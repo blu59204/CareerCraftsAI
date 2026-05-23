@@ -1,8 +1,9 @@
 import base64
 import os
+
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
 
 
 def derive_key(secret: str, salt: bytes) -> bytes:
@@ -34,6 +35,6 @@ def decrypt_api_key(encrypted: str, app_secret: str) -> str:
     aesgcm = AESGCM(key)
     try:
         plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-    except Exception:
-        raise ValueError("Decryption failed — ciphertext corrupted or wrong key")
+    except Exception as exc:
+        raise ValueError("Decryption failed — ciphertext corrupted or wrong key") from exc
     return plaintext.decode()

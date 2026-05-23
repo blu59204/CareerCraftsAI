@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.v1.deps import get_current_user, get_db
-from app.core.security import encrypt_api_key
 from app.core.config import settings
+from app.core.security import encrypt_api_key
 from app.models.db import User, UserModelSettings
 from app.models.schemas import (
-    UserCreate, UserResponse,
-    ModelSettingsCreate, ModelSettingsResponse,
+    ModelSettingsCreate,
+    ModelSettingsResponse,
+    UserCreate,
+    UserResponse,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])

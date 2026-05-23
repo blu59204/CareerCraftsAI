@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from langchain_core.language_models.fake_chat_models import FakeChatModel
 
 

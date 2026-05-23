@@ -1,5 +1,6 @@
 import pytest
-from app.core.security import encrypt_api_key, decrypt_api_key, derive_key
+
+from app.core.security import decrypt_api_key, derive_key, encrypt_api_key
 
 
 def test_encrypt_decrypt_roundtrip():
