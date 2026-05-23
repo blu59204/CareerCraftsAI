@@ -32,5 +32,8 @@ def decrypt_api_key(encrypted: str, app_secret: str) -> str:
     ciphertext = payload[28:]
     key = derive_key(app_secret, salt)
     aesgcm = AESGCM(key)
-    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+    try:
+        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+    except Exception:
+        raise ValueError("Decryption failed — ciphertext corrupted or wrong key")
     return plaintext.decode()
