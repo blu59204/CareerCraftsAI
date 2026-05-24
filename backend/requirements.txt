@@ -33,4 +33,5 @@ supabase==2.30.0
 langchain-postgres==0.0.17
 psycopg[binary]==3.3.4
 langchain-community==0.4.2
+langchain-google-community>=4.0.0
 reportlab>=4.1.0
