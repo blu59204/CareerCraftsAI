@@ -75,9 +75,10 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
-pytest                          # all tests
-pytest tests/test_resume.py     # single file
-pytest -k "test_name"           # single test
+pytest tests/unit tests/security -v   # all tests (46 total)
+pytest tests/unit -v                  # unit tests only (40)
+pytest tests/security -v              # security tests only (6)
+pytest -k "test_name"                 # single test
 ```
 
 ### Docker (full stack)
@@ -85,6 +86,15 @@ pytest -k "test_name"           # single test
 docker compose up --build       # start all services
 docker compose up frontend backend  # specific services
 docker compose logs -f backend  # tail logs
+```
+
+### Security & Load Testing
+```bash
+# Bandit static analysis
+cd backend && bandit -r app/ -f txt
+
+# Locust load test (requires running server + LOAD_TEST_TOKEN env var)
+locust --host=http://localhost:8000 --users=20 --spawn-rate=4 --run-time=30s --headless
 ```
 
 ### Database
@@ -114,10 +124,28 @@ See PRD §3.1 for full route tree. Key routes: `/dashboard`, `/resume/*`, `/jobs
 
 ## Build Phases
 
-Project not yet built (as of May 2026). Planned 10-week build:
-- Phase 1: Auth + model router + resume upload
-- Phase 2: RAG + Resume Agent + LinkedIn Agent  
-- Phase 3: Job Search Agent + PinchTab
-- Phase 4: Gmail MCP + Email/FollowUp Agents
-- Phase 5: Orchestrator + full loop + kanban
-- Phase 6: Production hardening
+- Phase 1: Auth + model router + resume upload — ✅ Done
+- Phase 2: RAG + Resume Agent + LinkedIn Agent — ✅ Done
+- Phase 3: Job Search Agent + PinchTab — ✅ Done
+- Phase 4: Gmail MCP + Email/FollowUp Agents — ✅ Done
+- Phase 5: Orchestrator + full loop + kanban — ✅ Done
+- Phase 6: Next.js frontend + Docker Compose — ✅ Done
+- Phase 7: Production hardening + security audit — ✅ Done
+
+---
+
+## Current State (P1–P7 Complete)
+
+All 7 build phases done. Platform production-ready.
+
+| Phase | Status | Tests |
+|---|---|---|
+| P1: Foundation | ✅ Done | 25 unit |
+| P2: RAG Pipeline | ✅ Done | +5 unit |
+| P3: Resume + LinkedIn Agents | ✅ Done | +7 unit |
+| P4: Job Search + BullMQ | ✅ Done | +3 unit |
+| P5: Email + Follow-Up Agents | ✅ Done | +5 unit |
+| P6: Orchestrator + Frontend | ✅ Done | +7 unit |
+| P7: Production Hardening | ✅ Done | +6 security |
+
+Total: 46 tests (40 unit + 6 security)
