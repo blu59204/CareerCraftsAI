@@ -73,18 +73,22 @@ async def upload_document(
 
     embedded_at = None
     if model_settings:
-        ingest_document(
-            str(current_user.id),
-            doc_type,
-            raw_text,
-            {
-                "user_id": str(current_user.id),
-                "doc_type": doc_type,
-                "filename": file.filename or "",
-            },
-            model_settings,
-        )
-        embedded_at = datetime.now(UTC)
+        try:
+            ingest_document(
+                str(current_user.id),
+                doc_type,
+                raw_text,
+                {
+                    "user_id": str(current_user.id),
+                    "doc_type": doc_type,
+                    "filename": file.filename or "",
+                },
+                model_settings,
+            )
+            embedded_at = datetime.now(UTC)
+        except Exception:
+            # Embedding failed — document saved without vectors, can retry later
+            embedded_at = None
 
     doc = UserDocument(
         user_id=current_user.id,
@@ -133,5 +137,10 @@ async def delete_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    delete_file(doc.storage_path)
+    storage_path = doc.storage_path
     await db.delete(doc)
+    await db.flush()
+    try:
+        delete_file(storage_path)
+    except Exception:
+        pass  # DB record gone; Supabase cleanup is best-effort
