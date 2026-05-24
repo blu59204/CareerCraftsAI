@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Search,
@@ -15,9 +16,12 @@ import {
   Globe,
   Copy,
   ChevronDown,
+  Loader2,
 } from "lucide-react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { apiClient } from "@/lib/api";
 
 const XRAY_TEMPLATES = [
   `site:linkedin.com/jobs "Frontend Engineer" "React" "Remote"`,
@@ -25,9 +29,27 @@ const XRAY_TEMPLATES = [
   `"careers.stripe.com" OR "jobs.notion.so" "Software Engineer" -intern`,
 ];
 
-// ---------------------------------------------------------------------------
-// X-ray Search Panel
-// ---------------------------------------------------------------------------
+const FILTER_CHIPS = ["Remote", "Full-time", "Entry-level", "Bangalore", "Hyderabad", "Mumbai"];
+
+interface SavedJob {
+  id: string;
+  company: string;
+  role: string;
+  job_url: string | null;
+  match_score: number | null;
+  status: string;
+  applied_at: string | null;
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(diff / 3600000);
+  if (h < 1) return "Just now";
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "Yesterday" : `${d}d ago`;
+}
 
 function XraySearchPanel({
   query,
@@ -46,7 +68,6 @@ function XraySearchPanel({
 
   return (
     <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-4">
-      {/* Card header */}
       <div className="flex items-start gap-3">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
           <Globe className="h-5 w-5 text-primary" />
@@ -59,7 +80,6 @@ function XraySearchPanel({
         </div>
       </div>
 
-      {/* Template chips */}
       <div className="flex flex-wrap gap-2">
         {XRAY_TEMPLATES.map((tpl) => (
           <button
@@ -76,7 +96,6 @@ function XraySearchPanel({
         ))}
       </div>
 
-      {/* Editable query textarea */}
       <textarea
         value={query}
         onChange={(e) => setQuery(e.target.value)}
@@ -84,7 +103,6 @@ function XraySearchPanel({
         className="w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 font-mono text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
       />
 
-      {/* Actions */}
       <div className="flex items-center gap-2">
         <LiquidGlassButton
           tone="primary"
@@ -112,181 +130,134 @@ function XraySearchPanel({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface Job {
-  id: string;
-  company: string;
-  role: string;
-  location: string;
-  type: string;
-  postedAgo: string;
-  matchPercent: number;
-  skills: [string, string, string];
-}
-
-// ---------------------------------------------------------------------------
-// Mock data
-// ---------------------------------------------------------------------------
-
-const JOBS: Job[] = [
-  {
-    id: "1",
-    company: "Acme Corp",
-    role: "Frontend Engineer",
-    location: "Remote",
-    type: "Full-time",
-    postedAgo: "2 days ago",
-    matchPercent: 92,
-    skills: ["React", "TypeScript", "Next.js"],
-  },
-  {
-    id: "2",
-    company: "BetaCorp",
-    role: "Full-stack Developer",
-    location: "Bangalore",
-    type: "Full-time",
-    postedAgo: "2 days ago",
-    matchPercent: 87,
-    skills: ["Node.js", "Python", "PostgreSQL"],
-  },
-  {
-    id: "3",
-    company: "Gamma Systems",
-    role: "Junior SDE",
-    location: "Hyderabad",
-    type: "Full-time",
-    postedAgo: "2 days ago",
-    matchPercent: 81,
-    skills: ["Java", "Spring Boot", "MySQL"],
-  },
-  {
-    id: "4",
-    company: "Delta Tech",
-    role: "React Developer",
-    location: "Remote",
-    type: "Full-time",
-    postedAgo: "2 days ago",
-    matchPercent: 78,
-    skills: ["React", "Redux", "Jest"],
-  },
-  {
-    id: "5",
-    company: "Epsilon Labs",
-    role: "Backend Engineer",
-    location: "Pune",
-    type: "Full-time",
-    postedAgo: "2 days ago",
-    matchPercent: 74,
-    skills: ["Go", "Kubernetes", "Redis"],
-  },
-  {
-    id: "6",
-    company: "Zeta Analytics",
-    role: "Data Engineer",
-    location: "Bangalore",
-    type: "Full-time",
-    postedAgo: "2 days ago",
-    matchPercent: 68,
-    skills: ["Python", "Spark", "Airflow"],
-  },
-];
-
-const FILTER_CHIPS = ["Remote", "Full-time", "Entry-level", "Bangalore", "Hyderabad", "Mumbai"];
-
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function MatchBar({ percent }: { percent: number }) {
-  const fillColor =
-    percent >= 80 ? "bg-primary" : percent >= 60 ? "bg-yellow-500" : "bg-red-400";
+function MatchBar({ percent }: { percent: number | null }) {
+  const p = percent ?? 0;
+  const fillColor = p >= 80 ? "bg-primary" : p >= 60 ? "bg-yellow-500" : "bg-red-400";
 
   return (
     <div className="mt-4">
       <div className="mb-1 flex items-center justify-between text-xs">
         <span className="text-muted-foreground">Match</span>
-        <span className="font-medium">{percent}%</span>
+        <span className="font-medium">{p > 0 ? `${p}%` : "—"}</span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-primary/20">
         <div
           className={`h-1.5 rounded-full ${fillColor} transition-all`}
-          style={{ width: `${percent}%` }}
+          style={{ width: `${p}%` }}
         />
       </div>
     </div>
   );
 }
 
-function JobCard({ job }: { job: Job }) {
+function JobCard({ job }: { job: SavedJob }) {
+  const domain = job.job_url
+    ? (() => {
+        try {
+          return new URL(job.job_url).hostname.replace("www.", "");
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
   return (
     <motion.div
       variants={fadeUp}
       className="rounded-3xl border border-border bg-card/60 p-6 hover:shadow-md transition-shadow flex flex-col gap-3"
     >
-      {/* Company + role */}
       <div>
         <div className="text-sm font-semibold text-muted-foreground">{job.company}</div>
         <div className="mt-0.5 text-xl font-medium leading-snug">{job.role}</div>
       </div>
 
-      {/* Badges */}
       <div className="flex flex-wrap gap-2">
-        <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-          <MapPin className="h-3 w-3" />
-          {job.location}
-        </span>
-        <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-          {job.type}
-        </span>
+        {domain && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
+            <MapPin className="h-3 w-3" />
+            {domain}
+          </span>
+        )}
         <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
           <Clock className="h-3 w-3" />
-          {job.postedAgo}
+          {relativeTime(job.applied_at)}
+        </span>
+        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+          job.status === "applied" ? "bg-green-500/15 text-green-600"
+          : job.status === "saved" ? "bg-blue-500/15 text-blue-600"
+          : "bg-secondary text-secondary-foreground"
+        }`}>
+          {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
         </span>
       </div>
 
-      {/* Match bar */}
-      <MatchBar percent={job.matchPercent} />
+      <MatchBar percent={job.match_score} />
 
-      {/* Skills */}
-      <div className="flex flex-wrap gap-1.5">
-        {job.skills.map((skill) => (
-          <span
-            key={skill}
-            className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
-          >
-            {skill}
-          </span>
-        ))}
-      </div>
-
-      {/* Actions */}
       <div className="mt-auto flex gap-2 pt-1">
         <LiquidGlassButton tone="ghost" size="sm" className="flex-1 gap-1.5">
           <Bookmark className="h-3.5 w-3.5" />
           Save
         </LiquidGlassButton>
-        <LiquidGlassButton tone="primary" size="sm" className="flex-1 gap-1.5">
-          <ExternalLink className="h-3.5 w-3.5" />
-          Apply
-        </LiquidGlassButton>
+        {job.job_url ? (
+          <LiquidGlassButton
+            tone="primary"
+            size="sm"
+            className="flex-1 gap-1.5"
+            onClick={() => window.open(job.job_url!, "_blank")}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Apply
+          </LiquidGlassButton>
+        ) : (
+          <LiquidGlassButton tone="primary" size="sm" className="flex-1 gap-1.5" disabled>
+            <ExternalLink className="h-3.5 w-3.5" />
+            Apply
+          </LiquidGlassButton>
+        )}
       </div>
     </motion.div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
 export default function JobsPage() {
+  const qc = useQueryClient();
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["Remote", "Full-time"]),
   );
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [xrayQuery, setXrayQuery] = useState(XRAY_TEMPLATES[0]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [agentRunning, setAgentRunning] = useState(false);
+
+  const { data: jobs = [], isLoading } = useQuery<SavedJob[]>({
+    queryKey: ["jobs-saved"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/jobs/applications?status=saved");
+      return data;
+    },
+  });
+
+  const searchMutation = useMutation({
+    mutationFn: (payload: { search_query: string; location: string; max_results: number }) =>
+      apiClient.post("/jobs/search", payload),
+    onSuccess: () => {
+      setAgentRunning(true);
+      setTimeout(() => {
+        setAgentRunning(false);
+        qc.invalidateQueries({ queryKey: ["jobs-saved"] });
+      }, 8000);
+    },
+  });
+
+  const avgMatch =
+    jobs.length > 0
+      ? Math.round(jobs.reduce((s, j) => s + (j.match_score ?? 0), 0) / jobs.length)
+      : 0;
+
+  const oneDayAgo = Date.now() - 86400000;
+  const newToday = jobs.filter(
+    (j) => j.applied_at && new Date(j.applied_at).getTime() > oneDayAgo,
+  ).length;
 
   function toggleFilter(chip: string) {
     setActiveFilters((prev) => {
@@ -296,9 +267,18 @@ export default function JobsPage() {
     });
   }
 
+  function handleRunAgent() {
+    const query = searchQuery.trim() || "Software Engineer Remote";
+    searchMutation.mutate({
+      search_query: query,
+      location: activeFilters.has("Remote") ? "Remote" : "Any",
+      max_results: 10,
+    });
+  }
+
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      {/* ---- Header ---- */}
+      {/* Header */}
       <motion.div variants={fadeUp} className="flex items-start justify-between gap-4">
         <div>
           <div className="text-sm text-muted-foreground">Job Search</div>
@@ -319,18 +299,30 @@ export default function JobsPage() {
             />
             Advanced search ↓
           </LiquidGlassButton>
-          <LiquidGlassButton tone="primary" size="sm">
-            <Zap className="h-4 w-4" />
-            Run Job Agent
+          <LiquidGlassButton
+            tone="primary"
+            size="sm"
+            onClick={handleRunAgent}
+            disabled={searchMutation.isPending || agentRunning}
+          >
+            {searchMutation.isPending || agentRunning ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Zap className="h-4 w-4" />
+            )}
+            {agentRunning ? "Searching…" : "Run Job Agent"}
           </LiquidGlassButton>
         </div>
       </motion.div>
 
-      {/* ---- Search + filter chips ---- */}
+      {/* Search + filter chips */}
       <motion.div variants={fadeUp} className="space-y-3">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleRunAgent()}
             placeholder="Search roles, companies, or skills…"
             className="h-11 w-full rounded-full border border-border bg-card/40 pl-11 pr-4 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
@@ -358,7 +350,7 @@ export default function JobsPage() {
         </div>
       </motion.div>
 
-      {/* ---- Advanced Search (X-ray) ---- */}
+      {/* Advanced Search (X-ray) */}
       <AnimatePresence>
         {showAdvanced && (
           <motion.div
@@ -374,14 +366,18 @@ export default function JobsPage() {
         )}
       </AnimatePresence>
 
-      {/* ---- Metrics strip ---- */}
+      {/* Metrics strip */}
       <motion.div variants={fadeUp} className="grid grid-cols-3 gap-4">
         <div className="rounded-3xl border border-border bg-card/60 p-6">
           <div className="flex items-center justify-between">
             <span className="text-sm text-muted-foreground">Roles found</span>
             <Search className="h-4 w-4 text-muted-foreground" />
           </div>
-          <div className="mt-4 text-3xl font-medium">47</div>
+          {isLoading ? (
+            <div className="mt-4 h-8 w-12 shimmer rounded-xl" />
+          ) : (
+            <div className="mt-4 text-3xl font-medium">{jobs.length}</div>
+          )}
         </div>
 
         <div className="rounded-3xl border border-border bg-card/60 p-6">
@@ -389,7 +385,11 @@ export default function JobsPage() {
             <span className="text-sm text-muted-foreground">Average match</span>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </div>
-          <div className="mt-4 text-3xl font-medium">82%</div>
+          {isLoading ? (
+            <div className="mt-4 h-8 w-16 shimmer rounded-xl" />
+          ) : (
+            <div className="mt-4 text-3xl font-medium">{avgMatch > 0 ? `${avgMatch}%` : "—"}</div>
+          )}
         </div>
 
         <div className="rounded-3xl border border-border bg-card/60 p-6">
@@ -397,30 +397,65 @@ export default function JobsPage() {
             <span className="text-sm text-muted-foreground">New since yesterday</span>
             <RefreshCw className="h-4 w-4 text-muted-foreground" />
           </div>
-          <div className="mt-4 text-3xl font-medium">12</div>
+          {isLoading ? (
+            <div className="mt-4 h-8 w-8 shimmer rounded-xl" />
+          ) : (
+            <div className="mt-4 text-3xl font-medium">{newToday}</div>
+          )}
         </div>
       </motion.div>
 
-      {/* ---- Job cards grid ---- */}
-      <motion.div
-        variants={stagger}
-        className="grid grid-cols-1 gap-4 lg:grid-cols-2"
-      >
-        {JOBS.map((job) => (
-          <JobCard key={job.id} job={job} />
-        ))}
-      </motion.div>
+      {/* Job cards grid */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-48 shimmer rounded-3xl" />
+          ))}
+        </div>
+      ) : jobs.length === 0 ? (
+        <motion.div variants={fadeUp}>
+          <EmptyState
+            icon={<Search className="h-6 w-6" />}
+            title="No jobs found yet."
+            description="Click Run Job Agent to start searching for roles matching your profile."
+            action={
+              <LiquidGlassButton tone="primary" onClick={handleRunAgent}>
+                <Zap className="h-4 w-4" />
+                Run Job Agent
+              </LiquidGlassButton>
+            }
+          />
+        </motion.div>
+      ) : (
+        <motion.div
+          variants={stagger}
+          className="grid grid-cols-1 gap-4 lg:grid-cols-2"
+        >
+          {jobs.map((job) => (
+            <JobCard key={job.id} job={job} />
+          ))}
+        </motion.div>
+      )}
 
-      {/* ---- Agent status bar ---- */}
+      {/* Agent status bar */}
       <motion.div
         variants={fadeUp}
         className="flex items-center gap-3 rounded-2xl border border-border bg-card/40 px-5 py-3 text-sm text-muted-foreground"
       >
-        <span className="relative flex h-2 w-2 shrink-0">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-        </span>
-        Job Search Agent is active — scanning 3 boards · 47 leads found · Last updated 2 min ago
+        {agentRunning ? (
+          <>
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+            Job Search Agent running — scanning boards for matching roles…
+          </>
+        ) : (
+          <>
+            <span className="relative flex h-2 w-2 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+            </span>
+            Job Search Agent ready — {jobs.length > 0 ? `${jobs.length} roles saved` : "run agent to discover roles"}
+          </>
+        )}
       </motion.div>
     </motion.div>
   );

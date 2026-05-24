@@ -19,7 +19,7 @@ from app.models.db import AgentRun, User
 router = APIRouter(prefix="/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
 
-VALID_TASKS = {"resume_optimize", "job_search", "linkedin_optimize", "email"}
+VALID_TASKS = {"resume_optimize", "job_search", "linkedin_optimize", "email", "interview_prep"}
 
 
 class RunRequest(BaseModel):

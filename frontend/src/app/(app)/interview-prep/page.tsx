@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Mic,
@@ -12,17 +13,14 @@ import {
   Plus,
   BarChart3,
   BookOpen,
-  Newspaper,
   Code2,
   Play,
   MessageSquare,
+  Loader2,
 } from "lucide-react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { apiClient } from "@/lib/api";
 
 type Category = "All" | "Technical" | "Behavioral" | "Company-Specific";
 type Difficulty = "Easy" | "Medium" | "Hard";
@@ -39,71 +37,21 @@ interface StarStory {
   title: string;
 }
 
-// ---------------------------------------------------------------------------
-// Data
-// ---------------------------------------------------------------------------
-
-const QUESTIONS: Question[] = [
-  {
-    id: "1",
-    category: "Technical",
-    difficulty: "Medium",
-    text: "Explain the difference between useEffect and useLayoutEffect in React. When would you use each?",
-  },
-  {
-    id: "2",
-    category: "Behavioral",
-    difficulty: "Easy",
-    text: "Tell me about yourself and your journey as a developer.",
-  },
-  {
-    id: "3",
-    category: "Technical",
-    difficulty: "Hard",
-    text: "How would you optimize the performance of a React application with 10,000+ list items?",
-  },
-  {
-    id: "4",
-    category: "Company-Specific",
-    difficulty: "Medium",
-    text: "Why do you want to work at Stripe specifically?",
-  },
-  {
-    id: "5",
-    category: "Technical",
-    difficulty: "Hard",
-    text: "Design a system for real-time collaborative editing like Notion. Walk me through your architecture.",
-  },
-  {
-    id: "6",
-    category: "Behavioral",
-    difficulty: "Medium",
-    text: "Describe a time you disagreed with your team lead. How did you handle it?",
-  },
-  {
-    id: "7",
-    category: "Technical",
-    difficulty: "Medium",
-    text: "What's the difference between useMemo and useCallback? Give examples.",
-  },
-  {
-    id: "8",
-    category: "Behavioral",
-    difficulty: "Easy",
-    text: "Where do you see yourself in 5 years?",
-  },
+const BASE_QUESTIONS: Question[] = [
+  { id: "b1", category: "Technical", difficulty: "Medium", text: "Explain the difference between useEffect and useLayoutEffect in React. When would you use each?" },
+  { id: "b2", category: "Behavioral", difficulty: "Easy", text: "Tell me about yourself and your journey as a developer." },
+  { id: "b3", category: "Technical", difficulty: "Hard", text: "How would you optimize the performance of a React application with 10,000+ list items?" },
+  { id: "b4", category: "Behavioral", difficulty: "Medium", text: "Describe a time you disagreed with your team lead. How did you handle it?" },
+  { id: "b5", category: "Technical", difficulty: "Medium", text: "What's the difference between useMemo and useCallback? Give examples." },
+  { id: "b6", category: "Behavioral", difficulty: "Easy", text: "Where do you see yourself in 5 years?" },
 ];
 
-const STAR_STORIES: StarStory[] = [
-  { id: "1", title: "Led migration from Webpack to Vite — cut build time 73%" },
-  { id: "2", title: "Debugged production race condition affecting 500 users" },
+const BASE_STAR_STORIES: StarStory[] = [
+  { id: "s1", title: "Led migration from Webpack to Vite — cut build time 73%" },
+  { id: "s2", title: "Debugged production race condition affecting 500 users" },
 ];
 
 const CATEGORY_TABS: Category[] = ["All", "Technical", "Behavioral", "Company-Specific"];
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const DIFFICULTY_CONFIG: Record<Difficulty, { label: string; className: string }> = {
   Easy: { label: "Easy", className: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30" },
@@ -117,16 +65,12 @@ const CATEGORY_CONFIG: Record<Exclude<Category, "All">, string> = {
   "Company-Specific": "bg-orange-500/15 text-orange-600 border-orange-500/30",
 };
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
 function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className="font-semibold tabular-nums">{value}%</span>
+        <span className="font-semibold tabular-nums">{value > 0 ? `${value}%` : "—"}</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-secondary">
         <motion.div
@@ -140,12 +84,39 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-function QuestionCard({ question }: { question: Question }) {
+function QuestionCard({ question, company, role }: { question: Question; company: string; role: string }) {
   const [open, setOpen] = useState(false);
   const [answer, setAnswer] = useState("");
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [gettingFeedback, setGettingFeedback] = useState(false);
 
   const diffCfg = DIFFICULTY_CONFIG[question.difficulty];
   const catCfg = CATEGORY_CONFIG[question.category];
+
+  async function handleFeedback() {
+    if (!answer.trim() || gettingFeedback) return;
+    setGettingFeedback(true);
+    setFeedback(null);
+    try {
+      const { data } = await apiClient.post("/agents/run", {
+        task_type: "interview_prep",
+        context: {
+          mode: "feedback",
+          question: question.text,
+          answer,
+          company,
+          role,
+        },
+      });
+      setFeedback(
+        `Run started (ID: ${data.run_id}). Check Agents page for your feedback when complete.`
+      );
+    } catch {
+      setFeedback("Could not connect to agent. Try again.");
+    } finally {
+      setGettingFeedback(false);
+    }
+  }
 
   return (
     <motion.div
@@ -155,23 +126,14 @@ function QuestionCard({ question }: { question: Question }) {
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-          <span
-            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${catCfg}`}
-          >
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${catCfg}`}>
             {question.category}
           </span>
-          <span
-            className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${diffCfg.className}`}
-          >
+          <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${diffCfg.className}`}>
             {diffCfg.label}
           </span>
         </div>
-        <LiquidGlassButton
-          tone="ghost"
-          size="sm"
-          onClick={() => setOpen((v) => !v)}
-          className="shrink-0 gap-1.5"
-        >
+        <LiquidGlassButton tone="ghost" size="sm" onClick={() => setOpen((v) => !v)} className="shrink-0 gap-1.5">
           {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           Practice
         </LiquidGlassButton>
@@ -198,14 +160,23 @@ function QuestionCard({ question }: { question: Question }) {
                 className="w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring"
               />
               <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">
-                  {answer.length} characters
-                </span>
-                <button className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
-                  <Sparkles className="h-3.5 w-3.5" />
+                <span className="text-xs text-muted-foreground">{answer.length} characters</span>
+                <button
+                  onClick={handleFeedback}
+                  disabled={gettingFeedback || !answer.trim()}
+                  className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:opacity-40"
+                >
+                  {gettingFeedback ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
                   Get AI feedback
                 </button>
               </div>
+              {feedback && (
+                <p className="rounded-xl bg-primary/5 px-3 py-2 text-xs text-muted-foreground">{feedback}</p>
+              )}
             </div>
           </motion.div>
         )}
@@ -214,21 +185,66 @@ function QuestionCard({ question }: { question: Question }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
-
 export default function InterviewPrepPage() {
-  const [company, setCompany] = useState("Stripe");
-  const [role, setRole] = useState("Frontend Engineer");
+  const qc = useQueryClient();
+  const [company, setCompany] = useState("");
+  const [role, setRole] = useState("");
   const [activeTab, setActiveTab] = useState<Category>("All");
+  const [stories, setStories] = useState<StarStory[]>(BASE_STAR_STORIES);
+
+  const { data: lastRun } = useQuery({
+    queryKey: ["interview-prep-run"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/agents/runs?limit=50");
+      const runs = (data as { agent_type: string; status: string; output: Record<string, unknown> | null }[])
+        .filter((r) => r.agent_type === "interview_prep" && r.status === "completed");
+      return runs[0] ?? null;
+    },
+  });
+
+  const aiQuestions: Question[] = (() => {
+    if (!lastRun?.output) return [];
+    const out = lastRun.output as Record<string, unknown>;
+    if (Array.isArray(out.questions)) {
+      return (out.questions as Question[]).map((q, i) => ({
+        ...q,
+        id: `ai-${i}`,
+        category: (q.category as Exclude<Category, "All">) || "Company-Specific",
+        difficulty: (q.difficulty as Difficulty) || "Medium",
+      }));
+    }
+    return [];
+  })();
+
+  const allQuestions = [...aiQuestions, ...BASE_QUESTIONS];
 
   const filtered =
-    activeTab === "All" ? QUESTIONS : QUESTIONS.filter((q) => q.category === activeTab);
+    activeTab === "All" ? allQuestions : allQuestions.filter((q) => q.category === activeTab);
+
+  const generateMutation = useMutation({
+    mutationFn: () =>
+      apiClient.post("/agents/run", {
+        task_type: "interview_prep",
+        context: {
+          mode: "generate",
+          company: company || "any company",
+          role: role || "Software Engineer",
+          count: 8,
+        },
+      }),
+    onSuccess: () => {
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["interview-prep-run"] }), 10000);
+    },
+  });
+
+  const aiScore =
+    lastRun?.output && typeof (lastRun.output as Record<string, unknown>).prep_score === "number"
+      ? (lastRun.output as Record<string, unknown>).prep_score as number
+      : null;
 
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      {/* ---- Header ---- */}
+      {/* Header */}
       <motion.div variants={fadeUp} className="flex items-start justify-between gap-4">
         <div>
           <div className="text-sm text-muted-foreground">Interview Prep</div>
@@ -239,14 +255,23 @@ export default function InterviewPrepPage() {
             <Mic className="h-4 w-4" />
             Mock interview
           </LiquidGlassButton>
-          <LiquidGlassButton tone="primary" size="sm">
-            <Sparkles className="h-4 w-4" />
-            Generate questions
+          <LiquidGlassButton
+            tone="primary"
+            size="sm"
+            onClick={() => generateMutation.mutate()}
+            disabled={generateMutation.isPending}
+          >
+            {generateMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            {generateMutation.isPending ? "Generating…" : "Generate questions"}
           </LiquidGlassButton>
         </div>
       </motion.div>
 
-      {/* ---- Target job row ---- */}
+      {/* Target job row */}
       <motion.div
         variants={fadeUp}
         className="flex flex-wrap items-center gap-3 rounded-3xl border border-border bg-card/60 p-5"
@@ -269,23 +294,40 @@ export default function InterviewPrepPage() {
             className="h-10 w-full rounded-full border border-border bg-background/60 pl-10 pr-4 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
-        <LiquidGlassButton tone="primary" size="sm">
+        <LiquidGlassButton
+          tone="primary"
+          size="sm"
+          onClick={() => generateMutation.mutate()}
+          disabled={generateMutation.isPending}
+        >
           <Sparkles className="h-3.5 w-3.5" />
           Analyze
         </LiquidGlassButton>
       </motion.div>
 
-      {/* ---- Two-column layout ---- */}
+      {/* Generation progress */}
+      {generateMutation.isPending && (
+        <motion.div variants={fadeUp} className="flex items-center gap-3 rounded-2xl border border-border bg-card/40 px-5 py-3 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          Generating role-specific questions for {role || "your target role"}…
+        </motion.div>
+      )}
+
+      {/* Two-column layout */}
       <motion.div variants={fadeUp} className="grid gap-6 lg:grid-cols-[3fr_2fr]">
-        {/* ---- LEFT: question list ---- */}
+        {/* LEFT: question list */}
         <div className="space-y-4">
-          {/* Header + tabs */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold">Interview Questions</span>
               <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-secondary-foreground">
                 {filtered.length}
               </span>
+              {aiQuestions.length > 0 && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  {aiQuestions.length} AI-generated
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {CATEGORY_TABS.map((tab) => (
@@ -304,17 +346,16 @@ export default function InterviewPrepPage() {
             </div>
           </div>
 
-          {/* Question cards */}
           <motion.div layout className="space-y-3">
             <AnimatePresence mode="popLayout">
               {filtered.map((q) => (
-                <QuestionCard key={q.id} question={q} />
+                <QuestionCard key={q.id} question={q} company={company} role={role} />
               ))}
             </AnimatePresence>
           </motion.div>
         </div>
 
-        {/* ---- RIGHT: prep assistant ---- */}
+        {/* RIGHT: prep assistant */}
         <div className="space-y-4">
           {/* AI Prep Score */}
           <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-5">
@@ -322,19 +363,33 @@ export default function InterviewPrepPage() {
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold">AI Prep Score</span>
             </div>
-
-            <div className="flex items-end gap-3">
-              <span className="text-5xl font-semibold tabular-nums leading-none">72</span>
-              <span className="mb-1 text-lg text-muted-foreground">%</span>
-              <span className="mb-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-xs font-medium text-amber-600">
-                Good
-              </span>
-            </div>
-
-            <div className="space-y-3 pt-1">
-              <ScoreBar label="Technical" value={68} />
-              <ScoreBar label="Behavioral" value={78} />
-            </div>
+            {aiScore !== null ? (
+              <>
+                <div className="flex items-end gap-3">
+                  <span className="text-5xl font-semibold tabular-nums leading-none">{aiScore}</span>
+                  <span className="mb-1 text-lg text-muted-foreground">%</span>
+                  <span className={`mb-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
+                    aiScore >= 80 ? "bg-green-500/15 border-green-500/30 text-green-600"
+                    : aiScore >= 60 ? "bg-amber-500/15 border-amber-500/30 text-amber-600"
+                    : "bg-red-500/15 border-red-500/30 text-red-500"
+                  }`}>
+                    {aiScore >= 80 ? "Strong" : aiScore >= 60 ? "Good" : "Needs Work"}
+                  </span>
+                </div>
+                <div className="space-y-3 pt-1">
+                  <ScoreBar label="Technical" value={
+                    (lastRun?.output as Record<string, unknown>)?.technical_score as number ?? 0
+                  } />
+                  <ScoreBar label="Behavioral" value={
+                    (lastRun?.output as Record<string, unknown>)?.behavioral_score as number ?? 0
+                  } />
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Generate questions and practice answers to see your prep score.
+              </p>
+            )}
           </div>
 
           {/* STAR Story Builder */}
@@ -344,86 +399,59 @@ export default function InterviewPrepPage() {
               <span className="text-sm font-semibold">STAR Story Builder</span>
             </div>
             <p className="text-xs text-muted-foreground">Build answer frameworks</p>
-
             <div className="space-y-2">
-              {STAR_STORIES.map((story) => (
-                <div
-                  key={story.id}
-                  className="rounded-2xl border border-border bg-background/40 p-4 space-y-2"
-                >
+              {stories.map((story) => (
+                <div key={story.id} className="rounded-2xl border border-border bg-background/40 p-4 space-y-2">
                   <p className="text-xs font-medium leading-snug">{story.title}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {["Situation", "Task", "Action", "Result"].map((step) => (
-                      <span
-                        key={step}
-                        className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground"
-                      >
+                      <span key={step} className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
                         {step}
                       </span>
                     ))}
                   </div>
                 </div>
               ))}
-
-              <LiquidGlassButton tone="ghost" size="sm" className="w-full gap-1.5 mt-1">
+              <LiquidGlassButton
+                tone="ghost"
+                size="sm"
+                className="w-full gap-1.5 mt-1"
+                onClick={() => setStories((s) => [...s, { id: `s${Date.now()}`, title: "New story — click to edit" }])}
+              >
                 <Plus className="h-3.5 w-3.5" />
                 Add new story
               </LiquidGlassButton>
             </div>
           </div>
 
-          {/* Company Research */}
-          <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <Newspaper className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-semibold">Company Research</span>
-            </div>
-
-            <div className="space-y-3">
+          {/* Company Research — dynamic based on company input */}
+          {company && (
+            <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <Code2 className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Company: {company}</span>
+              </div>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Founded 2010 · Payments infrastructure · 7,000+ employees
+                Generate questions targeting <span className="font-medium text-foreground">{company}</span> to get
+                company-specific interview preparation.
               </p>
-
-              <div>
-                <p className="text-xs font-medium mb-2">Recent news</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {["Stripe IPO 2025", "MCP launch", "Africa expansion"].map((news) => (
-                    <span
-                      key={news}
-                      className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs text-secondary-foreground"
-                    >
-                      {news}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Code2 className="h-3.5 w-3.5 text-muted-foreground" />
-                  <p className="text-xs font-medium">Tech stack</p>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {["Next.js", "Ruby", "Go", "Sorbet"].map((tech) => (
-                    <span
-                      key={tech}
-                      className="rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs font-medium text-primary"
-                    >
-                      {tech}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <LiquidGlassButton
+                tone="ghost"
+                size="sm"
+                className="w-full"
+                onClick={() => generateMutation.mutate()}
+                disabled={generateMutation.isPending}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Generate {company}-specific questions
+              </LiquidGlassButton>
             </div>
-          </div>
+          )}
         </div>
       </motion.div>
 
-      {/* ---- Mock interview banner ---- */}
-      <motion.div
-        variants={fadeUp}
-        className="rounded-3xl border border-border bg-card/60 p-6"
-      >
+      {/* Mock interview banner */}
+      <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
         <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left sm:justify-between">
           <div className="space-y-1">
             <div className="flex items-center justify-center gap-2 sm:justify-start">
