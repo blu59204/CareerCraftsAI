@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -10,6 +11,8 @@ from app.api.v1.deps import get_current_user, get_db
 from app.models.db import User, UserDocument, UserModelSettings
 from app.services.rag_service import extract_text, ingest_document
 from app.services.storage_service import delete_file, upload_file
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
@@ -142,5 +145,5 @@ async def delete_document(
     await db.flush()
     try:
         delete_file(storage_path)
-    except Exception:
-        pass  # DB record gone; Supabase cleanup is best-effort
+    except Exception as exc:
+        logger.warning("Supabase file delete failed for %s (best-effort): %s", storage_path, exc)
