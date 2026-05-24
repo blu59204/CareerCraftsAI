@@ -1,12 +1,28 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from langchain_core.language_models.fake_chat_models import FakeChatModel
+from langchain_core.messages import AIMessage
+
+
+class _MutableFakeLLM:
+    """Mutable LLM stand-in: supports ``mock_llm.responses = [...]`` after construction."""
+
+    def __init__(self, responses: list[str] | None = None):
+        self.responses: list[str] = responses or ["mocked LLM response"]
+        self._call_count = 0
+
+    def invoke(self, messages) -> AIMessage:
+        if self._call_count < len(self.responses):
+            content = self.responses[self._call_count]
+        else:
+            content = self.responses[-1] if self.responses else ""
+        self._call_count += 1
+        return AIMessage(content=content)
 
 
 @pytest.fixture
 def mock_llm():
-    return FakeChatModel(responses=["mocked LLM response"])
+    return _MutableFakeLLM()
 
 
 @pytest.fixture
