@@ -9,9 +9,10 @@ export function useAgentStream(runId: string | null) {
 
   useEffect(() => {
     if (!runId) return;
+    const id: string = runId;
     function connect() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const src = new EventSource(`${apiUrl}/api/v1/agents/${runId}/stream`);
+      const src = new EventSource(`${apiUrl}/api/v1/agents/${id}/stream`);
       sourceRef.current = src;
       src.onmessage = (e) => {
         try {
@@ -20,9 +21,9 @@ export function useAgentStream(runId: string | null) {
             data: unknown;
             ts: number;
           };
-          addEvent(runId, event);
+          addEvent(id, event);
           if (event.type === "complete" || event.type === "error") {
-            setRunStatus(runId, event.type === "complete" ? "completed" : "failed");
+            setRunStatus(id, event.type === "complete" ? "completed" : "failed");
             src.close();
           }
         } catch {
