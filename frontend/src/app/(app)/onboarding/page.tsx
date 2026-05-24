@@ -26,9 +26,10 @@ function StepWrapper({ children, onNext, onPrev, canPrev, isLast }: {
 export default function OnboardingPage() {
   const [i, setI] = useState(0);
 
-  const next = () => setI((n) => Math.min(n + 1, 5));
+  const TOTAL_STEPS = 6;
+  const next = () => setI((n) => Math.min(n + 1, TOTAL_STEPS - 1));
   const prev = () => setI((n) => Math.max(n - 1, 0));
-  const isLast = i === 5;
+  const isLast = i === TOTAL_STEPS - 1;
 
   const wrap = (node: React.ReactNode) => (
     <StepWrapper onNext={next} onPrev={prev} canPrev={i > 0} isLast={isLast}>{node}</StepWrapper>
