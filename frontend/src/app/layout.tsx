@@ -1,28 +1,29 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Instrument_Serif } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Providers } from "@/components/layout/Providers";
-import { Sidebar } from "@/components/layout/Sidebar";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const instrumentSerif = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: "italic",
+  variable: "--font-instrument-serif",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "JobAgent AI",
-  description: "Automate your job search with AI agents",
+  title: "CareerCraft AI — Apply smarter. Tailor faster.",
+  description: "AI job-search copilot for students and freshers.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider>
-      <html lang="en">
-        <body className={inter.className}>
-          <Providers>
-            <div className="flex min-h-screen">
-              <Sidebar />
-              <div className="flex-1">{children}</div>
-            </div>
-          </Providers>
+      <html lang="en" className={`${inter.variable} ${instrumentSerif.variable}`} suppressHydrationWarning>
+        <body className="font-sans antialiased">
+          <Providers>{children}</Providers>
         </body>
       </html>
     </ClerkProvider>
