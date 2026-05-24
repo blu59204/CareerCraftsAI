@@ -25,3 +25,7 @@ bandit>=1.7.8
 ruff>=0.4.4
 black>=24.4.2
 coverage>=7.5.1
+pymupdf==1.27.2.3
+python-docx==1.2.0
+supabase==2.30.0
+langchain-community==0.4.2
