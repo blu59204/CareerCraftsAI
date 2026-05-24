@@ -6,7 +6,7 @@ Protected by shared APP_SECRET_KEY header — not Clerk JWT.
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Header, HTTPException
 from langchain_core.messages import HumanMessage
@@ -73,7 +73,7 @@ async def run_job_search(
         if run:
             run.status = result_state["status"]
             run.output = result_state.get("result")
-            run.completed_at = datetime.now(timezone.utc)
+            run.completed_at = datetime.now(datetime.UTC)
         await db.commit()
 
     logger.info(

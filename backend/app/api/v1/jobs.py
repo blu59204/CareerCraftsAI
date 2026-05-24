@@ -1,7 +1,6 @@
-import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -121,5 +120,5 @@ async def update_application_status(
 
     app.status = status
     if status == "applied" and not app.applied_at:
-        app.applied_at = datetime.now(timezone.utc)
+        app.applied_at = datetime.now(datetime.UTC)
     return app

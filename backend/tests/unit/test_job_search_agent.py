@@ -1,7 +1,8 @@
 import uuid
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
+
 from langchain_core.messages import HumanMessage
+
 from app.agents.state import AgentState
 
 MOCK_SNAPSHOT = {
@@ -45,9 +46,15 @@ def test_job_search_agent_returns_scored_matches(mock_llm):
     mock_session.snapshot.return_value = MOCK_SNAPSHOT
 
     with patch("app.agents.job_search.new_session", return_value=mock_session), \
-         patch("app.agents.job_search._get_model_settings", return_value=MagicMock(provider="openai")), \
+         patch(
+             "app.agents.job_search._get_model_settings",
+             return_value=MagicMock(provider="openai"),
+         ), \
          patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search._get_user_profile", return_value="Python engineer 5 years FastAPI"):
+         patch(
+             "app.agents.job_search._get_user_profile",
+             return_value="Python engineer 5 years FastAPI",
+         ):
         result = job_search_agent_node(make_state())
 
     assert result["status"] == "completed"
@@ -78,13 +85,24 @@ def test_job_search_agent_closes_session_on_error():
 def test_job_search_agent_respects_max_results_cap():
     from app.agents.job_search import job_search_agent_node
 
-    many_jobs = [{"title": f"Job {i}", "company": f"Co{i}", "url": f"https://co{i}.com", "description": "Python"} for i in range(30)]
+    many_jobs = [
+        {
+            "title": f"Job {i}",
+            "company": f"Co{i}",
+            "url": f"https://co{i}.com",
+            "description": "Python",
+        }
+        for i in range(30)
+    ]
     mock_session = MagicMock()
     mock_session.navigate.return_value = {"ok": True}
     mock_session.snapshot.return_value = {"jobs": many_jobs}
 
     with patch("app.agents.job_search.new_session", return_value=mock_session), \
-         patch("app.agents.job_search._get_model_settings", return_value=MagicMock(provider="openai")), \
+         patch(
+             "app.agents.job_search._get_model_settings",
+             return_value=MagicMock(provider="openai"),
+         ), \
          patch("app.agents.job_search._build_llm") as mock_build:
         llm = MagicMock()
         llm.invoke.return_value = MagicMock(content="50")
