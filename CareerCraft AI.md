@@ -385,7 +385,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 | Cache | Redis | 7.x | Cache + pub/sub |
 | Queue | BullMQ | 5.x | Agent job queue |
 | Storage | Supabase Storage | S3-compatible | Resume PDFs, uploads |
-| Auth | Clerk | Latest | User auth + Google OAuth |
+| Auth | Supabase Auth | Latest | Google + LinkedIn + GitHub OAuth, email/password, magic link |
 | Email (read/send) | Gmail MCP | Official | Read/send Gmail |
 | Files | Google Drive MCP | Official | Resume storage |
 | PDF | ReportLab | 4.x | Generate resume PDFs |
@@ -429,7 +429,7 @@ services:
 
 | Phase | Deliverable | Duration | Key Tech |
 |---|---|---|---|
-| Phase 1 | Auth + user settings + model router + resume upload | 2 weeks | Next.js, FastAPI, Supabase, Clerk |
+| Phase 1 | Auth + user settings + model router + resume upload | 2 weeks | Next.js, FastAPI, Supabase, Supabase Auth |
 | Phase 2 | RAG pipeline + Resume Agent + LinkedIn Agent | 2 weeks | pgvector, LangGraph, LangChain |
 | Phase 3 | Job Search Agent + PinchTab browser automation | 2 weeks | PinchTab, BullMQ, Redis |
 | Phase 4 | Gmail MCP + Email Agent + Follow-Up Agent | 1 week | Gmail MCP, Google Drive MCP |

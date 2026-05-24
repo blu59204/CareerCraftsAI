@@ -4,6 +4,7 @@ Not exposed via Nginx (blocked at nginx level).
 Protected by shared APP_SECRET_KEY header — not Supabase JWT.
 """
 import asyncio
+import hmac
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _verify_secret(x_internal_secret: str = Header(...)) -> None:
-    if x_internal_secret != settings.APP_SECRET_KEY:
+    if not hmac.compare_digest(x_internal_secret, settings.APP_SECRET_KEY):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -61,7 +62,7 @@ async def run_job_search(
         error=None,
     )
 
-    result_state = await asyncio.get_event_loop().run_in_executor(
+    result_state = await asyncio.get_running_loop().run_in_executor(
         None, job_search_agent_node, state
     )
 
@@ -96,8 +97,24 @@ async def run_followup(
     x_internal_secret: str = Header(...),
 ):
     _verify_secret(x_internal_secret)
-    # Future: trigger email_agent_node for follow-up email composition
-    # For now: log and return — full implementation in P6 orchestrator
+
+    from app.agents.followup_agent import schedule_followups
+    from app.core.database import AsyncSessionLocal
+    from app.models.db import JobApplication
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(
+            select(JobApplication).where(
+                JobApplication.id == uuid.UUID(payload.application_id)
+            )
+        )
+        application = res.scalar_one_or_none()
+        if not application:
+            logger.warning("Follow-up: application %s not found", payload.application_id)
+            return {"status": "not_found", "application_id": payload.application_id}
+
+    schedule_followups(payload.user_id, payload.application_id, application.applied_at)
     logger.info(
         "Follow-up day-%d triggered for application %s user %s",
         payload.day,

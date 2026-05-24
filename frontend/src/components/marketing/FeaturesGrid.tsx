@@ -1,5 +1,9 @@
+"use client";
+
 import { FileText, Bot, Target, KanbanSquare, Mail, KeyRound } from "lucide-react";
 import { FeatureCard } from "@/components/ui/FeatureCard";
+import { motion } from "motion/react";
+import { fadeUp, stagger } from "@/lib/motion-variants";
 
 const FEATURES = [
   {
@@ -36,19 +40,46 @@ const FEATURES = [
 
 export function FeaturesGrid() {
   return (
-    <section id="features" className="bg-[#0a0a0a] py-28 text-white">
+    <section id="features" className="bg-background py-28">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="mb-14 max-w-2xl">
-          <div className="text-sm text-white/50">Features</div>
-          <h2 className="mt-2 text-4xl font-medium md:text-5xl">
+        <motion.div
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: "-80px" }}
+          variants={stagger}
+          className="mb-14 max-w-2xl"
+        >
+          <motion.div
+            variants={fadeUp}
+            className="text-sm font-medium text-primary"
+          >
+            Features
+          </motion.div>
+          <motion.h2
+            variants={fadeUp}
+            className="mt-2 text-4xl font-medium text-foreground md:text-5xl"
+          >
             Everything you need to land your first role.
-          </h2>
-        </div>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          </motion.h2>
+          <motion.p
+            variants={fadeUp}
+            className="mt-4 text-base text-muted-foreground"
+          >
+            Purpose-built agents handle every step of your job search, from tailoring resumes to drafting follow-ups.
+          </motion.p>
+        </motion.div>
+
+        <motion.div
+          initial="hidden"
+          whileInView="show"
+          viewport={{ once: true, margin: "-60px" }}
+          variants={stagger}
+          className="grid gap-6 md:grid-cols-2 lg:grid-cols-3"
+        >
           {FEATURES.map((f) => (
             <FeatureCard key={f.title} {...f} />
           ))}
-        </div>
+        </motion.div>
       </div>
     </section>
   );

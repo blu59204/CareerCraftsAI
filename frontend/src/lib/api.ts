@@ -1,4 +1,5 @@
 import axios from "axios";
+import { createClient } from "@/lib/supabase/client";
 
 export const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
@@ -8,12 +9,15 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
     try {
-      const { useAuth } = await import("@clerk/nextjs");
-      const { getToken } = useAuth();
-      const token = await getToken();
-      if (token) config.headers.Authorization = `Bearer ${token}`;
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        config.headers.Authorization = `Bearer ${session.access_token}`;
+      }
     } catch {
-      // not in clerk context or SSR
+      // not authenticated
     }
   }
   return config;

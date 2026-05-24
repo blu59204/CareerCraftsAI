@@ -2,13 +2,13 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserCreate(BaseModel):
     email: EmailStr
     full_name: str | None = None
-    clerk_id: str
+    supabase_uid: str = Field(min_length=36, max_length=36)
 
 
 class UserResponse(BaseModel):
@@ -23,7 +23,7 @@ class UserResponse(BaseModel):
 
 class ModelSettingsCreate(BaseModel):
     provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim"]
-    api_key: str
+    api_key: str = Field(min_length=1, max_length=200)
     model_name: str
     ollama_url: str | None = None
 

@@ -1,24 +1,25 @@
-import json
 import logging
-import time
 import uuid
+from urllib.parse import urlparse
 
-import redis
+from bullmq import Queue
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-AGENT_QUEUE_KEY = "bull:agent-queue:wait"
 
-_redis_client: redis.Redis | None = None
-
-
-def _get_redis() -> redis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    return _redis_client
+def _bullmq_connection() -> dict:
+    parsed = urlparse(settings.REDIS_URL)
+    opts: dict = {
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 6379,
+    }
+    if parsed.password:
+        opts["password"] = parsed.password
+    if parsed.path and parsed.path not in ("", "/"):
+        opts["db"] = int(parsed.path.lstrip("/"))
+    return opts
 
 
 async def enqueue_job_search(
@@ -29,22 +30,26 @@ async def enqueue_job_search(
     max_results: int,
 ) -> str:
     job_id = str(uuid.uuid4())
-    payload = {
-        "id": job_id,
-        "name": "job-search",
-        "data": {
-            "user_id": user_id,
-            "run_id": run_id,
-            "search_query": search_query,
-            "location": location,
-            "max_results": max_results,
-        },
-        "opts": {"attempts": 3, "backoff": {"type": "exponential", "delay": 5000}},
-        "timestamp": int(time.time() * 1000),
-    }
+    queue = Queue("agent-queue", connection=_bullmq_connection())
     try:
-        _get_redis().rpush(AGENT_QUEUE_KEY, json.dumps(payload))
+        await queue.add(
+            "job-search",
+            {
+                "user_id": user_id,
+                "run_id": run_id,
+                "search_query": search_query,
+                "location": location,
+                "max_results": max_results,
+            },
+            {
+                "jobId": job_id,
+                "attempts": 3,
+                "backoff": {"type": "exponential", "delay": 5000},
+            },
+        )
     except Exception as exc:
         logger.error("Failed to enqueue job-search for run %s: %s", run_id, exc)
         raise RuntimeError(f"Queue unavailable: {exc}") from exc
+    finally:
+        await queue.close()
     return job_id

@@ -3,18 +3,17 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.orchestrator import orchestrator
-from app.agents.state import AgentState
+from app.agents.harness import get_harness
 from app.api.v1.deps import get_current_user, get_db
 from app.core.database import AsyncSessionLocal
 from app.core.event_bus import emit, get_queue, stream_events
+from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -38,7 +37,9 @@ class ApproveRequest(BaseModel):
 
 
 @router.post("/run", response_model=RunResponse)
+@limiter.limit("10/minute")
 async def start_agent_run(
+    request: Request,
     payload: RunRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -64,30 +65,36 @@ async def start_agent_run(
     await db.flush()
     get_queue(run_id)
 
-    state = AgentState(
-        user_id=str(current_user.id),
-        run_id=run_id,
-        task_type=payload.task_type,
-        messages=[HumanMessage(content=str(payload.context))],
-        context=payload.context,
-        status="running",
-        pending_action=None,
-        result=None,
-        error=None,
-    )
-
     async def _run() -> None:
         try:
-            loop = asyncio.get_event_loop()
-            result_state = await loop.run_in_executor(None, orchestrator.invoke, state)
+            harness = await get_harness()
+            harness_result = await harness.run(
+                user_id=str(current_user.id),
+                task_type=payload.task_type,
+                context=payload.context,
+                user_settings={},   # user model settings resolved inside agents
+                run_id=run_id,
+            )
+            final_status = harness_result.get("status", "failed")
+            final_output = harness_result.get("result") or harness_result.get("pending_action")
+
+            # Forward SSE events based on harness outcome
+            if final_status == "awaiting_approval":
+                emit(run_id, "checkpoint", final_output or {})
+            elif final_status == "failed":
+                emit(run_id, "error", harness_result.get("error") or "Unknown error")
+            elif final_status == "completed":
+                emit(run_id, "complete", final_output or {})
+
             async with AsyncSessionLocal() as fresh_db:
                 res = await fresh_db.execute(
                     select(AgentRun).where(AgentRun.id == uuid.UUID(run_id))
                 )
                 run = res.scalar_one_or_none()
                 if run:
-                    run.status = result_state["status"]
-                    run.output = result_state.get("result") or result_state.get("pending_action")
+                    run.status = final_status
+                    run.output = final_output
+                    run.duration_ms = harness_result.get("duration_ms")
                     run.completed_at = datetime.now(UTC)
                 await fresh_db.commit()
         except Exception as exc:
@@ -162,4 +169,5 @@ async def approve_or_cancel(
     run.status = "completed"
     run.completed_at = datetime.now(UTC)
     emit(run_id, "complete", {"approved": True, "action": action_type})
+    await db.flush()
     return {"status": "completed", "action": action_type}

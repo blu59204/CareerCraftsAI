@@ -10,14 +10,22 @@ import {
   Mail,
   Settings,
   Sparkles,
+  Search,
+  Linkedin,
+  MessageSquare,
+  Users,
 } from "lucide-react";
 
 const ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/resume", icon: FileText, label: "Resume" },
+  { href: "/jobs", icon: Search, label: "Jobs" },
   { href: "/applications", icon: Briefcase, label: "Applications" },
   { href: "/agents", icon: Bot, label: "Agents" },
   { href: "/email", icon: Mail, label: "Email" },
+  { href: "/linkedin", icon: Linkedin, label: "LinkedIn" },
+  { href: "/leads", icon: Users, label: "Leads" },
+  { href: "/interview-prep", icon: MessageSquare, label: "Interview Prep" },
   { href: "/settings/models", icon: Settings, label: "Settings" },
 ];
 

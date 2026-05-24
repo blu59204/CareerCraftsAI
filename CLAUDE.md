@@ -34,7 +34,7 @@ PostgreSQL/pgvector (Supabase) + Redis + PinchTab (port 9867)
 
 **Queue** — BullMQ (Node.js worker) backed by Redis. Max concurrency per user = 2.
 
-**Auth** — Clerk (Google OAuth + email). Google OAuth scopes: Gmail read/send + Drive read/write only.
+**Auth** — Supabase Auth. Methods: Google OAuth, LinkedIn (OIDC), GitHub, email/password, magic link. Google OAuth scopes include `gmail.send`, `gmail.readonly`, `drive.readonly` for Email Agent. Frontend uses `@supabase/ssr` for cookie-based sessions; middleware refreshes tokens. Backend verifies access tokens locally with `SUPABASE_JWT_SECRET` (HS256, audience=`authenticated`). Postgres trigger `on_auth_user_created` auto-provisions `public.users` rows on signup, keyed by `supabase_uid`.
 
 ---
 

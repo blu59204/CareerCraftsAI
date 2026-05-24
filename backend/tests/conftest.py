@@ -1,7 +1,19 @@
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage
+
+# Bootstrap env vars before any `from app...` import so Settings() succeeds.
+# Individual tests still monkeypatch via test_config.py.
+os.environ.setdefault("APP_SECRET_KEY", "test-secret-key-32-chars-minimum!!")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/db")
+os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
+os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-service-key")
+os.environ.setdefault("SUPABASE_ANON_KEY", "test-anon-key")
+os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret-hs256")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
+os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 
 class _MutableFakeLLM:
@@ -39,5 +51,5 @@ def mock_user():
     user = MagicMock()
     user.id = "00000000-0000-0000-0000-000000000001"
     user.email = "test@example.com"
-    user.clerk_id = "user_test123"
+    user.supabase_uid = "00000000-0000-0000-0000-000000000abc"
     return user

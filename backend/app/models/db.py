@@ -16,7 +16,7 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String)
     avatar_url: Mapped[str | None] = mapped_column(String)
     google_id: Mapped[str | None] = mapped_column(String, unique=True)
-    clerk_id: Mapped[str | None] = mapped_column(String, unique=True)
+    supabase_uid: Mapped[str | None] = mapped_column(String, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     model_settings: Mapped[list["UserModelSettings"]] = relationship(back_populates="user")

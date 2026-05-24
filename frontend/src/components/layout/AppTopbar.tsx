@@ -1,8 +1,8 @@
 "use client";
 
-import { UserButton } from "@clerk/nextjs";
 import { Bell, Search } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { UserMenu } from "@/components/auth/UserMenu";
 
 export function AppTopbar() {
   return (
@@ -22,7 +22,7 @@ export function AppTopbar() {
         <Bell className="h-4 w-4" />
       </button>
       <ThemeToggle />
-      <UserButton afterSignOutUrl="/" />
+      <UserMenu />
     </header>
   );
 }

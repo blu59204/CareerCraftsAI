@@ -1,9 +1,7 @@
-import { SignUp } from "@clerk/nextjs";
+"use client";
+
+import { redirect } from "next/navigation";
 
 export default function RegisterPage() {
-  return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50">
-      <SignUp />
-    </main>
-  );
+  redirect("/login?mode=sign-up");
 }

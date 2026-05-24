@@ -4,16 +4,17 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.resume_agent import resume_agent_node
 from app.agents.state import AgentState
 from app.api.v1.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
 
 router = APIRouter(prefix="/resume", tags=["resume"])
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class OptimizeRequest(BaseModel):
-    jd_text: str
+    jd_text: str = Field(max_length=20000)
 
 
 class OptimizeResponse(BaseModel):
@@ -32,7 +33,9 @@ class OptimizeResponse(BaseModel):
 
 
 @router.post("/optimize", response_model=OptimizeResponse)
+@limiter.limit("10/minute")
 async def optimize_resume(
+    request: Request,
     payload: OptimizeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -63,7 +66,7 @@ async def optimize_resume(
         error=None,
     )
 
-    result_state = await asyncio.get_event_loop().run_in_executor(
+    result_state = await asyncio.get_running_loop().run_in_executor(
         None, resume_agent_node, state
     )
 

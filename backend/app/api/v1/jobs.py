@@ -1,13 +1,14 @@
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.models.db import AgentRun, JobApplication, User
 from app.services.queue_service import enqueue_job_search
 
@@ -18,7 +19,7 @@ VALID_STATUSES = {"saved", "applied", "viewed", "interview", "offer", "rejected"
 
 
 class JobSearchRequest(BaseModel):
-    search_query: str
+    search_query: str = Field(max_length=200)
     location: str = "Remote"
     max_results: int = 10
 
@@ -40,8 +41,14 @@ class ApplicationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class StatusUpdateBody(BaseModel):
+    status: str
+
+
 @router.post("/search", response_model=JobSearchResponse)
+@limiter.limit("10/minute")
 async def search_jobs(
+    request: Request,
     payload: JobSearchRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -99,11 +106,11 @@ async def list_applications(
 @router.patch("/applications/{application_id}/status", response_model=ApplicationResponse)
 async def update_application_status(
     application_id: uuid.UUID,
-    status: str,
+    body: StatusUpdateBody,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if status not in VALID_STATUSES:
+    if body.status not in VALID_STATUSES:
         raise HTTPException(
             status_code=400, detail=f"status must be one of: {VALID_STATUSES}"
         )
@@ -118,7 +125,7 @@ async def update_application_status(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    app.status = status
-    if status == "applied" and not app.applied_at:
-        app.applied_at = datetime.now(datetime.UTC)
+    app.status = body.status
+    if body.status == "applied" and not app.applied_at:
+        app.applied_at = datetime.now(UTC)
     return app

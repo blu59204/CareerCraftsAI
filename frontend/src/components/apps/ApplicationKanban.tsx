@@ -26,9 +26,10 @@ const COLUMNS: { stage: AppStage; label: string }[] = [
 type Props = {
   items: ApplicationItem[];
   onSelect: (id: string) => void;
+  onStageChange?: (id: string, newStage: AppStage) => void;
 };
 
-export function ApplicationKanban({ items, onSelect }: Props) {
+export function ApplicationKanban({ items, onSelect, onStageChange: _onStageChange }: Props) {
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
       {COLUMNS.map((col) => {
