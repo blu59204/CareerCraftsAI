@@ -82,3 +82,26 @@ async def run_job_search(
         result_state["status"],
     )
     return {"status": result_state["status"], "run_id": payload.run_id}
+
+
+class FollowupTrigger(BaseModel):
+    user_id: str
+    application_id: str
+    day: int
+
+
+@router.post("/agents/run-followup")
+async def run_followup(
+    payload: FollowupTrigger,
+    x_internal_secret: str = Header(...),
+):
+    _verify_secret(x_internal_secret)
+    # Future: trigger email_agent_node for follow-up email composition
+    # For now: log and return — full implementation in P6 orchestrator
+    logger.info(
+        "Follow-up day-%d triggered for application %s user %s",
+        payload.day,
+        payload.application_id,
+        payload.user_id,
+    )
+    return {"status": "scheduled", "day": payload.day, "application_id": payload.application_id}
