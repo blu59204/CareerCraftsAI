@@ -4,7 +4,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from app.api.v1 import users, rag
+from app.api.v1 import rag, users
 from app.core.config import settings
 
 limiter = Limiter(key_func=get_remote_address)

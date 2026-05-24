@@ -1,11 +1,13 @@
 import io
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_ollama import OllamaEmbeddings
-from app.core.security import decrypt_api_key
+from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 from app.core.config import settings as app_settings
+from app.core.security import decrypt_api_key
 
 
 def collection_name(user_id: str, doc_type: str) -> str:

@@ -1,13 +1,15 @@
 import uuid
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api.v1.deps import get_current_user, get_db
 from app.models.db import User, UserDocument, UserModelSettings
-from app.services.storage_service import upload_file, delete_file
 from app.services.rag_service import extract_text, ingest_document
+from app.services.storage_service import delete_file, upload_file
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
@@ -82,7 +84,7 @@ async def upload_document(
             },
             model_settings,
         )
-        embedded_at = datetime.now(timezone.utc)
+        embedded_at = datetime.now(UTC)
 
     doc = UserDocument(
         user_id=current_user.id,
