@@ -8,12 +8,12 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
     try {
-      const token = await (
-        window as Window & { Clerk?: { session?: { getToken: () => Promise<string | null> } } }
-      ).Clerk?.session?.getToken();
+      const { useAuth } = await import("@clerk/nextjs");
+      const { getToken } = useAuth();
+      const token = await getToken();
       if (token) config.headers.Authorization = `Bearer ${token}`;
     } catch {
-      // clerk not loaded or SSR
+      // not in clerk context or SSR
     }
   }
   return config;
