@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -10,9 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.deps import get_current_user, get_db
 from app.agents.orchestrator import orchestrator
 from app.agents.state import AgentState
+from app.api.v1.deps import get_current_user, get_db
 from app.core.database import AsyncSessionLocal
 from app.core.event_bus import emit, get_queue, stream_events
 from app.models.db import AgentRun, User
@@ -88,7 +88,7 @@ async def start_agent_run(
                 if run:
                     run.status = result_state["status"]
                     run.output = result_state.get("result") or result_state.get("pending_action")
-                    run.completed_at = datetime.now(timezone.utc)
+                    run.completed_at = datetime.now(UTC)
                 await fresh_db.commit()
         except Exception as exc:
             logger.error("Agent run %s background task failed: %s", run_id, exc)
@@ -147,7 +147,7 @@ async def approve_or_cancel(
 
     if not payload.approved:
         run.status = "failed"
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         emit(run_id, "complete", {"cancelled": True})
         return {"status": "cancelled"}
 
@@ -160,6 +160,6 @@ async def approve_or_cancel(
         gmail.send_message(pending["recipient"], pending["subject"], pending["body"])
 
     run.status = "completed"
-    run.completed_at = datetime.now(timezone.utc)
+    run.completed_at = datetime.now(UTC)
     emit(run_id, "complete", {"approved": True, "action": action_type})
     return {"status": "completed", "action": action_type}

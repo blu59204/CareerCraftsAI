@@ -1,7 +1,5 @@
 import uuid
 
-import pytest
-
 from app.agents.state import AgentState
 
 
