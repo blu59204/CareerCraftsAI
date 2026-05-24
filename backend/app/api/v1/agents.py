@@ -36,6 +36,37 @@ class ApproveRequest(BaseModel):
     approved: bool
 
 
+class AgentRunResponse(BaseModel):
+    id: uuid.UUID
+    agent_type: str
+    status: str
+    input: dict | None
+    output: dict | None
+    duration_ms: int | None
+    created_at: datetime
+    completed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/runs", response_model=list[AgentRunResponse])
+@limiter.limit("30/minute")
+async def list_runs(
+    request: Request,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List recent agent runs for the current user."""
+    result = await db.execute(
+        select(AgentRun)
+        .where(AgentRun.user_id == current_user.id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(min(limit, 50))
+    )
+    return result.scalars().all()
+
+
 @router.post("/run", response_model=RunResponse)
 @limiter.limit("10/minute")
 async def start_agent_run(
