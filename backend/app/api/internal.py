@@ -1,12 +1,12 @@
 """
 Internal endpoints called by BullMQ worker only.
 Not exposed via Nginx (blocked at nginx level).
-Protected by shared APP_SECRET_KEY header — not Clerk JWT.
+Protected by shared APP_SECRET_KEY header — not Supabase JWT.
 """
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Header, HTTPException
 from langchain_core.messages import HumanMessage
@@ -73,7 +73,7 @@ async def run_job_search(
         if run:
             run.status = result_state["status"]
             run.output = result_state.get("result")
-            run.completed_at = datetime.now(datetime.UTC)
+            run.completed_at = datetime.now(UTC)
         await db.commit()
 
     logger.info(

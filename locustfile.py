@@ -1,7 +1,7 @@
 """
 Load test baseline for JobAgent AI API.
 Run: locust --host=http://localhost:8000 --users=20 --spawn-rate=4 --run-time=30s --headless
-Requires LOAD_TEST_TOKEN env var set to a valid Clerk JWT.
+Requires LOAD_TEST_TOKEN env var set to a valid Supabase access token.
 """
 import os
 from locust import HttpUser, task, between

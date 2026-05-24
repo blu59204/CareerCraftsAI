@@ -54,7 +54,7 @@ Every action that sends an email or submits an application requires **explicit h
 └───────────────────────────────────────────────────┘
 ```
 
-**Infrastructure:** Hybrid — Supabase Cloud + Clerk Cloud for managed services, Docker Compose on your VPS for application logic.
+**Infrastructure:** Hybrid — Supabase Cloud for managed services, Docker Compose on your VPS for application logic.
 
 ---
 
@@ -68,7 +68,7 @@ Every action that sends an email or submits an application requires **explicit h
 
 **Frontend**
 - Next.js 14 App Router · TypeScript · Tailwind CSS
-- shadcn/ui · Zustand 4 · TanStack Query 5 · Clerk
+- shadcn/ui · Zustand 4 · TanStack Query 5
 
 **Infrastructure**
 - Supabase (PostgreSQL + pgvector + Storage)
@@ -83,7 +83,7 @@ Every action that sends an email or submits an application requires **explicit h
 
 - Docker + Docker Compose
 - [Supabase](https://supabase.com) project (free tier works)
-- [Clerk](https://clerk.com) app (free tier works)
+- [Supabase](https://supabase.com) project (free tier works)
 - At least one AI provider API key (Anthropic, OpenAI, Google, or local Ollama)
 
 ### 1. Clone and configure
@@ -102,8 +102,9 @@ APP_SECRET_KEY=<generate with: openssl rand -hex 32>
 DATABASE_URL=postgresql+asyncpg://postgres:[password]@db.[project].supabase.co:5432/postgres
 SUPABASE_URL=https://[project].supabase.co
 SUPABASE_SERVICE_KEY=<from Supabase dashboard>
-CLERK_SECRET_KEY=<from Clerk dashboard>
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=<from Clerk dashboard>
+NEXT_PUBLIC_SUPABASE_URL=<from Supabase dashboard>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<from Supabase dashboard>
+SUPABASE_JWT_SECRET=<from Supabase dashboard Settings → API>
 REDIS_URL=redis://redis:6379
 ```
 
@@ -283,7 +284,7 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 ## Security
 
 - **API keys** encrypted at rest with AES-256-GCM (PBKDF2, unique salt per key, decrypted only at request time)
-- **Authentication** via Clerk JWT verified on every protected route
+- **Authentication** via Supabase JWT verified on every protected route
 - **Rate limiting** 60 req/min per user via slowapi
 - **Internal endpoints** (`/internal/*`) blocked at Nginx — worker calls never reach the public internet
 - **Browser isolation** PinchTab creates a separate browser context per user
@@ -346,7 +347,7 @@ Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 - [ ] Run HNSW index migration after first RAG ingestion (see `supabase/migrations/0007_create_pgvector_indexes.sql`)
 - [ ] Set Supabase RLS policies on all tables for extra DB-layer protection
 - [ ] Configure Supabase DB connection pool alerts
-- [ ] Enable Clerk production mode and set allowed origins
+- [ ] Configure Supabase Auth providers (Google, LinkedIn, GitHub) and set allowed redirect URLs
 - [ ] Set `APP_ENV=production` in `.env` (disables `/docs` endpoint)
 - [ ] Verify Redis `appendonly yes` is persisting to Docker volume
 - [ ] Add BullBoard (`@bull-board/express`) to worker for queue visibility
