@@ -2,7 +2,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import redis
 
@@ -25,8 +25,8 @@ def _get_redis() -> redis.Redis:
 
 def _enqueue_followup(user_id: str, application_id: str, delay_days: int) -> str:
     job_id = str(uuid.uuid4())
-    fire_at = datetime.now(timezone.utc) + timedelta(days=delay_days)
-    delay_ms = int((fire_at - datetime.now(timezone.utc)).total_seconds() * 1000)
+    fire_at = datetime.now(UTC) + timedelta(days=delay_days)
+    delay_ms = int((fire_at - datetime.now(UTC)).total_seconds() * 1000)
     payload = {
         "id": job_id,
         "name": "followup-email",

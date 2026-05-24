@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage
@@ -62,7 +62,7 @@ async def compose_email(
     result_state = await asyncio.get_event_loop().run_in_executor(None, email_agent_node, state)
 
     agent_run.status = result_state["status"]
-    agent_run.completed_at = datetime.now(timezone.utc)
+    agent_run.completed_at = datetime.now(UTC)
     if result_state.get("pending_action"):
         agent_run.output = result_state["pending_action"]
 
@@ -106,5 +106,5 @@ async def approve_and_send(
     )
 
     run.status = "completed"
-    run.completed_at = datetime.now(timezone.utc)
+    run.completed_at = datetime.now(UTC)
     return {"status": "sent", "recipient": pending["recipient"]}

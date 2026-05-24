@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 
@@ -15,7 +15,7 @@ def test_schedule_followups_enqueues_two_jobs():
         schedule_followups(
             user_id="usr_test",
             application_id=application_id,
-            applied_at=datetime.now(timezone.utc),
+            applied_at=datetime.now(UTC),
         )
 
     assert mock_r.rpush.call_count == 2
@@ -35,7 +35,7 @@ def test_schedule_followups_idempotent():
         schedule_followups(
             user_id="usr_test",
             application_id=application_id,
-            applied_at=datetime.now(timezone.utc),
+            applied_at=datetime.now(UTC),
         )
 
     mock_r.rpush.assert_not_called()

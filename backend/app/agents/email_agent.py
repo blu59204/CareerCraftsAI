@@ -59,7 +59,9 @@ def email_agent_node(state: AgentState) -> AgentState:
         threads = gmail.search_threads(
             f"from:{recipient} OR subject:{company}", max_results=3
         )
-        thread_context = "\n".join(str(t) for t in threads[:2]) if threads else "No prior threads found."
+        thread_context = (
+            "\n".join(str(t) for t in threads[:2]) if threads else "No prior threads found."
+        )
 
         llm = _build_llm(model_settings)
         response = llm.invoke([HumanMessage(

@@ -1,8 +1,7 @@
 import uuid
-
-import pytest
-from langchain_core.messages import HumanMessage
 from unittest.mock import MagicMock, patch
+
+from langchain_core.messages import HumanMessage
 
 from app.agents.state import AgentState
 
@@ -30,12 +29,16 @@ def test_email_agent_drafts_and_pauses_for_approval(mock_llm):
     from app.agents.email_agent import email_agent_node
 
     mock_llm.responses = [
-        "Subject: Following up — Senior Python Engineer\n\nDear Hiring Team,\n\nI wanted to follow up..."
+        "Subject: Following up — Senior Python Engineer\n\n"
+        "Dear Hiring Team,\n\nI wanted to follow up..."
     ]
 
-    with patch("app.agents.email_agent._get_model_settings", return_value=MagicMock(provider="openai")), \
-         patch("app.agents.email_agent._build_llm", return_value=mock_llm), \
-         patch("app.agents.email_agent.GmailMCPClient") as mock_gmail_cls:
+    _patch_settings = "app.agents.email_agent._get_model_settings"
+    _patch_llm = "app.agents.email_agent._build_llm"
+    _patch_gmail = "app.agents.email_agent.GmailMCPClient"
+    with patch(_patch_settings, return_value=MagicMock(provider="openai")), \
+         patch(_patch_llm, return_value=mock_llm), \
+         patch(_patch_gmail) as mock_gmail_cls:
         mock_gmail = MagicMock()
         mock_gmail.search_threads.return_value = []
         mock_gmail_cls.return_value = mock_gmail
@@ -54,9 +57,12 @@ def test_email_agent_never_auto_sends(mock_llm):
 
     mock_llm.responses = ["Subject: Test\n\nBody"]
 
-    with patch("app.agents.email_agent._get_model_settings", return_value=MagicMock(provider="openai")), \
-         patch("app.agents.email_agent._build_llm", return_value=mock_llm), \
-         patch("app.agents.email_agent.GmailMCPClient") as mock_gmail_cls:
+    _patch_settings = "app.agents.email_agent._get_model_settings"
+    _patch_llm = "app.agents.email_agent._build_llm"
+    _patch_gmail = "app.agents.email_agent.GmailMCPClient"
+    with patch(_patch_settings, return_value=MagicMock(provider="openai")), \
+         patch(_patch_llm, return_value=mock_llm), \
+         patch(_patch_gmail) as mock_gmail_cls:
         mock_gmail = MagicMock()
         mock_gmail_cls.return_value = mock_gmail
         email_agent_node(make_state())
