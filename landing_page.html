@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet" />
+  <style>
+    :root {
+      --cream: #FAFAF8;
+      --white: #FFFFFF;
+      --ink: #0E0E0C;
+      --ink-light: #3D3D38;
+      --muted: #888880;
+      --border: #E8E8E4;
+      --accent: #1A1A1A;
+      --green: #1B6B47;
+      --green-light: #E8F5EE;
+      --red: #C94040;
+      --card: #FFFFFF;
+      --tag-bg: #F2F2EE;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--cream);
+      color: var(--ink);
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    /* ── NAV ─────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 48px;
+      background: rgba(250, 250, 248, 0.88);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-family: 'Instrument Serif', serif;
+      font-size: 22px;
+      color: var(--ink);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-logo-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+
+    .nav-links a {
+      font-size: 14px;
+      color: var(--ink-light);
+      text-decoration: none;
+      transition: color .2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--ink);
+    }
+
+    .nav-cta {
+      background: var(--ink);
+      color: var(--white);
+      padding: 9px 22px;
+      border-radius: 100px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: opacity .2s;
+    }
+
+    .nav-cta:hover {
+      opacity: .85;
+    }
+
+    /* ── HERO ─────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 140px 48px 80px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 50% -10%, rgba(27, 107, 71, .08) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 30% at 80% 80%, rgba(201, 64, 64, .05) 0%, transparent 60%);
+    }
+
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 30%, transparent 80%);
+      opacity: .5;
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--white);
+      border: 1px solid var(--border);
+      padding: 6px 16px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--green);
+      margin-bottom: 32px;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp .6s ease both;
+    }
+
+    .hero-tag-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: .5;
+        transform: scale(1.4);
+      }
+    }
+
+    .hero h1 {
+      font-family: 'Instrument Serif', serif;
+      font-size: clamp(48px, 7vw, 88px);
+      line-height: 1.05;
+      letter-spacing: -2px;
+      color: var(--ink);
+      max-width: 820px;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp .7s .1s ease both;
+    }
+
+    .hero h1 em {
+      font-style: italic;
+      color: var(--green);
+    }
+
+    .hero-sub {
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 520px;
+      margin: 24px auto 0;
+      font-weight: 400;
+      line-height: 1.7;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp .7s .2s ease both;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-top: 40px;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp .7s .3s ease both;
+    }
+
+    .btn-primary {
+      background: var(--ink);
+      color: var(--white);
+      padding: 14px 30px;
+      border-radius: 100px;
+      font-size: 15px;
+      font-weight: 500;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      transition: transform .2s, box-shadow .2s;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, .15);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, .2);
+    }
+
+    .btn-secondary {
+      color: var(--ink-light);
+      font-size: 15px;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: color .2s;
+    }
+
+    .btn-secondary:hover {
+      color: var(--ink);
+    }
+
+    .hero-stats {
+      display: flex;
+      align-items: center;
+      gap: 40px;
+      margin-top: 64px;
+      position: relative;
+      z-index: 1;
+      animation: fadeUp .7s .4s ease both;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-num {
+      font-family: 'Instrument Serif', serif;
+      font-size: 32px;
+      color: var(--ink);
+      display: block;
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .stat-div {
+      width: 1px;
+      height: 40px;
+      background: var(--border);
+    }
+
+    /* ── APP PREVIEW ────────────────────────────── */
+    .preview-wrap {
+      position: relative;
+      z-index: 1;
+      margin-top: 64px;
+      animation: fadeUp .8s .5s ease both;
+      width: 100%;
+      max-width: 900px;
+    }
+
+    .preview-frame {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow:
+        0 4px 8px rgba(0, 0, 0, .04),
+        0 24px 80px rgba(0, 0, 0, .1);
+      overflow: hidden;
+    }
+
+    .preview-bar {
+      background: #F5F5F3;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dot-red {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #FF5F57;
+    }
+
+    .dot-yellow {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #FEBC2E;
+    }
+
+    .dot-green {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #28C840;
+    }
+
+    .preview-url {
+      flex: 1;
+      background: var(--white);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0 12px;
+      text-align: center;
+    }
+
+    .preview-body {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 16px;
+      min-height: 360px;
+    }
+
+    .preview-sidebar {
+      background: var(--cream);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .preview-logo-sm {
+      font-family: 'Instrument Serif', serif;
+      font-size: 14px;
+      color: var(--ink);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .preview-logo-sm span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+    }
+
+    .preview-nav-item {
+      padding: 8px 10px;
+      border-radius: 7px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 3px;
+      cursor: pointer;
+      transition: background .15s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .preview-nav-item.active {
+      background: var(--white);
+      color: var(--ink);
+      font-weight: 500;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .06);
+    }
+
+    .preview-nav-item svg {
+      width: 14px;
+      height: 14px;
+      opacity: .6;
+    }
+
+    .preview-nav-item.active svg {
+      opacity: 1;
+    }
+
+    .preview-main {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .preview-greeting {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .preview-greeting span {
+      color: var(--muted);
+      font-weight: 400;
+      font-size: 13px;
+      margin-left: 6px;
+    }
+
+    .preview-cards-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .preview-metric {
+      background: var(--cream);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .preview-metric-num {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .preview-metric-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .preview-metric-up {
+      font-size: 10px;
+      color: var(--green);
+      margin-top: 4px;
+    }
+
+    .preview-jobs-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+
+    .preview-job-card {
+      background: var(--cream);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .preview-job-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .preview-job-role {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    .preview-job-co {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .preview-job-score {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 20px;
+    }
+
+    .score-high {
+      background: var(--green-light);
+      color: var(--green);
+    }
+
+    .score-mid {
+      background: #FEF3E2;
+      color: #B45309;
+    }
+
+    .agent-bar {
+      background: var(--cream);
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .agent-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 1.5s ease infinite;
+    }
+
+    /* ── SECTIONS ────────────────────────────────── */
+    section {
+      padding: 96px 48px;
+    }
+
+    .section-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-tag {
+      display: inline-block;
+      background: var(--tag-bg);
+      color: var(--ink-light);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 100px;
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-family: 'Instrument Serif', serif;
+      font-size: clamp(32px, 4vw, 52px);
+      line-height: 1.1;
+      letter-spacing: -1px;
+      color: var(--ink);
+      margin-bottom: 16px;
+    }
+
+    .section-sub {
+      font-size: 17px;
+      color: var(--muted);
+      max-width: 480px;
+      line-height: 1.7;
+    }
+
+    /* ── HOW IT WORKS ─────────────────────────────── */
+    .how-section {
+      background: var(--white);
+    }
+
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      margin-top: 56px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .step {
+      padding: 36px 32px;
+      border-right: 1px solid var(--border);
+      background: var(--white);
+      transition: background .2s;
+    }
+
+    .step:last-child {
+      border-right: none;
+    }
+
+    .step:hover {
+      background: var(--cream);
+    }
+
+    .step-num {
+      font-family: 'Instrument Serif', serif;
+      font-size: 48px;
+      color: var(--border);
+      line-height: 1;
+      margin-bottom: 20px;
+    }
+
+    .step-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: var(--cream);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 20px;
+    }
+
+    .step-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+
+    .step-desc {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    /* ── FEATURES ─────────────────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 56px;
+    }
+
+    .feature-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      transition: transform .2s, box-shadow .2s;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, .08);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: var(--cream);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      margin-bottom: 18px;
+    }
+
+    .feature-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+
+    .feature-desc {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .feature-tag {
+      display: inline-block;
+      margin-top: 14px;
+      background: var(--green-light);
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    /* ── AGENTS ──────────────────────────────────── */
+    .agents-section {
+      background: var(--ink);
+    }
+
+    .agents-section .section-tag {
+      background: rgba(255, 255, 255, .1);
+      color: rgba(255, 255, 255, .6);
+    }
+
+    .agents-section .section-title {
+      color: var(--white);
+    }
+
+    .agents-section .section-sub {
+      color: rgba(255, 255, 255, .5);
+    }
+
+    .agents-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 56px;
+      background: rgba(255, 255, 255, .08);
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .08);
+    }
+
+    .agent-card {
+      background: rgba(255, 255, 255, .03);
+      padding: 32px 28px;
+      transition: background .2s;
+    }
+
+    .agent-card:hover {
+      background: rgba(255, 255, 255, .07);
+    }
+
+    .agent-num {
+      font-family: 'Instrument Serif', serif;
+      font-size: 13px;
+      color: rgba(255, 255, 255, .2);
+      margin-bottom: 16px;
+      letter-spacing: .05em;
+    }
+
+    .agent-icon {
+      font-size: 28px;
+      margin-bottom: 14px;
+    }
+
+    .agent-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--white);
+      margin-bottom: 8px;
+    }
+
+    .agent-desc {
+      font-size: 13px;
+      color: rgba(255, 255, 255, .45);
+      line-height: 1.7;
+    }
+
+    .agent-tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 14px;
+    }
+
+    .agent-tool {
+      font-size: 10px;
+      padding: 3px 9px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, .08);
+      color: rgba(255, 255, 255, .4);
+    }
+
+    /* ── MODELS ──────────────────────────────────── */
+    .models-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 40px;
+    }
+
+    .model-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--white);
+      border: 1px solid var(--border);
+      padding: 10px 18px;
+      border-radius: 100px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--ink);
+    }
+
+    .model-chip-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    /* ── PRICING ─────────────────────────────────── */
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 56px;
+    }
+
+    .pricing-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 32px 28px;
+    }
+
+    .pricing-card.featured {
+      background: var(--ink);
+      border-color: var(--ink);
+    }
+
+    .pricing-plan {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .pricing-card.featured .pricing-plan {
+      color: rgba(255, 255, 255, .5);
+    }
+
+    .pricing-price {
+      font-family: 'Instrument Serif', serif;
+      font-size: 48px;
+      color: var(--ink);
+      line-height: 1;
+    }
+
+    .pricing-card.featured .pricing-price {
+      color: var(--white);
+    }
+
+    .pricing-per {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+
+    .pricing-card.featured .pricing-per {
+      color: rgba(255, 255, 255, .4);
+    }
+
+    .pricing-divider {
+      height: 1px;
+      background: var(--border);
+      margin-bottom: 24px;
+    }
+
+    .pricing-card.featured .pricing-divider {
+      background: rgba(255, 255, 255, .1);
+    }
+
+    .pricing-feature {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--ink-light);
+      margin-bottom: 12px;
+    }
+
+    .pricing-card.featured .pricing-feature {
+      color: rgba(255, 255, 255, .7);
+    }
+
+    .pricing-check {
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .pricing-card.featured .pricing-check {
+      color: #5AE89A;
+    }
+
+    .pricing-btn {
+      display: block;
+      text-align: center;
+      margin-top: 28px;
+      padding: 13px;
+      border-radius: 100px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all .2s;
+    }
+
+    .pricing-btn-outline {
+      border: 1px solid var(--border);
+      color: var(--ink);
+      background: transparent;
+    }
+
+    .pricing-btn-outline:hover {
+      background: var(--cream);
+    }
+
+    .pricing-btn-white {
+      background: var(--white);
+      color: var(--ink);
+    }
+
+    .pricing-btn-white:hover {
+      opacity: .9;
+    }
+
+    /* ── CTA ─────────────────────────────────────── */
+    .cta-section {
+      background: var(--cream);
+      text-align: center;
+      padding: 96px 48px;
+    }
+
+    .cta-box {
+      max-width: 640px;
+      margin: 0 auto;
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 64px 48px;
+      box-shadow: 0 4px 40px rgba(0, 0, 0, .06);
+    }
+
+    .cta-box .section-title {
+      font-size: 40px;
+      margin-bottom: 14px;
+    }
+
+    .cta-box .section-sub {
+      margin: 0 auto 32px;
+    }
+
+    /* ── FOOTER ──────────────────────────────────── */
+    footer {
+      background: var(--ink);
+      color: rgba(255, 255, 255, .4);
+      padding: 56px 48px 32px;
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 48px;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding-bottom: 48px;
+      border-bottom: 1px solid rgba(255, 255, 255, .08);
+    }
+
+    .footer-brand {
+      font-family: 'Instrument Serif', serif;
+      font-size: 20px;
+      color: var(--white);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .footer-brand span {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      display: inline-block;
+    }
+
+    .footer-desc {
+      font-size: 13px;
+      line-height: 1.8;
+      max-width: 240px;
+    }
+
+    .footer-col-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, .6);
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .footer-link {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 10px;
+      color: rgba(255, 255, 255, .35);
+      text-decoration: none;
+      transition: color .15s;
+    }
+
+    .footer-link:hover {
+      color: rgba(255, 255, 255, .7);
+    }
+
+    .footer-bottom {
+      max-width: 1100px;
+      margin: 24px auto 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    /* ── ANIMATIONS ──────────────────────────────── */
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .fade-in {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity .6s ease, transform .6s ease;
+    }
+
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 768px) {
+      nav {
+        padding: 14px 20px;
+      }
+
+      .nav-links {
+        display: none;
+      }
+
+      .hero {
+        padding: 120px 20px 60px;
+      }
+
+      section {
+        padding: 60px 20px;
+      }
+
+      .steps-grid,
+      .features-grid,
+      .agents-grid,
+      .pricing-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-body {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-sidebar {
+        display: none;
+      }
+
+      .hero-stats {
+        gap: 20px;
+      }
+
+      .footer-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <a href="#" class="nav-logo"><span class="nav-logo-dot"></span>CareerCrafts AI</a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#agents">Agents</a>
+      <a href="#pricing">Pricing</a>
+    </div>
+    <a href="#" class="nav-cta">Get early access</a>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="hero-grid"></div>
+    <div class="hero-tag">
+      <span class="hero-tag-dot"></span>
+      6 AI agents working for you 24/7
+    </div>
+    <h1>Land your next job<br /><em>while you sleep</em></h1>
+    <p class="hero-sub">AI agents that find roles, tailor your resume, apply, follow up, and prep you for interviews —
+      all on autopilot.</p>
+    <div class="hero-actions">
+      <a href="#" class="btn-primary">Start for free →</a>
+      <a href="#how" class="btn-secondary">See how it works ↓</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat">
+        <span class="stat-num">3×</span>
+        <span class="stat-label">more interviews</span>
+      </div>
+      <div class="stat-div"></div>
+      <div class="stat">
+        <span class="stat-num">10min</span>
+        <span class="stat-label">to first application</span>
+      </div>
+      <div class="stat-div"></div>
+      <div class="stat">
+        <span class="stat-num">100%</span>
+        <span class="stat-label">your own API key</span>
+      </div>
+    </div>
+
+    <!-- APP PREVIEW -->
+    <div class="preview-wrap fade-in">
+      <div class="preview-frame">
+        <div class="preview-bar">
+          <div class="dot-red"></div>
+          <div class="dot-yellow"></div>
+          <div class="dot-green"></div>
+          <div class="preview-url">app.jobagent.ai/dashboard</div>
+        </div>
+        <div class="preview-body">
+          <div class="preview-sidebar">
+            <div class="preview-logo-sm"><span></span>CareerCrafts AI</div>
+            <div class="preview-nav-item active">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="2" width="5" height="5" rx="1" />
+                <rect x="9" y="2" width="5" height="5" rx="1" />
+                <rect x="2" y="9" width="5" height="5" rx="1" />
+                <rect x="9" y="9" width="5" height="5" rx="1" />
+              </svg>
+              Dashboard
+            </div>
+            <div class="preview-nav-item">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <rect x="2" y="3" width="12" height="10" rx="1.5" />
+                <path d="M5 6h6M5 9h4" />
+              </svg>
+              Resume
+            </div>
+            <div class="preview-nav-item">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="8" cy="8" r="6" />
+                <path d="M8 5v3l2 2" />
+              </svg>
+              Jobs
+            </div>
+            <div class="preview-nav-item">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M2 4h12v9a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" />
+                <path d="M2 4l6 5 6-5" />
+              </svg>
+              Email
+            </div>
+            <div class="preview-nav-item">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="6" cy="5" r="3" />
+                <path d="M2 14c0-2.2 1.8-4 4-4h4c2.2 0 4 1.8 4 4" />
+              </svg>
+              LinkedIn
+            </div>
+          </div>
+          <div class="preview-main">
+            <div class="preview-greeting">Good morning, Arjun <span>— 3 new matches today</span></div>
+            <div class="preview-cards-row">
+              <div class="preview-metric">
+                <div class="preview-metric-num">47</div>
+                <div class="preview-metric-label">Applied</div>
+                <div class="preview-metric-up">↑ 12 this week</div>
+              </div>
+              <div class="preview-metric">
+                <div class="preview-metric-num">8</div>
+                <div class="preview-metric-label">Interviews</div>
+                <div class="preview-metric-up">↑ 3 pending</div>
+              </div>
+              <div class="preview-metric">
+                <div class="preview-metric-num">91%</div>
+                <div class="preview-metric-label">Avg match</div>
+                <div class="preview-metric-up">↑ vs 64% before</div>
+              </div>
+            </div>
+            <div>
+              <div class="preview-jobs-title">Top matches today</div>
+              <div class="preview-job-card">
+                <div class="preview-job-info">
+                  <div class="preview-job-role">Senior Product Manager</div>
+                  <div class="preview-job-co">Razorpay · Bangalore</div>
+                </div>
+                <div class="preview-job-score score-high">94% match</div>
+              </div>
+              <div class="preview-job-card">
+                <div class="preview-job-info">
+                  <div class="preview-job-role">Product Lead – Growth</div>
+                  <div class="preview-job-co">CRED · Remote</div>
+                </div>
+                <div class="preview-job-score score-high">88% match</div>
+              </div>
+              <div class="preview-job-card">
+                <div class="preview-job-info">
+                  <div class="preview-job-role">Principal PM – Platform</div>
+                  <div class="preview-job-co">Swiggy · Bangalore</div>
+                </div>
+                <div class="preview-job-score score-mid">76% match</div>
+              </div>
+            </div>
+            <div class="agent-bar">
+              <div class="agent-dot"></div>
+              Job Search Agent running · scanning LinkedIn · 3 min ago
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="how-section" id="how">
+    <div class="section-inner">
+      <div class="section-tag">How it works</div>
+      <h2 class="section-title">Set up once.<br />Let agents do the rest.</h2>
+      <p class="section-sub">Upload your resume, connect Gmail, pick your AI model, and watch 6 specialized agents go to
+        work.</p>
+      <div class="steps-grid fade-in">
+        <div class="step">
+          <div class="step-num">01</div>
+          <div class="step-icon">📄</div>
+          <div class="step-title">Upload your resume</div>
+          <div class="step-desc">We embed your experience into a personal RAG database. Every agent knows you deeply
+            before it acts.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">02</div>
+          <div class="step-icon">🔑</div>
+          <div class="step-title">Connect your tools</div>
+          <div class="step-desc">Link Gmail, add your AI API key (Claude, GPT, Gemini, or Ollama). Your data stays
+            yours.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">03</div>
+          <div class="step-icon">🤖</div>
+          <div class="step-title">Agents go to work</div>
+          <div class="step-desc">Search, match, tailor, apply, follow up — all automated. You review before anything
+            sends.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <div class="section-inner">
+      <div class="section-tag">Features</div>
+      <h2 class="section-title">Everything you need<br />to land the job.</h2>
+      <div class="features-grid fade-in">
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <div class="feature-title">Resume tailored per JD</div>
+          <div class="feature-desc">Paste any job description. The Resume Agent rewrites your resume using the Google
+            XYZ formula, matched to that exact role.</div>
+          <span class="feature-tag">RAG-powered</span>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔍</div>
+          <div class="feature-title">Automated job search</div>
+          <div class="feature-desc">Agent browses LinkedIn, Naukri, and Indeed. Scores each role against your profile.
+            Surfaces only the best matches.</div>
+          <span class="feature-tag">PinchTab browser</span>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">✉️</div>
+          <div class="feature-title">Gmail-connected outreach</div>
+          <div class="feature-desc">AI drafts application emails, cold outreach, and follow-ups. Sends via your Gmail.
+            Reads recruiter replies automatically.</div>
+          <span class="feature-tag">Gmail MCP</span>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <div class="feature-title">Application pipeline</div>
+          <div class="feature-desc">Kanban board tracks every application — Applied, Interview, Offer. Status updates
+            automatically when recruiters reply.</div>
+          <span class="feature-tag">Auto-tracking</span>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💼</div>
+          <div class="feature-title">LinkedIn optimizer</div>
+          <div class="feature-desc">AI audits and rewrites your headline, about section, and experience bullets. Keyword
+            gap analysis vs target roles.</div>
+          <span class="feature-tag">Score + rewrite</span>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🧠</div>
+          <div class="feature-title">Memory that learns</div>
+          <div class="feature-desc">Custom memory system remembers your preferences, blacklists, and what worked. Every
+            agent gets smarter over time.</div>
+          <span class="feature-tag">No 3rd-party deps</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AGENTS -->
+  <section class="agents-section" id="agents">
+    <div class="section-inner">
+      <div class="section-tag">The agent harness</div>
+      <h2 class="section-title">6 agents.<br />One goal.</h2>
+      <p class="section-sub">Each agent owns a specific part of your job search. An orchestrator coordinates them all.
+      </p>
+      <div class="agents-grid fade-in">
+        <div class="agent-card">
+          <div class="agent-num">01</div>
+          <div class="agent-icon">🧭</div>
+          <div class="agent-title">Orchestrator</div>
+          <div class="agent-desc">Supervisor agent. Routes tasks, manages state, coordinates all other agents based on
+            your goal.</div>
+          <div class="agent-tools"><span class="agent-tool">LangGraph</span><span class="agent-tool">StateGraph</span>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-num">02</div>
+          <div class="agent-icon">🔍</div>
+          <div class="agent-title">Job Search Agent</div>
+          <div class="agent-desc">Browses LinkedIn, Naukri, Indeed in stealth. Scores each role 0–100 against your
+            resume.</div>
+          <div class="agent-tools"><span class="agent-tool">PinchTab</span><span class="agent-tool">Exa.ai</span></div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-num">03</div>
+          <div class="agent-icon">📄</div>
+          <div class="agent-title">Resume Agent</div>
+          <div class="agent-desc">Retrieves your experience via RAG. Rewrites resume per JD using proven formulas.
+            Generates PDF.</div>
+          <div class="agent-tools"><span class="agent-tool">pgvector</span><span class="agent-tool">ReportLab</span>
+          </div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-num">04</div>
+          <div class="agent-icon">💼</div>
+          <div class="agent-title">LinkedIn Agent</div>
+          <div class="agent-desc">Audits your profile, scores each section, rewrites headline and about section for
+            recruiter visibility.</div>
+          <div class="agent-tools"><span class="agent-tool">PinchTab</span><span class="agent-tool">RAG</span></div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-num">05</div>
+          <div class="agent-icon">✉️</div>
+          <div class="agent-title">Email Agent</div>
+          <div class="agent-desc">Reads your Gmail, detects recruiter replies, drafts responses, sends outreach and
+            follow-ups.</div>
+          <div class="agent-tools"><span class="agent-tool">Gmail MCP</span><span class="agent-tool">Resend</span></div>
+        </div>
+        <div class="agent-card">
+          <div class="agent-num">06</div>
+          <div class="agent-icon">⏰</div>
+          <div class="agent-title">Follow-Up Agent</div>
+          <div class="agent-desc">Tracks days since application. Auto-schedules nudges at day 5 and day 12. Never miss a
+            follow-up.</div>
+          <div class="agent-tools"><span class="agent-tool">BullMQ</span><span class="agent-tool">Redis</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODELS -->
+  <section>
+    <div class="section-inner">
+      <div class="section-tag">Multi-model</div>
+      <h2 class="section-title">Your API key.<br />Your model.</h2>
+      <p class="section-sub">Bring your own API key and choose which AI model powers your agents. Switch anytime, per
+        module.</p>
+      <div class="models-row fade-in">
+        <div class="model-chip"><span class="model-chip-dot" style="background:#D97706"></span>Claude</div>
+        <div class="model-chip"><span class="model-chip-dot" style="background:#10A37F"></span>GPT-4o</div>
+        <div class="model-chip"><span class="model-chip-dot" style="background:#4285F4"></span>Gemini</div>
+        <div class="model-chip"><span class="model-chip-dot" style="background:#333"></span>Ollama (local)</div>
+        <div class="model-chip"><span class="model-chip-dot" style="background:#76B900"></span>NVIDIA NIM</div>
+        <div style="font-size:14px;color:var(--muted);margin-left:8px">+ any model you choose</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section id="pricing" style="background:var(--white)">
+    <div class="section-inner">
+      <div class="section-tag">Pricing</div>
+      <h2 class="section-title">Simple pricing.<br />No surprises.</h2>
+      <p class="section-sub">You pay for the platform. Your AI usage costs go on your own API key.</p>
+      <div class="pricing-grid fade-in">
+        <div class="pricing-card">
+          <div class="pricing-plan">Starter</div>
+          <div class="pricing-price">Free</div>
+          <div class="pricing-per">forever</div>
+          <div class="pricing-divider"></div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Resume optimizer</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>5 applications/month</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Job match scoring</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Bring your own API key</div>
+          <a href="#" class="pricing-btn pricing-btn-outline">Get started free</a>
+        </div>
+        <div class="pricing-card featured">
+          <div class="pricing-plan">Pro</div>
+          <div class="pricing-price">₹999</div>
+          <div class="pricing-per">per month</div>
+          <div class="pricing-divider"></div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Unlimited applications</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>All 6 agents active</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Gmail integration</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>LinkedIn optimizer</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Memory system</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Auto follow-ups</div>
+          <a href="#" class="pricing-btn pricing-btn-white">Get Pro</a>
+        </div>
+        <div class="pricing-card">
+          <div class="pricing-plan">Team</div>
+          <div class="pricing-price">₹2,499</div>
+          <div class="pricing-per">per month · up to 5 users</div>
+          <div class="pricing-divider"></div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Everything in Pro</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Team dashboard</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Shared templates</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Priority support</div>
+          <div class="pricing-feature"><span class="pricing-check">✓</span>Custom AI model config</div>
+          <a href="#" class="pricing-btn pricing-btn-outline">Contact us</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <div class="cta-section">
+    <div class="cta-box fade-in">
+      <div class="section-tag">Get started</div>
+      <h2 class="section-title">Ready to stop<br /><em>applying manually?</em></h2>
+      <p class="section-sub">Join the waitlist. Free to start. No credit card required.</p>
+      <div style="display:flex;gap:10px;max-width:380px;margin:0 auto">
+        <input type="email" placeholder="your@email.com"
+          style="flex:1;padding:13px 16px;border:1px solid var(--border);border-radius:100px;font-size:14px;font-family:inherit;outline:none;background:var(--cream)" />
+        <button class="btn-primary" style="white-space:nowrap">Join waitlist</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:16px">Already 1,200+ on the waitlist</p>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand"><span></span>CareerCrafts AI</div>
+        <div class="footer-desc">6 AI agents that automate your entire job search — from discovery to offer.</div>
+      </div>
+      <div>
+        <div class="footer-col-title">Product</div>
+        <a href="#" class="footer-link">Features</a>
+        <a href="#" class="footer-link">How it works</a>
+        <a href="#" class="footer-link">Pricing</a>
+        <a href="#" class="footer-link">Changelog</a>
+      </div>
+      <div>
+        <div class="footer-col-title">Agents</div>
+        <a href="#" class="footer-link">Resume Agent</a>
+        <a href="#" class="footer-link">Job Search</a>
+        <a href="#" class="footer-link">Email Agent</a>
+        <a href="#" class="footer-link">LinkedIn</a>
+      </div>
+      <div>
+        <div class="footer-col-title">Company</div>
+        <a href="#" class="footer-link">About</a>
+        <a href="#" class="footer-link">Blog</a>
+        <a href="#" class="footer-link">Privacy</a>
+        <a href="#" class="footer-link">Terms</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 CareerCrafts AI. All rights reserved.</span>
+      <span>Built with Claude · Powered by your API key</span>
+    </div>
+  </footer>
+
+  <script>
+    // Intersection observer for fade-in animations
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // Nav scroll effect
+    window.addEventListener('scroll', () => {
+      const nav = document.querySelector('nav');
+      nav.style.borderBottomColor = window.scrollY > 10 ? '#E8E8E4' : 'transparent';
+    });
+
+    // Animate preview metrics counting up
+    const nums = [{ el: '.preview-metric-num', targets: [47, 8, 91] }];
+    let counted = false;
+    const previewObserver = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && !counted) {
+        counted = true;
+        document.querySelectorAll('.preview-metric-num').forEach((el, i) => {
+          const targets = [47, 8, 91];
+          const suffix = i === 2 ? '%' : '';
+          let start = 0;
+          const end = targets[i];
+          const dur = 1200;
+          const step = (timestamp) => {
+            if (!start) start = timestamp;
+            const progress = Math.min((timestamp - start) / dur, 1);
+            el.textContent = Math.floor(progress * end) + suffix;
+            if (progress < 1) requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        });
+      }
+    }, { threshold: 0.5 });
+    const previewEl = document.querySelector('.preview-wrap');
+    if (previewEl) previewObserver.observe(previewEl);
+  </script>
+</body>
+
+</html>
