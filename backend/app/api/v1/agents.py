@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -19,7 +19,11 @@ from app.models.db import AgentRun, User
 router = APIRouter(prefix="/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
 
-VALID_TASKS = {"resume_optimize", "job_search", "linkedin_optimize", "email", "interview_prep"}
+VALID_TASKS = {
+    "resume_optimize", "job_search", "linkedin_optimize", "email", "interview_prep",
+    "cover_letter", "interview_coach", "evaluate_answer", "salary_intelligence",
+    "company_research", "nl_job_search", "linkedin_outreach", "auto_apply",
+}
 
 
 class RunRequest(BaseModel):
@@ -30,6 +34,15 @@ class RunRequest(BaseModel):
 class RunResponse(BaseModel):
     run_id: str
     status: str
+
+
+class AutoApplyRequest(BaseModel):
+    search_query: str
+    location: str = "Remote"
+    max_applications: int = 5
+    platforms: list[str] | None = None
+    linkedin_email: str | None = None
+    linkedin_password: str | None = None
 
 
 class ApproveRequest(BaseModel):
@@ -43,7 +56,7 @@ class AgentRunResponse(BaseModel):
     input: dict | None
     output: dict | None
     duration_ms: int | None
-    created_at: datetime
+    started_at: datetime
     completed_at: datetime | None
 
     model_config = {"from_attributes": True}
@@ -61,7 +74,7 @@ async def list_runs(
     result = await db.execute(
         select(AgentRun)
         .where(AgentRun.user_id == current_user.id)
-        .order_by(AgentRun.created_at.desc())
+        .order_by(AgentRun.started_at.desc())
         .limit(min(limit, 50))
     )
     return result.scalars().all()
@@ -126,7 +139,7 @@ async def start_agent_run(
                     run.status = final_status
                     run.output = final_output
                     run.duration_ms = harness_result.get("duration_ms")
-                    run.completed_at = datetime.now(UTC)
+                    run.completed_at = datetime.now(timezone.utc)
                 await fresh_db.commit()
         except Exception as exc:
             logger.error("Agent run %s background task failed: %s", run_id, exc)
@@ -185,7 +198,7 @@ async def approve_or_cancel(
 
     if not payload.approved:
         run.status = "failed"
-        run.completed_at = datetime.now(UTC)
+        run.completed_at = datetime.now(timezone.utc)
         emit(run_id, "complete", {"cancelled": True})
         return {"status": "cancelled"}
 
@@ -198,7 +211,81 @@ async def approve_or_cancel(
         gmail.send_message(pending["recipient"], pending["subject"], pending["body"])
 
     run.status = "completed"
-    run.completed_at = datetime.now(UTC)
+    run.completed_at = datetime.now(timezone.utc)
     emit(run_id, "complete", {"approved": True, "action": action_type})
     await db.flush()
     return {"status": "completed", "action": action_type}
+
+
+
+@router.post("/auto-apply")
+@limiter.limit("3/hour")
+async def auto_apply(
+    request: Request,
+    payload: AutoApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Trigger the fully automated job application pipeline.
+
+    Chains: multi-platform search → score → find recruiter → tailor resume →
+    send cold email + LinkedIn connection. All automated.
+    """
+    from app.agents.auto_apply_pipeline import run_auto_apply_pipeline
+
+    run_id = str(uuid.uuid4())
+    agent_run = AgentRun(
+        id=uuid.UUID(run_id),
+        user_id=current_user.id,
+        agent_type="auto_apply",
+        status="running",
+        input={
+            "search_query": payload.search_query,
+            "location": payload.location,
+            "max_applications": payload.max_applications,
+        },
+    )
+    db.add(agent_run)
+    await db.commit()
+
+    linkedin_creds = None
+    if payload.linkedin_email and payload.linkedin_password:
+        linkedin_creds = {"email": payload.linkedin_email, "password": payload.linkedin_password}
+
+    # Run pipeline in background
+    import asyncio
+
+    async def _run_pipeline():
+        try:
+            result = await run_auto_apply_pipeline(
+                user_id=str(current_user.id),
+                search_query=payload.search_query,
+                location=payload.location,
+                max_applications=payload.max_applications,
+                platforms=payload.platforms,
+                linkedin_credentials=linkedin_creds,
+            )
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import select as sel
+                res = await session.execute(sel(AgentRun).where(AgentRun.id == uuid.UUID(run_id)))
+                run = res.scalar_one_or_none()
+                if run:
+                    run.status = "completed"
+                    run.output = result
+                    run.completed_at = datetime.now(timezone.utc)
+                    await session.commit()
+        except Exception as exc:
+            logger.error("Auto-apply pipeline failed: %s", exc)
+            async with AsyncSessionLocal() as session:
+                from sqlalchemy import select as sel
+                res = await session.execute(sel(AgentRun).where(AgentRun.id == uuid.UUID(run_id)))
+                run = res.scalar_one_or_none()
+                if run:
+                    run.status = "failed"
+                    run.output = {"error": str(exc)}
+                    run.completed_at = datetime.now(timezone.utc)
+                    await session.commit()
+
+    asyncio.create_task(_run_pipeline())
+
+    return {"run_id": run_id, "status": "running", "message": "Auto-apply pipeline started"}

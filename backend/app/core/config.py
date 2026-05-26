@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     APP_SECRET_KEY: str
     APP_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
 
     DATABASE_URL: str
     SUPABASE_URL: str
@@ -16,7 +17,12 @@ class Settings(BaseSettings):
 
     REDIS_URL: str = "redis://localhost:6379"
     PINCHTAB_URL: str = "http://localhost:9867"
+    PINCHTAB_TOKEN: str = ""
     RESEND_API_KEY: str = ""
+    YOUTUBE_API_KEY: str = ""
+    PROXYCURL_API_KEY: str = ""
+    EXA_API_KEY: str | None = None
+    FIRECRAWL_API_KEY: str | None = None
 
 
 settings = Settings()

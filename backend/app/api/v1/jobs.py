@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -45,6 +45,43 @@ class StatusUpdateBody(BaseModel):
     status: str
 
 
+class NLSearchRequest(BaseModel):
+    query: str = Field(min_length=5, max_length=500)
+
+
+@router.post("/search/natural")
+@limiter.limit("10/minute")
+async def natural_language_search(
+    request: Request,
+    payload: NLSearchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Accept a natural language job query, extract parameters, return interpretation + results."""
+    from app.agents.harness import get_harness
+
+    run_id = str(uuid.uuid4())
+    agent_run = AgentRun(
+        id=uuid.UUID(run_id),
+        user_id=current_user.id,
+        agent_type="nl_job_search",
+        status="running",
+        input={"query": payload.query},
+    )
+    db.add(agent_run)
+    await db.flush()
+
+    harness = await get_harness()
+    await harness.run(
+        user_id=str(current_user.id),
+        task_type="nl_job_search",
+        context={"query": payload.query},
+        user_settings={},
+        run_id=run_id,
+    )
+    return {"run_id": run_id, "status": "running"}
+
+
 @router.post("/search", response_model=JobSearchResponse)
 @limiter.limit("10/minute")
 async def search_jobs(
@@ -73,15 +110,17 @@ async def search_jobs(
     db.add(agent_run)
     await db.flush()
 
-    queue_job_id = await enqueue_job_search(
-        user_id=str(current_user.id),
-        run_id=run_id,
-        search_query=payload.search_query,
-        location=payload.location,
-        max_results=payload.max_results,
-    )
+    try:
+        queue_job_id = await enqueue_job_search(
+            user_id=str(current_user.id),
+            run_id=run_id,
+            search_query=payload.search_query,
+            location=payload.location,
+            max_results=payload.max_results,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return JobSearchResponse(queue_job_id=queue_job_id)
-
 
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
@@ -98,7 +137,7 @@ async def list_applications(
     if status:
         query = query.where(JobApplication.status == status)
     result = await db.execute(
-        query.order_by(JobApplication.applied_at.desc().nullslast())
+        query.order_by(JobApplication.applied_at.desc().nulls_last())
     )
     return result.scalars().all()
 
@@ -127,5 +166,5 @@ async def update_application_status(
 
     app.status = body.status
     if body.status == "applied" and not app.applied_at:
-        app.applied_at = datetime.now(UTC)
+        app.applied_at = datetime.now(timezone.utc)
     return app
