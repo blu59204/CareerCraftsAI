@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.messages import HumanMessage
@@ -62,7 +62,7 @@ async def list_drafts(
             AgentRun.agent_type == "email",
             AgentRun.user_id == current_user.id,
         )
-        .order_by(desc(AgentRun.created_at))
+        .order_by(desc(AgentRun.started_at))
         .limit(20)
     )
     runs = result.scalars().all()
@@ -76,7 +76,7 @@ async def list_drafts(
         subject = f"Follow-up on {role} at {company}"
         body = out.get("draft", {}).get("body", "") if isinstance(out.get("draft"), dict) else ""
         initial = company[0].upper() if company else "?"
-        timestamp = _relative_time(run.created_at) if run.created_at else "?"
+        timestamp = _relative_time(run.started_at) if run.started_at else "?"
         drafts.append(
             EmailDraft(
                 id=str(run.id),
@@ -136,7 +136,7 @@ async def compose_email(
     result_state = await asyncio.get_running_loop().run_in_executor(None, email_agent_node, state)
 
     agent_run.status = result_state["status"]
-    agent_run.completed_at = datetime.now(UTC)
+    agent_run.completed_at = datetime.now(timezone.utc)
     if result_state.get("pending_action"):
         agent_run.output = result_state["pending_action"]
 
@@ -180,5 +180,5 @@ async def approve_and_send(
     )
 
     run.status = "completed"
-    run.completed_at = datetime.now(UTC)
+    run.completed_at = datetime.now(timezone.utc)
     return {"status": "sent", "recipient": pending["recipient"]}

@@ -1,6 +1,5 @@
 import io
 import logging
-from functools import lru_cache
 
 from langchain_core.documents import Document
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Embedding dimension per provider — must match model output
 EMBEDDING_DIMENSIONS: dict[str, int] = {
     "openai": 1536,    # text-embedding-3-small
-    "google": 768,     # models/embedding-001
+    "google": 768,     # models/text-embedding-004
     "ollama": 768,     # nomic-embed-text
     "anthropic": 768,  # falls back to nomic-embed-text
     "nvidia_nim": 768, # falls back to nomic-embed-text
@@ -52,40 +51,36 @@ def get_embedding_model(model_settings):
         return OpenAIEmbeddings(model="text-embedding-3-small", api_key=api_key)
     if provider == "google":
         api_key = decrypt_api_key(model_settings.api_key_enc, app_settings.APP_SECRET_KEY)
-        return GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+        return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
     if provider == "ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url=model_settings.ollama_url)
     # anthropic + nvidia_nim have no native embedding API — fall back to local nomic-embed-text
     return OllamaEmbeddings(model="nomic-embed-text")
 
 
-@lru_cache(maxsize=1)
-def _get_pg_engine(connection_string: str):
-    """Cache PGEngine per connection string — avoids creating new connection pool per call."""
-    from langchain_postgres.v2.engine import PGEngine
-    return PGEngine.from_connection_string(url=connection_string)
-
-
 def _psycopg_url() -> str:
-    """Convert asyncpg URL to psycopg3 URL for langchain-postgres."""
+    """Convert asyncpg URL to psycopg3 URL for langchain-postgres PGVector."""
     url = app_settings.DATABASE_URL
-    return url.replace("+asyncpg", "+psycopg")
+    if "+asyncpg" in url:
+        return url.replace("+asyncpg", "+psycopg")
+    if "postgresql://" in url and "+psycopg" not in url:
+        logger.warning(
+            "DATABASE_URL does not contain '+asyncpg' driver prefix. "
+            "Assuming psycopg3 compatibility — verify your connection string."
+        )
+        return url.replace("postgresql://", "postgresql+psycopg://")
+    return url
 
 
 def get_vector_store(user_id: str, doc_type: str, embeddings, provider: str = "openai"):
-    """Get or create PGVectorStore for a user+doc_type collection."""
-    from langchain_postgres.v2.vectorstores import PGVectorStore
+    """Get or create PGVector store for a user+doc_type collection."""
+    from langchain_postgres import PGVector
+
     table = collection_name(user_id, doc_type)
-    engine = _get_pg_engine(_psycopg_url())
-    dim = EMBEDDING_DIMENSIONS.get(provider, 768)
-    try:
-        engine.init_vectorstore_table(table_name=table, vector_size=dim, overwrite_existing=False)
-    except Exception as exc:
-        logger.debug("init_vectorstore_table skipped for %s (likely exists): %s", table, exc)
-    return PGVectorStore.create_sync(
-        engine=engine,
-        table_name=table,
-        embedding_service=embeddings,
+    return PGVector(
+        connection_string=_psycopg_url(),
+        collection_name=table,
+        embedding=embeddings,
     )
 
 

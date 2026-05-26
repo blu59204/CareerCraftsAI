@@ -1,18 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogOut, Settings, User as UserIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export function UserMenu() {
   const router = useRouter();
-  const supabase = createClient();
+  const supabaseRef = useRef<SupabaseClient | null>(null);
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const supabase = createClient();
+    supabaseRef.current = supabase;
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
       if (!mounted) return;
@@ -29,12 +34,24 @@ export function UserMenu() {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
 
   const initials = (email ?? "?").slice(0, 1).toUpperCase();
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    setOpen(false);
+    await supabaseRef.current?.auth.signOut();
     router.push("/");
     router.refresh();
   };
@@ -42,7 +59,7 @@ export function UserMenu() {
   if (!email) return null;
 
   return (
-    <div className="relative">
+    <div ref={menuRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -57,41 +74,32 @@ export function UserMenu() {
         )}
       </button>
       {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-2xl border border-border bg-card shadow-lg">
-            <div className="border-b border-border px-4 py-3 text-sm">
-              <p className="truncate text-muted-foreground">{email}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                router.push("/settings/account");
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-secondary"
-            >
-              <UserIcon className="h-4 w-4" /> Account
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                router.push("/settings/models");
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-secondary"
-            >
-              <Settings className="h-4 w-4" /> Settings
-            </button>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="flex w-full items-center gap-2 border-t border-border px-4 py-2 text-sm text-danger hover:bg-secondary"
-            >
-              <LogOut className="h-4 w-4" /> Sign out
-            </button>
+        <div className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-2xl border border-border bg-card shadow-lg">
+          <div className="border-b border-border px-4 py-3 text-sm">
+            <p className="truncate text-muted-foreground">{email}</p>
           </div>
-        </>
+          <Link
+            href="/settings/account"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-secondary"
+          >
+            <UserIcon className="h-4 w-4" /> Account
+          </Link>
+          <Link
+            href="/settings/models"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 px-4 py-2 text-sm hover:bg-secondary"
+          >
+            <Settings className="h-4 w-4" /> Settings
+          </Link>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="flex w-full items-center gap-2 border-t border-border px-4 py-2 text-sm text-danger hover:bg-secondary"
+          >
+            <LogOut className="h-4 w-4" /> Sign out
+          </button>
+        </div>
       )}
     </div>
   );

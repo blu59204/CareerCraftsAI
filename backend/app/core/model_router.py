@@ -38,10 +38,16 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
             )
 
 
-def get_llm(user_id: str, db) -> BaseChatModel:
-    model_settings: UserModelSettings | None = (
-        db.query(UserModelSettings).filter_by(user_id=user_id, is_active=True).first()
+async def get_llm(user_id: str, db) -> BaseChatModel:
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(UserModelSettings).where(
+            UserModelSettings.user_id == user_id,
+            UserModelSettings.is_active == True,  # noqa: E712
+        )
     )
+    model_settings: UserModelSettings | None = result.scalars().first()
     if not model_settings:
         raise HTTPException(
             status_code=400, detail="No active model configured. Add a model in Settings."

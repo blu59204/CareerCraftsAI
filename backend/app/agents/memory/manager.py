@@ -7,7 +7,7 @@ Tables expected (created lazily on first use):
                         context_summary, output_summary, created_at)
   - agent_learnings    (id, user_id, agent_type, learning, success_rate,
                         sample_count, created_at, updated_at)
-  - user_preferences   (id, user_id, preference_key, preference_value, created_at)
+  - agent_preferences  (id, user_id, preference_key, preference_value, created_at)
 
 If the tables do not exist the manager logs a warning and returns safe empty
 values — it never raises so the harness can degrade gracefully.
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_learnings (
 CREATE INDEX IF NOT EXISTS idx_learnings_user_agent
     ON agent_learnings (user_id, agent_type, success_rate DESC);
 
-CREATE TABLE IF NOT EXISTS user_preferences (
+CREATE TABLE IF NOT EXISTS agent_preferences (
     id               BIGSERIAL PRIMARY KEY,
     user_id          TEXT NOT NULL,
     preference_key   TEXT NOT NULL,
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (user_id, preference_key)
 );
-CREATE INDEX IF NOT EXISTS idx_prefs_user ON user_preferences (user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_prefs_user ON agent_preferences (user_id);
 """
 
 
@@ -178,7 +178,7 @@ class MemoryManager:
                 # Preferences
                 prefs_rows = await conn.fetch(
                     "SELECT preference_key, preference_value "
-                    "FROM user_preferences WHERE user_id = $1",
+                    "FROM agent_preferences WHERE user_id = $1",
                     user_id,
                 )
                 preferences = {r["preference_key"]: r["preference_value"] for r in prefs_rows}

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
+import { toast } from "sonner";
 import {
   Mail,
   Send,
@@ -74,16 +75,19 @@ const SUGGESTIONS = [
     id: "1",
     title: "Personalize subject line",
     description: "Mention the specific role and company initiative",
+    applied: "Subject: Following up on [Role] at [Company] — excited about [initiative]",
   },
   {
     id: "2",
     title: "Add social proof",
     description: "Reference a recent project or achievement",
+    applied: "\n\nP.S. — I recently shipped [project] which reduced latency by 40%. Happy to share details.",
   },
   {
     id: "3",
     title: "CTA optimization",
     description: "Use a specific date/time for the interview request",
+    applied: "\n\nAre you available for a 20-minute call this Thursday between 2–4pm, or Friday morning?",
   },
 ];
 
@@ -260,7 +264,7 @@ const CATEGORY_COLORS: Record<InboxCategory, string> = {
   social: "bg-green-100 text-green-700",
 };
 
-function InboxCleanup() {
+function InboxCleanup({ onApplyToCompose }: { onApplyToCompose: (text: string) => void }) {
   const [emails, setEmails] = useState(INBOX_EMAILS);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<InboxCategory | "all">("all");
@@ -279,6 +283,7 @@ function InboxCleanup() {
   const archiveSelected = () => {
     setEmails((prev) => prev.filter((e) => !selectedIds.has(e.id)));
     setSelectedIds(new Set());
+    toast.success(`${selectedIds.size} emails archived`);
   };
 
   const unsubAll = () => {
@@ -286,6 +291,7 @@ function InboxCleanup() {
     setTimeout(() => {
       setEmails((prev) => prev.filter((e) => !e.unsubscribable));
       setCleaning(false);
+      toast.success("Unsubscribed from all newsletters and promos");
     }, 1200);
   };
 
@@ -297,7 +303,6 @@ function InboxCleanup() {
 
   return (
     <div className="space-y-4">
-      {/* Health stats */}
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: "Total", value: stats.total, icon: Inbox },
@@ -312,7 +317,6 @@ function InboxCleanup() {
         ))}
       </div>
 
-      {/* Bulk action bar */}
       <div className="flex flex-wrap gap-2">
         <LiquidGlassButton
           tone="ghost"
@@ -335,7 +339,6 @@ function InboxCleanup() {
         )}
       </div>
 
-      {/* Category filter */}
       <div className="flex gap-1 flex-wrap">
         {(["all", "important", "newsletter", "promo", "social"] as const).map((c) => (
           <button
@@ -353,7 +356,6 @@ function InboxCleanup() {
         ))}
       </div>
 
-      {/* Email list */}
       <div className="space-y-2">
         <AnimatePresence initial={false}>
           {visible.map((email) => (
@@ -391,7 +393,10 @@ function InboxCleanup() {
                   <span className="text-xs text-muted-foreground">{email.date}</span>
                   {email.unsubscribable && (
                     <button
-                      onClick={() => setEmails((prev) => prev.filter((e) => e.id !== email.id))}
+                      onClick={() => {
+                        setEmails((prev) => prev.filter((e) => e.id !== email.id));
+                        toast.success(`Unsubscribed from ${email.from}`);
+                      }}
                       className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-500"
                       title="Unsubscribe"
                     >
@@ -399,7 +404,10 @@ function InboxCleanup() {
                     </button>
                   )}
                   <button
-                    onClick={() => setEmails((prev) => prev.filter((e) => e.id !== email.id))}
+                    onClick={() => {
+                      setEmails((prev) => prev.filter((e) => e.id !== email.id));
+                      toast.success("Email archived");
+                    }}
                     className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     title="Archive"
                   >
@@ -424,8 +432,10 @@ export default function EmailPage() {
   const [selectedId, setSelectedId] = useState<string>("1");
   const [composeText, setComposeText] = useState<string>("");
   const [emailTab, setEmailTab] = useState<"drafts" | "templates" | "inbox">("drafts");
+  const [localDrafts, setLocalDrafts] = useState<Draft[]>([]);
+  const qc = useQueryClient();
 
-  const { data: drafts = DRAFTS } = useQuery<Draft[]>({
+  const { data: remoteDrafts = [] } = useQuery<Draft[]>({
     queryKey: ["email-drafts"],
     queryFn: async () => {
       const { data } = await apiClient.get("/email/drafts");
@@ -433,7 +443,45 @@ export default function EmailPage() {
     },
   });
 
+  const { data: userMe } = useQuery<{ email?: string; identities?: Array<{ provider: string }> }>({
+    queryKey: ["user-me-email"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/users/me");
+      return data;
+    },
+  });
+
+  const gmailConnected = userMe?.identities?.some((i) => i.provider === "google") ?? false;
+
+  const drafts = [...localDrafts, ...remoteDrafts.filter((d) => !localDrafts.find((x) => x.id === d.id))];
+
   const selected = drafts.find((d) => d.id === selectedId) ?? drafts[0];
+
+  const handleSaveDraft = async () => {
+    if (!composeText.trim()) {
+      toast.info("Nothing to save — compose some text first.");
+      return;
+    }
+    try {
+      await apiClient.post("/email/compose", {
+        company: selected?.company ?? "Unknown",
+        role: selected?.subject ?? "Draft",
+        recipient_email: `recruiter@${(selected?.company ?? "company").toLowerCase().replace(/\s+/g, "")}.com`,
+      });
+      qc.invalidateQueries({ queryKey: ["email-drafts"] });
+      toast.success("Draft saved");
+    } catch {
+      toast.error("Failed to save draft — check backend connection");
+    }
+  };
+
+  const handleApplySuggestion = (suggestion: typeof SUGGESTIONS[0]) => {
+    setComposeText((prev) => {
+      const base = prev || (selected?.body ?? "");
+      return base + suggestion.applied;
+    });
+    toast.success(`Applied: ${suggestion.title}`);
+  };
 
   return (
     <motion.div
@@ -452,11 +500,19 @@ export default function EmailPage() {
           <h1 className="mt-1 text-3xl font-medium">AI-powered outreach.</h1>
         </div>
         <div className="flex gap-2">
-          <LiquidGlassButton tone="primary" size="sm">
+          <LiquidGlassButton tone="primary" size="sm" onClick={() => toast.info("Connect Gmail in Settings → Account → Connected accounts")}>
             <Mail className="h-4 w-4" />
             Connect Gmail
           </LiquidGlassButton>
-          <LiquidGlassButton tone="ghost" size="sm">
+          <LiquidGlassButton tone="ghost" size="sm" onClick={() => {
+            const newId = `new-${Date.now()}`;
+            const blank = { id: newId, subject: "New draft", company: "Untitled", timestamp: "just now", initial: "N", body: "", status: "draft" };
+            setLocalDrafts((prev) => [blank, ...prev]);
+            setSelectedId(newId);
+            setComposeText("");
+            setEmailTab("drafts");
+            toast.success("New draft created");
+          }}>
             <Edit className="h-4 w-4" />
             New draft
           </LiquidGlassButton>
@@ -467,22 +523,21 @@ export default function EmailPage() {
       <motion.div variants={fadeUp} className="flex gap-4">
         {/* Left sidebar */}
         <div className="w-[280px] shrink-0 space-y-4">
-          {/* Gmail status */}
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-green-500" />
+              <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-green-500" : "bg-muted-foreground"}`} />
               <span className="text-sm font-medium text-foreground">
-                Gmail Connected
+                {gmailConnected ? "Gmail Connected" : "Gmail Not Connected"}
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              alex@gmail.com · Synced 5 min ago
+              {gmailConnected
+                ? `${userMe?.email ?? "Connected"} · Synced`
+                : "Connect Gmail in Settings → Account"}
             </p>
           </div>
 
-          {/* Drafts / Templates / Inbox tab list */}
           <div className="rounded-3xl border border-border bg-card/60 p-4">
-            {/* Tab switcher */}
             <div className="mb-3 flex gap-1 rounded-full border border-border bg-muted/40 p-1 text-xs">
               {(["drafts", "templates", "inbox"] as const).map((t) => (
                 <button
@@ -534,20 +589,24 @@ export default function EmailPage() {
                       onUse={(body) => {
                         setComposeText(body);
                         setEmailTab("drafts");
+                        toast.success(`Template "${tpl.name}" loaded`);
                       }}
                     />
                   ))}
                 </div>
               </>
             ) : (
-              <InboxCleanup />
+              <InboxCleanup onApplyToCompose={(text) => {
+                setComposeText((prev) => prev + text);
+                setEmailTab("drafts");
+              }} />
             )}
           </div>
         </div>
 
         {/* Main content */}
         <div className="min-w-0 flex-1 space-y-4">
-          {/* Email preview */}
+          {selected ? (
           <div className="rounded-3xl border border-border bg-card/60 p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -568,8 +627,12 @@ export default function EmailPage() {
               </pre>
             </div>
           </div>
+          ) : (
+          <div className="rounded-3xl border border-border bg-card/60 p-6 text-center text-sm text-muted-foreground">
+            No drafts yet. Compose your first email to get started.
+          </div>
+          )}
 
-          {/* Compose area */}
           <div className="rounded-3xl border border-border bg-card/60 p-6">
             <div className="mb-3 flex items-center justify-between">
               <span className="text-sm font-medium text-foreground">
@@ -588,11 +651,11 @@ export default function EmailPage() {
               className="w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <div className="mt-3 flex gap-2">
-              <LiquidGlassButton tone="primary" size="sm">
+              <LiquidGlassButton tone="primary" size="sm" onClick={() => toast.info("Gmail not connected — connect Gmail to send")}>
                 <Send className="h-4 w-4" />
                 Send
               </LiquidGlassButton>
-              <LiquidGlassButton tone="ghost" size="sm">
+              <LiquidGlassButton tone="ghost" size="sm" onClick={handleSaveDraft}>
                 Save draft
               </LiquidGlassButton>
             </div>
@@ -601,14 +664,13 @@ export default function EmailPage() {
 
         {/* Right sidebar */}
         <div className="w-[280px] shrink-0 space-y-4">
-          {/* AI Suggestions */}
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="mb-3 flex items-center gap-2">
               <span className="text-sm font-semibold text-foreground">
                 AI Suggestions
               </span>
               <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
-                3
+                {SUGGESTIONS.length}
               </span>
             </div>
             <div className="space-y-3">
@@ -623,7 +685,10 @@ export default function EmailPage() {
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {s.description}
                   </p>
-                  <button className="mt-2 flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+                  <button
+                    onClick={() => handleApplySuggestion(s)}
+                    className="mt-2 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
                     Apply <ChevronRight className="h-3 w-3" />
                   </button>
                 </div>
@@ -631,7 +696,6 @@ export default function EmailPage() {
             </div>
           </div>
 
-          {/* Follow-up schedule */}
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <p className="mb-3 text-sm font-semibold text-foreground">
               Follow-up Schedule

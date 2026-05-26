@@ -1,10 +1,10 @@
-import asyncio
 import logging
 
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
+from app.core.sync_db import fetch_model_settings
 from app.services.gmail_service import GmailMCPClient
 
 logger = logging.getLogger(__name__)
@@ -24,25 +24,6 @@ Subject: <subject line>
 Do NOT include placeholder text. Write a complete, ready-to-send email."""
 
 
-def _get_model_settings(user_id: str):
-    async def _fetch():
-        from sqlalchemy import select
-
-        from app.core.database import AsyncSessionLocal
-        from app.models.db import UserModelSettings
-
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(UserModelSettings).where(
-                    UserModelSettings.user_id == user_id,
-                    UserModelSettings.is_active == True,  # noqa: E712
-                )
-            )
-            return result.scalar_one_or_none()
-
-    return asyncio.run(_fetch())
-
-
 def email_agent_node(state: AgentState) -> AgentState:
     try:
         user_id = state["user_id"]
@@ -51,7 +32,7 @@ def email_agent_node(state: AgentState) -> AgentState:
         role = ctx.get("role", "")
         recipient = ctx.get("recipient_email", "")
 
-        model_settings = _get_model_settings(user_id)
+        model_settings = fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 

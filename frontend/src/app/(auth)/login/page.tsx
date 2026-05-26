@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SignInPage, type AuthMode, type Testimonial } from "@/components/ui/sign-in";
@@ -38,7 +38,7 @@ const TESTIMONIALS: Testimonial[] = [
 const HERO_IMAGE =
   "https://images.unsplash.com/photo-1642615835477-d303d7dc9ee9?w=2160&q=80";
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
@@ -148,5 +148,17 @@ export default function LoginPage() {
       infoMessage={info}
       loading={loading}
     />
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }

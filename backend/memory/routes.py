@@ -56,8 +56,11 @@ def _get_manager(user: User) -> MemoryManager:
 
     rc = _redis_client()
     embedder = MemoryEmbedder(user_settings, redis_client=rc)
+
+    # asyncpg requires a plain postgresql:// DSN — strip SQLAlchemy driver prefix
+    db_url = settings.DATABASE_URL.replace("+asyncpg", "")
     return MemoryManager(
-        db_url=settings.DATABASE_URL,
+        db_url=db_url,
         redis_client=rc,
         embedder=embedder,
     )

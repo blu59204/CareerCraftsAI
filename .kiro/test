@@ -1,0 +1,8 @@
+cd backend
+pytest tests/unit tests/security -v
+And for frontend:
+
+
+
+cd frontend
+npx tsc --noEmit

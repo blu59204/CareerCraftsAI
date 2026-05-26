@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { createClient } from "@/lib/supabase/client";
 
 const HEADLINE_WORDS = ["Apply", "smarter.", "Tailor", "faster."];
 const HIGHLIGHT = "Get noticed.";
@@ -127,6 +129,12 @@ function DashboardMockup() {
 }
 
 export function HeroA() {
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => setSignedIn(!!data.user));
+  }, []);
+
   return (
     <section className="relative isolate overflow-hidden pt-16">
       {/* Video background */}
@@ -183,9 +191,9 @@ export function HeroA() {
           variants={fadeUp}
           className="mt-10 flex items-center justify-center gap-3"
         >
-          <Link href="/register">
+          <Link href={signedIn ? "/dashboard" : "/register"}>
             <LiquidGlassButton tone="primary" size="lg">
-              Start free
+              {signedIn ? "Go to dashboard" : "Start free"}
             </LiquidGlassButton>
           </Link>
           <Link href="/#demo">

@@ -1,13 +1,27 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { useState } from "react";
-import { User, Shield, Bell, Check, X, Github, Globe, AlertTriangle } from "lucide-react";
+import { User, Shield, Bell, Check, Github, Globe, AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { cn } from "@/lib/utils";
+import { apiClient } from "@/lib/api";
 
 type Tab = "account" | "security" | "notifications";
+
+interface UserProfile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  headline: string | null;
+  phone: string | null;
+  linkedin_url: string | null;
+  onboarding_completed: boolean;
+}
 
 interface ToggleProps {
   enabled: boolean;
@@ -36,13 +50,66 @@ function Toggle({ enabled, onToggle }: ToggleProps) {
   );
 }
 
+function getInitials(fullName: string | null | undefined): string {
+  if (!fullName) return "?";
+  return fullName
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
 export default function AccountSettingsPage() {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [agentAlerts, setAgentAlerts] = useState(true);
   const [followUpReminders, setFollowUpReminders] = useState(true);
   const [weeklyDigest, setWeeklyDigest] = useState(false);
   const [twoFactor, setTwoFactor] = useState(false);
+
+  const [name, setName] = useState("");
+  const [headline, setHeadline] = useState("");
+  const [phone, setPhone] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [currentPwd, setCurrentPwd] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [confirmPwd, setConfirmPwd] = useState("");
+
+  const { data: user, isLoading } = useQuery<UserProfile & { identities?: Array<{ provider: string }> }>({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/users/me");
+      return data as UserProfile & { identities?: Array<{ provider: string }> };
+    },
+  });
+
+  useEffect(() => {
+    if (user) {
+      setName(user.full_name ?? "");
+      setHeadline(user.headline ?? "");
+      setPhone(user.phone ?? "");
+      setLinkedinUrl(user.linkedin_url ?? "");
+    }
+  }, [user]);
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.patch("/users/me", {
+        full_name: name || undefined,
+        headline: headline || undefined,
+        phone: phone || undefined,
+        linkedin_url: linkedinUrl || undefined,
+      });
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      toast.success("Profile updated");
+    },
+    onError: () => toast.error("Update failed"),
+  });
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "account", label: "Account" },
@@ -84,11 +151,23 @@ export default function AccountSettingsPage() {
             <div className="mb-6 text-sm font-medium">Profile</div>
             <div className="flex items-center gap-4 mb-6">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/20 text-lg font-semibold text-primary">
-                JD
+                {isLoading ? "…" : getInitials(user?.full_name)}
               </div>
               <div>
-                <div className="font-medium">John Doe</div>
-                <div className="text-sm text-muted-foreground">user@example.com</div>
+                <div className="font-medium">
+                  {isLoading ? (
+                    <span className="inline-block h-4 w-32 animate-pulse rounded bg-muted" />
+                  ) : (
+                    user?.full_name ?? "—"
+                  )}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {isLoading ? (
+                    <span className="inline-block h-3 w-44 animate-pulse rounded bg-muted" />
+                  ) : (
+                    user?.email ?? ""
+                  )}
+                </div>
               </div>
             </div>
             <div className="space-y-4">
@@ -96,7 +175,9 @@ export default function AccountSettingsPage() {
                 <label className="mb-1.5 block text-sm font-medium">Name</label>
                 <input
                   type="text"
-                  defaultValue="John Doe"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Your full name"
                   className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
@@ -109,21 +190,72 @@ export default function AccountSettingsPage() {
                 </label>
                 <input
                   type="email"
-                  value="user@example.com"
+                  value={user?.email ?? ""}
                   disabled
                   className="w-full rounded-2xl border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground cursor-not-allowed"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium">Bio</label>
-                <textarea
-                  rows={3}
-                  placeholder="Tell us a bit about yourself..."
-                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                <label className="mb-1.5 block text-sm font-medium">Headline</label>
+                <input
+                  type="text"
+                  value={headline}
+                  onChange={(e) => setHeadline(e.target.value)}
+                  placeholder="e.g. Senior Software Engineer at Stripe"
+                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-              <LiquidGlassButton tone="primary" size="sm">Save changes</LiquidGlassButton>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Phone</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+1 555 000 0000"
+                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">LinkedIn URL</label>
+                <input
+                  type="url"
+                  value={linkedinUrl}
+                  onChange={(e) => setLinkedinUrl(e.target.value)}
+                  placeholder="https://linkedin.com/in/your-profile"
+                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <LiquidGlassButton
+                tone="primary"
+                size="sm"
+                onClick={() => updateMutation.mutate()}
+                disabled={updateMutation.isPending}
+              >
+                {updateMutation.isPending ? "Saving…" : "Save changes"}
+              </LiquidGlassButton>
             </div>
+          </motion.div>
+
+          {/* Job preferences link */}
+          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
+            <div className="mb-2 text-sm font-medium">Job preferences</div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Set your target role, experience level, work mode and salary preferences.
+            </p>
+            <a href="/settings/profile">
+              <LiquidGlassButton tone="ghost" size="sm">Manage preferences →</LiquidGlassButton>
+            </a>
+          </motion.div>
+
+          {/* AI model & API keys */}
+          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
+            <div className="mb-2 text-sm font-medium">AI models &amp; API keys</div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Add your Anthropic, OpenAI, Google, or Ollama API key. Agents use your key — BYOK.
+            </p>
+            <a href="/settings/models">
+              <LiquidGlassButton tone="ghost" size="sm">Manage models →</LiquidGlassButton>
+            </a>
           </motion.div>
 
           {/* Connected accounts */}
@@ -142,10 +274,16 @@ export default function AccountSettingsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="flex items-center gap-1 rounded-full bg-green-500/15 px-2.5 py-1 text-xs font-medium text-green-600">
-                    <Check className="h-3 w-3" /> Connected
-                  </span>
-                  <LiquidGlassButton tone="ghost" size="sm">Disconnect</LiquidGlassButton>
+                  {user?.identities?.some((i) => i.provider === "google") ? (
+                    <>
+                      <span className="flex items-center gap-1 rounded-full bg-green-500/15 px-2.5 py-1 text-xs font-medium text-green-600">
+                        <Check className="h-3 w-3" /> Connected
+                      </span>
+                      <LiquidGlassButton tone="ghost" size="sm">Disconnect</LiquidGlassButton>
+                    </>
+                  ) : (
+                    <LiquidGlassButton tone="primary" size="sm">Connect</LiquidGlassButton>
+                  )}
                 </div>
               </div>
               {/* LinkedIn */}
@@ -169,14 +307,20 @@ export default function AccountSettingsPage() {
                   </div>
                   <div>
                     <div className="text-sm font-medium">GitHub</div>
-                    <div className="text-xs text-muted-foreground">Portfolio & projects</div>
+                    <div className="text-xs text-muted-foreground">Portfolio &amp; projects</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="flex items-center gap-1 rounded-full bg-green-500/15 px-2.5 py-1 text-xs font-medium text-green-600">
-                    <Check className="h-3 w-3" /> Connected
-                  </span>
-                  <LiquidGlassButton tone="ghost" size="sm">Disconnect</LiquidGlassButton>
+                  {user?.identities?.some((i) => i.provider === "github") ? (
+                    <>
+                      <span className="flex items-center gap-1 rounded-full bg-green-500/15 px-2.5 py-1 text-xs font-medium text-green-600">
+                        <Check className="h-3 w-3" /> Connected
+                      </span>
+                      <LiquidGlassButton tone="ghost" size="sm">Disconnect</LiquidGlassButton>
+                    </>
+                  ) : (
+                    <LiquidGlassButton tone="primary" size="sm">Connect</LiquidGlassButton>
+                  )}
                 </div>
               </div>
             </div>
@@ -196,6 +340,18 @@ export default function AccountSettingsPage() {
               tone="ghost"
               size="sm"
               className="bg-red-500 text-white hover:bg-red-600 hover:opacity-100"
+              onClick={async () => {
+                if (!confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
+                  return;
+                }
+                try {
+                  await apiClient.delete("/users/me");
+                  toast.success("Account deleted");
+                  window.location.href = "/";
+                } catch {
+                  toast.error("Failed to delete account — please try again or contact support");
+                }
+              }}
             >
               Delete my account
             </LiquidGlassButton>
@@ -214,6 +370,8 @@ export default function AccountSettingsPage() {
                 <label className="mb-1.5 block text-sm font-medium">Current password</label>
                 <input
                   type="password"
+                  value={currentPwd}
+                  onChange={(e) => setCurrentPwd(e.target.value)}
                   placeholder="••••••••"
                   className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
@@ -222,6 +380,8 @@ export default function AccountSettingsPage() {
                 <label className="mb-1.5 block text-sm font-medium">New password</label>
                 <input
                   type="password"
+                  value={newPwd}
+                  onChange={(e) => setNewPwd(e.target.value)}
                   placeholder="••••••••"
                   className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
@@ -230,11 +390,44 @@ export default function AccountSettingsPage() {
                 <label className="mb-1.5 block text-sm font-medium">Confirm new password</label>
                 <input
                   type="password"
+                  value={confirmPwd}
+                  onChange={(e) => setConfirmPwd(e.target.value)}
                   placeholder="••••••••"
                   className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-              <LiquidGlassButton tone="primary" size="sm">Update password</LiquidGlassButton>
+              <LiquidGlassButton
+                tone="primary"
+                size="sm"
+                onClick={async () => {
+                  if (!currentPwd || !newPwd || !confirmPwd) {
+                    toast.error("Fill in all password fields");
+                    return;
+                  }
+                  if (newPwd !== confirmPwd) {
+                    toast.error("New passwords don't match");
+                    return;
+                  }
+                  if (newPwd.length < 8) {
+                    toast.error("Password must be at least 8 characters");
+                    return;
+                  }
+                  try {
+                    await apiClient.patch("/users/me/password", {
+                      current_password: currentPwd,
+                      new_password: newPwd,
+                    });
+                    toast.success("Password updated");
+                    setCurrentPwd("");
+                    setNewPwd("");
+                    setConfirmPwd("");
+                  } catch {
+                    toast.error("Password update failed — check current password");
+                  }
+                }}
+              >
+                Update password
+              </LiquidGlassButton>
             </div>
           </motion.div>
 

@@ -26,7 +26,7 @@ const ITEMS = [
   { href: "/linkedin", icon: Linkedin, label: "LinkedIn" },
   { href: "/leads", icon: Users, label: "Leads" },
   { href: "/interview-prep", icon: MessageSquare, label: "Interview Prep" },
-  { href: "/settings/models", icon: Settings, label: "Settings" },
+  { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export function AppSidebar() {

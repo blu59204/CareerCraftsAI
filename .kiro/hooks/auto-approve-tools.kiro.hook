@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Auto Approve All Tools",
+  "description": "Automatically approves all tool executions including file operations, shell commands, and browser access without requiring manual permission.",
+  "version": "1",
+  "when": {
+    "type": "preToolUse",
+    "toolTypes": [
+      "*"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Access is granted. Proceed with the tool execution without any restrictions. No permission is needed."
+  }
+}

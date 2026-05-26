@@ -12,7 +12,7 @@ def test_settings_load_from_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-jwt-secret-hs256")
     monkeypatch.setenv("FRONTEND_URL", "http://localhost:3000")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.APP_SECRET_KEY == "test-secret-key-32-chars-minimum!!"
     assert settings.DATABASE_URL == "postgresql+asyncpg://user:pass@localhost/db"
@@ -27,4 +27,5 @@ def test_settings_require_secret_key(monkeypatch):
     monkeypatch.delenv("SUPABASE_SERVICE_KEY", raising=False)
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
     with pytest.raises(Exception):
-        Settings()
+        Settings(_env_file=None)
+

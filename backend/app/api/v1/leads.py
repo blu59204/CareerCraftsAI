@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -102,7 +102,7 @@ async def update_lead_status(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     lead.status = payload.status
-    lead.last_contact = datetime.now(UTC)
+    lead.last_contact = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(lead)
     return lead

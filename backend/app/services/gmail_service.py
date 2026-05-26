@@ -11,15 +11,30 @@ class GmailMCPClient:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._toolkit: GmailToolkit | None = None
+        self._available: bool | None = None
 
-    def _get_toolkit(self) -> GmailToolkit:
+    def _get_toolkit(self) -> GmailToolkit | None:
+        if self._available is False:
+            return None
         if self._toolkit is None:
-            self._toolkit = GmailToolkit()
+            try:
+                self._toolkit = GmailToolkit()
+                self._available = True
+            except Exception as exc:
+                logger.warning(
+                    "Gmail OAuth credentials not available for user %s: %s",
+                    self.user_id,
+                    exc,
+                )
+                self._available = False
+                return None
         return self._toolkit
 
     def search_threads(self, query: str, max_results: int = 10) -> list[dict]:
         try:
             toolkit = self._get_toolkit()
+            if toolkit is None:
+                return []
             tools = {t.name: t for t in toolkit.get_tools()}
             search_tool = tools.get("search_gmail")
             if not search_tool:
@@ -33,6 +48,8 @@ class GmailMCPClient:
     def get_thread(self, thread_id: str) -> dict:
         try:
             toolkit = self._get_toolkit()
+            if toolkit is None:
+                return {}
             tools = {t.name: t for t in toolkit.get_tools()}
             return tools["get_gmail_thread"].run({"thread_id": thread_id}) or {}
         except Exception as exc:
@@ -42,5 +59,10 @@ class GmailMCPClient:
     def send_message(self, to: str, subject: str, body: str) -> dict:
         """Send email. MUST only be called after explicit human approval."""
         toolkit = self._get_toolkit()
+        if toolkit is None:
+            raise RuntimeError(
+                "Gmail OAuth credentials are not configured. "
+                "Connect Gmail in Settings → Account → Connected accounts."
+            )
         tools = {t.name: t for t in toolkit.get_tools()}
         return tools["send_gmail_message"].run({"to": [to], "subject": subject, "message": body})

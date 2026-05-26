@@ -26,7 +26,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const decide = async (approved: boolean) => {
     setLoading(true);
     try {
-      await apiClient.post(`/api/v1/agents/${runId}/approve`, { approved });
+      await apiClient.post(`/agents/${runId}/approve`, { approved });
       approved ? toast.success("Action approved") : toast.info("Action cancelled");
       approved ? onApprove() : onCancel();
     } catch {

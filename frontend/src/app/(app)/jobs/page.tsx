@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -17,7 +17,9 @@ import {
   Copy,
   ChevronDown,
   Loader2,
+  X,
 } from "lucide-react";
+import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -30,6 +32,10 @@ const XRAY_TEMPLATES = [
 ];
 
 const FILTER_CHIPS = ["Remote", "Full-time", "Entry-level", "Bangalore", "Hyderabad", "Mumbai"];
+
+const JOB_TYPE_FILTERS = ["Full-time", "Part-time", "Contract", "Internship"];
+const EXPERIENCE_FILTERS = ["Entry-level", "Mid-level", "Senior", "Lead"];
+const DATE_FILTERS = ["Today", "Past week", "Past month"];
 
 interface SavedJob {
   id: string;
@@ -130,6 +136,113 @@ function XraySearchPanel({
   );
 }
 
+function FilterPanel({
+  activeFilters,
+  onToggle,
+  onClear,
+}: {
+  activeFilters: Set<string>;
+  onToggle: (chip: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.25 }}
+      className="overflow-hidden"
+    >
+      <div className="rounded-3xl border border-border bg-card/60 p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold">Filters</span>
+          {activeFilters.size > 0 && (
+            <button onClick={onClear} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+              <X className="h-3 w-3" /> Clear all
+            </button>
+          )}
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Location / Mode</p>
+          <div className="flex flex-wrap gap-2">
+            {["Remote", "Bangalore", "Hyderabad", "Mumbai"].map((chip) => (
+              <button
+                key={chip}
+                onClick={() => onToggle(chip)}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                  activeFilters.has(chip)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
+                }`}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Job type</p>
+          <div className="flex flex-wrap gap-2">
+            {JOB_TYPE_FILTERS.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => onToggle(chip)}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                  activeFilters.has(chip)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
+                }`}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Experience level</p>
+          <div className="flex flex-wrap gap-2">
+            {EXPERIENCE_FILTERS.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => onToggle(chip)}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                  activeFilters.has(chip)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
+                }`}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Date posted</p>
+          <div className="flex flex-wrap gap-2">
+            {DATE_FILTERS.map((chip) => (
+              <button
+                key={chip}
+                onClick={() => onToggle(chip)}
+                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                  activeFilters.has(chip)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
+                }`}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 function MatchBar({ percent }: { percent: number | null }) {
   const p = percent ?? 0;
   const fillColor = p >= 80 ? "bg-primary" : p >= 60 ? "bg-yellow-500" : "bg-red-400";
@@ -224,28 +337,85 @@ export default function JobsPage() {
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["Remote", "Full-time"]),
   );
+  const [showFilters, setShowFilters] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [xrayQuery, setXrayQuery] = useState(XRAY_TEMPLATES[0]);
   const [searchQuery, setSearchQuery] = useState("");
   const [agentRunning, setAgentRunning] = useState(false);
 
   const { data: jobs = [], isLoading } = useQuery<SavedJob[]>({
-    queryKey: ["jobs-saved"],
+    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(",")],
     queryFn: async () => {
-      const { data } = await apiClient.get("/jobs/applications?status=saved");
+      const params = new URLSearchParams({ status: "saved" });
+      // Pass active filters to backend
+      const locations = Array.from(activeFilters).filter((f) =>
+        ["Remote", "Bangalore", "Hyderabad", "Mumbai"].includes(f)
+      );
+      const jobTypes = Array.from(activeFilters).filter((f) =>
+        ["Full-time", "Part-time", "Contract", "Internship"].includes(f)
+      );
+      const expLevels = Array.from(activeFilters).filter((f) =>
+        ["Entry-level", "Mid-level", "Senior", "Lead"].includes(f)
+      );
+      if (locations.length > 0) params.set("location", locations.join(","));
+      if (jobTypes.length > 0) params.set("job_type", jobTypes.join(","));
+      if (expLevels.length > 0) params.set("experience_level", expLevels.join(","));
+      const { data } = await apiClient.get(`/jobs/applications?${params.toString()}`);
       return data;
     },
   });
+
+  const { data: prefs } = useQuery({
+    queryKey: ["preferences"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/users/me/preferences");
+      return data as {
+        target_roles?: string[];
+        work_mode?: string;
+        job_type?: string;
+        experience_level?: string;
+      } | null;
+    },
+  });
+
+  // Prefill search form and filters from saved preferences on first load
+  useEffect(() => {
+    if (!prefs) return;
+    if (prefs.target_roles && prefs.target_roles.length > 0 && !searchQuery) {
+      setSearchQuery(prefs.target_roles[0]);
+    }
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (prefs.work_mode === "remote" && !next.has("Remote")) {
+        next.add("Remote");
+      }
+      if (prefs.job_type === "full-time" && !next.has("Full-time")) {
+        next.add("Full-time");
+      }
+      if (
+        (prefs.experience_level === "fresher" || prefs.experience_level === "junior") &&
+        !next.has("Entry-level")
+      ) {
+        next.add("Entry-level");
+      }
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs]);
 
   const searchMutation = useMutation({
     mutationFn: (payload: { search_query: string; location: string; max_results: number }) =>
       apiClient.post("/jobs/search", payload),
     onSuccess: () => {
       setAgentRunning(true);
+      toast.success("Job Agent started — scanning boards for matching roles");
       setTimeout(() => {
         setAgentRunning(false);
         qc.invalidateQueries({ queryKey: ["jobs-saved"] });
       }, 8000);
+    },
+    onError: () => {
+      toast.error("Job Agent unavailable — backend not connected");
     },
   });
 
@@ -285,9 +455,18 @@ export default function JobsPage() {
           <h1 className="mt-1 text-3xl font-medium">Find your next role.</h1>
         </div>
         <div className="flex shrink-0 gap-2">
-          <LiquidGlassButton tone="ghost" size="sm">
+          <LiquidGlassButton
+            tone={showFilters ? "primary" : "ghost"}
+            size="sm"
+            onClick={() => setShowFilters((v) => !v)}
+          >
             <Filter className="h-4 w-4" />
             Filters
+            {activeFilters.size > 0 && (
+              <span className="ml-1 rounded-full bg-current/20 px-1.5 py-0.5 text-[10px] font-semibold">
+                {activeFilters.size}
+              </span>
+            )}
           </LiquidGlassButton>
           <LiquidGlassButton
             tone="ghost"
@@ -315,7 +494,7 @@ export default function JobsPage() {
         </div>
       </motion.div>
 
-      {/* Search + filter chips */}
+      {/* Search + active filter chips */}
       <motion.div variants={fadeUp} className="space-y-3">
         <div className="relative">
           <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -349,6 +528,17 @@ export default function JobsPage() {
           )}
         </div>
       </motion.div>
+
+      {/* Filter panel */}
+      <AnimatePresence>
+        {showFilters && (
+          <FilterPanel
+            activeFilters={activeFilters}
+            onToggle={toggleFilter}
+            onClear={() => setActiveFilters(new Set())}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Advanced Search (X-ray) */}
       <AnimatePresence>

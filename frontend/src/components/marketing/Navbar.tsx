@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { UserMenu } from "@/components/auth/UserMenu";
 import { createClient } from "@/lib/supabase/client";
+
+const UserMenu = dynamic(
+  () => import("@/components/auth/UserMenu").then((m) => ({ default: m.UserMenu })),
+  { ssr: false },
+);
 
 const NAV = [
   { href: "/#features", label: "Features" },
@@ -14,10 +19,10 @@ const NAV = [
 ];
 
 export function MarketingNavbar() {
-  const supabase = createClient();
   const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
+    const supabase = createClient();
     let mounted = true;
     supabase.auth.getUser().then(({ data }) => {
       if (mounted) setSignedIn(!!data.user);
@@ -29,7 +34,7 @@ export function MarketingNavbar() {
       mounted = false;
       sub.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, []);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/70 backdrop-blur">

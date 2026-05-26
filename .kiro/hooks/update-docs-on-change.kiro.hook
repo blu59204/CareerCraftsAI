@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "name": "Update Docs on Source Change",
+  "description": "When source files (Python, TypeScript, SQL, config) are edited, ask the agent to update relevant documentation in the docs/ folder or README.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.py",
+      "*.ts",
+      "*.tsx",
+      "*.sql",
+      "docker-compose*.yml",
+      "Makefile",
+      "*.toml",
+      "*.json"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A source file was just edited. Review the change and determine if any documentation needs updating. If so, update the relevant docs in the docs/ folder or the root README. Focus on: API changes, new/removed endpoints, configuration changes, architecture changes, or new commands. If the change is purely internal (refactoring, bug fix with no behavior change), skip the docs update."
+  }
+}

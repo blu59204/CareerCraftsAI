@@ -11,9 +11,21 @@ def get_supabase() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
 
 
+def _ensure_bucket(supabase: Client) -> None:
+    """Create storage bucket if it doesn't exist yet."""
+    try:
+        supabase.storage.get_bucket(BUCKET)
+    except Exception:
+        try:
+            supabase.storage.create_bucket(BUCKET, options={"public": False})
+        except Exception:
+            pass  # already exists or insufficient perms — upload will fail with a clear error
+
+
 def upload_file(user_id: str, filename: str, content: bytes, content_type: str) -> str:
     """Upload file to Supabase Storage. Returns storage path."""
     supabase = get_supabase()
+    _ensure_bucket(supabase)
     ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
     path = f"{user_id}/{uuid.uuid4()}.{ext}"
     try:
