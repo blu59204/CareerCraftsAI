@@ -1,7 +1,8 @@
-"""Supabase JWT verification.
+"""Supabase JWT verification — pinned to HS256.
 
-Backend verifies access tokens locally using SUPABASE_JWT_SECRET (HS256).
-No network call to Supabase per request.
+Supabase project tokens are signed with the JWT secret (HS256).
+We pin the algorithm to prevent algorithm confusion attacks (CWE-327).
+Tokens specifying alg:none or any other algorithm are rejected.
 """
 
 from __future__ import annotations
@@ -11,18 +12,20 @@ from fastapi import HTTPException
 
 from app.core.config import settings
 
+# Pinned algorithm — NEVER read from untrusted token header
+_ALLOWED_ALGORITHMS = ["HS256"]
+
 
 def verify_supabase_jwt(token: str) -> dict:
-    """Decode and validate a Supabase access token.
+    """Verify a Supabase JWT token with pinned HS256 algorithm.
 
-    Returns the decoded payload. Raises HTTPException(401) on any failure.
-    Validates audience="authenticated", expiration, and signature.
+    Rejects: alg:none, ES256, RS256, or any algorithm not in _ALLOWED_ALGORITHMS.
     """
     try:
         payload = jwt.decode(
             token,
             settings.SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
+            algorithms=_ALLOWED_ALGORITHMS,
             audience="authenticated",
             options={"require": ["exp", "sub"]},
         )

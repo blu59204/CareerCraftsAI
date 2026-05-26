@@ -40,9 +40,8 @@ services:
     restart: unless-stopped
 
   pinchtab:
-    image: ghcr.io/pinchtab/pinchtab:0.7.6
-    ports:
-      - "9867:9867"
+    image: pinchtab/pinchtab
+    shm_size: "2g"
     restart: unless-stopped
 
   redis:
@@ -50,9 +49,9 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-changeme}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
