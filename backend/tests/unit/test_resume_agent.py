@@ -25,11 +25,12 @@ def test_resume_agent_pauses_for_approval(mock_llm):
 
     mock_chunks = [MagicMock(page_content="5 years Python experience")]
 
-    _settings_patch = "app.agents.resume_agent._get_model_settings"
+    _settings_patch = "app.agents.resume_agent.fetch_model_settings"
     with patch("app.agents.resume_agent.retrieve", return_value=mock_chunks), \
          patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"), \
          patch(_settings_patch, return_value=MagicMock(provider="openai")), \
-         patch("app.agents.resume_agent._build_llm", return_value=mock_llm):
+         patch("app.agents.resume_agent._build_llm", return_value=mock_llm), \
+         patch("app.agents.resume_agent.fetch_user_full_name", return_value="Test User"):
         result = resume_agent_node(make_state())
 
     assert result["status"] == "awaiting_approval"
@@ -41,9 +42,11 @@ def test_resume_agent_pauses_for_approval(mock_llm):
 def test_resume_agent_sets_error_on_exception():
     from app.agents.resume_agent import resume_agent_node
 
-    with patch("app.agents.resume_agent._get_model_settings", return_value=MagicMock()), \
+    with patch("app.agents.resume_agent.fetch_model_settings", return_value=MagicMock()), \
+         patch("app.agents.resume_agent.fetch_user_full_name", return_value="Test"), \
          patch("app.agents.resume_agent.retrieve", side_effect=Exception("pgvector down")):
         result = resume_agent_node(make_state())
 
     assert result["status"] == "failed"
     assert "pgvector down" in result["error"]
+

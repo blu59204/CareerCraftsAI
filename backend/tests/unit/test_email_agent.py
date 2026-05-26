@@ -33,7 +33,7 @@ def test_email_agent_drafts_and_pauses_for_approval(mock_llm):
         "Dear Hiring Team,\n\nI wanted to follow up..."
     ]
 
-    _patch_settings = "app.agents.email_agent._get_model_settings"
+    _patch_settings = "app.agents.email_agent.fetch_model_settings"
     _patch_llm = "app.agents.email_agent._build_llm"
     _patch_gmail = "app.agents.email_agent.GmailMCPClient"
     with patch(_patch_settings, return_value=MagicMock(provider="openai")), \
@@ -57,7 +57,7 @@ def test_email_agent_never_auto_sends(mock_llm):
 
     mock_llm.responses = ["Subject: Test\n\nBody"]
 
-    _patch_settings = "app.agents.email_agent._get_model_settings"
+    _patch_settings = "app.agents.email_agent.fetch_model_settings"
     _patch_llm = "app.agents.email_agent._build_llm"
     _patch_gmail = "app.agents.email_agent.GmailMCPClient"
     with patch(_patch_settings, return_value=MagicMock(provider="openai")), \
@@ -73,7 +73,7 @@ def test_email_agent_never_auto_sends(mock_llm):
 def test_email_agent_fails_gracefully():
     from app.agents.email_agent import email_agent_node
 
-    with patch("app.agents.email_agent._get_model_settings", return_value=MagicMock()), \
+    with patch("app.agents.email_agent.fetch_model_settings", return_value=MagicMock()), \
          patch("app.agents.email_agent._build_llm", side_effect=Exception("LLM unavailable")):
         result = email_agent_node(make_state())
 

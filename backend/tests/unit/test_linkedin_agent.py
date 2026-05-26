@@ -34,7 +34,7 @@ def test_linkedin_agent_generates_sections_and_pauses():
     mock_llm.invoke.side_effect = llm_responses
     mock_chunks = [MagicMock(page_content="5 years Python, FastAPI, LangChain")]
 
-    _settings_patch = "app.agents.linkedin_agent._get_model_settings"
+    _settings_patch = "app.agents.linkedin_agent.fetch_model_settings"
     with patch("app.agents.linkedin_agent.retrieve", return_value=mock_chunks), \
          patch(_settings_patch, return_value=MagicMock(provider="openai")), \
          patch("app.agents.linkedin_agent._build_llm", return_value=mock_llm):
@@ -50,9 +50,10 @@ def test_linkedin_agent_generates_sections_and_pauses():
 def test_linkedin_agent_fails_gracefully():
     from app.agents.linkedin_agent import linkedin_agent_node
 
-    with patch("app.agents.linkedin_agent._get_model_settings", return_value=MagicMock()), \
+    with patch("app.agents.linkedin_agent.fetch_model_settings", return_value=MagicMock()), \
          patch("app.agents.linkedin_agent.retrieve", side_effect=Exception("DB error")):
         result = linkedin_agent_node(make_state())
 
     assert result["status"] == "failed"
     assert "DB error" in result["error"]
+

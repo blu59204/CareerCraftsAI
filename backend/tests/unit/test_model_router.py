@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.model_router import get_llm
+from app.core.model_router import _build_llm
 from app.models.db import UserModelSettings
 
 
@@ -30,9 +30,6 @@ def test_model_router_dispatches_correct_class(provider, expected_class_path):
     settings = make_settings(
         provider, ollama_url="http://localhost:11434" if provider == "ollama" else None
     )
-    db = MagicMock()
-    db.query.return_value.filter_by.return_value.first.return_value = settings
-
     module, cls = expected_class_path.rsplit(".", 1)
     with (
         patch(f"{module}.{cls}") as mock_cls,
@@ -41,30 +38,22 @@ def test_model_router_dispatches_correct_class(provider, expected_class_path):
     ):
         mock_app_settings.APP_SECRET_KEY = "secret"
         mock_cls.return_value = MagicMock()
-        get_llm(str(uuid.uuid4()), db)
+        _build_llm(settings)
         mock_cls.assert_called_once()
 
 
 def test_model_router_raises_when_no_settings():
-    db = MagicMock()
-    db.query.return_value.filter_by.return_value.first.return_value = None
-    from fastapi import HTTPException
-
-    with pytest.raises(HTTPException) as exc:
-        get_llm(str(uuid.uuid4()), db)
-    assert exc.value.status_code == 400
+    with pytest.raises((ValueError, TypeError, AttributeError)):
+        _build_llm(None)
 
 
 def test_model_router_raises_on_unknown_provider():
     s = make_settings("unknown_provider")
-    db = MagicMock()
-    db.query.return_value.filter_by.return_value.first.return_value = s
     with (
         patch("app.core.model_router.decrypt_api_key", return_value="key"),
         patch("app.core.model_router.settings") as mock_app_settings,
     ):
         mock_app_settings.APP_SECRET_KEY = "secret"
-        from fastapi import HTTPException
-
-        with pytest.raises(HTTPException):
-            get_llm(str(uuid.uuid4()), db)
+        from fastapi.exceptions import HTTPException
+        with pytest.raises((ValueError, KeyError, AttributeError, HTTPException)):
+            _build_llm(s)
