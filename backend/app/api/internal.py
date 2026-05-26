@@ -7,9 +7,9 @@ import asyncio
 import hmac
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -32,12 +32,10 @@ class JobSearchTrigger(BaseModel):
     max_results: int
 
 
-@router.post("/agents/run-job-search")
+@router.post("/agents/run-job-search", dependencies=[Depends(_verify_secret)])
 async def run_job_search(
     payload: JobSearchTrigger,
-    x_internal_secret: str = Header(...),
 ):
-    _verify_secret(x_internal_secret)
 
     from sqlalchemy import select
 
@@ -74,7 +72,24 @@ async def run_job_search(
         if run:
             run.status = result_state["status"]
             run.output = result_state.get("result")
-            run.completed_at = datetime.now(UTC)
+            run.completed_at = datetime.now(timezone.utc)
+
+        # Persist matched jobs as saved JobApplications
+        if result_state["status"] == "completed":
+            matches = (result_state.get("result") or {}).get("matches", [])
+            from app.models.db import JobApplication
+            for job in matches:
+                app = JobApplication(
+                    user_id=uuid.UUID(payload.user_id),
+                    company=job.get("company", "Unknown"),
+                    role=job.get("title", "Unknown"),
+                    job_url=job.get("job_url"),
+                    jd_text=job.get("description"),
+                    match_score=job.get("match_score"),
+                    status="saved",
+                )
+                db.add(app)
+
         await db.commit()
 
     logger.info(
@@ -91,12 +106,10 @@ class FollowupTrigger(BaseModel):
     day: int
 
 
-@router.post("/agents/run-followup")
+@router.post("/agents/run-followup", dependencies=[Depends(_verify_secret)])
 async def run_followup(
     payload: FollowupTrigger,
-    x_internal_secret: str = Header(...),
 ):
-    _verify_secret(x_internal_secret)
 
     from app.agents.followup_agent import schedule_followups
     from app.core.database import AsyncSessionLocal
@@ -114,7 +127,7 @@ async def run_followup(
             logger.warning("Follow-up: application %s not found", payload.application_id)
             return {"status": "not_found", "application_id": payload.application_id}
 
-    schedule_followups(payload.user_id, payload.application_id, application.applied_at)
+    await schedule_followups(payload.user_id, payload.application_id, application.applied_at)
     logger.info(
         "Follow-up day-%d triggered for application %s user %s",
         payload.day,
