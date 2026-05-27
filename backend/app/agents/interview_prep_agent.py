@@ -16,11 +16,14 @@ Company: {company}
 Candidate Background (from resume):
 {context}
 
+STRATEGIC ANALYSIS (use this to tailor questions):
+{thinking}
+
 Generate exactly this structure:
-1. Five behavioral questions (STAR format) tailored to the role
-2. Five technical/domain questions for this role
-3. Three questions the candidate should ask the interviewer
-4. One 60-second elevator pitch based on the candidate's background
+1. Five behavioral questions (STAR format) tailored to the role — focus on the candidate's RELEVANT experiences only
+2. Five technical/domain questions for this role — target likely weak spots and strengths
+3. Three questions the candidate should ask the interviewer — show strategic thinking
+4. One 60-second elevator pitch based on the candidate's STRONGEST relevant background
 
 Format your response as JSON with keys:
   behavioral_questions, technical_questions, questions_to_ask, elevator_pitch
@@ -45,12 +48,24 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
         context_text = "\n".join(c.page_content for c in chunks) if chunks else "No resume context available."
 
         llm = _build_llm(model_settings)
+
+        # ── Think: What are the candidate's strengths/gaps for this role ──
+        from app.agents.thinking import think_and_select
+        thinking = think_and_select(
+            llm=llm,
+            task_description=f"Prepare interview for {target_role} at {company}",
+            user_context=context_text,
+            target_context=f"Role: {target_role}, Company: {company}",
+            selection_criteria="What are the candidate's strongest stories? Where are the gaps they'll be questioned on?",
+        )
+
         response = llm.invoke([
             HumanMessage(
                 content=_QUESTIONS_PROMPT.format(
                     role=target_role,
                     company=company,
                     context=context_text,
+                    thinking=thinking,
                 )
             )
         ])

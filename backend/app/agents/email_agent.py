@@ -1,8 +1,9 @@
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.state import AgentState
+from app.agents.thinking import think_and_select
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings
 from app.services.gmail_service import GmailMCPClient
@@ -14,6 +15,9 @@ _OUTREACH_PROMPT = """You are writing a professional follow-up email for a job a
 Company: {company}
 Role: {role}
 Prior thread context: {thread_context}
+
+STRATEGIC THINKING (follow this approach):
+{thinking}
 
 Write a concise, professional email (3-4 short paragraphs max).
 Format your response exactly as:
@@ -45,9 +49,19 @@ def email_agent_node(state: AgentState) -> AgentState:
         )
 
         llm = _build_llm(model_settings)
+
+        # ── Think: What angle to take, what to emphasize ─────────────
+        thinking = think_and_select(
+            llm=llm,
+            task_description=f"Write outreach email to {recipient} about {role} at {company}",
+            user_context=f"Prior email threads: {thread_context}",
+            target_context=f"Company: {company}, Role: {role}",
+            selection_criteria="What hook will get a response? What's unique about this candidate for this role?",
+        )
+
         response = llm.invoke([HumanMessage(
             content=_OUTREACH_PROMPT.format(
-                company=company, role=role, thread_context=thread_context
+                company=company, role=role, thread_context=thread_context, thinking=thinking
             )
         )])
 
@@ -59,7 +73,6 @@ def email_agent_node(state: AgentState) -> AgentState:
             subject = lines[0].replace("Subject:", "").strip()
             body = lines[2].strip() if len(lines) > 2 else ""
 
-        # NEVER call gmail.send_message here — human gate enforced via /approve endpoint
         return {
             **state,
             "status": "awaiting_approval",
@@ -68,6 +81,7 @@ def email_agent_node(state: AgentState) -> AgentState:
                 "recipient": recipient,
                 "subject": subject,
                 "body": body,
+                "thinking": thinking,
             },
             "messages": state["messages"] + [
                 AIMessage(content=f"Email draft ready for {recipient}. Review before sending.")

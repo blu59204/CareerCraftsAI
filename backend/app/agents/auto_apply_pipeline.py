@@ -299,16 +299,21 @@ async def _apply_to_job(
 
 
 def _score_job_quick(llm: Any, job: JobListing, profile: str) -> int:
-    """Quick score a job 0-100 against user profile."""
+    """Score a job 0-100 using critical thinking analysis."""
     try:
-        resp = llm.invoke([HumanMessage(
-            content=f"Rate 0-100 how well this job matches the candidate. Return ONLY a number.\n\n"
-                    f"Candidate: {profile[:500]}\n\nJob: {job.title} at {job.company}\n{job.description[:300]}\n\nScore:"
-        )])
-        digits = "".join(c for c in resp.content.strip()[:3] if c.isdigit())
-        return int(digits) if digits else 0
+        from app.agents.thinking import think_about_job_match
+        result = think_about_job_match(llm, profile, f"{job.title} at {job.company}\n{job.description[:500]}")
+        match_level = result.get("match_level", "MEDIUM")
+        decision = result.get("decision", "MAYBE")
+
+        # Convert thinking output to numeric score
+        level_scores = {"HIGH": 85, "MEDIUM": 60, "LOW": 30}
+        decision_bonus = {"YES": 10, "MAYBE": 0, "NO": -20}
+        base = level_scores.get(match_level, 50)
+        bonus = decision_bonus.get(decision, 0)
+        return max(0, min(100, base + bonus))
     except Exception:
-        return 0
+        return 50
 
 
 def _generate_cold_email(

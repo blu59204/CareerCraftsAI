@@ -16,7 +16,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from browser_use import Agent, Browser, BrowserConfig
+try:
+    from browser_use import Agent, Browser, BrowserConfig
+    BROWSER_USE_AVAILABLE = True
+except ImportError:
+    BROWSER_USE_AVAILABLE = False
+    Agent = Browser = BrowserConfig = None  # type: ignore
 from langchain_core.language_models import BaseChatModel
 
 from app.core.config import settings

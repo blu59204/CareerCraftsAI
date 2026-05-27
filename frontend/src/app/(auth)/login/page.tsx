@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import React, { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SignInPage, type AuthMode, type Testimonial } from "@/components/ui/sign-in";
@@ -38,10 +38,18 @@ const TESTIMONIALS: Testimonial[] = [
 const HERO_IMAGE =
   "https://images.unsplash.com/photo-1642615835477-d303d7dc9ee9?w=2160&q=80";
 
+function useSupabase() {
+  const ref = React.useRef<ReturnType<typeof createClient>>();
+  if (!ref.current && typeof window !== "undefined") {
+    ref.current = createClient();
+  }
+  return ref.current!;
+}
+
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = createClient();
+  const supabase = useSupabase();
   const [mode, setMode] = useState<AuthMode>("sign-in");
   const [error, setError] = useState<string | null>(searchParams.get("error"));
   const [info, setInfo] = useState<string | null>(null);

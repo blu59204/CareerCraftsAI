@@ -35,6 +35,7 @@ interface JobApplication {
 interface PendingApproval {
   id: string;
   agent_type: string;
+  status: string;
   output: { type?: string; subject?: string; body?: string } | null;
 }
 
@@ -60,7 +61,7 @@ export default function DashboardPage() {
     queryKey: ["pending-approvals"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=20");
-      return (data as PendingApproval[]).filter((r: { status?: string }) => r.status === "awaiting_approval");
+      return (data as PendingApproval[]).filter((r) => r.status === "awaiting_approval");
     },
     refetchInterval: 10000,
   });

@@ -1,33 +1,35 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api";
-
-interface UserProfile {
-  onboarding_completed: boolean;
-}
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 
 export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
-
-  const { data: user } = useQuery<UserProfile>({
-    queryKey: ["me"],
-    queryFn: async () => {
-      const { data } = await apiClient.get<UserProfile>("/users/me");
-      return data;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
+  const [mounted, setMounted] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
-    if (pathname === "/onboarding") return;
-    if (user && user.onboarding_completed === false) {
-      router.replace("/onboarding");
-    }
-  }, [user, router, pathname]);
+    setMounted(true);
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) {
+        router.replace("/login");
+      } else {
+        setAuthenticated(true);
+      }
+    });
+  }, [router]);
+
+  // Return null on both server and initial client render to avoid hydration mismatch.
+  // Server renders with mounted=false, client hydrates with mounted=false — consistent.
+  if (!mounted || !authenticated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return <>{children}</>;
 }

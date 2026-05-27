@@ -58,7 +58,7 @@ def _extract_jobs_from_text(llm, page_text: str, max_results: int) -> list[dict]
         return []
 
 
-def _score_job(llm, job: dict, profile: str) -> int:
+def _score_job(llm, job: dict, profile: str, thinking: str = "") -> int:
     try:
         resp = llm.invoke([HumanMessage(
             content=SCORE_PROMPT.format(
@@ -66,7 +66,7 @@ def _score_job(llm, job: dict, profile: str) -> int:
                 title=job.get("title", ""),
                 company=job.get("company", ""),
                 description=str(job.get("description", ""))[:500],
-            )
+            ) + (f"\n\nScoring criteria from analysis:\n{thinking}" if thinking else "")
         )])
         digits = "".join(c for c in resp.content.strip()[:3] if c.isdigit())
         return int(digits) if digits else 0
@@ -90,6 +90,16 @@ def job_search_agent_node(state: AgentState) -> AgentState:
 
         user_profile = fetch_user_profile_text(user_id)
         llm = _build_llm(model_settings)
+
+        # ── Think: What to prioritize when scoring jobs ──────────────
+        from app.agents.thinking import think_and_select
+        thinking = think_and_select(
+            llm=llm,
+            task_description=f"Search and score jobs for query: '{query}' in '{location}'",
+            user_context=user_profile[:1000],
+            target_context=f"Search: {query}, Location: {location}",
+            selection_criteria="What are the user's must-haves? What should disqualify a job? What signals a great match?",
+        )
 
         jobs_raw: list[dict] = []
         try:
@@ -123,7 +133,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
                 jobs_raw = _MOCK_JOBS[:max_results]
 
         scored = [
-            {**job, "match_score": _score_job(llm, job, user_profile)}
+            {**job, "match_score": _score_job(llm, job, user_profile, thinking)}
             for job in jobs_raw
         ]
         scored.sort(key=lambda j: j["match_score"], reverse=True)

@@ -162,6 +162,16 @@ class AgentHarness:
             "_strategy": strategy,
         }
 
+        # ── Pre-action thinking: analyze task before execution ────────
+        # Inject procedures as reusable patterns the agent can follow
+        procedures = mem_context.get("procedures", [])
+        if procedures:
+            enriched_context["_procedures"] = procedures
+        # Inject blacklist so agent avoids known-bad approaches
+        blacklist = mem_context.get("blacklist", [])
+        if blacklist:
+            enriched_context["_avoid"] = blacklist
+
         # ── 4. Build AgentState and invoke orchestrator ──────────────
         # SECURITY: Separate prompt instructions from user data with XML delimiters
         # to prevent prompt injection via user-controlled content (CWE-77)
@@ -321,7 +331,7 @@ class AgentHarness:
     ) -> None:
         """
         Pull salient learnings from a successful output dict and persist them.
-        This is a heuristic extraction — a richer version could call an LLM.
+        Also saves the workflow as a reusable procedure (procedural memory).
         """
         new_learnings: list[dict[str, Any]] = []
 
@@ -346,6 +356,16 @@ class AgentHarness:
                 agent_type=agent_type,
                 learnings=new_learnings,
             )
+
+        # Save as procedural memory — the workflow that succeeded
+        action_type = output.get("type", agent_type)
+        trigger = f"{agent_type}_{action_type}"
+        workflow = {
+            "agent_type": agent_type,
+            "action_type": action_type,
+            "output_keys": list(output.keys())[:10],
+        }
+        await self._memory.save_procedure(user_id, agent_type, trigger, workflow)
 
     # ------------------------------------------------------------------
     # Reflection

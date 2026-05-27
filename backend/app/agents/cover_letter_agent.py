@@ -215,9 +215,27 @@ def cover_letter_node(state: AgentState) -> AgentState:
         if not context_text.strip():
             context_text = primary_resume_text
 
+        # ── Think: Which achievements to highlight, what angle ────────
+        from app.agents.thinking import think_and_select
+        llm = _build_llm(model_settings)
+
+        thinking = think_and_select(
+            llm=llm,
+            task_description=f"Write a {tone} cover letter for this job application",
+            user_context=context_text,
+            target_context=jd_text,
+            selection_criteria="Which 2-3 achievements create the strongest case? What's the unique hook?",
+        )
+
         # Build prompt and invoke LLM via model_router
         messages = _build_cover_letter_prompt(context_text, jd_text, tone)
-        llm = _build_llm(model_settings)
+        # Inject thinking into the user message
+        messages[-1] = HumanMessage(
+            content=(
+                f"STRATEGIC THINKING (follow this):\n{thinking}\n\n"
+                f"{messages[-1].content}"
+            )
+        )
         response = llm.invoke(messages)
         cover_letter_text = response.content
 

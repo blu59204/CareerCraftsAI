@@ -199,3 +199,91 @@ def generate_resume_pdf(
 
     doc.build(story)
     return buffer.getvalue()
+
+
+
+def generate_resume_docx(resume_text: str, full_name: str = "") -> bytes:
+    """Generate ATS-friendly DOCX from resume text.
+
+    Uses Calibri 11pt, single column, standard margins.
+    Compatible with Greenhouse, Workday, Taleo, iCIMS parsers.
+    """
+    from docx import Document
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    import io
+
+    if not resume_text or not resume_text.strip():
+        raise ValueError("resume_text cannot be empty")
+
+    doc = Document()
+
+    # Set margins
+    for section in doc.sections:
+        section.top_margin = Inches(0.75)
+        section.bottom_margin = Inches(0.75)
+        section.left_margin = Inches(0.75)
+        section.right_margin = Inches(0.75)
+
+    lines = resume_text.strip().split("\n")
+    name_written = False
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if not name_written:
+            display = full_name if full_name else stripped
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(display)
+            run.bold = True
+            run.font.size = Pt(14)
+            run.font.name = "Calibri"
+            name_written = True
+            if full_name and stripped != full_name and _is_contact_line(stripped):
+                cp = doc.add_paragraph()
+                cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cr = cp.add_run(stripped)
+                cr.font.size = Pt(10)
+                cr.font.name = "Calibri"
+            continue
+
+        if _is_section_header(stripped):
+            p = doc.add_paragraph()
+            run = p.add_run(stripped)
+            run.bold = True
+            run.font.size = Pt(11)
+            run.font.name = "Calibri"
+            # Add bottom border via paragraph formatting
+            p.paragraph_format.space_before = Pt(10)
+            p.paragraph_format.space_after = Pt(4)
+            continue
+
+        if _is_contact_line(stripped):
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(stripped)
+            run.font.size = Pt(10)
+            run.font.name = "Calibri"
+            continue
+
+        if _is_bullet_line(stripped):
+            p = doc.add_paragraph(style="List Bullet")
+            # Remove bullet prefix for clean rendering
+            clean = re.sub(r"^[•\-\*]\s*", "", stripped)
+            clean = re.sub(r"^\d+\.\s*", "", clean)
+            run = p.add_run(clean)
+            run.font.size = Pt(10.5)
+            run.font.name = "Calibri"
+            continue
+
+        p = doc.add_paragraph()
+        run = p.add_run(stripped)
+        run.font.size = Pt(10.5)
+        run.font.name = "Calibri"
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    return buffer.getvalue()

@@ -69,6 +69,9 @@ app.include_router(linkedin.router, prefix="/api/v1")
 app.include_router(memory_router)
 app.include_router(internal.router)
 
+from app.core.llm_gateway import router as llm_gateway_router
+app.include_router(llm_gateway_router)
+
 
 @app.get("/health")
 async def health():
