@@ -1,0 +1,53 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+.next/
+dist/
+.turbo/
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Supabase
+supabase/.branches
+supabase/.temp
+
+# AI tooling / agent configs (not needed in repo)
+.claude/
+.codex/
+.agents/
+.github/
+.kiro/
+.cursor/
+.windsurf/
+.aider*
+.verdent/
+.mcp.json
+CLAUDE.md
+AGENTS.md
+GEMINI.md

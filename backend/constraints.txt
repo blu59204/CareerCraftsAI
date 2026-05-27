@@ -1,0 +1,3 @@
+# Security constraint: langgraph-checkpoint-sqlite has CVE-2025-67644 (SQL injection)
+# We use PostgreSQL checkpoints only. Never install the SQLite variant.
+langgraph-checkpoint-sqlite==0.0.0
