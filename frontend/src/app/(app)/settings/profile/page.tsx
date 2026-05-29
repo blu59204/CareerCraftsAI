@@ -74,6 +74,7 @@ function PillButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors",
         active
@@ -90,7 +91,12 @@ function TagPill({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs">
       {label}
-      <button type="button" onClick={onRemove} className="ml-0.5 hover:text-foreground text-muted-foreground">
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${label}`}
+        className="ml-0.5 text-muted-foreground hover:text-foreground"
+      >
         <X className="h-3 w-3" />
       </button>
     </span>
