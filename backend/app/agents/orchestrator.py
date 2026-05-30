@@ -3,9 +3,11 @@ import logging
 from langgraph.graph import END, StateGraph
 
 from app.agents.email_agent import email_agent_node
+from app.agents.email_monitor_agent import email_monitor_node
 from app.agents.interview_prep_agent import interview_prep_agent_node
 from app.agents.job_search import job_search_agent_node
 from app.agents.linkedin_agent import linkedin_agent_node
+from app.agents.linkedin_outreach_agent import linkedin_outreach_agent_node
 from app.agents.resume_agent import resume_agent_node
 from app.agents.cover_letter_agent import cover_letter_node
 from app.agents.interview_coach_agent import start_session_node
@@ -16,20 +18,13 @@ from app.agents.state import AgentState
 from app.core.event_bus import emit
 
 logger = logging.getLogger(__name__)
+CLIENT_SAFE_AGENT_ERROR = "Agent failed"
 
 
 def company_research_node(state: AgentState) -> AgentState:
     """Sync wrapper for the async company_research_node."""
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(1) as pool:
-                return pool.submit(asyncio.run, _async_company_research_node(state)).result()
-        return loop.run_until_complete(_async_company_research_node(state))
-    except RuntimeError:
-        return asyncio.run(_async_company_research_node(state))
+    from app.core.sync_db import run_coro_sync
+    return run_coro_sync(_async_company_research_node(state))
 
 _TASK_ROUTES: dict[str, str] = {
     "resume_optimize": "resume",
@@ -43,7 +38,8 @@ _TASK_ROUTES: dict[str, str] = {
     "salary_intelligence": "salary",
     "company_research": "company_research",
     "nl_job_search": "nl_search",
-    "linkedin_outreach": "linkedin",
+    "linkedin_outreach": "linkedin_outreach",
+    "email_monitor": "email_monitor",
 }
 
 _TERMINAL_STATUSES = {"completed", "failed", "awaiting_approval"}
@@ -62,7 +58,14 @@ def _wrap_with_events(agent_fn, agent_name: str):
         if result["status"] == "awaiting_approval":
             emit(state["run_id"], "checkpoint", result.get("pending_action") or {})
         elif result["status"] == "failed":
-            emit(state["run_id"], "error", result.get("error", "Unknown error"))
+            if result.get("error"):
+                logger.warning(
+                    "%s failed for run %s: %s",
+                    agent_name,
+                    state["run_id"],
+                    result.get("error"),
+                )
+            emit(state["run_id"], "error", CLIENT_SAFE_AGENT_ERROR)
         elif result["status"] == "completed":
             emit(state["run_id"], "complete", result.get("result") or {})
         return result
@@ -82,6 +85,8 @@ def build_graph() -> StateGraph:
     graph.add_node("salary", _wrap_with_events(salary_report_node, "SalaryAgent"))
     graph.add_node("company_research", _wrap_with_events(company_research_node, "CompanyResearchAgent"))
     graph.add_node("nl_search", _wrap_with_events(nl_search_node, "NLSearchAgent"))
+    graph.add_node("linkedin_outreach", _wrap_with_events(linkedin_outreach_agent_node, "LinkedInOutreachAgent"))
+    graph.add_node("email_monitor", _wrap_with_events(email_monitor_node, "EmailMonitorAgent"))
     graph.set_conditional_entry_point(
         route_task,
         {
@@ -95,11 +100,14 @@ def build_graph() -> StateGraph:
             "salary": "salary",
             "company_research": "company_research",
             "nl_search": "nl_search",
+            "linkedin_outreach": "linkedin_outreach",
+            "email_monitor": "email_monitor",
             "__end__": END,
         },
     )
     for node in ("resume", "job_search", "linkedin", "email", "interview_prep",
-                 "cover_letter", "interview_coach", "salary", "company_research", "nl_search"):
+                 "cover_letter", "interview_coach", "salary", "company_research", "nl_search",
+                 "linkedin_outreach", "email_monitor"):
         graph.add_edge(node, END)
     return graph.compile()
 

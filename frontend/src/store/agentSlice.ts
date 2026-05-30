@@ -54,7 +54,8 @@ export const useAgentStore = create<AgentStore>((set) => ({
     })),
   clearRun: (runId) =>
     set((s) => {
-      const { [runId]: _removed, ...rest } = s.runs;
+      const rest = { ...s.runs };
+      delete rest[runId];
       return { runs: rest };
     }),
 }));

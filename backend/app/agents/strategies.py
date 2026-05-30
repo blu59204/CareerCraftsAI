@@ -33,6 +33,16 @@ STRATEGIES: dict[str, list[str]] = {
         "role_specific_questions",
         "company_research",
     ],
+    "linkedin_outreach": [
+        "recruiter_priority",
+        "short_personalized_note",
+        "approval_first",
+    ],
+    "email_monitor": [
+        "interview_replies_first",
+        "status_classification",
+        "daily_scan",
+    ],
 }
 
 # Canonical mapping: task_type → agent key used in STRATEGIES
@@ -49,6 +59,7 @@ TASK_TO_AGENT: dict[str, str] = {
     "company_research": "company_research",
     "nl_job_search": "nl_search",
     "linkedin_outreach": "linkedin_outreach",
+    "email_monitor": "email_monitor",
 }
 
 

@@ -35,6 +35,7 @@ class UserProfileUpdate(BaseModel):
 
 class UserPreferencesSchema(BaseModel):
     experience_level: str | None = None
+    years_experience: int | None = Field(None, ge=0, le=60)
     job_type: str | None = None
     work_mode: str | None = None
     salary_min: int | None = None

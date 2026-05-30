@@ -4,21 +4,24 @@ const nextConfig = {
   compress: true,
   poweredByHeader: false,
   reactStrictMode: true,
+  turbopack: {
+    root: __dirname,
+  },
 
   // Optimize images
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30, // 30 days
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "i.ytimg.com",
+      },
+    ],
   },
 
-  // Reduce bundle size
-  modularizeImports: {
-    "lucide-react": {
-      transform: "lucide-react/dist/esm/icons/{{kebabCase member}}",
-    },
-  },
-
-  // Headers for caching static assets
+  // Cache public assets. Next.js manages /_next/static cache headers itself,
+  // which keeps dev chunks from being pinned across Fast Refresh rebuilds.
   async headers() {
     return [
       {
@@ -27,17 +30,7 @@ const nextConfig = {
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
         ],
       },
-      {
-        source: "/_next/static/:path*",
-        headers: [
-          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
-        ],
-      },
     ];
-  },
-
-  experimental: {
-    optimizePackageImports: ["lucide-react", "motion", "@radix-ui/react-dialog"],
   },
 };
 

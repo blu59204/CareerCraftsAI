@@ -1,7 +1,7 @@
 """
 Internal endpoints called by BullMQ worker only.
 Not exposed via Nginx (blocked at nginx level).
-Protected by shared APP_SECRET_KEY header — not Supabase JWT.
+Protected by a dedicated INTERNAL_SECRET header — not Supabase JWT.
 """
 import asyncio
 import hmac
@@ -13,14 +13,17 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
+from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.config import settings
+from app.core.event_bus import emit
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 logger = logging.getLogger(__name__)
 
 
 def _verify_secret(x_internal_secret: str = Header(...)) -> None:
-    if not hmac.compare_digest(x_internal_secret, settings.APP_SECRET_KEY):
+    internal_secret = settings.INTERNAL_SECRET or settings.APP_SECRET_KEY
+    if not hmac.compare_digest(x_internal_secret, internal_secret):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -30,6 +33,8 @@ class JobSearchTrigger(BaseModel):
     search_query: str
     location: str
     max_results: int
+    live_browser: bool = False
+    work_mode: str = ""
 
 
 @router.post("/agents/run-job-search", dependencies=[Depends(_verify_secret)])
@@ -53,6 +58,8 @@ async def run_job_search(
             "search_query": payload.search_query,
             "location": payload.location,
             "max_results": payload.max_results,
+            "live_browser": payload.live_browser,
+            "work_mode": payload.work_mode,
         },
         status="running",
         pending_action=None,
@@ -60,9 +67,16 @@ async def run_job_search(
         error=None,
     )
 
-    result_state = await asyncio.get_running_loop().run_in_executor(
-        None, job_search_agent_node, state
-    )
+    try:
+        result_state = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                None, job_search_agent_node, state
+            ),
+            timeout=120,
+        )
+    except TimeoutError:
+        logger.error("Job search run %s timed out", payload.run_id)
+        result_state = {**state, "status": "failed", "error": "Job search timed out"}
 
     async with AsyncSessionLocal() as db:
         res = await db.execute(
@@ -70,8 +84,18 @@ async def run_job_search(
         )
         run = res.scalar_one_or_none()
         if run:
+            if result_state["status"] == "failed" and result_state.get("error"):
+                logger.warning(
+                    "Job search run %s failed: %s",
+                    payload.run_id,
+                    result_state.get("error"),
+                )
             run.status = result_state["status"]
-            run.output = result_state.get("result")
+            run.output = (
+                result_state.get("result")
+                if result_state["status"] == "completed"
+                else {"error": CLIENT_SAFE_AGENT_ERROR}
+            )
             run.completed_at = datetime.now(timezone.utc)
 
         # Persist matched jobs as saved JobApplications
@@ -83,6 +107,7 @@ async def run_job_search(
                     user_id=uuid.UUID(payload.user_id),
                     company=job.get("company", "Unknown"),
                     role=job.get("title", "Unknown"),
+                    location=job.get("location"),
                     job_url=job.get("job_url"),
                     jd_text=job.get("description"),
                     match_score=job.get("match_score"),
@@ -91,6 +116,13 @@ async def run_job_search(
                 db.add(app)
 
         await db.commit()
+
+    if result_state["status"] == "completed":
+        emit(payload.run_id, "complete", result_state.get("result") or {})
+    elif result_state["status"] == "awaiting_approval":
+        emit(payload.run_id, "checkpoint", result_state.get("pending_action") or {})
+    else:
+        emit(payload.run_id, "error", CLIENT_SAFE_AGENT_ERROR)
 
     logger.info(
         "Job search run %s finished with status %s",
@@ -173,7 +205,7 @@ async def daily_search(payload: StatusCheckTrigger):
 
         for user in users:
             try:
-                user_id = user.supabase_uid
+                user_id = str(user.id)
                 llm = await get_llm(user_id, db)
 
                 # Get user preferences from memory
@@ -210,7 +242,7 @@ async def daily_search(payload: StatusCheckTrigger):
                 for job in all_jobs[:10]:
                     existing = await db.execute(
                         select(JobApplication).where(
-                            JobApplication.user_id == uuid.UUID(user_id),
+                            JobApplication.user_id == user.id,
                             JobApplication.job_url == job.job_url,
                         )
                     )
@@ -218,9 +250,10 @@ async def daily_search(payload: StatusCheckTrigger):
                         continue  # Skip duplicates
 
                     app = JobApplication(
-                        user_id=uuid.UUID(user_id),
+                        user_id=user.id,
                         company=job.company,
                         role=job.title,
+                        location=job.location,
                         job_url=job.job_url,
                         jd_text=job.description,
                         status="saved",
@@ -230,7 +263,7 @@ async def daily_search(payload: StatusCheckTrigger):
 
                 await db.commit()
             except Exception as exc:
-                logger.warning("Daily search failed for user %s: %s", user.supabase_uid, exc)
+                logger.warning("Daily search failed for user %s: %s", user.id, exc)
 
     logger.info("Daily search complete: %d jobs found, %d queued", jobs_found, applications_queued)
     return {"status": "ok", "jobs_found": jobs_found, "applications_queued": applications_queued}
@@ -294,7 +327,7 @@ async def check_application_status(payload: StatusCheckTrigger):
                         .where(JobApplication.id == app_id)
                         .values(status=new_status)
                     )
-                    updated_count += len(updates)
+                    updated_count += 1
             except Exception as exc:
                 logger.warning("Status check failed for platform %s: %s", platform, exc)
 
@@ -384,7 +417,8 @@ def _parse_status_updates(result_text: str, apps: list) -> dict:
                 if app.company.lower() in company or company in app.company.lower():
                     updates[app.id] = new_status
                     break
-        except Exception:
+        except Exception as exc:
+            logger.debug("Skipping unparsable status update line: %s", exc)
             continue
 
     return updates

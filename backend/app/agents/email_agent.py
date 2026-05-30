@@ -28,6 +28,22 @@ Subject: <subject line>
 Do NOT include placeholder text. Write a complete, ready-to-send email."""
 
 
+def _fallback_email(company: str, role: str, reason: str) -> tuple[str, str, str]:
+    role_text = role or "the role"
+    company_text = company or "your team"
+    subject = f"Following up on {role_text}"
+    body = (
+        f"Hi,\n\n"
+        f"I wanted to follow up on my interest in {role_text} at {company_text}. "
+        "My background aligns with building reliable software, collaborating across teams, "
+        "and moving product work from unclear requirements to shipped results.\n\n"
+        "I would welcome the chance to share more context and learn what the team needs most right now.\n\n"
+        "Best,\n"
+    )
+    thinking = f"Fallback draft used because live email/model context failed: {reason}"
+    return subject, body, thinking
+
+
 def email_agent_node(state: AgentState) -> AgentState:
     try:
         user_id = state["user_id"]
@@ -40,10 +56,14 @@ def email_agent_node(state: AgentState) -> AgentState:
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
-        gmail = GmailMCPClient(user_id)
-        threads = gmail.search_threads(
-            f"from:{recipient} OR subject:{company}", max_results=3
-        )
+        try:
+            gmail = GmailMCPClient(user_id)
+            threads = gmail.search_threads(
+                f"from:{recipient} OR subject:{company}", max_results=3
+            )
+        except Exception as exc:
+            logger.warning("Email thread lookup failed for user %s: %s", user_id, exc)
+            threads = []
         thread_context = (
             "\n".join(str(t) for t in threads[:2]) if threads else "No prior threads found."
         )
@@ -89,4 +109,24 @@ def email_agent_node(state: AgentState) -> AgentState:
         }
     except Exception as exc:
         logger.error("Email agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        ctx = state.get("context", {})
+        company = ctx.get("company", "")
+        role = ctx.get("role", "")
+        recipient = ctx.get("recipient_email", "")
+        subject, body, thinking = _fallback_email(company, role, "Email drafting failed")
+        output = {
+            "type": "send_email" if recipient else "email_draft",
+            "recipient": recipient,
+            "subject": subject,
+            "body": body,
+            "thinking": thinking,
+        }
+        return {
+            **state,
+            "status": "awaiting_approval" if recipient else "completed",
+            "pending_action": output if recipient else None,
+            "result": None if recipient else output,
+            "messages": state["messages"] + [
+                AIMessage(content="Email fallback draft ready.")
+            ],
+        }

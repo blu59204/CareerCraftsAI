@@ -7,7 +7,9 @@ be reused from a worker thread.  A dedicated *synchronous* SQLAlchemy engine is
 created once (protected by a threading.Lock) and reused across all calls,
 avoiding both connection pool exhaustion and the asyncio.run() RuntimeError.
 """
+import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,6 +19,32 @@ from app.core.config import settings
 _lock = threading.Lock()
 _sync_engine = None
 _sync_factory = None
+
+
+def run_coro_sync(coro):
+    """Run an async coroutine to completion from a synchronous context.
+
+    Agent nodes execute inside a thread-pool worker (harness runs
+    orchestrator.invoke via run_in_executor), so there is normally no event
+    loop bound to the current thread and asyncio.run() is correct. If a loop
+    happens to be running in this thread, fall back to executing the coroutine
+    on a dedicated worker thread so we never call run_until_complete on a loop
+    owned by another thread (the source of "attached to a different loop"
+    errors). Always use this instead of asyncio.get_event_loop()/new_event_loop.
+    """
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+
+    if running is None:
+        # No loop in this thread — safe to spin up a throwaway loop.
+        return asyncio.run(coro)
+
+    # A loop is already running here; run the coroutine on a separate thread
+    # with its own fresh loop to avoid cross-loop reuse.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def _get_sync_factory():

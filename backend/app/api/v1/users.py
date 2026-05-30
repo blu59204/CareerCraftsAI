@@ -1,3 +1,6 @@
+import logging
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import case, func, select
@@ -18,6 +21,7 @@ from app.models.schemas import (
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
+logger = logging.getLogger(__name__)
 
 
 class DashboardStats(BaseModel):
@@ -144,6 +148,16 @@ async def add_model_settings(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from sqlalchemy import update as sa_update
+
+    # Deactivate any existing active keys so exactly one remains active.
+    # (No DB unique constraint guarantees this, so enforce it here.)
+    await db.execute(
+        sa_update(UserModelSettings)
+        .where(UserModelSettings.user_id == current_user.id)
+        .values(is_active=False)
+    )
+
     encrypted_key = encrypt_api_key(payload.api_key, settings.APP_SECRET_KEY)
     model_setting = UserModelSettings(
         user_id=current_user.id,
@@ -228,9 +242,7 @@ async def test_model(
     current_user: User = Depends(get_current_user),
 ):
     import uuid as _uuid
-
     from langchain_core.messages import HumanMessage
-
     from app.core.model_router import _build_llm
 
     result = await db.execute(
@@ -254,7 +266,13 @@ async def test_model(
         resp = llm.invoke([HumanMessage(content="Reply with exactly: OK")])
         return {"success": True, "response": resp.content.strip()[:200]}
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        logger.warning(
+            "Model test failed for user %s model %s: %s",
+            current_user.id,
+            payload.model_id,
+            exc,
+        )
+        raise HTTPException(status_code=422, detail="Model test failed") from exc
 
 
 
@@ -270,6 +288,18 @@ class LinkedInCredentialsRequest(BaseModel):
 
 class AutoModeRequest(BaseModel):
     mode: str  # 'auto' or 'drafts'
+
+
+class GoogleOAuthTokensRequest(BaseModel):
+    access_token: str
+    refresh_token: str | None = None
+    expires_at: int | None = None
+    expires_in: int | None = None
+
+
+class ConnectedAccountsResponse(BaseModel):
+    google: bool
+    gmail_send: bool
 
 
 @router.post("/me/linkedin-credentials")
@@ -301,6 +331,63 @@ async def delete_linkedin_credentials(
     return {"status": "deleted"}
 
 
+@router.post("/me/google-oauth")
+@limiter.limit("10/minute")
+async def save_google_oauth_tokens(
+    request: Request,
+    payload: GoogleOAuthTokensRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Store Google provider tokens encrypted for Gmail agent send/read."""
+    current_user.google_access_token_enc = encrypt_api_key(
+        payload.access_token,
+        settings.APP_SECRET_KEY,
+    )
+    if payload.refresh_token:
+        current_user.google_refresh_token_enc = encrypt_api_key(
+            payload.refresh_token,
+            settings.APP_SECRET_KEY,
+        )
+
+    if payload.expires_at:
+        current_user.google_token_expires_at = datetime.fromtimestamp(
+            payload.expires_at,
+            tz=timezone.utc,
+        )
+    elif payload.expires_in:
+        current_user.google_token_expires_at = datetime.now(timezone.utc) + timedelta(
+            seconds=max(payload.expires_in - 60, 60),
+        )
+    else:
+        current_user.google_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    await db.flush()
+    return {
+        "status": "connected",
+        "gmail_send": True,
+        "has_refresh_token": bool(current_user.google_refresh_token_enc),
+    }
+
+
+@router.get("/me/connected-accounts", response_model=ConnectedAccountsResponse)
+async def get_connected_accounts(current_user: User = Depends(get_current_user)):
+    google_connected = bool(current_user.google_access_token_enc or current_user.google_refresh_token_enc)
+    return {"google": google_connected, "gmail_send": google_connected}
+
+
+@router.delete("/me/google-oauth")
+async def delete_google_oauth_tokens(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.google_access_token_enc = None
+    current_user.google_refresh_token_enc = None
+    current_user.google_token_expires_at = None
+    await db.flush()
+    return {"status": "deleted"}
+
+
 @router.patch("/me/auto-mode")
 async def set_auto_mode(
     payload: AutoModeRequest,
@@ -321,3 +408,58 @@ async def get_auto_mode(
 ):
     """Get current auto-mode setting."""
     return {"auto_mode": current_user.auto_mode or "drafts"}
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.patch("/me/password", status_code=204)
+async def change_password(
+    payload: PasswordChangeRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Password changes are managed by Clerk."""
+    _ = (payload, current_user)
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    raise HTTPException(status_code=400, detail="Password changes are managed by Clerk")
+
+
+@router.delete("/me", status_code=204)
+async def delete_account(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permanently delete the user's account.
+
+    Deletes the Clerk user when the backend secret is configured, plus the local row.
+    DB cascade removes related records (applications, agent runs, settings).
+    """
+    auth_subject = str(current_user.supabase_uid or "")
+
+    # Delete local DB row first (cascade handles related tables)
+    await db.delete(current_user)
+    await db.flush()
+
+    if not settings.CLERK_SECRET_KEY or not auth_subject.startswith("user_"):
+        return
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(
+                f"https://api.clerk.com/v1/users/{auth_subject}",
+                headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+            )
+        if response.status_code not in (200, 204, 404):
+            response.raise_for_status()
+    except Exception as exc:
+        # DB row already deleted; log but don't fail the request.
+        import logging
+
+        logging.getLogger(__name__).error(
+            "Failed to delete Clerk auth user %s: %s", auth_subject, exc
+        )

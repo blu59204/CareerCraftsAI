@@ -52,5 +52,9 @@ def test_get_embedding_model_openai():
 
 def test_collection_name_format():
     from app.services.rag_service import collection_name
-    assert collection_name("usr_abc123", "resume") == "usr_abc123_resume"
-    assert collection_name("usr_abc123", "jd") == "usr_abc123_jd"
+    # Default provider (openai, 1536-d)
+    assert collection_name("usr_abc123", "resume") == "usr_abc123_resume_openai_1536d"
+    assert collection_name("usr_abc123", "jd") == "usr_abc123_jd_openai_1536d"
+    # Different providers have different dimensions
+    assert collection_name("usr_abc123", "resume", "google") == "usr_abc123_resume_google_768d"
+    assert collection_name("usr_abc123", "resume", "ollama") == "usr_abc123_resume_ollama_768d"

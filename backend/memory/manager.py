@@ -36,6 +36,7 @@ _RECALL_SQL = """
     FROM user_memories
     WHERE user_id = $2
       AND is_active = true
+      AND embedding IS NOT NULL
       AND ({type_filter})
     ORDER BY embedding <=> $1::vector
     LIMIT $3
@@ -86,7 +87,12 @@ class MemoryManager:
     async def _get_pool(self) -> asyncpg.Pool:
         """Lazy-initialise the asyncpg connection pool."""
         if self._pool is None:
-            self._pool = await asyncpg.create_pool(dsn=self._db_url, min_size=1, max_size=10)
+            self._pool = await asyncpg.create_pool(
+                dsn=self._db_url,
+                min_size=1,
+                max_size=10,
+                statement_cache_size=0,
+            )
         return self._pool
 
     async def close(self) -> None:
@@ -265,15 +271,26 @@ class MemoryManager:
     # delete_memory
     # ------------------------------------------------------------------
 
-    async def delete_memory(self, memory_id: UUID) -> bool:
+    async def delete_memory(self, memory_id: UUID, user_id: UUID | None = None) -> bool:
         """Soft-delete a memory by setting is_active = false."""
         try:
             pool = await self._get_pool()
             async with pool.acquire() as conn:
-                result = await conn.execute(
-                    "UPDATE user_memories SET is_active = false, updated_at = NOW() WHERE id = $1",
-                    memory_id,
-                )
+                if user_id is None:
+                    result = await conn.execute(
+                        "UPDATE user_memories SET is_active = false, updated_at = NOW() WHERE id = $1",
+                        memory_id,
+                    )
+                else:
+                    result = await conn.execute(
+                        """
+                        UPDATE user_memories
+                        SET is_active = false, updated_at = NOW()
+                        WHERE id = $1 AND user_id = $2
+                        """,
+                        memory_id,
+                        user_id,
+                    )
                 return result == "UPDATE 1"
         except Exception as e:
             logger.error(f"delete_memory failed id={memory_id}: {e}")
@@ -362,9 +379,10 @@ class MemoryManager:
             async with pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    INSERT INTO agent_learnings (agent_type, learning, success_rate)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT DO NOTHING
+                    INSERT INTO agent_learnings
+                        (agent_type, learning, success_rate, evidence_count, last_applied)
+                    VALUES ($1, $2, $3, 1, NOW())
+                    ON CONFLICT (agent_type, learning) DO NOTHING
                     RETURNING id
                     """,
                     learning.agent_type,

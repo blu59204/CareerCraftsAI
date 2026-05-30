@@ -41,17 +41,17 @@ const COLUMNS: { title: string; links: { href: string; label: string }[] }[] = [
 
 export function MarketingFooter() {
   return (
-    <footer className="relative isolate mt-32 overflow-hidden rounded-t-[3rem] border-t border-border bg-gradient-to-b from-muted/30 to-background">
+    <footer className="relative isolate mt-0 overflow-hidden border-t border-border bg-background text-foreground">
       {/* CTA card */}
       <div className="mx-auto max-w-7xl px-6 pt-20">
-        <div className="gradient-mesh-light noise-overlay overflow-hidden rounded-3xl border border-border px-8 py-14 text-center">
+        <div className="overflow-hidden rounded-3xl border border-border bg-card px-8 py-14 text-center shadow-[0_18px_70px_hsl(var(--foreground)/0.07)]">
           <div className="mx-auto max-w-xl">
-            <div className="text-sm font-medium text-primary">Get started today</div>
-            <h2 className="mt-3 text-3xl font-medium text-foreground md:text-4xl">
+            <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Get started</div>
+            <h2 className="mt-4 text-3xl font-medium text-foreground md:text-5xl">
               Ready to land your{" "}
               <span className="font-display text-primary">dream role?</span>
             </h2>
-            <p className="mt-4 text-base text-muted-foreground">
+            <p className="mt-4 text-base leading-7 text-muted-foreground">
               Join thousands of job seekers using AI to work smarter, apply faster, and follow up better.
             </p>
             <div className="mt-8 flex items-center justify-center gap-3">
@@ -74,8 +74,8 @@ export function MarketingFooter() {
       <div className="relative mx-auto max-w-7xl px-6 py-16">
         <div className="grid grid-cols-2 gap-10 md:grid-cols-5">
           <div className="col-span-2">
-            <div className="text-2xl font-semibold text-foreground">CareerCraft AI</div>
-            <p className="mt-3 max-w-xs text-sm text-muted-foreground">
+            <div className="font-display text-3xl text-foreground">CareerCraft AI</div>
+            <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
               The AI job-search copilot for students and freshers. Tailor resumes, match jobs, follow up — automatically.
             </p>
           </div>
@@ -85,7 +85,7 @@ export function MarketingFooter() {
               <ul className="mt-4 space-y-2">
                 {c.links.map((l) => (
                   <li key={l.href}>
-                    <Link href={l.href} className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    <Link href={l.href} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
                       {l.label}
                     </Link>
                   </li>
@@ -94,7 +94,7 @@ export function MarketingFooter() {
             </div>
           ))}
         </div>
-        <div className="mt-14 flex items-center justify-between border-t border-border/60 pt-6 text-xs text-muted-foreground">
+        <div className="mt-14 flex items-center justify-between border-t border-border pt-6 text-xs text-muted-foreground">
           <span>© {new Date().getFullYear()} CareerCraft AI</span>
           <span>Built with care.</span>
         </div>

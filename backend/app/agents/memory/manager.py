@@ -3,11 +3,11 @@ memory.manager — MemoryManager for episodic memory, preference storage, and
                   agent learnings backed by PostgreSQL + Redis.
 
 Tables expected (created lazily on first use):
-  - agent_episodes     (id, user_id, agent_type, task_type, strategy, success,
+  - agent_memory_episodes     (id, user_id, agent_type, task_type, strategy, success,
                         context_summary, output_summary, created_at)
-  - agent_learnings    (id, user_id, agent_type, learning, success_rate,
+  - agent_memory_learnings    (id, user_id, agent_type, learning, success_rate,
                         sample_count, created_at, updated_at)
-  - agent_preferences  (id, user_id, preference_key, preference_value, created_at)
+  - agent_memory_preferences  (id, user_id, preference_key, preference_value, created_at)
 
 If the tables do not exist the manager logs a warning and returns safe empty
 values — it never raises so the harness can degrade gracefully.
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # DDL executed once per connection pool lifetime
 _DDL = """
-CREATE TABLE IF NOT EXISTS agent_episodes (
+CREATE TABLE IF NOT EXISTS agent_memory_episodes (
     id            BIGSERIAL PRIMARY KEY,
     user_id       TEXT        NOT NULL,
     agent_type    TEXT        NOT NULL,
@@ -38,9 +38,9 @@ CREATE TABLE IF NOT EXISTS agent_episodes (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_user_agent
-    ON agent_episodes (user_id, agent_type, created_at DESC);
+    ON agent_memory_episodes (user_id, agent_type, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS agent_learnings (
+CREATE TABLE IF NOT EXISTS agent_memory_learnings (
     id           BIGSERIAL PRIMARY KEY,
     user_id      TEXT        NOT NULL,
     agent_type   TEXT        NOT NULL,
@@ -52,9 +52,9 @@ CREATE TABLE IF NOT EXISTS agent_learnings (
     UNIQUE (user_id, agent_type, learning)
 );
 CREATE INDEX IF NOT EXISTS idx_learnings_user_agent
-    ON agent_learnings (user_id, agent_type, success_rate DESC);
+    ON agent_memory_learnings (user_id, agent_type, success_rate DESC);
 
-CREATE TABLE IF NOT EXISTS agent_preferences (
+CREATE TABLE IF NOT EXISTS agent_memory_preferences (
     id               BIGSERIAL PRIMARY KEY,
     user_id          TEXT NOT NULL,
     preference_key   TEXT NOT NULL,
@@ -62,9 +62,9 @@ CREATE TABLE IF NOT EXISTS agent_preferences (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (user_id, preference_key)
 );
-CREATE INDEX IF NOT EXISTS idx_agent_prefs_user ON agent_preferences (user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_prefs_user ON agent_memory_preferences (user_id);
 
-CREATE TABLE IF NOT EXISTS agent_procedures (
+CREATE TABLE IF NOT EXISTS agent_memory_procedures (
     id            BIGSERIAL PRIMARY KEY,
     user_id       TEXT        NOT NULL,
     agent_type    TEXT        NOT NULL,
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS agent_procedures (
     UNIQUE (user_id, agent_type, trigger_desc)
 );
 CREATE INDEX IF NOT EXISTS idx_procedures_user_agent
-    ON agent_procedures (user_id, agent_type, success_count DESC);
+    ON agent_memory_procedures (user_id, agent_type, success_count DESC);
 """
 
 
@@ -194,14 +194,14 @@ class MemoryManager:
                 # Preferences
                 prefs_rows = await conn.fetch(
                     "SELECT preference_key, preference_value "
-                    "FROM agent_preferences WHERE user_id = $1",
+                    "FROM agent_memory_preferences WHERE user_id = $1",
                     user_id,
                 )
                 preferences = {r["preference_key"]: r["preference_value"] for r in prefs_rows}
 
                 # Learnings
                 learning_rows = await conn.fetch(
-                    "SELECT learning, success_rate FROM agent_learnings "
+                    "SELECT learning, success_rate FROM agent_memory_learnings "
                     "WHERE user_id = $1 AND agent_type = $2 "
                     "ORDER BY success_rate DESC LIMIT 20",
                     user_id,
@@ -213,7 +213,7 @@ class MemoryManager:
                 # Past episodes
                 ep_rows = await conn.fetch(
                     "SELECT task_type, strategy, success, output_summary, created_at "
-                    "FROM agent_episodes "
+                    "FROM agent_memory_episodes "
                     "WHERE user_id = $1 AND agent_type = $2 "
                     "ORDER BY created_at DESC LIMIT $3",
                     user_id,
@@ -234,7 +234,7 @@ class MemoryManager:
                 # Procedural memory
                 proc_rows = await conn.fetch(
                     "SELECT trigger_desc, workflow_json, success_count "
-                    "FROM agent_procedures "
+                    "FROM agent_memory_procedures "
                     "WHERE user_id = $1 AND agent_type = $2 "
                     "ORDER BY success_count DESC LIMIT 5",
                     user_id,
@@ -281,7 +281,7 @@ class MemoryManager:
             async with self._pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO agent_episodes
+                    INSERT INTO agent_memory_episodes
                         (user_id, agent_type, task_type, strategy,
                          success, context_summary, output_summary)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -316,15 +316,15 @@ class MemoryManager:
                 # Upsert: create or increment counters
                 await conn.execute(
                     """
-                    INSERT INTO agent_learnings
+                    INSERT INTO agent_memory_learnings
                         (user_id, agent_type, learning, success_rate, sample_count, updated_at)
                     VALUES ($1, $2, $3, $4, 1, NOW())
                     ON CONFLICT (user_id, agent_type, learning) DO UPDATE SET
-                        sample_count = agent_learnings.sample_count + 1,
+                        sample_count = agent_memory_learnings.sample_count + 1,
                         success_rate = (
-                            agent_learnings.success_rate * agent_learnings.sample_count
+                            agent_memory_learnings.success_rate * agent_memory_learnings.sample_count
                             + $4
-                        ) / (agent_learnings.sample_count + 1),
+                        ) / (agent_memory_learnings.sample_count + 1),
                         updated_at = NOW()
                     """,
                     user_id,
@@ -357,7 +357,7 @@ class MemoryManager:
                 async with self._pool.acquire() as conn:
                     await conn.execute(
                         """
-                        INSERT INTO agent_learnings
+                        INSERT INTO agent_memory_learnings
                             (user_id, agent_type, learning,
                              success_rate, sample_count, updated_at)
                         VALUES ($1, $2, $3, $4, $5, NOW())
@@ -413,7 +413,7 @@ class MemoryManager:
             async with self._pool.acquire() as conn:
                 if user_id:
                     row = await conn.fetchrow(
-                        "SELECT COUNT(*) AS cnt FROM agent_episodes "
+                        "SELECT COUNT(*) AS cnt FROM agent_memory_episodes "
                         "WHERE agent_type = $1 AND user_id = $2 AND created_at > $3",
                         agent_type,
                         user_id,
@@ -421,7 +421,7 @@ class MemoryManager:
                     )
                 else:
                     row = await conn.fetchrow(
-                        "SELECT COUNT(*) AS cnt FROM agent_episodes "
+                        "SELECT COUNT(*) AS cnt FROM agent_memory_episodes "
                         "WHERE agent_type = $1 AND created_at > $2",
                         agent_type,
                         since,
@@ -449,7 +449,7 @@ class MemoryManager:
                     rows = await conn.fetch(
                         "SELECT user_id, task_type, strategy, success, "
                         "context_summary, output_summary, created_at "
-                        "FROM agent_episodes "
+                        "FROM agent_memory_episodes "
                         "WHERE agent_type = $1 AND user_id = $2 "
                         "ORDER BY created_at DESC LIMIT $3",
                         agent_type,
@@ -460,7 +460,7 @@ class MemoryManager:
                     rows = await conn.fetch(
                         "SELECT user_id, task_type, strategy, success, "
                         "context_summary, output_summary, created_at "
-                        "FROM agent_episodes "
+                        "FROM agent_memory_episodes "
                         "WHERE agent_type = $1 "
                         "ORDER BY created_at DESC LIMIT $2",
                         agent_type,
@@ -483,7 +483,7 @@ class MemoryManager:
             async with self._pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO agent_preferences (user_id, preference_key, preference_value)
+                        INSERT INTO agent_memory_preferences (user_id, preference_key, preference_value)
                     VALUES ($1, $2, $3)
                     ON CONFLICT (user_id, preference_key) DO UPDATE SET
                         preference_value = EXCLUDED.preference_value
@@ -500,7 +500,7 @@ class MemoryManager:
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT preference_key, preference_value FROM agent_preferences WHERE user_id = $1",
+                    "SELECT preference_key, preference_value FROM agent_memory_preferences WHERE user_id = $1",
                     user_id,
                 )
                 return {r["preference_key"]: r["preference_value"] for r in rows}
@@ -616,11 +616,11 @@ class MemoryManager:
             async with self._pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO agent_procedures
+                    INSERT INTO agent_memory_procedures
                         (user_id, agent_type, trigger_desc, workflow_json, success_count, last_used_at)
                     VALUES ($1, $2, $3, $4, 1, NOW())
                     ON CONFLICT (user_id, agent_type, trigger_desc) DO UPDATE SET
-                        success_count = agent_procedures.success_count + 1,
+                        success_count = agent_memory_procedures.success_count + 1,
                         last_used_at = NOW()
                     """,
                     user_id, agent_type, trigger_desc, json.dumps(workflow),
@@ -641,7 +641,7 @@ class MemoryManager:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(
                     "SELECT trigger_desc, workflow_json, success_count "
-                    "FROM agent_procedures "
+                    "FROM agent_memory_procedures "
                     "WHERE user_id = $1 AND agent_type = $2 "
                     "ORDER BY success_count DESC LIMIT $3",
                     user_id, agent_type, limit,

@@ -136,18 +136,21 @@ def _log_agent_run(
 
     factory = _get_sync_factory()
     with factory() as db:
-        agent_run = AgentRun(
-            id=uuid.UUID(run_id),
-            user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
-            agent_type=AGENT_TYPE,
-            status=status,
-            input=input_data,
-            output=output_data,
-            tokens_used=tokens_used,
-            duration_ms=duration_ms,
-            completed_at=datetime.now(timezone.utc) if status != "running" else None,
-        )
-        db.add(agent_run)
+        run_uuid = uuid.UUID(run_id)
+        agent_run = db.get(AgentRun, run_uuid)
+        if agent_run is None:
+            agent_run = AgentRun(
+                id=run_uuid,
+                user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
+                agent_type=AGENT_TYPE,
+            )
+            db.add(agent_run)
+        agent_run.status = status
+        agent_run.input = input_data
+        agent_run.output = output_data
+        agent_run.tokens_used = tokens_used
+        agent_run.duration_ms = duration_ms
+        agent_run.completed_at = datetime.now(timezone.utc) if status != "running" else None
         db.commit()
 
 
@@ -271,26 +274,10 @@ def salary_report_node(state: AgentState) -> AgentState:
 
         # Query Exa for salary data (Requirement 3.1)
         exa_service = ExaService()
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Running inside an existing event loop — create new loop in thread
-                new_loop = asyncio.new_event_loop()
-                try:
-                    salary_results = new_loop.run_until_complete(
-                        exa_service.search_salary(role, company, location)
-                    )
-                finally:
-                    new_loop.close()
-            else:
-                salary_results = loop.run_until_complete(
-                    exa_service.search_salary(role, company, location)
-                )
-        except RuntimeError:
-            # No event loop available, create one
-            salary_results = asyncio.run(
-                exa_service.search_salary(role, company, location)
-            )
+        from app.core.sync_db import run_coro_sync
+        salary_results = run_coro_sync(
+            exa_service.search_salary(role, company, location)
+        )
 
         # Extract percentiles from search results (Requirement 3.2)
         percentiles = _extract_percentiles(salary_results)
@@ -386,4 +373,4 @@ def salary_report_node(state: AgentState) -> AgentState:
     except Exception as exc:
         duration_ms = int((time.monotonic() - start_time) * 1000)
         logger.error("Salary agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}

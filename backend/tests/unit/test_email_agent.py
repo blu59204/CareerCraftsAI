@@ -70,12 +70,15 @@ def test_email_agent_never_auto_sends(mock_llm):
     mock_gmail.send_message.assert_not_called()
 
 
-def test_email_agent_fails_gracefully():
+def test_email_agent_uses_fallback_gracefully():
     from app.agents.email_agent import email_agent_node
 
     with patch("app.agents.email_agent.fetch_model_settings", return_value=MagicMock()), \
          patch("app.agents.email_agent._build_llm", side_effect=Exception("LLM unavailable")):
         result = email_agent_node(make_state())
 
-    assert result["status"] == "failed"
-    assert "LLM unavailable" in result["error"]
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_action"]["type"] == "send_email"
+    assert result["pending_action"]["recipient"] == "recruiter@stripe.com"
+    assert "Email drafting failed" in result["pending_action"]["thinking"]
+    assert "LLM unavailable" not in result["pending_action"]["thinking"]

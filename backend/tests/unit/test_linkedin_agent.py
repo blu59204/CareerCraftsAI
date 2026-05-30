@@ -48,13 +48,15 @@ def test_linkedin_agent_generates_sections_and_pauses():
     assert "experience_bullets" in result["pending_action"]
 
 
-def test_linkedin_agent_fails_gracefully():
+def test_linkedin_agent_falls_back_to_reviewable_draft():
     from app.agents.linkedin_agent import linkedin_agent_node
 
     with patch("app.agents.linkedin_agent.fetch_model_settings", return_value=MagicMock()), \
          patch("app.agents.linkedin_agent.retrieve", side_effect=Exception("DB error")):
         result = linkedin_agent_node(make_state())
 
-    assert result["status"] == "failed"
-    assert "DB error" in result["error"]
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_action"]["type"] == "linkedin_edits"
+    assert "DB error" not in result["pending_action"]["thinking"]
+    assert result["pending_action"]["thinking"] == "Fallback draft used because live model call failed."
 

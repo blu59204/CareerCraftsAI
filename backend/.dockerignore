@@ -1,0 +1,15 @@
+.env
+.env.*
+.browser_data/
+.hypothesis/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.venv_win/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.log
+output/
+htmlcov/
+.coverage

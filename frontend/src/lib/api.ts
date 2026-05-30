@@ -1,5 +1,5 @@
 import axios from "axios";
-import { createClient } from "@/lib/supabase/client";
+import { getClerkAuthToken } from "@/lib/clerk-token";
 
 export const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1",
@@ -13,12 +13,9 @@ const pendingRequests = new Map<string, Promise<unknown>>();
 apiClient.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
     try {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        config.headers.Authorization = `Bearer ${session.access_token}`;
+      const token = await getClerkAuthToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
       }
     } catch {
       // not authenticated — request will get 401, guard handles redirect
@@ -31,10 +28,14 @@ apiClient.interceptors.request.use(async (config) => {
 let redirectingToLogin = false;
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const hasClerkSession =
+      typeof window !== "undefined" ? Boolean(await getClerkAuthToken().catch(() => null)) : false;
+
     if (
       error?.response?.status === 401 &&
       typeof window !== "undefined" &&
+      !hasClerkSession &&
       !window.location.pathname.startsWith("/login") &&
       !redirectingToLogin
     ) {

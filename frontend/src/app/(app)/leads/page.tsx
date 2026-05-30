@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import { Plus, Download, Mail, Calendar, ChevronRight, X, Loader2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 
@@ -33,9 +34,9 @@ const STATUS_MAP: Record<string, UIStatus> = {
 };
 
 const STATUS_STYLES: Record<UIStatus, string> = {
-  New: "bg-blue-500/15 text-blue-600",
-  Contacted: "bg-yellow-500/15 text-yellow-600",
-  Replied: "bg-green-500/15 text-green-600",
+  New: "bg-primary/15 text-primary",
+  Contacted: "bg-warning/15 text-warning",
+  Replied: "bg-success/15 text-success",
   Cold: "bg-muted text-muted-foreground",
 };
 
@@ -62,11 +63,6 @@ function relativeTime(iso: string | null): string {
   if (d < 7) return `${d}d ago`;
   return `${Math.floor(d / 7)}w ago`;
 }
-
-const FALLBACK: Lead[] = [
-  { id: "f1", name: "Sarah Chen", email: null, company: "Acme Corp", linkedin_url: null, status: "cold", last_contact: null, notes: null },
-  { id: "f2", name: "Raj Patel", email: null, company: "BetaCorp", linkedin_url: null, status: "contacted", last_contact: new Date(Date.now() - 86400000).toISOString(), notes: null },
-];
 
 interface AddLeadForm {
   name: string;
@@ -105,19 +101,7 @@ function AddLeadModal({ onClose, onAdd }: { onClose: () => void; onAdd: (lead: L
       toast.success(`Lead "${form.name}" added`);
       onClose();
     } catch {
-      const newLead: Lead = {
-        id: `local-${Date.now()}`,
-        name: form.name,
-        company: form.company || null,
-        email: form.email || null,
-        linkedin_url: form.linkedin_url || null,
-        status: "cold",
-        last_contact: null,
-        notes: form.notes || null,
-      };
-      onAdd(newLead);
-      toast.success(`Lead "${form.name}" added`);
-      onClose();
+      toast.error("Could not add lead — backend did not save it");
     }
   };
 
@@ -301,8 +285,52 @@ export default function LeadsPage() {
   const [localLeads, setLocalLeads] = useState<Lead[]>([]);
   const [mutatingLeadId, setMutatingLeadId] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: remoteLeads = FALLBACK, isLoading } = useQuery<Lead[]>({
+  const handleImportCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-importing the same file
+    if (!file) return;
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const rows = text.split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+      if (rows.length === 0) {
+        toast.error("CSV is empty");
+        return;
+      }
+      // Detect + skip a header row (name,email,company,linkedin_url)
+      const header = rows[0].toLowerCase();
+      const dataRows = header.includes("name") && header.includes("email") ? rows.slice(1) : rows;
+
+      let ok = 0;
+      for (const row of dataRows) {
+        const [name, email, company, linkedin_url] = row.split(",").map((c) => c.trim());
+        if (!name) continue;
+        try {
+          await apiClient.post("/leads", {
+            name,
+            email: email || null,
+            company: company || null,
+            linkedin_url: linkedin_url || null,
+            status: "cold",
+          });
+          ok++;
+        } catch {
+          // skip malformed row, keep going
+        }
+      }
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      toast.success(`Imported ${ok} lead${ok === 1 ? "" : "s"} from CSV`);
+    } catch {
+      toast.error("Could not read CSV file");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const { data: remoteLeads = [], isLoading } = useQuery<Lead[]>({
     queryKey: ["leads"],
     queryFn: async () => {
       const { data } = await apiClient.get("/leads");
@@ -334,27 +362,41 @@ export default function LeadsPage() {
   return (
     <>
       <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-        {/* Header */}
-        <motion.div variants={fadeUp} className="flex items-end justify-between">
-          <div>
-            <div className="text-sm text-muted-foreground">Lead Pipeline</div>
-            <h1 className="mt-1 text-3xl font-medium">Your recruiter contacts.</h1>
-          </div>
-          <div className="flex gap-3">
-            <LiquidGlassButton tone="ghost" size="sm">
+        <motion.div variants={fadeUp}>
+          <CommandHeader
+            eyebrow="Max Reed Portfolio Features"
+            title="Recruiter Contacts"
+            description="Manage warm leads, CSV imports, replies, and follow-up status without fake placeholder data."
+            actions={
+              <div className="flex gap-3">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleImportCsv}
+              className="hidden"
+            />
+            <LiquidGlassButton
+              tone="ghost"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+            >
               <Download className="h-4 w-4" />
-              Import from LinkedIn
+              {importing ? "Importing…" : "Import CSV"}
             </LiquidGlassButton>
             <LiquidGlassButton tone="primary" size="sm" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" />
               Add lead
             </LiquidGlassButton>
-          </div>
+              </div>
+            }
+          />
         </motion.div>
 
         {/* Stats row */}
         <motion.div variants={fadeUp} className="grid gap-4 md:grid-cols-3">
-          <div className="rounded-3xl border border-border bg-card/60 p-6">
+          <div className="glass-panel rounded-3xl p-6">
             <div className="text-sm text-muted-foreground">Total leads</div>
             {isLoading ? (
               <div className="mt-2 h-8 w-12 shimmer rounded-xl" />
@@ -362,7 +404,7 @@ export default function LeadsPage() {
               <div className="mt-2 text-3xl font-semibold">{leads.length}</div>
             )}
           </div>
-          <div className="rounded-3xl border border-border bg-card/60 p-6">
+          <div className="glass-panel rounded-3xl p-6">
             <div className="text-sm text-muted-foreground">Contacted</div>
             {isLoading ? (
               <div className="mt-2 h-8 w-8 shimmer rounded-xl" />
@@ -370,14 +412,14 @@ export default function LeadsPage() {
               <div className="mt-2 text-3xl font-semibold">{contactedCount}</div>
             )}
           </div>
-          <div className="rounded-3xl border border-border bg-card/60 p-6">
+          <div className="glass-panel rounded-3xl p-6">
             <div className="text-sm text-muted-foreground">Replied</div>
             {isLoading ? (
               <div className="mt-2 h-8 w-20 shimmer rounded-xl" />
             ) : (
               <div className="mt-2 flex items-baseline gap-3">
                 <span className="text-3xl font-semibold">{repliedCount}</span>
-                <span className="text-sm text-green-600">{replyRate}% rate</span>
+                <span className="text-sm text-success">{replyRate}% rate</span>
               </div>
             )}
           </div>
@@ -396,7 +438,7 @@ export default function LeadsPage() {
                   <div
                     key={lead.id}
                     onClick={() => setSelectedLead(lead)}
-                    className="cursor-pointer rounded-3xl border border-border bg-card/60 p-4 flex items-center gap-4 transition-colors hover:bg-card/80"
+                    className="glass-panel flex cursor-pointer items-center gap-4 rounded-3xl p-4 transition-colors hover:bg-card/80"
                   >
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary">
                       {getInitials(lead.name)}

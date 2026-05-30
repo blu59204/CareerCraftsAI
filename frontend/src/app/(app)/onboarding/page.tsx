@@ -12,11 +12,12 @@ import { apiClient } from "@/lib/api";
 
 interface FormData {
   goal: string;
-  targetRole: string;
+  targetRoles: string;
   preferredLocations: string;
   experienceLevel: string;
-  jobType: string;
-  workMode: string;
+  yearsExperience: string;
+  jobTypes: string[];
+  workModes: string[];
   provider: "anthropic" | "openai" | "google" | "ollama" | "nvidia_nim";
   apiKey: string;
   modelName: string;
@@ -52,6 +53,28 @@ const POPULAR_ROLES = [
   "Node.js Developer",
   "Security Engineer",
 ];
+
+function toggleSelection(values: string[], value: string) {
+  if (values.includes(value)) {
+    return values.length > 1 ? values.filter((item) => item !== value) : values;
+  }
+  return [...values, value];
+}
+
+function splitCsv(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toggleCsvValue(value: string, item: string) {
+  const values = splitCsv(value);
+  if (values.includes(item)) {
+    return values.filter((role) => role !== item).join(", ");
+  }
+  return [...values, item].join(", ");
+}
 
 function StepWrapper({
   children,
@@ -104,11 +127,12 @@ export default function OnboardingPage() {
 
   const [formData, setFormData] = useState<FormData>({
     goal: "Switch roles",
-    targetRole: "",
+    targetRoles: "",
     preferredLocations: "",
     experienceLevel: "mid",
-    jobType: "full-time",
-    workMode: "remote",
+    yearsExperience: "",
+    jobTypes: ["full-time"],
+    workModes: ["remote"],
     provider: "anthropic",
     apiKey: "",
     modelName: "claude-3-5-sonnet-20241022",
@@ -116,6 +140,7 @@ export default function OnboardingPage() {
 
   const TOTAL_STEPS = 6;
   const isLast = i === TOTAL_STEPS - 1;
+  const selectedRoles = splitCsv(formData.targetRoles);
 
   const advance = () => setI((n) => Math.min(n + 1, TOTAL_STEPS - 1));
   const prev = () => setI((n) => Math.max(n - 1, 0));
@@ -157,9 +182,10 @@ export default function OnboardingPage() {
 
       await apiClient.patch("/users/me/preferences", {
         experience_level: formData.experienceLevel,
-        job_type: formData.jobType,
-        work_mode: formData.workMode,
-        target_roles: formData.targetRole ? [formData.targetRole] : [],
+        years_experience: formData.yearsExperience ? parseInt(formData.yearsExperience, 10) : undefined,
+        job_type: formData.jobTypes.join(","),
+        work_mode: formData.workModes.join(","),
+        target_roles: selectedRoles,
         preferred_locations: locations,
       });
 
@@ -183,9 +209,16 @@ export default function OnboardingPage() {
   };
 
   const handleSkip = async () => {
-    markOnboardingDone();
-    apiClient.patch("/users/me", { onboarding_completed: true }).catch(() => {});
-    router.push("/dashboard");
+    setSaving(true);
+    try {
+      await apiClient.patch("/users/me", { onboarding_completed: true });
+      markOnboardingDone();
+      router.push("/dashboard");
+    } catch {
+      toast.error("Could not skip setup — try again");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSuggestRoles = async () => {
@@ -265,7 +298,13 @@ export default function OnboardingPage() {
             <label className="mb-1.5 block text-sm font-medium">Experience level</label>
             <select
               value={formData.experienceLevel}
-              onChange={(e) => setFormData((p) => ({ ...p, experienceLevel: e.target.value }))}
+              onChange={(e) =>
+                setFormData((p) => ({
+                  ...p,
+                  experienceLevel: e.target.value,
+                  yearsExperience: e.target.value === "fresher" ? "0" : p.yearsExperience,
+                }))
+              }
               className="w-full rounded-2xl border border-border bg-background p-3 text-sm"
             >
               <option value="fresher">Fresher (0–1 yr)</option>
@@ -276,15 +315,33 @@ export default function OnboardingPage() {
             </select>
           </div>
           <div>
+            <label className="mb-1.5 block text-sm font-medium">Exact years of experience</label>
+            <input
+              type="number"
+              min={0}
+              max={60}
+              value={formData.yearsExperience}
+              onChange={(e) => setFormData((p) => ({ ...p, yearsExperience: e.target.value }))}
+              placeholder={formData.experienceLevel === "fresher" ? "0" : "e.g. 2"}
+              className="w-full rounded-2xl border border-border bg-background p-3 text-sm"
+            />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Helps agents avoid senior jobs for freshers and junior profiles.
+            </p>
+          </div>
+          <div>
             <label className="mb-1.5 block text-sm font-medium">Job type</label>
             <div className="flex flex-wrap gap-2">
               {["full-time", "part-time", "contract", "internship"].map((t) => (
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setFormData((p) => ({ ...p, jobType: t }))}
+                  onClick={() =>
+                    setFormData((p) => ({ ...p, jobTypes: toggleSelection(p.jobTypes, t) }))
+                  }
+                  aria-pressed={formData.jobTypes.includes(t)}
                   className={`rounded-full border px-3 py-1 text-xs capitalize transition-colors ${
-                    formData.jobType === t
+                    formData.jobTypes.includes(t)
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border text-muted-foreground"
                   }`}
@@ -296,14 +353,17 @@ export default function OnboardingPage() {
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium">Work mode</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {["remote", "hybrid", "onsite"].map((m) => (
                 <button
                   key={m}
                   type="button"
-                  onClick={() => setFormData((p) => ({ ...p, workMode: m }))}
-                  className={`flex-1 rounded-2xl border py-2 text-xs capitalize transition-colors ${
-                    formData.workMode === m
+                  onClick={() =>
+                    setFormData((p) => ({ ...p, workModes: toggleSelection(p.workModes, m) }))
+                  }
+                  aria-pressed={formData.workModes.includes(m)}
+                  className={`min-w-24 flex-1 rounded-2xl border px-3 py-2 text-xs capitalize transition-colors ${
+                    formData.workModes.includes(m)
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border text-muted-foreground"
                   }`}
@@ -335,7 +395,7 @@ export default function OnboardingPage() {
             </p>
           )}
           {uploadedDocId && !uploading && (
-            <p className="text-xs text-green-600 dark:text-green-400">Resume uploaded successfully.</p>
+            <p className="text-xs text-success">Resume uploaded successfully.</p>
           )}
           <p className="text-xs text-muted-foreground">PDF or DOCX, max 10 MB. You can change this later.</p>
         </div>,
@@ -344,17 +404,41 @@ export default function OnboardingPage() {
     },
     {
       id: "role",
-      title: "Target role",
+      title: "Target roles",
       content: wrap(
         <div className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Role title</label>
+            <label className="mb-1.5 block text-sm font-medium">Role titles</label>
             <input
-              value={formData.targetRole}
-              onChange={(e) => setFormData((p) => ({ ...p, targetRole: e.target.value }))}
-              placeholder="e.g. Frontend Engineer"
+              value={formData.targetRoles}
+              onChange={(e) => setFormData((p) => ({ ...p, targetRoles: e.target.value }))}
+              placeholder="Frontend Engineer, React Developer, Full Stack Developer"
               className="w-full rounded-2xl border border-border bg-background p-3 text-sm"
             />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Add multiple custom roles with commas, or click chips below.
+            </p>
+            {selectedRoles.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {selectedRoles.map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() =>
+                      setFormData((p) => ({
+                        ...p,
+                        targetRoles: splitCsv(p.targetRoles)
+                          .filter((item) => item !== role)
+                          .join(", "),
+                      }))
+                    }
+                    className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+                  >
+                    {role} ×
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -382,9 +466,12 @@ export default function OnboardingPage() {
                   <button
                     key={r}
                     type="button"
-                    onClick={() => setFormData((p) => ({ ...p, targetRole: r }))}
+                    onClick={() =>
+                      setFormData((p) => ({ ...p, targetRoles: toggleCsvValue(p.targetRoles, r) }))
+                    }
+                    aria-pressed={selectedRoles.includes(r)}
                     className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                      formData.targetRole === r
+                      selectedRoles.includes(r)
                         ? "border-primary bg-primary/10 text-primary font-medium"
                         : "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10"
                     }`}
@@ -396,15 +483,18 @@ export default function OnboardingPage() {
             </div>
           )}
           <div>
-            <div className="mb-2 text-xs text-muted-foreground">Popular roles — click to select</div>
+            <div className="mb-2 text-xs text-muted-foreground">Popular roles — click to add</div>
             <div className="flex flex-wrap gap-2">
               {POPULAR_ROLES.map((r) => (
                 <button
                   key={r}
                   type="button"
-                  onClick={() => setFormData((p) => ({ ...p, targetRole: r }))}
+                  onClick={() =>
+                    setFormData((p) => ({ ...p, targetRoles: toggleCsvValue(p.targetRoles, r) }))
+                  }
+                  aria-pressed={selectedRoles.includes(r)}
                   className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                    formData.targetRole === r
+                    selectedRoles.includes(r)
                       ? "border-primary bg-primary/10 text-primary font-medium"
                       : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
                   }`}
@@ -488,13 +578,22 @@ export default function OnboardingPage() {
 
   return (
     <ThemeProvider zoneDefault="light">
-      <div className="min-h-screen bg-background px-6 py-16">
+      <div className="min-h-screen bg-[radial-gradient(circle_at_50%_0%,hsl(var(--primary)/0.10),transparent_34%),linear-gradient(180deg,hsl(var(--background)),hsl(var(--muted)/0.45))] px-6 py-16">
+        <div className="mx-auto mb-8 max-w-3xl text-center">
+          <div className="inline-flex rounded-full border border-border bg-card/70 px-3 py-1 text-xs uppercase tracking-[0.22em] text-muted-foreground shadow-sm backdrop-blur">
+            Aurora Onboard
+          </div>
+          <h1 className="mt-5 font-display text-5xl leading-none text-foreground md:text-7xl">
+            Set your job search orbit.
+          </h1>
+        </div>
         <OnboardingStepper steps={steps} currentIndex={i} onChange={setI} />
         <div className="mt-6 text-center">
           <button
             type="button"
             onClick={handleSkip}
-            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
+            disabled={saving}
+            className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors disabled:opacity-60"
           >
             Skip setup — go to dashboard →
           </button>

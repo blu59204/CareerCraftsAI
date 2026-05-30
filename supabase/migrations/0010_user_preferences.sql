@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS public.user_preferences (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
     experience_level TEXT,
+    years_experience INTEGER,
     job_type TEXT,
     work_mode TEXT,
     salary_min INTEGER,

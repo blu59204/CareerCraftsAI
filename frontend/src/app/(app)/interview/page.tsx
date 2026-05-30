@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { fadeUp, stagger } from '@/lib/motion-variants'
 import { LiquidGlassButton } from '@/components/ui/LiquidGlassButton'
+import { CommandHeader } from '@/components/immersive/CommandHeader'
 import { apiClient } from '@/lib/api'
 import { toast } from 'sonner'
 import { Play, Send, Trophy } from 'lucide-react'
@@ -39,7 +40,7 @@ export default function InterviewPage() {
 
   const startSession = useMutation({
     mutationFn: () =>
-      apiClient.post('/api/v1/interview/session/start', {
+      apiClient.post('/interview/session/start', {
         role,
         company: company || undefined,
         question_type: questionType,
@@ -54,7 +55,7 @@ export default function InterviewPage() {
 
   const submitAnswer = useMutation({
     mutationFn: () =>
-      apiClient.post(`/api/v1/interview/session/${sessionId}/answer`, {
+      apiClient.post(`/interview/session/${sessionId}/answer`, {
         question_id: currentQuestion?.id,
         answer,
       }),
@@ -81,13 +82,13 @@ export default function InterviewPage() {
 
   if (summary) {
     return (
-      <motion.div variants={stagger} initial="hidden" animate="show" className="max-w-2xl mx-auto p-6 space-y-6">
-        <motion.div variants={fadeUp} className="text-center space-y-4">
-          <Trophy className="w-12 h-12 mx-auto text-yellow-500" />
+      <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-6">
+        <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-8 text-center">
+          <Trophy className="w-12 h-12 mx-auto text-warning" />
           <h1 className="text-2xl font-bold">Session Complete</h1>
           <p className="text-4xl font-bold">{summary.overall_score}/100</p>
         </motion.div>
-        <motion.div variants={fadeUp} className="space-y-3">
+        <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
           <h2 className="font-semibold">Strengths</h2>
           <ul className="list-disc pl-5 space-y-1">
             {summary.strengths.map((s, i) => <li key={i}>{s}</li>)}
@@ -103,15 +104,19 @@ export default function InterviewPage() {
 
   if (!sessionId) {
     return (
-      <motion.div variants={stagger} initial="hidden" animate="show" className="max-w-md mx-auto p-6 space-y-6">
-        <motion.h1 variants={fadeUp} className="text-2xl font-bold">Interview Coach</motion.h1>
-        <motion.div variants={fadeUp} className="space-y-4">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-8">
+        <CommandHeader
+          eyebrow="AI Workflow"
+          title="Interview Coach"
+          description="Start a live practice loop, submit answers, and get score-backed feedback."
+        />
+        <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-6">
           <input
             type="text"
             placeholder="Target Role *"
             value={role}
             onChange={(e) => setRole(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg"
+            className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
             required
           />
           <input
@@ -119,7 +124,7 @@ export default function InterviewPage() {
             placeholder="Company (optional)"
             value={company}
             onChange={(e) => setCompany(e.target.value)}
-            className="w-full px-3 py-2 border rounded-lg"
+            className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
           />
           <fieldset className="space-y-2">
             <legend className="font-medium text-sm">Question Type</legend>
@@ -150,9 +155,9 @@ export default function InterviewPage() {
   }
 
   return (
-    <motion.div variants={stagger} initial="hidden" animate="show" className="max-w-2xl mx-auto p-6 space-y-6">
+    <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-6">
       {currentQuestion && (
-        <motion.div variants={fadeUp} className="space-y-4">
+        <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-6">
           <p className="text-sm text-muted-foreground">Question {feedbacks.length + 1}</p>
           <p className="text-lg font-medium">{currentQuestion.text}</p>
           <textarea
@@ -160,7 +165,7 @@ export default function InterviewPage() {
             onChange={(e) => setAnswer(e.target.value)}
             placeholder="Type your answer (minimum 10 words)..."
             rows={5}
-            className="w-full px-3 py-2 border rounded-lg resize-none"
+            className="w-full resize-none rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
           />
           <LiquidGlassButton
             onClick={handleSubmitAnswer}
@@ -172,7 +177,7 @@ export default function InterviewPage() {
         </motion.div>
       )}
       {feedbacks.length > 0 && (
-        <motion.div variants={fadeUp} className="space-y-3 border-t pt-4">
+        <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
           <h2 className="font-semibold text-sm">Previous Feedback</h2>
           {feedbacks.map((fb, i) => (
             <div key={i} className="p-3 bg-muted rounded-lg text-sm">

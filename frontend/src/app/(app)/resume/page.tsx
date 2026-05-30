@@ -7,11 +7,11 @@ import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { AtsScoreRing } from "@/components/resume/AtsScoreRing";
 import { KeywordCoverage } from "@/components/resume/KeywordCoverage";
 import { SuggestionsList, type Suggestion } from "@/components/resume/SuggestionsList";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { ResumeTemplates } from "@/components/resume/ResumeTemplates";
 import { apiClient } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -421,7 +421,7 @@ function HistoryTab({ agentRuns, isLoading, onDownload }: HistoryTabProps) {
     running: "bg-primary/10 text-primary",
     completed: "bg-success/15 text-success",
     failed: "bg-destructive/15 text-destructive",
-    awaiting_approval: "bg-amber-500/15 text-amber-600",
+    awaiting_approval: "bg-warning/15 text-warning",
   };
 
   return (
@@ -618,50 +618,35 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   const generateCoverLetter = async () => {
     setGenerating(true);
+    // Map UI tone labels to backend VALID_TONES (formal | casual | bold)
+    const toneMap: Record<CoverTone, "formal" | "casual" | "bold"> = {
+      Professional: "formal",
+      Concise: "formal",
+      Enthusiastic: "casual",
+      "Story-driven": "bold",
+    };
     try {
-      const { data } = await apiClient.post("/agents/run", {
-        task_type: "resume_optimize",
-        context: {
-          cover_letter: true,
-          company: "Target Company",
-          role: coverJd ? coverJd.split("\n")[0].slice(0, 100) : "the role",
-          tone: coverTone,
-        },
+      // Call the real cover-letter endpoint, which runs the cover_letter agent
+      // synchronously and returns the generated content.
+      const { data } = await apiClient.post<{
+        run_id: string;
+        status: string;
+        content: string | null;
+        tone: string | null;
+      }>("/cover-letter/generate", {
+        tone: toneMap[coverTone],
+        jd_text: coverJd || undefined,
       });
 
-      const runId = (data as { run_id: string }).run_id;
-      let safetyTimeoutId: ReturnType<typeof setTimeout>;
-
-      // Poll for result
-      const pollInterval = setInterval(async () => {
-        try {
-          const { data: runs } = await apiClient.get("/agents/runs?limit=5");
-          const thisRun = (runs as AgentRun[]).find((r) => r.id === runId);
-          if (
-            thisRun?.status === "completed" ||
-            thisRun?.status === "awaiting_approval"
-          ) {
-            clearInterval(pollInterval);
-            clearTimeout(safetyTimeoutId); // BUG 17: cancel safety timeout — no stale closure
-            setCoverLetter(
-              `Dear Hiring Manager,\n\nI am writing to express my strong interest in this opportunity.\n\nWith my background in ${coverJd ? "the required skills" : "software engineering"}, I am confident I can contribute meaningfully to your team.\n\nI would welcome the opportunity to discuss my qualifications further.\n\nBest regards,\nYour Name`
-            );
-            setGenerating(false);
-          }
-        } catch {
-          clearInterval(pollInterval);
-          clearTimeout(safetyTimeoutId);
-          setGenerating(false);
-        }
-      }, 2000);
-
-      // Timeout after 15s
-      safetyTimeoutId = setTimeout(() => {
-        clearInterval(pollInterval);
-        setGenerating(false);
-      }, 15000);
+      if (data.content) {
+        setCoverLetter(data.content);
+        toast.success("Cover letter generated");
+      } else {
+        toast.error("No cover letter content returned — check model settings");
+      }
     } catch {
       toast.error("Cover letter generation failed — check model settings");
+    } finally {
       setGenerating(false);
     }
   };
@@ -683,13 +668,12 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      {/* Header */}
-      <motion.div variants={fadeUp} className="flex items-center justify-between">
-        <div>
-          <div className="text-sm text-muted-foreground">Resume Workspace</div>
-          <h1 className="mt-1 text-3xl font-medium">Tailor your resume.</h1>
-        </div>
-        <div className="flex gap-2">
+      <CommandHeader
+        eyebrow="HR SaaS Hero"
+        title="Tailor your resume."
+        description="Paste a target job, scan keywords, improve bullets, and export once your preview is ready."
+        actions={
+        <div className="flex flex-wrap gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -758,7 +742,8 @@ export default function ResumePage() {
             <Download className="h-4 w-4" /> Export
           </LiquidGlassButton>
         </div>
-      </motion.div>
+        }
+      />
 
       {/* Tab nav */}
       <motion.div variants={fadeUp}>

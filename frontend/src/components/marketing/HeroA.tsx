@@ -1,218 +1,119 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { motion } from "motion/react";
-import { fadeUp, stagger } from "@/lib/motion-variants";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { createClient } from "@/lib/supabase/client";
+import { useTheme } from "@/components/theme/ThemeProvider";
+import { BlurText } from "@/components/immersive/BlurText";
+import { FilmGrain } from "@/components/immersive/FilmGrain";
+import { ArrowUpRight, CheckCircle2, Mail, Radar, Sparkles } from "lucide-react";
 
-const HEADLINE_WORDS = ["Apply", "smarter.", "Tailor", "faster."];
-const HIGHLIGHT = "Get noticed.";
-
-function DashboardMockup() {
-  return (
-    <div className="w-full overflow-hidden rounded-2xl border border-border bg-white shadow-2xl">
-      {/* Top bar */}
-      <div className="flex items-center gap-2 border-b border-border/60 bg-muted/40 px-4 py-3">
-        <span className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
-        <span className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
-        <span className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
-        <span className="ml-3 text-xs font-medium text-foreground/60">CareerCraft AI — Dashboard</span>
-      </div>
-
-      <div className="p-5">
-        {/* Metric cards row */}
-        <div className="grid grid-cols-4 gap-3 text-left">
-          {[
-            { label: "Applications", value: "34", trend: "+8 this week", color: "text-primary" },
-            { label: "Interviews", value: "6", trend: "+2 this week", color: "text-emerald-600" },
-            { label: "Avg Match", value: "87%", trend: "↑ 4% vs last wk", color: "text-violet-600" },
-            { label: "Follow-ups", value: "12", trend: "3 pending", color: "text-amber-600" },
-          ].map((m) => (
-            <div
-              key={m.label}
-              className="rounded-xl border border-border/70 bg-white px-3 py-3 shadow-sm"
-            >
-              <div className="text-[10px] font-medium text-muted-foreground">{m.label}</div>
-              <div className={`mt-0.5 text-xl font-semibold ${m.color}`}>{m.value}</div>
-              <div className="mt-0.5 text-[9px] text-muted-foreground/70">{m.trend}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Two panels */}
-        <div className="mt-4 grid grid-cols-5 gap-3">
-          {/* Left: ATS Score panel */}
-          <div className="col-span-2 rounded-xl border border-border/70 bg-white p-4 shadow-sm">
-            <div className="text-[11px] font-medium text-foreground/60">Resume ATS Score</div>
-            <div className="mt-3 flex items-center justify-center">
-              {/* SVG circle gauge */}
-              <svg viewBox="0 0 80 80" className="h-20 w-20 -rotate-90">
-                <circle
-                  cx="40" cy="40" r="32"
-                  fill="none"
-                  strokeWidth="7"
-                  stroke="hsl(214 32% 91%)"
-                />
-                <circle
-                  cx="40" cy="40" r="32"
-                  fill="none"
-                  strokeWidth="7"
-                  stroke="hsl(245 75% 59%)"
-                  strokeLinecap="round"
-                  strokeDasharray={`${2 * Math.PI * 32 * 0.82} ${2 * Math.PI * 32}`}
-                />
-              </svg>
-              <div className="absolute text-center">
-                <div className="text-lg font-bold text-foreground">82</div>
-                <div className="text-[9px] text-muted-foreground">/ 100</div>
-              </div>
-            </div>
-            <div className="mt-3 space-y-1.5">
-              {[
-                { label: "Keywords", pct: 88 },
-                { label: "Formatting", pct: 91 },
-                { label: "Relevance", pct: 75 },
-              ].map((bar) => (
-                <div key={bar.label} className="flex items-center gap-2">
-                  <span className="w-16 text-[9px] text-muted-foreground">{bar.label}</span>
-                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-primary/70"
-                      style={{ width: `${bar.pct}%` }}
-                    />
-                  </div>
-                  <span className="w-6 text-right text-[9px] font-medium text-foreground/60">
-                    {bar.pct}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Right: Job match cards */}
-          <div className="col-span-3 rounded-xl border border-border/70 bg-white p-4 shadow-sm">
-            <div className="mb-3 text-[11px] font-medium text-foreground/60">Top Job Matches</div>
-            <div className="space-y-2">
-              {[
-                { role: "Frontend Engineer", company: "Stripe", match: 94, tag: "Remote" },
-                { role: "Software Engineer", company: "Notion", match: 89, tag: "SF / Remote" },
-                { role: "Full-Stack Dev", company: "Linear", match: 81, tag: "Remote" },
-              ].map((job) => (
-                <div
-                  key={job.role}
-                  className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/30 px-3 py-2"
-                >
-                  <div>
-                    <div className="text-[11px] font-medium text-foreground">{job.role}</div>
-                    <div className="text-[9px] text-muted-foreground">
-                      {job.company} · {job.tag}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-semibold text-primary">
-                      {job.match}% match
-                    </span>
-                    <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">
-                      Apply
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const PROOF = ["Resume AI", "Real jobs", "Google X-ray", "Gmail", "LinkedIn", "BYOK Models", "Human approval"];
+const LIGHT_HERO_VIDEO = "/media/hero/light-bg.mp4";
+const DARK_HERO_VIDEO = "/media/hero/dark-bg.mp4";
 
 export function HeroA() {
-  const [signedIn, setSignedIn] = useState(false);
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => setSignedIn(!!data.user));
-  }, []);
+  const { isLoaded, isSignedIn } = useAuth();
+  const { theme } = useTheme();
+  const heroVideo = theme === "dark" ? DARK_HERO_VIDEO : LIGHT_HERO_VIDEO;
+  const signedIn = isLoaded && isSignedIn;
 
   return (
-    <section className="relative isolate overflow-hidden pt-16">
-      {/* Video background */}
+    <section className="relative isolate min-h-screen overflow-hidden bg-black pt-16 text-white">
       <video
+        key={heroVideo}
+        className="absolute inset-0 -z-20 h-full w-full object-cover"
+        src={heroVideo}
         autoPlay
-        muted
         loop
+        muted
         playsInline
-        className="absolute inset-0 -z-20 h-full w-full object-cover opacity-[0.07]"
-        src="/videos/hero.mp4"
+        preload="auto"
+        aria-hidden="true"
       />
-      {/* Gradient overlay keeps text readable */}
-      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-background/60 via-background/40 to-background" />
-      <div className="absolute inset-0 -z-10 noise-overlay" />
-      <div className="relative mx-auto max-w-6xl px-6 pb-32 pt-20 text-center">
+      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-white/0 via-white/0 to-black/20 dark:from-black/45 dark:via-black/25 dark:to-black/72" />
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_70%_55%_at_50%_12%,transparent_0%,rgba(0,0,0,0.05)_58%,rgba(0,0,0,0.22)_100%)] dark:bg-[radial-gradient(ellipse_70%_55%_at_50%_12%,transparent_0%,rgba(0,0,0,0.18)_58%,rgba(0,0,0,0.72)_100%)]" />
+      <FilmGrain />
+      <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] max-w-7xl flex-col justify-center px-6 pb-16 pt-36 text-center md:pt-44">
         <motion.span
-          initial="hidden"
-          animate="show"
-          variants={fadeUp}
-          className="inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-4 py-1.5 text-xs font-medium text-muted-foreground"
+          initial={{ opacity: 0, y: 16, filter: "blur(8px)" }}
+          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          transition={{ duration: 0.5 }}
+          className="font-chrome mx-auto inline-flex w-fit items-center gap-2 rounded-full border border-white/65 bg-white/[0.07] px-4 py-2 text-xs font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.62),0_10px_30px_rgba(0,0,0,0.08)] backdrop-blur-[26px] backdrop-saturate-[190%] dark:border-white/20 dark:bg-black/[0.12] dark:text-[#E1E0CC]"
         >
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
-          AI job-search copilot · 2024
+          <Sparkles className="h-3.5 w-3.5 text-primary" />
+          6 AI agents working for you 24/7
         </motion.span>
 
         <motion.h1
-          initial="hidden"
-          animate="show"
-          variants={stagger}
-          className="mx-auto mt-8 max-w-4xl text-balance text-5xl font-medium leading-tight tracking-tight md:text-7xl"
+          className="mx-auto mt-8 max-w-5xl text-balance font-hero text-5xl font-semibold leading-[0.95] tracking-[-0.04em] text-[#fff9df] drop-shadow-[0_6px_28px_rgba(0,0,0,0.45)] md:text-7xl lg:text-[6.8rem]"
         >
-          {HEADLINE_WORDS.map((w, i) => (
-            <motion.span key={i} variants={fadeUp} className="inline-block">
-              {w}&nbsp;
-            </motion.span>
-          ))}
-          <motion.span variants={fadeUp} className="font-display text-primary">
-            {HIGHLIGHT}
-          </motion.span>
+          <BlurText text="Land your next job" />
+          <span className="block font-medium italic text-[#f5edcf]">while you sleep</span>
         </motion.h1>
 
         <motion.p
-          initial="hidden"
+          initial={{ opacity: 0, y: 18 }}
           animate="show"
-          variants={fadeUp}
-          className="mx-auto mt-6 max-w-2xl text-base text-muted-foreground md:text-lg"
+          variants={{ show: { opacity: 1, y: 0, transition: { delay: 0.42, duration: 0.55 } } }}
+          className="mx-auto mt-7 max-w-2xl text-base leading-8 text-[#DEDBC8]/75 md:text-lg"
         >
-          Resume tailoring, job matching, auto-apply, and follow-up — all powered by your own API keys.
+          AI agents that find real roles, tailor your resume, draft outreach, and prep you for interviews while you approve every important action.
         </motion.p>
 
         <motion.div
-          initial="hidden"
-          animate="show"
-          variants={fadeUp}
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.62, duration: 0.5 }}
           className="mt-10 flex items-center justify-center gap-3"
         >
           <Link href={signedIn ? "/dashboard" : "/register"}>
-            <LiquidGlassButton tone="primary" size="lg">
-              {signedIn ? "Go to dashboard" : "Start free"}
-            </LiquidGlassButton>
+            <span className="font-chrome group inline-flex h-12 items-center justify-center gap-2 rounded-full border border-white/65 bg-white/[0.07] px-7 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_14px_40px_rgba(0,0,0,0.14)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:gap-3 hover:bg-white/[0.12] dark:border-white/20 dark:bg-black/[0.16] dark:text-[#E1E0CC] dark:hover:bg-black/[0.24] sm:text-base">
+              <span className="sm:hidden">{signedIn ? "Open app" : "Start free"}</span>
+              <span className="hidden sm:inline">{signedIn ? "Open command center" : "Start free"}</span>
+              <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </span>
           </Link>
           <Link href="/#demo">
-            <LiquidGlassButton tone="ghost" size="lg">
-              Watch demo
-            </LiquidGlassButton>
+            <span className="font-chrome inline-flex h-12 items-center justify-center rounded-full border border-white/65 bg-white/[0.08] px-7 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_14px_40px_rgba(0,0,0,0.12)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:bg-white/[0.13] dark:border-white/20 dark:bg-white/[0.06] dark:text-[#E1E0CC] dark:hover:bg-white/[0.11] sm:text-base">
+              <span className="sm:hidden">How it works</span>
+              <span className="hidden sm:inline">See how it works</span>
+            </span>
           </Link>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1], delay: 0.4 }}
-          className="relative mx-auto mt-20 max-w-5xl"
+          transition={{ delay: 0.76, duration: 0.5 }}
+          className="mx-auto mt-10 flex max-w-4xl flex-wrap items-center justify-center gap-3"
         >
-          {/* Subtle glow behind the mockup */}
-          <div className="absolute -inset-4 -z-10 rounded-[2rem] bg-primary/5 blur-2xl" />
-          <DashboardMockup />
+          {[
+            [CheckCircle2, "Approval-safe"],
+            [Radar, "Real-time search"],
+            [Mail, "Gmail outreach"],
+          ].map(([Icon, label]) => {
+            const TypedIcon = Icon as typeof CheckCircle2;
+            return (
+              <span key={label as string} className="font-chrome inline-flex items-center gap-2 rounded-full border border-white/55 bg-white/[0.07] px-3 py-2 text-xs font-semibold text-foreground/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.52),0_8px_24px_rgba(0,0,0,0.10)] backdrop-blur-[24px] backdrop-saturate-[190%] dark:border-white/15 dark:bg-black/[0.12] dark:text-[#DEDBC8]/75">
+                <TypedIcon className="h-3.5 w-3.5 text-primary dark:text-[#DEDBC8]" />
+                {label as string}
+              </span>
+            );
+          })}
         </motion.div>
+
+      </div>
+      <div className="relative z-10 border-y border-white/10 bg-black/45 py-5 backdrop-blur-xl">
+        <div className="flex overflow-hidden">
+          <div className="animate-marquee-left flex min-w-full items-center gap-10 whitespace-nowrap pr-10">
+            {[...PROOF, ...PROOF].map((item, index) => (
+              <span key={`${item}-${index}`} className="text-sm uppercase tracking-[0.28em] text-muted-foreground">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
   );

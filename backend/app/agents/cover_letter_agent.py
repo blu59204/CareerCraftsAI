@@ -179,13 +179,9 @@ def cover_letter_node(state: AgentState) -> AgentState:
                 "error": f"Invalid tone: '{tone}'. Must be one of: formal, casual, bold",
             }
 
-        # Validate job_application_id is provided
-        if not job_application_id:
-            return {
-                **state,
-                "status": "failed",
-                "error": "job_application_id is required",
-            }
+        # job_application_id is optional. When provided, the result is persisted
+        # to cover_letter_versions; when absent (ad-hoc generation from the
+        # resume tool with only a JD), we generate and return without persisting.
 
         # Get model settings
         model_settings = fetch_model_settings(user_id)
@@ -246,26 +242,31 @@ def cover_letter_node(state: AgentState) -> AgentState:
 
         duration_ms = int((time.monotonic() - start_ts) * 1000)
 
-        # Store in user_documents and cover_letter_versions
-        store_result = _store_cover_letter(
-            user_id=user_id,
-            job_application_id=job_application_id,
-            cover_letter_text=cover_letter_text,
-            tone=tone,
-        )
+        # Persist only when tied to a job application; otherwise return ad-hoc.
+        document_id = None
+        version_number = None
+        if job_application_id:
+            store_result = _store_cover_letter(
+                user_id=user_id,
+                job_application_id=job_application_id,
+                cover_letter_text=cover_letter_text,
+                tone=tone,
+            )
+            document_id = store_result["document_id"]
+            version_number = store_result["version_number"]
 
         # Log to agent_runs
         _log_agent_run(
             user_id=user_id,
             status="awaiting_approval",
             input_data={
-                "job_application_id": str(job_application_id),
+                "job_application_id": str(job_application_id) if job_application_id else None,
                 "tone": tone,
                 "jd_text_length": len(jd_text),
             },
             output_data={
-                "document_id": store_result["document_id"],
-                "version_number": store_result["version_number"],
+                "document_id": document_id,
+                "version_number": version_number,
                 "content_length": len(cover_letter_text),
             },
             tokens_used=tokens_used,
@@ -279,9 +280,9 @@ def cover_letter_node(state: AgentState) -> AgentState:
                 "type": "cover_letter_review",
                 "content": cover_letter_text,
                 "tone": tone,
-                "job_application_id": str(job_application_id),
-                "document_id": store_result["document_id"],
-                "version_number": store_result["version_number"],
+                "job_application_id": str(job_application_id) if job_application_id else None,
+                "document_id": document_id,
+                "version_number": version_number,
             },
             "messages": state["messages"] + [AIMessage(content=cover_letter_text[:200])],
         }
@@ -303,4 +304,4 @@ def cover_letter_node(state: AgentState) -> AgentState:
         except Exception:
             logger.warning("Failed to log agent_run for cover letter failure")
 
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}

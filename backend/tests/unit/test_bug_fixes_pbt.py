@@ -116,3 +116,38 @@ def test_psycopg_url_conversion():
         result = _psycopg_url()
         assert "+psycopg" in result
         assert "+asyncpg" not in result
+
+
+def test_event_bus_emit_does_not_raise_when_redis_unavailable(monkeypatch):
+    """Agent nodes should not fail just because Redis Pub/Sub is unavailable."""
+    import app.core.event_bus as event_bus
+
+    class BrokenRedis:
+        async def publish(self, channel, message):
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(event_bus, "_get_redis", lambda: BrokenRedis())
+
+    event_bus.emit("run-1", "log", "hello")
+
+
+def test_memory_manager_uses_dedicated_tables_not_legacy_agent_tables():
+    """Memory DDL must avoid old agent_* tables with incompatible columns."""
+    from app.agents.memory.manager import _DDL
+
+    assert "agent_memory_episodes" in _DDL
+    assert "agent_memory_learnings" in _DDL
+    assert "CREATE TABLE IF NOT EXISTS agent_episodes" not in _DDL
+    assert "CREATE TABLE IF NOT EXISTS agent_learnings" not in _DDL
+
+
+def test_dev_cors_allows_localhost_and_loopback_origins():
+    """Dev CORS should allow both localhost and 127.0.0.1 browser origins."""
+    from app.main import _build_allowed_origins
+
+    origins = _build_allowed_origins("http://localhost:3000", "development")
+
+    assert "http://localhost:3000" in origins
+    assert "http://localhost:3001" in origins
+    assert "http://127.0.0.1:3000" in origins
+    assert "http://127.0.0.1:3001" in origins

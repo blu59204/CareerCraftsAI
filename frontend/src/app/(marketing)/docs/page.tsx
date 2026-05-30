@@ -30,7 +30,7 @@ export default function DocsPage() {
         Everything you need to configure CareerCraft AI and start automating your job search.
       </p>
 
-      <div className="mt-12 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+      <div className="mt-12 rounded-2xl border border-warning/30 bg-warning/10 px-5 py-4 text-sm text-warning">
         Full documentation is coming soon. In the meantime, check the{" "}
         <a
           href="https://github.com"

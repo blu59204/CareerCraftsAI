@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.resume_agent import resume_agent_node
 from app.agents.state import AgentState
 from app.api.v1.deps import get_current_user, get_db
+from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User, UserDocument
 
@@ -99,9 +100,8 @@ async def optimize_resume(
         }
 
     if result_state["status"] == "failed":
-        raise HTTPException(
-            status_code=500, detail=result_state.get("error", "Agent failed")
-        )
+        logger.warning("Resume optimize agent failed for run %s: %s", run_id, result_state.get("error"))
+        raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
     pending = result_state.get("pending_action") or {}
     return OptimizeResponse(
@@ -219,6 +219,22 @@ async def list_personas(
     return result.scalars().all()
 
 
+async def _verify_resume_ownership(db: AsyncSession, resume_id, user_id) -> None:
+    """Ensure a referenced resume document belongs to the user (prevents IDOR)."""
+    if resume_id is None:
+        return
+    from app.models.db import UserDocument
+
+    result = await db.execute(
+        select(UserDocument.id).where(
+            UserDocument.id == resume_id,
+            UserDocument.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Resume document not found")
+
+
 @router.post("/personas", status_code=201)
 async def create_persona(
     body: PersonaCreateRequest,
@@ -226,13 +242,17 @@ async def create_persona(
     current_user: User = Depends(get_current_user),
 ):
     from app.models.db import ResumePersona
+    from sqlalchemy import func
 
-    # Enforce max 10
+    # Enforce max 10 (use COUNT, not len() of all rows)
     count_result = await db.execute(
-        select(ResumePersona).where(ResumePersona.user_id == current_user.id)
+        select(func.count(ResumePersona.id)).where(ResumePersona.user_id == current_user.id)
     )
-    if len(count_result.scalars().all()) >= 10:
+    if (count_result.scalar_one() or 0) >= 10:
         raise HTTPException(status_code=400, detail="Maximum 10 personas allowed")
+
+    # Prevent attaching another user's resume document
+    await _verify_resume_ownership(db, body.primary_resume_id, current_user.id)
 
     persona = ResumePersona(
         user_id=current_user.id,
@@ -272,6 +292,7 @@ async def update_persona(
     if body.target_keywords is not None:
         persona.target_keywords = body.target_keywords
     if body.primary_resume_id is not None:
+        await _verify_resume_ownership(db, body.primary_resume_id, current_user.id)
         persona.primary_resume_id = body.primary_resume_id
     return persona
 

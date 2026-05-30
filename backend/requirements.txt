@@ -43,6 +43,7 @@ ollama>=0.1.0
 pgvector>=0.3.0
 google-api-python-client>=2.100.0
 python-jobspy>=1.1.75
-browser-use>=0.1.40; python_version >= "3.11"
+# Native Playwright LLM browser-agent fallback powers visible browser control.
+# browser-use is optional; current 0.12.x API is incompatible with BrowserConfig.
 playwright>=1.44.0; python_version >= "3.11"
 dnspython>=2.6.0

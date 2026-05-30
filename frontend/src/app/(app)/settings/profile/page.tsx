@@ -7,11 +7,13 @@ import { Briefcase, MapPin, DollarSign, Target, Loader2, X, Sparkles } from "luc
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface UserPreferences {
   experience_level: string | null;
+  years_experience: number | null;
   job_type: string | null;
   work_mode: string | null;
   salary_min: number | null;
@@ -25,6 +27,7 @@ interface UserPreferences {
 interface FormState {
   current_title: string;
   experience_level: string;
+  years_experience: string;
   job_type: string;
   work_mode: string;
   salary_min: string;
@@ -60,6 +63,21 @@ const POPULAR_ROLES = [
   "Node.js Developer",
   "Security Engineer",
 ];
+
+function splitCsv(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toggleCsvValue(value: string, item: string) {
+  const values = splitCsv(value);
+  if (values.includes(item)) {
+    return values.length > 1 ? values.filter((v) => v !== item).join(", ") : value;
+  }
+  return [...values, item].join(", ");
+}
 
 function PillButton({
   label,
@@ -117,6 +135,7 @@ export default function ProfilePreferencesPage() {
   const [form, setForm] = useState<FormState>({
     current_title: "",
     experience_level: "mid",
+    years_experience: "",
     job_type: "full-time",
     work_mode: "remote",
     salary_min: "",
@@ -134,6 +153,7 @@ export default function ProfilePreferencesPage() {
       setForm({
         current_title: prefs.current_title ?? "",
         experience_level: prefs.experience_level ?? "mid",
+        years_experience: prefs.years_experience != null ? String(prefs.years_experience) : "",
         job_type: prefs.job_type ?? "full-time",
         work_mode: prefs.work_mode ?? "remote",
         salary_min: prefs.salary_min != null ? String(prefs.salary_min) : "",
@@ -158,6 +178,8 @@ export default function ProfilePreferencesPage() {
     .split(",")
     .map((l) => l.trim())
     .filter(Boolean);
+  const selectedJobTypes = splitCsv(form.job_type);
+  const selectedWorkModes = splitCsv(form.work_mode);
 
   function removeRole(role: string) {
     const updated = parsedRoles.filter((r) => r !== role).join(", ");
@@ -205,6 +227,7 @@ export default function ProfilePreferencesPage() {
       const payload = {
         current_title: form.current_title || undefined,
         experience_level: form.experience_level || undefined,
+        years_experience: form.years_experience ? parseInt(form.years_experience, 10) : undefined,
         job_type: form.job_type || undefined,
         work_mode: form.work_mode || undefined,
         salary_min: form.salary_min ? parseInt(form.salary_min, 10) : undefined,
@@ -225,13 +248,12 @@ export default function ProfilePreferencesPage() {
 
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      {/* Header */}
       <motion.div variants={fadeUp}>
-        <div className="text-sm text-muted-foreground">Settings / Job Preferences</div>
-        <h1 className="mt-1 text-3xl font-medium">Job preferences</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tell agents what you&apos;re looking for — they&apos;ll use this to tailor every search and application.
-        </p>
+        <CommandHeader
+          eyebrow="HR SaaS Hero"
+          title="Job Preferences"
+          description="Tell agents what you want. Search, resume tailoring, and outreach use these preferences first."
+        />
       </motion.div>
 
       {isLoading ? (
@@ -275,14 +297,30 @@ export default function ProfilePreferencesPage() {
             </div>
 
             <div>
+              <label className="mb-2 block text-xs text-muted-foreground">Exact years of experience</label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                value={form.years_experience}
+                onChange={(e) => set("years_experience", e.target.value)}
+                placeholder={form.experience_level === "fresher" ? "0" : "e.g. 3"}
+                className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Used by job search and application forms. Set 0 for fresher.
+              </p>
+            </div>
+
+            <div>
               <label className="mb-2 block text-xs text-muted-foreground">Job type</label>
               <div className="flex flex-wrap gap-2">
                 {JOB_TYPES.map((jt) => (
                   <PillButton
                     key={jt}
                     label={jt}
-                    active={form.job_type === jt}
-                    onClick={() => set("job_type", jt)}
+                    active={selectedJobTypes.includes(jt)}
+                    onClick={() => set("job_type", toggleCsvValue(form.job_type, jt))}
                   />
                 ))}
               </div>
@@ -295,8 +333,8 @@ export default function ProfilePreferencesPage() {
                   <PillButton
                     key={wm}
                     label={wm}
-                    active={form.work_mode === wm}
-                    onClick={() => set("work_mode", wm)}
+                    active={selectedWorkModes.includes(wm)}
+                    onClick={() => set("work_mode", toggleCsvValue(form.work_mode, wm))}
                   />
                 ))}
               </div>

@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.harness import get_harness
 from app.api.v1.deps import get_current_user, get_db
+from app.api.v1.run_utils import apply_harness_result
 from app.models.db import AgentRun, InterviewSession, User
 
 router = APIRouter(prefix="/interview", tags=["interview"])
+
+HARNESS_TIMEOUT_SECONDS = 120
 
 
 class StartSessionRequest(BaseModel):
@@ -40,14 +44,25 @@ async def start_session(
     await db.flush()
 
     harness = await get_harness()
-    await harness.run(
-        user_id=str(current_user.id),
-        task_type="interview_coach",
-        context=body.model_dump(exclude_none=True),
-        user_settings={},
-        run_id=run_id,
-    )
-    return {"run_id": run_id, "status": "running"}
+    try:
+        harness_result = await asyncio.wait_for(
+            harness.run(
+                user_id=str(current_user.id),
+                task_type="interview_coach",
+                context=body.model_dump(exclude_none=True),
+                user_settings={},
+                run_id=run_id,
+            ),
+            timeout=HARNESS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        agent_run.status = "failed"
+        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
+        await db.flush()
+        raise HTTPException(status_code=504, detail="Interview session start timed out") from None
+    apply_harness_result(agent_run, harness_result)
+    await db.flush()
+    return {"run_id": run_id, "status": agent_run.status}
 
 
 @router.post("/session/{session_id}/answer")
@@ -59,6 +74,16 @@ async def submit_answer(
 ):
     if len(body.answer.split()) < 10:
         raise HTTPException(status_code=422, detail="Answer must be at least 10 words")
+
+    # Verify the session belongs to this user (prevents IDOR into another user's session)
+    session_result = await db.execute(
+        select(InterviewSession.id).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == current_user.id,
+        )
+    )
+    if session_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Session not found")
 
     run_id = str(uuid.uuid4())
     agent_run = AgentRun(
@@ -72,14 +97,25 @@ async def submit_answer(
     await db.flush()
 
     harness = await get_harness()
-    await harness.run(
-        user_id=str(current_user.id),
-        task_type="evaluate_answer",
-        context={"session_id": str(session_id), "answer": body.answer},
-        user_settings={},
-        run_id=run_id,
-    )
-    return {"run_id": run_id, "status": "running"}
+    try:
+        harness_result = await asyncio.wait_for(
+            harness.run(
+                user_id=str(current_user.id),
+                task_type="evaluate_answer",
+                context={"session_id": str(session_id), "answer": body.answer},
+                user_settings={},
+                run_id=run_id,
+            ),
+            timeout=HARNESS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        agent_run.status = "failed"
+        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
+        await db.flush()
+        raise HTTPException(status_code=504, detail="Answer evaluation timed out") from None
+    apply_harness_result(agent_run, harness_result)
+    await db.flush()
+    return {"run_id": run_id, "status": agent_run.status}
 
 
 @router.get("/session/{session_id}/summary")

@@ -30,7 +30,7 @@ def _get_redis() -> redis.Redis:
 
 
 def _cache_key(query: str) -> str:
-    return f"yt:videos:{hashlib.md5(query.encode()).hexdigest()}"
+    return f"yt:videos:{hashlib.sha256(query.encode()).hexdigest()}"
 
 
 def _build_query(company: str, role: str) -> str:

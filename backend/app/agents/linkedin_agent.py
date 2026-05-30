@@ -31,6 +31,7 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
     try:
         user_id = state["user_id"]
         target_role = state["context"].get("target_role", "software engineer")
+        live_browser = bool(state["context"].get("live_browser", True))
 
         model_settings = fetch_model_settings(user_id)
         if not model_settings:
@@ -83,6 +84,7 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
                 "about": about.strip(),
                 "experience_bullets": bullets.strip(),
                 "thinking": thinking,
+                "live_browser": live_browser,
             },
             "messages": state["messages"] + [
                 AIMessage(content="LinkedIn sections ready for review.")
@@ -92,4 +94,33 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
         logger.error(
             "LinkedIn agent failed for user %s: %s", state.get("user_id"), exc
         )
-        return {**state, "status": "failed", "error": str(exc)}
+        target_role = state.get("context", {}).get("target_role", "software engineer")
+        headline = f"{target_role.title()} | Builder of reliable, user-focused products"
+        about = (
+            f"I build practical software for {target_role} roles, with focus on clean "
+            "delivery, collaboration, and measurable product impact.\n\n"
+            "I enjoy turning fuzzy requirements into shipped features, improving systems, "
+            "and learning fast across product and engineering teams."
+        )
+        bullets = "\n".join(
+            [
+                "• Built and improved production features with attention to reliability and user value.",
+                "• Collaborated across teams to clarify requirements and deliver maintainable solutions.",
+                "• Used feedback and metrics to improve product quality and delivery speed.",
+            ]
+        )
+        return {
+            **state,
+            "status": "awaiting_approval",
+            "pending_action": {
+                "type": "linkedin_edits",
+                "headline": headline,
+                "about": about,
+                "experience_bullets": bullets,
+                "thinking": "Fallback draft used because live model call failed.",
+                "live_browser": bool(state.get("context", {}).get("live_browser", True)),
+            },
+            "messages": state["messages"] + [
+                AIMessage(content="LinkedIn fallback sections ready for review.")
+            ],
+        }

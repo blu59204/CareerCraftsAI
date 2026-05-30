@@ -23,6 +23,9 @@ class User(Base):
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     linkedin_email_enc: Mapped[str | None] = mapped_column(Text)
     linkedin_password_enc: Mapped[str | None] = mapped_column(Text)
+    google_access_token_enc: Mapped[str | None] = mapped_column(Text)
+    google_refresh_token_enc: Mapped[str | None] = mapped_column(Text)
+    google_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     auto_mode: Mapped[str] = mapped_column(String, default="drafts")  # 'auto' or 'drafts'
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -72,6 +75,7 @@ class JobApplication(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     company: Mapped[str] = mapped_column(String, nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False)
+    location: Mapped[str | None] = mapped_column(String)
     job_url: Mapped[str | None] = mapped_column(String)
     jd_text: Mapped[str | None] = mapped_column(Text)
     match_score: Mapped[int | None] = mapped_column(Integer)
@@ -255,6 +259,7 @@ class UserPreferences(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
     experience_level: Mapped[str | None] = mapped_column(String)
+    years_experience: Mapped[int | None] = mapped_column(Integer)
     job_type: Mapped[str | None] = mapped_column(String)
     work_mode: Mapped[str | None] = mapped_column(String)
     salary_min: Mapped[int | None] = mapped_column(Integer)

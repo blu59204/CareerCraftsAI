@@ -133,7 +133,7 @@ def email_monitor_node(state: AgentState) -> AgentState:
         }
     except Exception as exc:
         logger.error("Email monitor failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
 
 
 def _classify_notification(notif: dict, llm) -> dict | None:
@@ -214,7 +214,7 @@ async def run_email_monitor(user_id: str) -> dict:
     )
 
     import asyncio
-    result_state = await asyncio.get_event_loop().run_in_executor(
+    result_state = await asyncio.get_running_loop().run_in_executor(
         None, email_monitor_node, state
     )
 

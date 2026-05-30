@@ -13,6 +13,7 @@ custom ATS, or company career pages.
 """
 import logging
 from dataclasses import dataclass, field
+from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -54,7 +55,15 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
 
     factory = _get_sync_factory()
     with factory() as db:
-        user = db.execute(select(User).where(User.supabase_uid == user_id)).scalars().first()
+        user_uuid = None
+        try:
+            user_uuid = UUID(str(user_id))
+        except ValueError:
+            pass
+        criteria = User.supabase_uid == str(user_id)
+        if user_uuid:
+            criteria = (User.id == user_uuid) | criteria
+        user = db.execute(select(User).where(criteria)).scalars().first()
         prefs = db.execute(
             select(UserPreferences).where(UserPreferences.user_id == user.id)
         ).scalars().first() if user else None
@@ -64,8 +73,9 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
     parts = full_name.split() if full_name else []
 
     # Map experience level to years
-    exp_years_map = {"entry": "0-2", "junior": "1-3", "mid": "3-5", "senior": "5-10", "lead": "8-12", "principal": "10+"}
+    exp_years_map = {"fresher": "0-1", "entry": "0-2", "junior": "1-3", "mid": "3-5", "senior": "5-10", "lead": "8-12", "principal": "10+"}
     exp_level = prefs.experience_level or "mid" if prefs else "mid"
+    experience_years = str(prefs.years_experience) if prefs and prefs.years_experience is not None else exp_years_map.get(exp_level, "3-5")
 
     return UserFormProfile(
         full_name=full_name,
@@ -76,7 +86,7 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
         linkedin_url=user.linkedin_url or "" if user else "",
         current_title=prefs.current_title or "" if prefs else "",
         experience_level=exp_level,
-        experience_years=exp_years_map.get(exp_level, "3-5"),
+        experience_years=experience_years,
         work_mode=prefs.work_mode or "remote" if prefs else "remote",
         salary_min=prefs.salary_min if prefs else None,
         salary_max=prefs.salary_max if prefs else None,
@@ -190,8 +200,10 @@ async def fill_and_submit_form(
     resume_path: str | None = None,
     cover_letter: str = "",
     job_description: str = "",
+    live_browser: bool = False,
+    submit: bool = False,
 ) -> dict:
-    """Navigate to a job URL, use LLM to fill the form with user data, and submit.
+    """Navigate to a job URL and use LLM to fill the form with user data.
 
     The browser-use agent is given the user's full profile context so the LLM
     can generate appropriate answers for ANY form field it encounters.
@@ -211,7 +223,8 @@ async def fill_and_submit_form(
     context = _build_profile_context(profile, job_description)
 
     # Build the browser-use task with full user context so LLM can answer any field
-    task = f"""You are filling a job application form. You have the candidate's complete profile below.
+    task = (  # noqa: S608 - browser task text, not SQL.
+        f"""You are filling a job application form. You have the candidate's complete profile below.
 Use this data to fill EVERY field on the form accurately.
 
 {context}
@@ -230,8 +243,8 @@ TASK:
    - File upload: {'upload resume from ' + resume_path if resume_path else 'skip or use pre-uploaded'}
    - Text areas (cover letter, "why this role?"): use the cover letter above or write a compelling answer
 4. If the form has multiple pages, fill each page completely then click Next/Continue
-5. On the final page, click Submit
-6. Confirm submission was successful
+5. {"On the final page, click Submit only after confirming all fields." if submit else "On the final page, STOP before clicking final Submit/Send Application and report READY_FOR_REVIEW."}
+6. {"Confirm submission was successful" if submit else "Do not submit. The user must review and submit manually."}
 
 IMPORTANT:
 - Fill fields using EXACT profile data (don't make up info)
@@ -242,13 +255,15 @@ IMPORTANT:
 - For experience/years: {profile.experience_years} years
 - For salary: {profile.salary_min or 'negotiable'}
 - If you encounter CAPTCHA/OTP/video, stop and report 'REQUIRES_MANUAL'
-- If account creation is needed, use email {profile.email} with password 'TempPass123!'"""
+- If account creation is needed, stop and report 'REQUIRES_ACCOUNT_CREATION'."""  # noqa: S608
+    )
 
     try:
-        result = await run_browser_task(llm, task, user_id, max_steps=30)
+        result = await run_browser_task(llm, task, user_id, max_steps=30, live_browser=live_browser)
         if "REQUIRES_MANUAL" in (result or ""):
             return {"status": "requires_manual", "message": result}
-        return {"status": "applied", "message": result or "Form submitted successfully"}
+        status = "applied" if submit else "ready_for_review"
+        return {"status": status, "message": result or "Form prepared for review"}
     except Exception as exc:
         logger.error("Form filling failed for %s: %s", job_url, exc)
-        return {"status": "failed", "message": str(exc)}
+        return {"status": "failed", "message": "Form filling failed"}

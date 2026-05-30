@@ -5,17 +5,20 @@ import { useMutation } from '@tanstack/react-query'
 import { motion } from 'motion/react'
 import { fadeUp, stagger } from '@/lib/motion-variants'
 import { LiquidGlassButton } from '@/components/ui/LiquidGlassButton'
+import { CommandHeader } from '@/components/immersive/CommandHeader'
 import { apiClient } from '@/lib/api'
 import { toast } from 'sonner'
-import { DollarSign, TrendingUp, BarChart3 } from 'lucide-react'
+import { TrendingUp, BarChart3 } from 'lucide-react'
 
+// Matches backend SalaryReport DB model (salary_reports table)
 interface SalaryReport {
+  id: string
   p25: number
   p50: number
   p75: number
-  offer_classification: 'below' | 'at' | 'above'
-  negotiation_script: string
-  report_id: string
+  classification: 'below_market' | 'at_market' | 'above_market' | null
+  negotiation_script: Record<string, unknown> | null
+  data_unavailable: boolean
 }
 
 export default function SalaryPage() {
@@ -25,19 +28,28 @@ export default function SalaryPage() {
   const [offerAmount, setOfferAmount] = useState('')
   const [report, setReport] = useState<SalaryReport | null>(null)
 
+  // Backend runs the agent synchronously then returns {run_id}. The SalaryReport
+  // row shares the run_id as its primary key, so we fetch it by that id.
   const mutation = useMutation({
-    mutationFn: (data: { role: string; company?: string; location?: string; offer_amount?: number }) =>
-      apiClient.post<SalaryReport>('/api/v1/salary/report', data).then(r => r.data),
+    mutationFn: async (data: { role: string; company?: string; location?: string; offer_amount?: number }) => {
+      const { data: started } = await apiClient.post<{ run_id: string; status: string }>('/salary/report', data)
+      const { data: full } = await apiClient.get<SalaryReport>(`/salary/report/${started.run_id}`)
+      return full
+    },
     onSuccess: (data) => {
       setReport(data)
-      toast.success('Salary report generated')
+      if (data.data_unavailable) {
+        toast.warning('Not enough market data found for this role')
+      } else {
+        toast.success('Salary report generated')
+      }
     },
     onError: () => toast.error('Failed to generate report'),
   })
 
   const approveMutation = useMutation({
     mutationFn: (reportId: string) =>
-      apiClient.post(`/api/v1/agents/${reportId}/approve`, { action: 'approve' }),
+      apiClient.post(`/agents/${reportId}/approve`, { approved: true }),
     onSuccess: () => toast.success('Negotiation script approved'),
     onError: () => toast.error('Approval failed'),
   })
@@ -55,26 +67,35 @@ export default function SalaryPage() {
 
   const maxVal = report ? Math.max(report.p75, 1) : 1
 
-  const classificationColor = {
-    below: 'bg-red-500/20 text-red-400 border-red-500/30',
-    at: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-    above: 'bg-green-500/20 text-green-400 border-green-500/30',
+  const classificationColor: Record<string, string> = {
+    below_market: 'bg-danger/20 text-danger border-danger/30',
+    at_market: 'bg-warning/20 text-warning border-warning/30',
+    above_market: 'bg-success/20 text-success border-success/30',
+  }
+
+  const formatScript = (script: Record<string, unknown> | null): string => {
+    if (!script) return 'No negotiation script available.'
+    // negotiation_script is a JSON object; render it readably.
+    return Object.entries(script)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+      .join('\n\n')
   }
 
   return (
-    <motion.div variants={stagger} initial="hidden" animate="show" className="max-w-2xl mx-auto p-6 space-y-8">
-      <motion.div variants={fadeUp} className="flex items-center gap-3">
-        <DollarSign className="h-8 w-8 text-primary" />
-        <h1 className="text-2xl font-bold">Salary Intelligence</h1>
-      </motion.div>
+    <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-5xl space-y-8">
+      <CommandHeader
+        eyebrow="Dashboard UI"
+        title="Salary Intelligence"
+        description="Benchmark offers, compare percentiles, and generate approval-safe negotiation scripts."
+      />
 
-      <motion.form variants={fadeUp} onSubmit={handleSubmit} className="space-y-4">
+      <motion.form variants={fadeUp} onSubmit={handleSubmit} className="glass-panel grid gap-3 rounded-3xl p-6 md:grid-cols-2">
         <input
           type="text"
           placeholder="Role *"
           value={role}
           onChange={e => setRole(e.target.value)}
-          className="w-full rounded-lg border bg-background px-4 py-2"
+          className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
           required
         />
         <input
@@ -82,29 +103,29 @@ export default function SalaryPage() {
           placeholder="Company (optional)"
           value={company}
           onChange={e => setCompany(e.target.value)}
-          className="w-full rounded-lg border bg-background px-4 py-2"
+          className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
         />
         <input
           type="text"
           placeholder="Location (optional)"
           value={location}
           onChange={e => setLocation(e.target.value)}
-          className="w-full rounded-lg border bg-background px-4 py-2"
+          className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
         />
         <input
           type="number"
           placeholder="Offer amount (optional)"
           value={offerAmount}
           onChange={e => setOfferAmount(e.target.value)}
-          className="w-full rounded-lg border bg-background px-4 py-2"
+          className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
         />
-        <LiquidGlassButton type="submit" disabled={mutation.isPending} className="w-full">
+        <LiquidGlassButton type="submit" disabled={mutation.isPending} className="w-full md:col-span-2">
           {mutation.isPending ? 'Generating...' : 'Generate Report'}
         </LiquidGlassButton>
       </motion.form>
 
       {report && (
-        <motion.div variants={fadeUp} className="space-y-6">
+        <motion.div variants={fadeUp} className="glass-panel space-y-6 rounded-3xl p-6">
           <div className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5" />
             <h2 className="text-lg font-semibold">Market Percentiles</h2>
@@ -129,20 +150,22 @@ export default function SalaryPage() {
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5" />
-            <span className="text-sm font-medium">Offer Classification:</span>
-            <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${classificationColor[report.offer_classification]}`}>
-              {report.offer_classification.toUpperCase()} MARKET
-            </span>
-          </div>
+          {report.classification && (
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5" />
+              <span className="text-sm font-medium">Offer Classification:</span>
+              <span className={`px-2 py-0.5 rounded border text-xs font-semibold ${classificationColor[report.classification] ?? ''}`}>
+                {report.classification.replace('_', ' ').toUpperCase()}
+              </span>
+            </div>
+          )}
 
           <div className="space-y-3 rounded-lg border p-4">
             <h3 className="font-semibold">Negotiation Script</h3>
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{report.negotiation_script}</p>
+            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{formatScript(report.negotiation_script)}</p>
             <div className="flex gap-2 pt-2">
               <LiquidGlassButton
-                onClick={() => approveMutation.mutate(report.report_id)}
+                onClick={() => approveMutation.mutate(report.id)}
                 disabled={approveMutation.isPending}
               >
                 {approveMutation.isPending ? 'Approving...' : 'Approve & Use'}

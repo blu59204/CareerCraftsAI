@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
-import { Eye, EyeOff, Github, Linkedin, Mail } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Eye, EyeOff, Mail } from "lucide-react";
+import { BrandGithub, BrandLinkedin } from "@/components/icons/BrandIcons";
 
 // --- HELPER ICON ---
 
@@ -36,6 +37,25 @@ export interface Testimonial {
 }
 
 export type AuthMode = "sign-in" | "sign-up";
+export interface AuthPasswordSubmitData {
+  email: string;
+  password: string;
+  fullName?: string;
+  phone?: string;
+  headline?: string;
+  linkedinUrl?: string;
+}
+
+export interface AuthResetPasswordData {
+  email: string;
+  password: string;
+}
+
+export interface AuthVerificationState {
+  email: string;
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+}
 
 interface SignInPageProps {
   mode?: AuthMode;
@@ -43,12 +63,15 @@ interface SignInPageProps {
   description?: React.ReactNode;
   heroImageSrc?: string;
   testimonials?: Testimonial[];
-  onPasswordSubmit?: (data: { email: string; password: string }) => Promise<void> | void;
+  onPasswordSubmit?: (data: AuthPasswordSubmitData) => Promise<void> | void;
   onGoogleSignIn?: () => void;
   onLinkedInSignIn?: () => void;
   onGithubSignIn?: () => void;
   onMagicLink?: (email: string) => Promise<void> | void;
-  onResetPassword?: () => void;
+  onResetPassword?: (data: AuthResetPasswordData) => Promise<void> | void;
+  verification?: AuthVerificationState | null;
+  onVerificationSubmit?: (code: string) => Promise<void> | void;
+  onVerificationCancel?: () => void;
   onModeSwitch?: (mode: AuthMode) => void;
   errorMessage?: string | null;
   infoMessage?: string | null;
@@ -65,7 +88,7 @@ const GlassInputWrapper = ({ children }: { children: React.ReactNode }) => (
 
 const TestimonialCard = ({ testimonial, delay }: { testimonial: Testimonial; delay: string }) => (
   <div
-    className={`animate-testimonial ${delay} flex items-start gap-3 rounded-3xl bg-card/40 dark:bg-zinc-800/40 backdrop-blur-xl border border-white/10 p-5 w-64`}
+    className={`animate-testimonial ${delay} flex w-64 items-start gap-3 rounded-3xl border border-border bg-card/80 p-5 text-card-foreground shadow-lg backdrop-blur-xl`}
   >
     {/* eslint-disable-next-line @next/next/no-img-element */}
     <img src={testimonial.avatarSrc} className="h-10 w-10 object-cover rounded-2xl" alt="avatar" />
@@ -91,6 +114,9 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   onGithubSignIn,
   onMagicLink,
   onResetPassword,
+  verification,
+  onVerificationSubmit,
+  onVerificationCancel,
   onModeSwitch,
   errorMessage,
   infoMessage,
@@ -98,18 +124,44 @@ export const SignInPage: React.FC<SignInPageProps> = ({
 }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [magicLinkMode, setMagicLinkMode] = useState(false);
+  const [resetPasswordMode, setResetPasswordMode] = useState(false);
+  const [captchaKey, setCaptchaKey] = useState(0);
+  const [verificationCode, setVerificationCode] = useState("");
 
   const isSignUp = mode === "sign-up";
+
+  useEffect(() => {
+    if (isSignUp) {
+      setMagicLinkMode(false);
+      setResetPasswordMode(false);
+    }
+    setCaptchaKey((value) => value + 1);
+  }, [isSignUp]);
+
+  useEffect(() => {
+    setVerificationCode("");
+  }, [verification?.email]);
+
   const resolvedTitle =
     title ??
-    (isSignUp ? (
+    (verification ? (
+      (verification.title ?? (
+        <span className="font-light text-foreground tracking-tighter">Enter code</span>
+      ))
+    ) : resetPasswordMode ? (
+      <span className="font-light text-foreground tracking-tighter">Reset password</span>
+    ) : isSignUp ? (
       <span className="font-light text-foreground tracking-tighter">Create account</span>
     ) : (
       <span className="font-light text-foreground tracking-tighter">Welcome back</span>
     ));
   const resolvedDescription =
     description ??
-    (isSignUp
+    (verification
+      ? (verification.description ?? `We sent a verification code to ${verification.email}.`)
+      : resetPasswordMode
+        ? "Enter your email and a new password. We will send a code to confirm the change."
+      : isSignUp
       ? "Start your AI-powered job search in minutes."
       : "Sign in to continue your CareerCraft journey.");
 
@@ -118,12 +170,32 @@ export const SignInPage: React.FC<SignInPageProps> = ({
     const formData = new FormData(event.currentTarget);
     const email = String(formData.get("email") ?? "").trim();
     const password = String(formData.get("password") ?? "");
+    const fullName = String(formData.get("fullName") ?? "").trim();
+    const phone = String(formData.get("phone") ?? "").trim();
+    const headline = String(formData.get("headline") ?? "").trim();
+    const linkedinUrl = String(formData.get("linkedinUrl") ?? "").trim();
 
-    if (magicLinkMode) {
+    if (resetPasswordMode) {
+      await onResetPassword?.({ email, password });
+    } else if (magicLinkMode) {
       await onMagicLink?.(email);
     } else {
-      await onPasswordSubmit?.({ email, password });
+      await onPasswordSubmit?.({
+        email,
+        password,
+        fullName: fullName || undefined,
+        phone: phone || undefined,
+        headline: headline || undefined,
+        linkedinUrl: linkedinUrl || undefined,
+      });
     }
+  };
+
+  const handleVerificationSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const code = verificationCode.trim();
+    if (!code) return;
+    await onVerificationSubmit?.(code);
   };
 
   return (
@@ -150,7 +222,105 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               </div>
             )}
 
-            <form className="space-y-5" onSubmit={handleSubmit}>
+            {verification && (
+              <form className="space-y-5" method="post" action="/login" onSubmit={handleVerificationSubmit}>
+                <div className="animate-element animate-delay-300">
+                  <label className="text-sm font-medium text-muted-foreground">
+                    Verification code
+                  </label>
+                  <GlassInputWrapper>
+                    <input
+                      value={verificationCode}
+                      onChange={(event) => setVerificationCode(event.target.value)}
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="Enter code"
+                      maxLength={8}
+                      required
+                      autoFocus
+                      className="w-full bg-transparent text-sm p-4 rounded-2xl focus:outline-none"
+                    />
+                  </GlassInputWrapper>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || !verificationCode.trim()}
+                  className="animate-element animate-delay-400 w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+                >
+                  {loading ? "Verifying..." : "Verify code"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onVerificationCancel}
+                  disabled={loading}
+                  className="animate-element animate-delay-500 w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-60"
+                >
+                  Use another email
+                </button>
+              </form>
+            )}
+
+            {!verification && (
+              <>
+            <form className="space-y-5" method="post" action="/login" onSubmit={handleSubmit}>
+              {isSignUp && !resetPasswordMode && (
+                <div className="animate-element animate-delay-300 grid gap-4 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="text-sm font-medium text-muted-foreground">Full name</label>
+                    <GlassInputWrapper>
+                      <input
+                        name="fullName"
+                        type="text"
+                        required
+                        autoComplete="name"
+                        placeholder="Alex Morgan"
+                        className="w-full bg-transparent text-sm p-4 rounded-2xl focus:outline-none"
+                      />
+                    </GlassInputWrapper>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Phone</label>
+                    <GlassInputWrapper>
+                      <input
+                        name="phone"
+                        type="tel"
+                        required
+                        autoComplete="tel"
+                        placeholder="+1 555 000 0000"
+                        className="w-full bg-transparent text-sm p-4 rounded-2xl focus:outline-none"
+                      />
+                    </GlassInputWrapper>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Current role</label>
+                    <GlassInputWrapper>
+                      <input
+                        name="headline"
+                        type="text"
+                        autoComplete="organization-title"
+                        placeholder="Frontend Engineer"
+                        className="w-full bg-transparent text-sm p-4 rounded-2xl focus:outline-none"
+                      />
+                    </GlassInputWrapper>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-sm font-medium text-muted-foreground">LinkedIn URL</label>
+                    <GlassInputWrapper>
+                      <input
+                        name="linkedinUrl"
+                        type="url"
+                        autoComplete="url"
+                        placeholder="https://linkedin.com/in/your-profile"
+                        className="w-full bg-transparent text-sm p-4 rounded-2xl focus:outline-none"
+                      />
+                    </GlassInputWrapper>
+                  </div>
+                </div>
+              )}
+
               <div className="animate-element animate-delay-300">
                 <label className="text-sm font-medium text-muted-foreground">Email Address</label>
                 <GlassInputWrapper>
@@ -167,16 +337,18 @@ export const SignInPage: React.FC<SignInPageProps> = ({
 
               {!magicLinkMode && (
                 <div className="animate-element animate-delay-400">
-                  <label className="text-sm font-medium text-muted-foreground">Password</label>
+                  <label className="text-sm font-medium text-muted-foreground">
+                    {resetPasswordMode ? "New password" : "Password"}
+                  </label>
                   <GlassInputWrapper>
                     <div className="relative">
                       <input
                         name="password"
                         type={showPassword ? "text" : "password"}
                         required
-                        minLength={isSignUp ? 8 : 1}
-                        autoComplete={isSignUp ? "new-password" : "current-password"}
-                        placeholder={isSignUp ? "Min 8 characters" : "Enter your password"}
+                        minLength={isSignUp || resetPasswordMode ? 8 : 1}
+                        autoComplete={isSignUp || resetPasswordMode ? "new-password" : "current-password"}
+                        placeholder={isSignUp || resetPasswordMode ? "Min 8 characters" : "Enter your password"}
                         className="w-full bg-transparent text-sm p-4 pr-12 rounded-2xl focus:outline-none"
                       />
                       <button
@@ -196,7 +368,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                 </div>
               )}
 
-              {!isSignUp && !magicLinkMode && (
+              {!isSignUp && !magicLinkMode && !resetPasswordMode && (
                 <div className="animate-element animate-delay-500 flex items-center justify-between text-sm">
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input type="checkbox" name="rememberMe" className="custom-checkbox" />
@@ -204,12 +376,25 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                   </label>
                   <button
                     type="button"
-                    onClick={onResetPassword}
+                    onClick={() => {
+                      setMagicLinkMode(false);
+                      setResetPasswordMode(true);
+                    }}
                     className="hover:underline text-violet-400 transition-colors"
                   >
                     Reset password
                   </button>
                 </div>
+              )}
+
+              {isSignUp && (
+                <div
+                  key={captchaKey}
+                  id="clerk-captcha"
+                  data-cl-theme="auto"
+                  data-cl-size="flexible"
+                  className="animate-element animate-delay-500"
+                />
               )}
 
               <button
@@ -219,22 +404,38 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               >
                 {loading
                   ? "Please wait…"
-                  : magicLinkMode
+                  : resetPasswordMode
+                    ? "Send reset code"
+                    : magicLinkMode
                     ? "Send magic link"
                     : isSignUp
                       ? "Create account"
                       : "Sign In"}
               </button>
 
-              <button
-                type="button"
-                onClick={() => setMagicLinkMode((v) => !v)}
-                className="animate-element animate-delay-700 w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {magicLinkMode ? "Use password instead" : "Use magic link instead"}
-              </button>
+              {!isSignUp && !resetPasswordMode && (
+                <button
+                  type="button"
+                  onClick={() => setMagicLinkMode((v) => !v)}
+                  className="animate-element animate-delay-700 w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {magicLinkMode ? "Use password instead" : "Use magic link instead"}
+                </button>
+              )}
+
+              {resetPasswordMode && (
+                <button
+                  type="button"
+                  onClick={() => setResetPasswordMode(false)}
+                  className="animate-element animate-delay-700 w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Back to sign in
+                </button>
+              )}
             </form>
 
+            {!resetPasswordMode && (
+              <>
             <div className="animate-element animate-delay-700 relative flex items-center justify-center">
               <span className="w-full border-t border-border" />
               <span className="px-4 text-sm text-muted-foreground bg-background absolute">
@@ -246,26 +447,29 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               <button
                 type="button"
                 onClick={onGoogleSignIn}
+                disabled={loading}
                 aria-label="Continue with Google"
-                className="animate-element animate-delay-800 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors"
+                className="animate-element animate-delay-800 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors disabled:pointer-events-none disabled:opacity-60"
               >
                 <GoogleIcon />
               </button>
               <button
                 type="button"
                 onClick={onLinkedInSignIn}
+                disabled={loading}
                 aria-label="Continue with LinkedIn"
-                className="animate-element animate-delay-900 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors"
+                className="animate-element animate-delay-900 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors disabled:pointer-events-none disabled:opacity-60"
               >
-                <Linkedin className="h-5 w-5 text-[#0A66C2]" />
+                <BrandLinkedin className="h-5 w-5 text-[#0A66C2]" />
               </button>
               <button
                 type="button"
                 onClick={onGithubSignIn}
+                disabled={loading}
                 aria-label="Continue with GitHub"
-                className="animate-element animate-delay-1000 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors"
+                className="animate-element animate-delay-1000 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors disabled:pointer-events-none disabled:opacity-60"
               >
-                <Github className="h-5 w-5" />
+                <BrandGithub className="h-5 w-5" />
               </button>
             </div>
 
@@ -279,6 +483,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                 {isSignUp ? "Sign in" : "Create account"}
               </button>
             </p>
+              </>
+            )}
+              </>
+            )}
           </div>
         </div>
       </section>

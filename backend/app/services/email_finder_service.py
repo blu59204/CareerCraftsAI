@@ -123,7 +123,7 @@ async def find_email(
     target_domain = domain or _company_to_domain(company)
 
     # Check MX first — no point guessing if domain has no email server
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     mx_valid = await loop.run_in_executor(None, verify_mx, target_domain)
     if not mx_valid:
         # Try with .io, .co variants
@@ -175,7 +175,7 @@ async def find_recruiter_email(company: str, recruiter_name: str = "") -> dict |
             }
 
     # Fallback: try generic HR/recruiting addresses
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     mx_valid = await loop.run_in_executor(None, verify_mx, domain)
     if not mx_valid:
         return None

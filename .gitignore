@@ -51,3 +51,10 @@ supabase/.temp
 CLAUDE.md
 AGENTS.md
 GEMINI.md
+D:\CareerCraft AI\motionsites.ai-prompt-library
+
+# Browser automation profiles/captures may contain cookies, tokens, or private page data.
+.browser_data/
+**/.browser_data/
+.playwright-cli/
+.playwright-mcp/

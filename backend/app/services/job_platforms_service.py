@@ -122,7 +122,7 @@ async def scrape_all_platforms(
         Combined job listings from all sources.
     """
     # JobSpy results (sync, run in executor)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     jobspy_jobs = await loop.run_in_executor(
         None, scrape_jobs, search_term, location, results_wanted, hours_old, None, "India"
     )

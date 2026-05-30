@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.email_agent import email_agent_node
 from app.agents.state import AgentState
 from app.api.v1.deps import get_current_user, get_db
+from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
 from app.services.gmail_service import GmailMCPClient
@@ -96,6 +97,8 @@ class ComposeRequest(BaseModel):
     role: str = Field(max_length=500)
     recipient_email: str
     application_id: uuid.UUID | None = None
+    subject: str | None = Field(default=None, max_length=500)
+    body: str | None = Field(default=None, max_length=20000)
 
 
 @router.post("/compose", response_model=dict)
@@ -138,10 +141,16 @@ async def compose_email(
     agent_run.status = result_state["status"]
     agent_run.completed_at = datetime.now(timezone.utc)
     if result_state.get("pending_action"):
-        agent_run.output = result_state["pending_action"]
+        pending_action = dict(result_state["pending_action"])
+        if payload.subject:
+            pending_action["subject"] = payload.subject
+        if payload.body:
+            pending_action["body"] = payload.body
+        agent_run.output = pending_action
 
     if result_state["status"] == "failed":
-        raise HTTPException(status_code=500, detail=result_state.get("error", "Agent failed"))
+        logger.warning("Email compose agent failed for run %s: %s", run_id, result_state.get("error"))
+        raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
     return {
         "run_id": run_id,
@@ -172,13 +181,22 @@ async def approve_and_send(
     if pending.get("type") != "send_email":
         raise HTTPException(status_code=400, detail="No email pending for this run")
 
-    gmail = GmailMCPClient(str(current_user.id))
-    gmail.send_message(
-        to=pending["recipient"],
-        subject=pending["subject"],
-        body=pending["body"],
-    )
+    recipient = pending.get("recipient")
+    subject = pending.get("subject")
+    body = pending.get("body")
+    if not recipient or not subject or not body:
+        raise HTTPException(
+            status_code=422,
+            detail="Pending email is missing recipient, subject, or body",
+        )
+
+    try:
+        gmail = GmailMCPClient(str(current_user.id))
+        gmail.send_message(to=recipient, subject=subject, body=body)
+    except Exception as exc:
+        logger.warning("Email approval send failed for run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail="Email send failed") from exc
 
     run.status = "completed"
     run.completed_at = datetime.now(timezone.utc)
-    return {"status": "sent", "recipient": pending["recipient"]}
+    return {"status": "sent", "recipient": recipient}

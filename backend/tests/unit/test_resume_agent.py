@@ -39,7 +39,7 @@ def test_resume_agent_pauses_for_approval(mock_llm):
     assert "resume_text" in result["pending_action"]
 
 
-def test_resume_agent_sets_error_on_exception():
+def test_resume_agent_uses_fallback_on_exception():
     from app.agents.resume_agent import resume_agent_node
 
     with patch("app.agents.resume_agent.fetch_model_settings", return_value=MagicMock()), \
@@ -47,6 +47,8 @@ def test_resume_agent_sets_error_on_exception():
          patch("app.agents.resume_agent.retrieve", side_effect=Exception("pgvector down")):
         result = resume_agent_node(make_state())
 
-    assert result["status"] == "failed"
-    assert "pgvector down" in result["error"]
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_action"]["type"] == "resume_ready"
+    assert "Fallback draft used" in result["pending_action"]["thinking"]
+    assert "pgvector down" not in result["pending_action"]["thinking"]
 

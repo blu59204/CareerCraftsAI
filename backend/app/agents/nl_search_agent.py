@@ -167,18 +167,21 @@ def _log_agent_run(
     factory = _get_sync_factory()
     now = datetime.now(timezone.utc)
     with factory() as db:
-        agent_run = AgentRun(
-            id=uuid.UUID(run_id),
-            user_id=user_id,
-            agent_type="nl_job_search",
-            status=status,
-            input={"query": query, "extracted_parameters": params.to_dict()},
-            output={"results_count": result_count} if result_count is not None else None,
-            duration_ms=duration_ms,
-            started_at=now,
-            completed_at=now if status != "running" else None,
-        )
-        db.add(agent_run)
+        run_uuid = uuid.UUID(run_id)
+        agent_run = db.get(AgentRun, run_uuid)
+        if agent_run is None:
+            agent_run = AgentRun(
+                id=run_uuid,
+                user_id=user_id,
+                agent_type="nl_job_search",
+                started_at=now,
+            )
+            db.add(agent_run)
+        agent_run.status = status
+        agent_run.input = {"query": query, "extracted_parameters": params.to_dict()}
+        agent_run.output = {"results_count": result_count} if result_count is not None else None
+        agent_run.duration_ms = duration_ms
+        agent_run.completed_at = now if status != "running" else None
         db.commit()
 
 
@@ -343,7 +346,7 @@ def nl_search_node(state: AgentState) -> AgentState:
 
     except Exception as exc:
         logger.error("NL search agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
     finally:
         if session:
             session.close()

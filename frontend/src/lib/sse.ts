@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { getClerkAuthToken } from "@/lib/clerk-token";
 import { useAgentStore } from "@/store/agentSlice";
 
 // BUG 5: fetch-based SSE so we can send Authorization header
@@ -20,13 +20,11 @@ export function useAgentStream(runId: string | null) {
       abortRef.current = controller;
 
       try {
-        const supabase = createClient();
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token ?? "";
+        const token = await getClerkAuthToken();
 
         const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
         const res = await fetch(`${apiUrl}/agents/${id}/stream`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
           signal: controller.signal,
         });
 

@@ -66,7 +66,60 @@ CONTENT RULES:
 Return ONLY the resume text — no commentary, no markdown fences, no ```."""
 
 
+def _fallback_resume_text(context_text: str, full_name: str | None, jd_text: str) -> str:
+    name = full_name or "Candidate"
+    source = context_text.strip() or "Resume context not available."
+    summary = (
+        f"{name}\n\n"
+        "SUMMARY\n"
+        "Software professional focused on practical delivery, clear communication, and reliable product outcomes."
+    )
+    if jd_text:
+        summary += " Resume draft aligned to supplied job description keywords and requirements."
+    return (
+        f"{summary}\n\n"
+        "EXPERIENCE\n"
+        f"{source[:1800]}\n\n"
+        "SKILLS\n"
+        "Software engineering, problem solving, collaboration, delivery, documentation\n"
+    )
+
+
+def _resume_pending_action(
+    rewritten_text: str,
+    full_name: str | None,
+    template: str,
+    jd_text: str,
+    thinking_output: str,
+) -> dict:
+    pdf_bytes = generate_resume_pdf(rewritten_text, full_name=full_name, template=template)
+    docx_bytes = generate_resume_docx(rewritten_text, full_name=full_name)
+    ats_result = None
+    if jd_text:
+        ats = compute_ats_score(rewritten_text, jd_text)
+        ats_result = {
+            "composite_score": ats.composite_score,
+            "keyword_score": ats.keyword_score,
+            "readability_score": ats.readability_score,
+            "format_score": ats.format_score,
+            "missing_keywords": ats.missing_keywords[:10],
+            "suggestions": ats.suggestions[:5],
+        }
+    return {
+        "type": "resume_ready",
+        "resume_text": rewritten_text,
+        "pdf_b64": base64.b64encode(pdf_bytes).decode(),
+        "docx_b64": base64.b64encode(docx_bytes).decode(),
+        "ats_score": ats_result,
+        "thinking": thinking_output,
+    }
+
+
 def resume_agent_node(state: AgentState) -> AgentState:
+    context_text = ""
+    full_name = None
+    template = "modern"
+    jd_text = ""
     try:
         user_id = state["user_id"]
         jd_text = state["context"].get("jd_text", "")
@@ -103,38 +156,28 @@ def resume_agent_node(state: AgentState) -> AgentState:
         ])
         rewritten_text = response.content
 
-        # Generate PDF and DOCX
-        pdf_bytes = generate_resume_pdf(rewritten_text, full_name=full_name, template=template)
-        pdf_b64 = base64.b64encode(pdf_bytes).decode()
-        docx_bytes = generate_resume_docx(rewritten_text, full_name=full_name)
-        docx_b64 = base64.b64encode(docx_bytes).decode()
-
-        # ATS validation
-        ats_result = None
-        if jd_text:
-            ats = compute_ats_score(rewritten_text, jd_text)
-            ats_result = {
-                "composite_score": ats.composite_score,
-                "keyword_score": ats.keyword_score,
-                "readability_score": ats.readability_score,
-                "format_score": ats.format_score,
-                "missing_keywords": ats.missing_keywords[:10],
-                "suggestions": ats.suggestions[:5],
-            }
-
         return {
             **state,
             "status": "awaiting_approval",
-            "pending_action": {
-                "type": "resume_ready",
-                "resume_text": rewritten_text,
-                "pdf_b64": pdf_b64,
-                "docx_b64": docx_b64,
-                "ats_score": ats_result,
-                "thinking": thinking_output,
-            },
+            "pending_action": _resume_pending_action(
+                rewritten_text, full_name, template, jd_text, thinking_output
+            ),
             "messages": state["messages"] + [AIMessage(content=rewritten_text[:200])],
         }
     except Exception as exc:
         logger.error("Resume agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        fallback_text = _fallback_resume_text(context_text, full_name, jd_text)
+        return {
+            **state,
+            "status": "awaiting_approval",
+            "pending_action": _resume_pending_action(
+                fallback_text,
+                full_name,
+                template,
+                jd_text,
+                "Fallback draft used because live model call failed.",
+            ),
+            "messages": state["messages"] + [
+                AIMessage(content="Resume fallback draft ready for review.")
+            ],
+        }

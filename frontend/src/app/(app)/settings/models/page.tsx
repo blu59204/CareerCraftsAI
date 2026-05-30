@@ -8,6 +8,7 @@ import { CheckCircle, XCircle, Loader2, Trash2, Zap } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { cn } from "@/lib/utils";
@@ -104,8 +105,11 @@ export default function SettingsModelsPage() {
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
       <motion.div variants={fadeUp}>
-        <div className="text-sm text-muted-foreground">Settings</div>
-        <h1 className="mt-1 text-3xl font-medium">Models &amp; preferences</h1>
+        <CommandHeader
+          eyebrow="AI Automation"
+          title="Model Settings"
+          description="Bring your own model keys, test provider health, and keep routing explicit."
+        />
       </motion.div>
 
       <motion.div variants={fadeUp} className="grid gap-6 lg:grid-cols-[1fr_420px]">

@@ -1,0 +1,10 @@
+.env
+.env.*
+.clerk/
+.next/
+node_modules/
+dist/
+out/
+coverage/
+*.log
+tsconfig.tsbuildinfo

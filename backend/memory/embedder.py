@@ -33,6 +33,7 @@ class MemoryEmbedder:
     ) -> None:
         self.provider: str = user_settings.get("provider", "openai")
         self.api_key: str = user_settings.get("api_key", "")
+        self.ollama_url: str = user_settings.get("ollama_url") or "http://localhost:11434"
         self.redis = redis_client
         self.DIMS = _DIMS
 
@@ -123,7 +124,7 @@ class MemoryEmbedder:
     async def _ollama_embed(self, text: str) -> list[float]:
         import ollama
 
-        resp = await ollama.AsyncClient().embeddings(
+        resp = await ollama.AsyncClient(host=self.ollama_url).embeddings(
             model="nomic-embed-text", prompt=text
         )
         return resp["embedding"]

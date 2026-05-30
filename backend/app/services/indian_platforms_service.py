@@ -9,8 +9,9 @@ that JobSpy doesn't support natively.
 """
 import asyncio
 import logging
-import random
+import secrets
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 try:
     from browser_use import Agent, Browser, BrowserConfig
@@ -21,9 +22,11 @@ except ImportError:
 from langchain_core.language_models import BaseChatModel
 
 from app.services.browser_control_service import _get_browser_config
+from app.core.event_bus import emit
 from app.services.job_platforms_service import JobListing
 
 logger = logging.getLogger(__name__)
+_RANDOM = secrets.SystemRandom()
 
 # Platform search URL templates — {query} and {location} are replaced at runtime
 INDIAN_PLATFORMS = {
@@ -87,7 +90,7 @@ Do NOT click on individual jobs — only extract what's visible on the search re
 
 async def _human_delay():
     """Random delay to mimic human browsing (2-5s)."""
-    await asyncio.sleep(random.uniform(2.0, 5.0))
+    await asyncio.sleep(_RANDOM.uniform(2.0, 5.0))
 
 
 async def scrape_indian_platform(
@@ -164,10 +167,110 @@ def _parse_extraction_result(raw_text: str, platform: str) -> list[JobListing]:
                     job_url=parts.get("URL", ""),
                     platform=platform,
                 ))
-        except Exception:
+        except Exception as exc:
+            logger.debug("Skipping unparsable %s job line: %s", platform, exc)
             continue
 
     return jobs
+
+
+def _job_from_card_text(raw_text: str, fallback_url: str) -> JobListing | None:
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    lines = [line for line in lines if line.lower() not in {"new", "via linkedin", "via indeed"}]
+    if len(lines) < 2:
+        return None
+
+    title = lines[0]
+    company = lines[1] if len(lines) > 1 else "Unknown"
+    location = lines[2] if len(lines) > 2 else ""
+    description = " ".join(lines[3:8])[:2000]
+    return JobListing(
+        title=title,
+        company=company,
+        location=location,
+        description=description,
+        job_url=fallback_url,
+        platform="google_jobs",
+    )
+
+
+async def _search_google_jobs_playwright(
+    user_id: str,
+    search_term: str,
+    location: str,
+    results_wanted: int,
+    live_browser: bool,
+    run_id: str | None,
+) -> list[JobListing]:
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        logger.error("Playwright is required for Google Jobs fallback: %s", exc)
+        return []
+
+    from app.services.browser_control_service import BROWSER_DATA_DIR
+
+    query = quote_plus(f"{search_term} jobs in {location}")
+    url = f"https://www.google.com/search?q={query}&ibp=htl;jobs"
+    user_dir = BROWSER_DATA_DIR / user_id / "google_jobs"
+    user_dir.mkdir(parents=True, exist_ok=True)
+
+    if run_id:
+        emit(run_id, "browser", {
+            "phase": "navigate",
+            "mode": "visible" if live_browser else "headless",
+            "url": url,
+            "task": "Search Google Jobs with Playwright",
+        })
+
+    async with async_playwright() as p:
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=str(user_dir),
+            headless=not live_browser,
+            viewport={"width": 1366, "height": 900},
+        )
+        page = context.pages[0] if context.pages else await context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(5000 if live_browser else 2500)
+            if run_id:
+                emit(run_id, "browser", {"phase": "extracting", "source": "google_jobs"})
+
+            jobs: list[JobListing] = []
+            cards = page.locator('div[role="treeitem"]')
+            count = await cards.count()
+            for index in range(min(count, results_wanted)):
+                try:
+                    raw = await cards.nth(index).inner_text(timeout=1500)
+                except Exception as exc:
+                    logger.debug("Skipping Google Jobs card %s: %s", index, exc)
+                    continue
+                job = _job_from_card_text(raw, url)
+                if job:
+                    jobs.append(job)
+
+            if run_id:
+                emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
+            if live_browser:
+                await page.wait_for_timeout(5000)
+            return jobs
+        except Exception as exc:
+            logger.error("Google Jobs Playwright fallback failed: %s", exc)
+            if run_id:
+                emit(
+                    run_id,
+                    "browser",
+                    {
+                        "phase": "failed",
+                        "source": "google_jobs",
+                        "error": "Google Jobs search failed",
+                    },
+                )
+            return []
+        finally:
+            await context.close()
+            if run_id:
+                emit(run_id, "browser", {"phase": "closed", "source": "google_jobs"})
 
 
 async def scrape_all_indian_platforms(
@@ -216,7 +319,13 @@ async def login_to_platform(
     email: str,
     password: str,
 ) -> str:
-    """Login to an Indian job platform. Cookies are persisted for future scraping."""
+    """Login to an Indian job platform. Cookies are persisted for future scraping.
+
+    Credentials are filled directly through Playwright so they never enter an
+    LLM prompt, SSE event, or provider-side trace.
+    """
+    del llm
+
     if platform not in INDIAN_PLATFORMS:
         return f"Unknown platform: {platform}"
 
@@ -229,23 +338,48 @@ async def login_to_platform(
     }
     login_url = login_urls.get(platform, config["url"])
 
-    task = (
-        f"Go to {login_url}. "
-        f"Enter email '{email}' and password '{password}'. "
-        f"Click the login/sign-in button. Wait for the page to load. "
-        f"If there's a CAPTCHA or OTP, stop and report it."
-    )
-
-    browser_config = _get_browser_config(user_id)
-    browser = Browser(config=browser_config)
-    agent = Agent(task=task, llm=llm, browser=browser, max_actions_per_step=3)
-
     try:
-        await _human_delay()
-        result = await agent.run(max_steps=10)
-        return result.final_result() if result else "Login attempted"
-    finally:
-        await browser.close()
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.async_api import async_playwright
+    except ImportError as exc:  # pragma: no cover - dependency is optional in some test envs
+        raise RuntimeError("Playwright is required for secure platform login") from exc
+
+    from app.services.browser_control_service import BROWSER_DATA_DIR
+
+    user_dir = BROWSER_DATA_DIR / user_id / platform
+    user_dir.mkdir(parents=True, exist_ok=True)
+    email_selectors = (
+        'input[type="email"], input[name*="email" i], input[name*="user" i], '
+        'input[id*="email" i], input[id*="user" i], input[type="text"]'
+    )
+    # CSS selectors for password fields, not stored credentials.
+    password_selectors = (
+        'input[type="password"], input[name*="password" i], input[id*="password" i]'  # noqa: S105  # nosec B105
+    )
+    submit_selectors = 'button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign in")'
+
+    async with async_playwright() as p:
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir=str(user_dir),
+            headless=True,
+        )
+        page = context.pages[0] if context.pages else await context.new_page()
+        try:
+            await page.goto(login_url, wait_until="domcontentloaded")
+            await _human_delay()
+            await page.locator(email_selectors).first.fill(email)
+            await page.locator(password_selectors).first.fill(password)
+            await page.locator(submit_selectors).first.click()
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except PlaywrightTimeoutError:
+                pass
+            page_text = (await page.locator("body").inner_text(timeout=5000)).lower()
+            if any(marker in page_text for marker in ("captcha", "otp", "verification code")):
+                return f"{config['name']} security challenge requires manual review"
+            return f"{config['name']} login submitted"
+        finally:
+            await context.close()
 
 
 def get_indian_platforms() -> list[dict]:
@@ -262,6 +396,8 @@ async def search_google_jobs(
     search_term: str,
     location: str = "India",
     results_wanted: int = 15,
+    live_browser: bool = False,
+    run_id: str | None = None,
 ) -> list[JobListing]:
     """Search Google Jobs (google.com/jobs) via browser-use.
 
@@ -278,6 +414,16 @@ async def search_google_jobs(
     Returns:
         List of JobListing from Google Jobs
     """
+    if not BROWSER_USE_AVAILABLE:
+        return await _search_google_jobs_playwright(
+            user_id=user_id,
+            search_term=search_term,
+            location=location,
+            results_wanted=results_wanted,
+            live_browser=live_browser,
+            run_id=run_id,
+        )
+
     query = f"{search_term} jobs in {location}".replace(" ", "+")
     url = f"https://www.google.com/search?q={query}&ibp=htl;jobs"
 
@@ -291,17 +437,42 @@ async def search_google_jobs(
         f"\nIf no jobs panel appears, return NO_RESULTS."
     )
 
-    browser_config = _get_browser_config(user_id)
+    if run_id:
+        emit(run_id, "browser", {
+            "phase": "navigate",
+            "mode": "visible" if live_browser else "headless",
+            "url": url,
+            "task": "Search Google Jobs for real-time job listings",
+        })
+
+    browser_config = _get_browser_config(user_id, live_browser=live_browser)
     browser = Browser(config=browser_config)
     agent = Agent(task=task, llm=llm, browser=browser, max_actions_per_step=3)
 
     try:
         await _human_delay()
+        if run_id:
+            emit(run_id, "browser", {"phase": "extracting", "source": "google_jobs"})
         result = await agent.run(max_steps=12)
         raw_text = result.final_result() if result else ""
-        return _parse_extraction_result(raw_text, "google_jobs")
+        jobs = _parse_extraction_result(raw_text, "google_jobs")
+        if run_id:
+            emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
+        return jobs
     except Exception as exc:
         logger.error("Google Jobs search failed: %s", exc)
+        if run_id:
+                emit(
+                    run_id,
+                    "browser",
+                    {
+                        "phase": "failed",
+                        "source": "google_jobs",
+                        "error": "Google Jobs search failed",
+                    },
+                )
         return []
     finally:
         await browser.close()
+        if run_id:
+            emit(run_id, "browser", {"phase": "closed", "source": "google_jobs"})

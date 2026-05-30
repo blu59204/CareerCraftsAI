@@ -1,20 +1,14 @@
-import { createClient } from "@/lib/supabase/server";
+import { auth as clerkAuth, currentUser as clerkCurrentUser } from "@clerk/nextjs/server";
 
 export async function currentUser() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
+  return clerkCurrentUser();
 }
 
 export async function auth() {
-  const supabase = await createClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const session = await clerkAuth();
   return {
-    userId: session?.user.id ?? null,
-    session,
+    userId: session.userId,
+    session: null,
+    token: await session.getToken(),
   };
 }

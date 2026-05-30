@@ -40,8 +40,11 @@ def emit(run_id: str, event_type: str, data: str | dict) -> None:
     message = json.dumps({"type": event_type, "data": payload, "ts": int(time.time())})
 
     async def _pub() -> None:
-        r = _get_redis()
-        await r.publish(_channel(run_id), message)
+        try:
+            r = _get_redis()
+            await r.publish(_channel(run_id), message)
+        except Exception as exc:
+            logger.warning("SSE publish skipped for run %s: %s", run_id, exc)
 
     try:
         loop = asyncio.get_running_loop()
@@ -59,7 +62,7 @@ async def stream_events(run_id: str) -> AsyncIterator[str]:
     try:
         while True:
             try:
-                msg = await asyncio.wait_for(pubsub.get_message(ignore_subscribe_messages=True), timeout=30.0)
+                msg = await asyncio.wait_for(pubsub.get_message(ignore_subscribe_messages=True), timeout=5.0)
             except TimeoutError:
                 yield 'data: {"type":"ping"}\n\n'
                 continue

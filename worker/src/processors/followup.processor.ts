@@ -2,7 +2,7 @@ import { Job } from "bullmq";
 import axios from "axios";
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:8000";
-const INTERNAL_SECRET = process.env.APP_SECRET_KEY ?? "";
+const INTERNAL_SECRET = process.env.INTERNAL_SECRET ?? process.env.APP_SECRET_KEY ?? "";
 
 export async function processFollowupEmail(job: Job): Promise<void> {
   const { user_id, application_id, day } = job.data as {

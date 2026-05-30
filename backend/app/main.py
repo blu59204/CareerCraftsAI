@@ -31,19 +31,28 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
     logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-_raw_origins = getattr(settings, "ALLOWED_ORIGINS", settings.FRONTEND_URL)
-_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-if "*" in _allowed_origins:
-    raise ValueError(
-        "ALLOWED_ORIGINS contains '*' which is not permitted. "
-        "Set specific origins in your .env file, e.g. ALLOWED_ORIGINS=http://localhost:3000"
-    )
+def _build_allowed_origins(raw_origins: str, app_env: str) -> list[str]:
+    origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+    if "*" in origins:
+        raise ValueError(
+            "ALLOWED_ORIGINS contains '*' which is not permitted. "
+            "Set specific origins in your .env file, e.g. ALLOWED_ORIGINS=http://localhost:3000"
+        )
 
-# Always include both 3000 and 3001 in dev so the port Next.js picks doesn't matter
-if settings.APP_ENV != "production":
-    for _p in ("http://localhost:3000", "http://localhost:3001"):
-        if _p not in _allowed_origins:
-            _allowed_origins.append(_p)
+    if app_env != "production":
+        for origin in (
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:3001",
+        ):
+            if origin not in origins:
+                origins.append(origin)
+    return origins
+
+
+_raw_origins = getattr(settings, "ALLOWED_ORIGINS", settings.FRONTEND_URL)
+_allowed_origins = _build_allowed_origins(_raw_origins, settings.APP_ENV)
 
 app.add_middleware(
     CORSMiddleware,

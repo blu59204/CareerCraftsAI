@@ -3,7 +3,7 @@ version: "3.9"
 services:
   frontend:
     build: ./frontend
-    env_file: .env
+    env_file: ./frontend/.env.local
     depends_on:
       backend:
         condition: service_healthy
@@ -17,7 +17,7 @@ services:
 
   backend:
     build: ./backend
-    env_file: .env
+    env_file: ./backend/.env
     depends_on:
       redis:
         condition: service_healthy
@@ -31,7 +31,7 @@ services:
 
   worker:
     build: ./worker
-    env_file: .env
+    env_file: ./worker/.env
     depends_on:
       redis:
         condition: service_healthy
@@ -42,14 +42,20 @@ services:
   pinchtab:
     image: pinchtab/pinchtab
     shm_size: "2g"
+    environment:
+      PINCHTAB_CONFIG: /config/config.json
+    volumes:
+      - ./pinchtab/config.json:/config/config.json:ro
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-changeme}
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD:-changeme}
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
       interval: 10s
@@ -61,8 +67,14 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      # envsubst substitutes only ${DOMAIN} in the template; nginx runtime
+      # variables ($host, $remote_addr, ...) are left untouched by the filter.
+      DOMAIN: ${DOMAIN:-localhost}
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      NGINX_ENVSUBST_FILTER: DOMAIN
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       frontend:

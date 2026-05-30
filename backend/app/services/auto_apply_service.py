@@ -12,7 +12,7 @@ All handlers use browser-use for automation with human-like delays.
 """
 import asyncio
 import logging
-import random
+import secrets
 from dataclasses import dataclass
 from typing import Literal
 
@@ -21,8 +21,10 @@ from langchain_core.language_models import BaseChatModel
 from app.services.browser_control_service import run_browser_task, _get_browser_config
 
 logger = logging.getLogger(__name__)
+_RANDOM = secrets.SystemRandom()
 
 ApplyStatus = Literal["applied", "draft_saved", "failed", "requires_manual"]
+GENERIC_APPLY_FAILURE = "Application automation failed"
 
 
 @dataclass
@@ -35,7 +37,7 @@ class ApplyResult:
 
 async def _human_delay():
     """Random delay to avoid detection (2-6s)."""
-    await asyncio.sleep(random.uniform(2.0, 6.0))
+    await asyncio.sleep(_RANDOM.uniform(2.0, 6.0))
 
 
 async def apply_linkedin(
@@ -57,7 +59,8 @@ async def apply_linkedin(
             return ApplyResult("linkedin", job_url, "requires_manual", result)
         return ApplyResult("linkedin", job_url, "applied", result or "Submitted")
     except Exception as exc:
-        return ApplyResult("linkedin", job_url, "failed", str(exc))
+        logger.warning("LinkedIn apply failed for user %s: %s", user_id, exc)
+        return ApplyResult("linkedin", job_url, "failed", GENERIC_APPLY_FAILURE)
 
 
 async def apply_naukri(
@@ -80,7 +83,8 @@ async def apply_naukri(
             return ApplyResult("naukri", job_url, "requires_manual", result)
         return ApplyResult("naukri", job_url, "applied", result or "Submitted")
     except Exception as exc:
-        return ApplyResult("naukri", job_url, "failed", str(exc))
+        logger.warning("Naukri apply failed for user %s: %s", user_id, exc)
+        return ApplyResult("naukri", job_url, "failed", GENERIC_APPLY_FAILURE)
 
 
 async def apply_instahyre(
@@ -99,7 +103,8 @@ async def apply_instahyre(
         result = await run_browser_task(llm, task, user_id, max_steps=12)
         return ApplyResult("instahyre", job_url, "applied", result or "Submitted")
     except Exception as exc:
-        return ApplyResult("instahyre", job_url, "failed", str(exc))
+        logger.warning("Instahyre apply failed for user %s: %s", user_id, exc)
+        return ApplyResult("instahyre", job_url, "failed", GENERIC_APPLY_FAILURE)
 
 
 async def apply_indeed(
@@ -122,7 +127,8 @@ async def apply_indeed(
             return ApplyResult("indeed", job_url, "requires_manual", result)
         return ApplyResult("indeed", job_url, "applied", result or "Submitted")
     except Exception as exc:
-        return ApplyResult("indeed", job_url, "failed", str(exc))
+        logger.warning("Indeed apply failed for user %s: %s", user_id, exc)
+        return ApplyResult("indeed", job_url, "failed", GENERIC_APPLY_FAILURE)
 
 
 async def apply_foundit(
@@ -141,7 +147,8 @@ async def apply_foundit(
         result = await run_browser_task(llm, task, user_id, max_steps=15)
         return ApplyResult("foundit", job_url, "applied", result or "Submitted")
     except Exception as exc:
-        return ApplyResult("foundit", job_url, "failed", str(exc))
+        logger.warning("Foundit apply failed for user %s: %s", user_id, exc)
+        return ApplyResult("foundit", job_url, "failed", GENERIC_APPLY_FAILURE)
 
 
 async def apply_cutshort(
@@ -159,7 +166,8 @@ async def apply_cutshort(
         result = await run_browser_task(llm, task, user_id, max_steps=12)
         return ApplyResult("cutshort", job_url, "applied", result or "Submitted")
     except Exception as exc:
-        return ApplyResult("cutshort", job_url, "failed", str(exc))
+        logger.warning("Cutshort apply failed for user %s: %s", user_id, exc)
+        return ApplyResult("cutshort", job_url, "failed", GENERIC_APPLY_FAILURE)
 
 
 # Platform handler registry

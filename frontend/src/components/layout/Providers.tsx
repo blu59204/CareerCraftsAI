@@ -1,7 +1,10 @@
 "use client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { lazy, Suspense, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Toaster } from "sonner";
+import { GoogleOAuthSync } from "@/components/auth/GoogleOAuthSync";
+import { setClerkTokenProvider } from "@/lib/clerk-token";
 
 const ReactQueryDevtools =
   process.env.NODE_ENV === "development"
@@ -11,6 +14,17 @@ const ReactQueryDevtools =
         }))
       )
     : () => null;
+
+function ClerkTokenBridge() {
+  const { getToken } = useAuth();
+
+  useEffect(() => {
+    setClerkTokenProvider(() => getToken());
+    return () => setClerkTokenProvider(null);
+  }, [getToken]);
+
+  return null;
+}
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -37,6 +51,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
   return (
     <QueryClientProvider client={queryClient}>
+      <ClerkTokenBridge />
+      <GoogleOAuthSync />
       {children}
       <Toaster position="top-right" richColors closeButton />
       <Suspense>

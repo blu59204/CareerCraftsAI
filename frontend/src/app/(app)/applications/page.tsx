@@ -4,10 +4,11 @@ import { useState, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
-import { ApplicationKanban, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationKanban";
+import type { ApplicationItem, AppStage } from "@/components/apps/ApplicationKanban";
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { Download, FileText, ExternalLink, Share2, Sparkles, Clock } from "lucide-react";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
+import { Download, ExternalLink, Share2, Sparkles, Clock } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -109,37 +110,37 @@ export default function ApplicationsPage() {
 
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-6">
-      <motion.div variants={fadeUp} className="flex items-center justify-between">
-        <div>
-          <div className="text-sm text-muted-foreground">Pipeline</div>
-          <h1 className="mt-1 text-3xl font-medium">Applications</h1>
-        </div>
-        <div className="flex gap-2">
-          <input
-            placeholder="Filter by company or role…"
-            className="h-10 rounded-full border border-border bg-card/40 px-4 text-sm placeholder:text-muted-foreground"
-          />
-          <div className="relative">
-            <LiquidGlassButton tone="ghost" size="sm" onClick={() => setShowExportMenu((v) => !v)}>
-              <Download className="h-4 w-4" /> Export
-            </LiquidGlassButton>
-            {showExportMenu && (
-              <div className="absolute right-0 top-12 z-10 rounded-2xl border border-border bg-card shadow-lg p-2 text-sm min-w-[180px]">
-                <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-muted" onClick={() => { exportToCSV(); setShowExportMenu(false); }}>
-                  <FileText className="h-4 w-4 text-muted-foreground" /> Download CSV
-                </button>
-                <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-muted" onClick={() => { openSheetsExport(); setShowExportMenu(false); }}>
-                  <ExternalLink className="h-4 w-4 text-muted-foreground" /> Open in Google Sheets
-                </button>
-                <button className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left hover:bg-muted" onClick={() => setShowExportMenu(false)}>
-                  <Share2 className="h-4 w-4 text-muted-foreground" /> Export to Notion
-                </button>
+      <motion.div variants={fadeUp}>
+        <CommandHeader
+          eyebrow="Taskora SaaS Hero"
+          title="Application Tracker"
+          description="Track saved, applied, interview, offer, and rejected roles with a clean dashboard workflow."
+          actions={
+            <div className="flex gap-2">
+              <input
+                placeholder="Filter by company or role..."
+                className="h-10 rounded-full border border-border bg-card/55 px-4 text-sm placeholder:text-muted-foreground"
+              />
+              <div className="relative">
+                <LiquidGlassButton tone="ghost" size="sm" onClick={() => setShowExportMenu((v) => !v)}>
+                  <Share2 className="h-4 w-4" />
+                  Export
+                </LiquidGlassButton>
+                {showExportMenu && (
+                  <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
+                    <button onClick={exportToCSV} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted">
+                      <Download className="h-4 w-4" /> CSV
+                    </button>
+                    <button onClick={openSheetsExport} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted">
+                      <ExternalLink className="h-4 w-4" /> Google Sheets
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+          }
+        />
       </motion.div>
-
       {/* Kanban with HTML5 drag-and-drop columns */}
       <motion.div variants={fadeUp}>
         {isLoading ? (

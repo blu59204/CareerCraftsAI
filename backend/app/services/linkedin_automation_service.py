@@ -5,8 +5,8 @@ Handles: login, connection requests, message sending.
 Uses human-like delays to avoid detection.
 """
 import logging
+import secrets
 import time
-import random
 
 from app.services.pinchtab_service import PinchTabClient, new_session
 
@@ -15,11 +15,12 @@ logger = logging.getLogger(__name__)
 # Human-like delay range (seconds)
 MIN_DELAY = 2.0
 MAX_DELAY = 5.0
+_RANDOM = secrets.SystemRandom()
 
 
 def _human_delay():
     """Random delay to mimic human behavior."""
-    time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+    time.sleep(_RANDOM.uniform(MIN_DELAY, MAX_DELAY))
 
 
 def linkedin_login(user_id: str, email: str, password: str) -> PinchTabClient:

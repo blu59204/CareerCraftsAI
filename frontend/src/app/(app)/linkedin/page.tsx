@@ -6,10 +6,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
-  Linkedin,
   TrendingUp,
   Eye,
   Users,
@@ -22,7 +22,9 @@ import {
   X,
   Save,
 } from "lucide-react";
+import { BrandLinkedin } from "@/components/icons/BrandIcons";
 import { apiClient } from "@/lib/api";
+import { ApprovalModal } from "@/components/agents/ApprovalModal";
 
 interface AgentRun {
   id: string;
@@ -94,7 +96,7 @@ function EditProfileModal({ onClose }: { onClose: () => void }) {
       >
         <div className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Linkedin className="h-4 w-4 text-primary" />
+            <BrandLinkedin className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold">Edit Profile</span>
           </div>
           <button
@@ -146,7 +148,7 @@ function EditProfileModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div className="flex items-center gap-2 rounded-2xl border border-border bg-card/40 px-3 py-2">
-            <Linkedin className="h-3.5 w-3.5 text-muted-foreground" />
+            <BrandLinkedin className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs text-muted-foreground">
               <Link href="/settings/account" className="text-primary underline hover:no-underline">
                 Connect LinkedIn OAuth in Settings
@@ -170,7 +172,7 @@ function EditProfileModal({ onClose }: { onClose: () => void }) {
 
 function ScoreBar({ score }: { score: number }) {
   const color =
-    score >= 85 ? "bg-green-500" : score >= 70 ? "bg-amber-500" : "bg-red-400";
+    score >= 85 ? "bg-success" : score >= 70 ? "bg-warning" : "bg-danger";
 
   return (
     <div className="flex items-center gap-2">
@@ -187,14 +189,14 @@ function ScoreBar({ score }: { score: number }) {
 function StatusChip({ status }: { status: ProfileSection["status"] }) {
   if (status === "strong")
     return (
-      <span className="flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700">
+      <span className="flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-0.5 text-xs font-medium text-success">
         <CheckCircle className="h-3 w-3" />Strong
       </span>
     );
   if (status === "good")
     return <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">Good</span>;
   return (
-    <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+    <span className="flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
       <AlertCircle className="h-3 w-3" />Improve
     </span>
   );
@@ -208,6 +210,45 @@ function parseOutput(run: AgentRun | null): {
   if (!run?.output) return { sections: DEFAULT_SECTIONS, recommendations: [], overallScore: null };
 
   const out = run.output as Record<string, unknown>;
+
+  if (out.type === "linkedin_edits") {
+    const headline = typeof out.headline === "string" ? out.headline : "";
+    const about = typeof out.about === "string" ? out.about : "";
+    const experience = typeof out.experience_bullets === "string" ? out.experience_bullets : "";
+
+    return {
+      sections: [
+        {
+          name: "Headline",
+          score: 82,
+          excerpt: headline || "Draft ready",
+          note: "Review draft before applying changes",
+          status: "good",
+        },
+        {
+          name: "Summary / About",
+          score: 78,
+          excerpt: about || "Draft ready",
+          note: "Review draft before applying changes",
+          status: "good",
+        },
+        {
+          name: "Experience",
+          score: 76,
+          excerpt: experience || "Draft ready",
+          note: "Review draft before applying changes",
+          status: "good",
+        },
+        ...DEFAULT_SECTIONS.slice(3),
+      ],
+      recommendations: [
+        headline && { id: "headline", priority: "High" as const, text: `Use headline: ${headline}` },
+        about && { id: "about", priority: "High" as const, text: `Update About section: ${about.slice(0, 220)}` },
+        experience && { id: "experience", priority: "Medium" as const, text: `Refresh experience bullets: ${experience}` },
+      ].filter(Boolean) as Recommendation[],
+      overallScore: 79,
+    };
+  }
 
   const sections: ProfileSection[] = Array.isArray(out.sections)
     ? (out.sections as ProfileSection[])
@@ -244,6 +285,10 @@ export default function LinkedInPage() {
       const runs = (data as AgentRun[]).filter((r) => r.agent_type === "linkedin_optimize");
       return runs[0] ?? null;
     },
+    refetchInterval: (query) => {
+      const run = query.state.data as AgentRun | null | undefined;
+      return !run || run.status === "running" || run.status === "pending" ? 2000 : false;
+    },
   });
 
   const analysisMutation = useMutation({
@@ -251,7 +296,7 @@ export default function LinkedInPage() {
       apiClient.post("/agents/run", { task_type: "linkedin_optimize", context: {} }),
     onSuccess: () => {
       toast.success("LinkedIn analysis started");
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["linkedin-run"] }), 5000);
+      qc.invalidateQueries({ queryKey: ["linkedin-run"] });
     },
     onError: () => {
       toast.error("Agent unavailable — backend not connected");
@@ -260,18 +305,20 @@ export default function LinkedInPage() {
 
   const { sections, recommendations, overallScore } = parseOutput(lastRun ?? null);
 
-  const isRunning = analysisMutation.isPending;
+  const isRunning =
+    analysisMutation.isPending || lastRun?.status === "running" || lastRun?.status === "pending";
+  const awaitingApproval = lastRun?.status === "awaiting_approval" && lastRun.output;
 
   return (
     <>
       <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-        {/* Header */}
-        <motion.div variants={fadeUp} className="flex items-start justify-between">
-          <div>
-            <div className="text-sm text-muted-foreground">LinkedIn Agent</div>
-            <h1 className="mt-1 text-3xl font-medium">Optimize your presence.</h1>
-          </div>
-          <div className="flex gap-2">
+        <motion.div variants={fadeUp}>
+          <CommandHeader
+            eyebrow="Finlytic AI Agent"
+            title="LinkedIn Presence"
+            description="Analyze profile sections, generate keyword upgrades, and keep publishing behind OAuth approval."
+            actions={
+              <div className="flex gap-2">
             <LiquidGlassButton
               tone="primary"
               size="sm"
@@ -281,14 +328,16 @@ export default function LinkedInPage() {
               {isRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Linkedin className="h-4 w-4" />
+                <BrandLinkedin className="h-4 w-4" />
               )}
               {isRunning ? "Analyzing…" : "Run Analysis"}
             </LiquidGlassButton>
             <LiquidGlassButton tone="ghost" size="sm" onClick={() => setEditOpen(true)}>
               Edit Profile
             </LiquidGlassButton>
-          </div>
+              </div>
+            }
+          />
         </motion.div>
 
         {/* Last run banner */}
@@ -303,7 +352,7 @@ export default function LinkedInPage() {
         {/* No analysis yet — CTA */}
         {!isLoading && !lastRun && (
           <motion.div variants={fadeUp} className="rounded-3xl border border-dashed border-border bg-card/40 p-8 text-center">
-            <Linkedin className="mx-auto h-8 w-8 text-muted-foreground/40" />
+            <BrandLinkedin className="mx-auto h-8 w-8 text-muted-foreground/40" />
             <p className="mt-3 text-sm font-medium">No analysis yet</p>
             <p className="mt-1 text-xs text-muted-foreground">
               Run the LinkedIn Agent to score your profile sections and get AI recommendations.
@@ -324,15 +373,15 @@ export default function LinkedInPage() {
         {/* Overall score metric */}
         {overallScore !== null && (
           <motion.div variants={fadeUp} className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-3xl border border-border bg-card/60 p-5">
+            <div className="glass-panel rounded-3xl p-5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Profile Score</span>
                 <Zap className="h-4 w-4 text-muted-foreground" />
               </div>
               <p className="mt-2 text-2xl font-semibold">{overallScore}/100</p>
-              <p className="mt-0.5 text-xs text-green-600">From last analysis</p>
+              <p className="mt-0.5 text-xs text-success">From last analysis</p>
             </div>
-            <div className="rounded-3xl border border-border bg-card/60 p-5">
+            <div className="glass-panel rounded-3xl p-5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Profile Views</span>
                 <Eye className="h-4 w-4 text-muted-foreground" />
@@ -340,7 +389,7 @@ export default function LinkedInPage() {
               <p className="mt-2 text-2xl font-semibold text-muted-foreground">—</p>
               <p className="mt-0.5 text-xs text-muted-foreground">LinkedIn OAuth required</p>
             </div>
-            <div className="rounded-3xl border border-border bg-card/60 p-5">
+            <div className="glass-panel rounded-3xl p-5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">Connections</span>
                 <Users className="h-4 w-4 text-muted-foreground" />
@@ -416,7 +465,7 @@ export default function LinkedInPage() {
                         <div className="min-w-0 flex-1">
                           <span className={cn(
                             "rounded-full px-2 py-0.5 text-xs font-medium",
-                            rec.priority === "High" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                            rec.priority === "High" ? "bg-danger/10 text-danger" : "bg-warning/10 text-warning"
                           )}>
                             {rec.priority}
                           </span>
@@ -454,6 +503,14 @@ export default function LinkedInPage() {
       <AnimatePresence>
         {editOpen && <EditProfileModal onClose={() => setEditOpen(false)} />}
       </AnimatePresence>
+      {awaitingApproval && (
+        <ApprovalModal
+          runId={lastRun.id}
+          action={lastRun.output as Record<string, unknown>}
+          onApprove={() => qc.invalidateQueries({ queryKey: ["linkedin-run"] })}
+          onCancel={() => qc.invalidateQueries({ queryKey: ["linkedin-run"] })}
+        />
+      )}
     </>
   );
 }

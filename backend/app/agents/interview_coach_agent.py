@@ -211,10 +211,11 @@ def start_session_node(state: AgentState) -> AgentState:
         try:
             questions = json.loads(raw)
         except json.JSONDecodeError as exc:
+            logger.warning("Interview coach question JSON parse failed: %s", exc)
             return {
                 **state,
                 "status": "failed",
-                "error": f"interview_coach: LLM returned non-JSON response: {exc}",
+                "error": "Agent failed",
             }
 
         if not isinstance(questions, list) or len(questions) == 0:
@@ -267,7 +268,7 @@ def start_session_node(state: AgentState) -> AgentState:
         }
     except Exception as exc:
         logger.error("interview_coach start_session failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
 
 
 def evaluate_answer_node(state: AgentState) -> AgentState:
@@ -350,10 +351,11 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
         try:
             evaluation = json.loads(raw)
         except json.JSONDecodeError as exc:
+            logger.warning("Interview coach evaluation JSON parse failed: %s", exc)
             return {
                 **state,
                 "status": "failed",
-                "error": f"interview_coach: LLM returned non-JSON evaluation: {exc}",
+                "error": "Agent failed",
             }
 
         # Normalize score to 0-100 range
@@ -410,7 +412,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
             "interview_coach evaluate_answer failed for user %s: %s",
             state.get("user_id"), exc,
         )
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.v1.deps import get_current_user
 from app.core.config import settings
+from app.core.security import decrypt_api_key
 from app.models.db import User
 from memory.embedder import MemoryEmbedder
 from memory.manager import MemoryManager
@@ -50,7 +51,9 @@ def _get_manager(user: User) -> MemoryManager:
             if ms.is_active:
                 user_settings = {
                     "provider": ms.provider,
-                    "api_key": ms.api_key_enc or "",  # decryption handled upstream
+                    "api_key": decrypt_api_key(ms.api_key_enc, settings.APP_SECRET_KEY)
+                    if ms.api_key_enc else "",
+                    "ollama_url": ms.ollama_url or "",
                 }
                 break
 
@@ -139,7 +142,7 @@ async def delete_memory(
 ) -> dict:
     """Soft-delete a memory by ID (sets is_active = false)."""
     mgr = _get_manager(current_user)
-    ok = await mgr.delete_memory(memory_id)
+    ok = await mgr.delete_memory(memory_id, current_user.id)
     if not ok:
         raise HTTPException(status_code=404, detail="Memory not found or already deleted")
     return _std({"deleted": str(memory_id)}, count=1)

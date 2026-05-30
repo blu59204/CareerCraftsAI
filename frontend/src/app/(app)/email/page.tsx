@@ -5,8 +5,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
+import { connectGoogleForGmail } from "@/lib/google-oauth";
 import { toast } from "sonner";
 import {
   Mail,
@@ -205,8 +207,8 @@ function FollowUpStep({
       <div
         className={cn(
           "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs",
-          status === "done" && "bg-green-100 text-green-600",
-          status === "pending" && "bg-amber-100 text-amber-600",
+          status === "done" && "bg-success/10 text-success",
+          status === "pending" && "bg-warning/10 text-warning",
           status === "upcoming" && "bg-muted text-muted-foreground"
         )}
       >
@@ -221,12 +223,12 @@ function FollowUpStep({
         <span className="ml-2 text-xs text-muted-foreground">{label}</span>
       </div>
       {status === "done" && (
-        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+        <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
           Sent
         </span>
       )}
       {status === "pending" && (
-        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+        <span className="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">
           Queued
         </span>
       )}
@@ -260,11 +262,11 @@ const INBOX_EMAILS: InboxEmail[] = [
 const CATEGORY_COLORS: Record<InboxCategory, string> = {
   important: "bg-blue-100 text-blue-700",
   newsletter: "bg-purple-100 text-purple-700",
-  promo: "bg-orange-100 text-orange-700",
-  social: "bg-green-100 text-green-700",
+  promo: "bg-warning/10 text-warning",
+  social: "bg-success/10 text-success",
 };
 
-function InboxCleanup({ onApplyToCompose }: { onApplyToCompose: (text: string) => void }) {
+function InboxCleanup() {
   const [emails, setEmails] = useState(INBOX_EMAILS);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<InboxCategory | "all">("all");
@@ -276,7 +278,11 @@ function InboxCleanup({ onApplyToCompose }: { onApplyToCompose: (text: string) =
   const toggle = (id: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
 
@@ -303,6 +309,13 @@ function InboxCleanup({ onApplyToCompose }: { onApplyToCompose: (text: string) =
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-2 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning" />
+        <p className="text-xs text-warning">
+          Preview only — sample data. Live inbox cleanup is not connected yet.
+        </p>
+      </div>
+
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: "Total", value: stats.total, icon: Inbox },
@@ -397,7 +410,7 @@ function InboxCleanup({ onApplyToCompose }: { onApplyToCompose: (text: string) =
                         setEmails((prev) => prev.filter((e) => e.id !== email.id));
                         toast.success(`Unsubscribed from ${email.from}`);
                       }}
-                      className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-500"
+                      className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
                       title="Unsubscribe"
                     >
                       <MailMinus className="h-3.5 w-3.5" />
@@ -432,7 +445,7 @@ export default function EmailPage() {
   const [selectedId, setSelectedId] = useState<string>("1");
   const [composeText, setComposeText] = useState<string>("");
   const [emailTab, setEmailTab] = useState<"drafts" | "templates" | "inbox">("drafts");
-  const [localDrafts, setLocalDrafts] = useState<Draft[]>([]);
+  const [localDrafts, setLocalDrafts] = useState<Draft[]>(DRAFTS);
   const qc = useQueryClient();
 
   const { data: remoteDrafts = [] } = useQuery<Draft[]>({
@@ -443,7 +456,7 @@ export default function EmailPage() {
     },
   });
 
-  const { data: userMe } = useQuery<{ email?: string; identities?: Array<{ provider: string }> }>({
+  const { data: userMe } = useQuery<{ email?: string }>({
     queryKey: ["user-me-email"],
     queryFn: async () => {
       const { data } = await apiClient.get("/users/me");
@@ -451,7 +464,15 @@ export default function EmailPage() {
     },
   });
 
-  const gmailConnected = userMe?.identities?.some((i) => i.provider === "google") ?? false;
+  const { data: connectedAccounts } = useQuery<{ google: boolean; gmail_send: boolean }>({
+    queryKey: ["connected-accounts"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/users/me/connected-accounts");
+      return data;
+    },
+  });
+
+  const gmailConnected = connectedAccounts?.gmail_send ?? false;
 
   const drafts = [...localDrafts, ...remoteDrafts.filter((d) => !localDrafts.find((x) => x.id === d.id))];
 
@@ -467,11 +488,55 @@ export default function EmailPage() {
         company: selected?.company ?? "Unknown",
         role: selected?.subject ?? "Draft",
         recipient_email: `recruiter@${(selected?.company ?? "company").toLowerCase().replace(/\s+/g, "")}.com`,
+        subject: selected?.subject ?? "Draft",
+        body: composeText,
       });
       qc.invalidateQueries({ queryKey: ["email-drafts"] });
       toast.success("Draft saved");
     } catch {
       toast.error("Failed to save draft — check backend connection");
+    }
+  };
+
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    if (!gmailConnected) {
+      toast.error("Gmail not connected — connect Gmail to send");
+      return;
+    }
+    if (!composeText.trim()) {
+      toast.info("Nothing to send — compose some text first.");
+      return;
+    }
+    setSending(true);
+    try {
+      // Clicking Send IS the human-in-the-loop approval: compose creates a
+      // pending email (status awaiting_approval), then approve dispatches it.
+      const { data: composed } = await apiClient.post<{ run_id: string; status: string }>(
+        "/email/compose",
+        {
+          company: selected?.company ?? "Unknown",
+          role: selected?.subject ?? "Draft",
+          recipient_email: `recruiter@${(selected?.company ?? "company").toLowerCase().replace(/\s+/g, "")}.com`,
+          subject: selected?.subject ?? "Follow up",
+          body: composeText,
+        },
+      );
+      if (composed.status !== "awaiting_approval") {
+        toast.error("Draft could not be prepared for sending");
+        return;
+      }
+      await apiClient.post(`/email/approve/${composed.run_id}`);
+      qc.invalidateQueries({ queryKey: ["email-drafts"] });
+      toast.success("Email sent");
+      setComposeText("");
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ? `Send failed: ${detail}` : "Send failed — check Gmail connection");
+    } finally {
+      setSending(false);
     }
   };
 
@@ -490,17 +555,20 @@ export default function EmailPage() {
       variants={stagger}
       className="space-y-8"
     >
-      {/* Header */}
-      <motion.div
-        variants={fadeUp}
-        className="flex items-start justify-between"
-      >
-        <div>
-          <div className="text-sm text-muted-foreground">Email Agent</div>
-          <h1 className="mt-1 text-3xl font-medium">AI-powered outreach.</h1>
-        </div>
-        <div className="flex gap-2">
-          <LiquidGlassButton tone="primary" size="sm" onClick={() => toast.info("Connect Gmail in Settings → Account → Connected accounts")}>
+      <CommandHeader
+        eyebrow="AI Automation"
+        title="AI-powered outreach."
+        description="Draft follow-ups, personalize messages, and keep human approval before anything gets sent."
+        actions={
+        <div className="flex flex-wrap gap-2">
+          <LiquidGlassButton
+            tone="primary"
+            size="sm"
+            onClick={async () => {
+              const { error } = await connectGoogleForGmail("/email");
+              if (error) toast.error(error.message);
+            }}
+          >
             <Mail className="h-4 w-4" />
             Connect Gmail
           </LiquidGlassButton>
@@ -517,7 +585,8 @@ export default function EmailPage() {
             New draft
           </LiquidGlassButton>
         </div>
-      </motion.div>
+        }
+      />
 
       {/* 3-column layout */}
       <motion.div variants={fadeUp} className="flex gap-4">
@@ -525,7 +594,7 @@ export default function EmailPage() {
         <div className="w-[280px] shrink-0 space-y-4">
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="flex items-center gap-2">
-              <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-green-500" : "bg-muted-foreground"}`} />
+              <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-success" : "bg-muted-foreground"}`} />
               <span className="text-sm font-medium text-foreground">
                 {gmailConnected ? "Gmail Connected" : "Gmail Not Connected"}
               </span>
@@ -596,10 +665,7 @@ export default function EmailPage() {
                 </div>
               </>
             ) : (
-              <InboxCleanup onApplyToCompose={(text) => {
-                setComposeText((prev) => prev + text);
-                setEmailTab("drafts");
-              }} />
+              <InboxCleanup />
             )}
           </div>
         </div>
@@ -617,7 +683,7 @@ export default function EmailPage() {
                   To: recruiter@{selected.company.toLowerCase().replace(" ", "")}.com
                 </p>
               </div>
-              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
+              <span className="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
                 Draft
               </span>
             </div>
@@ -651,9 +717,9 @@ export default function EmailPage() {
               className="w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             <div className="mt-3 flex gap-2">
-              <LiquidGlassButton tone="primary" size="sm" onClick={() => toast.info("Gmail not connected — connect Gmail to send")}>
+              <LiquidGlassButton tone="primary" size="sm" onClick={handleSend} disabled={sending}>
                 <Send className="h-4 w-4" />
-                Send
+                {sending ? "Sending…" : "Send"}
               </LiquidGlassButton>
               <LiquidGlassButton tone="ghost" size="sm" onClick={handleSaveDraft}>
                 Save draft
@@ -711,9 +777,9 @@ export default function EmailPage() {
 
       {/* Human-in-the-loop warning */}
       <motion.div variants={fadeUp}>
-        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-          <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
-          <p className="text-sm text-amber-800">
+        <div className="flex items-center gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-5 py-4">
+          <AlertCircle className="h-4 w-4 shrink-0 text-warning" />
+          <p className="text-sm text-warning">
             Every email needs your approval before sending.
           </p>
         </div>

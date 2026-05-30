@@ -27,8 +27,13 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
     setLoading(true);
     try {
       await apiClient.post(`/agents/${runId}/approve`, { approved });
-      approved ? toast.success("Action approved") : toast.info("Action cancelled");
-      approved ? onApprove() : onCancel();
+      if (approved) {
+        toast.success("Action approved");
+        onApprove();
+      } else {
+        toast.info("Action cancelled");
+        onCancel();
+      }
     } catch {
       toast.error("Failed to process approval");
     } finally {
@@ -55,13 +60,13 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
               <div>
                 <span className="font-medium">Subject:</span> {action.subject as string}
               </div>
-              <div className="bg-slate-50 rounded p-3 whitespace-pre-wrap max-h-48 overflow-y-auto">
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-border bg-background/70 p-3 text-foreground whitespace-pre-wrap">
                 {action.body as string}
               </div>
             </>
           )}
           {actionType === "resume_ready" && (
-            <div className="bg-slate-50 rounded p-3 whitespace-pre-wrap max-h-64 overflow-y-auto">
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/70 p-3 text-foreground whitespace-pre-wrap">
               {action.resume_text as string}
             </div>
           )}
@@ -70,9 +75,33 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
               <div>
                 <span className="font-medium">Headline:</span> {action.headline as string}
               </div>
-              <p className="text-slate-600">
+              <p className="text-muted-foreground">
                 {(action.about as string)?.slice(0, 200)}...
               </p>
+            </div>
+          )}
+          {actionType === "submit_application" && (
+            <div className="space-y-2">
+              <div>
+                <span className="font-medium">Role:</span> {action.role as string}
+              </div>
+              <div>
+                <span className="font-medium">Company:</span> {action.company as string}
+              </div>
+              <a
+                href={action.job_url as string}
+                target="_blank"
+                rel="noreferrer"
+                className="block break-all text-primary underline"
+              >
+                {action.job_url as string}
+              </a>
+              <p className="text-muted-foreground">{action.message as string}</p>
+              {Boolean(action.browser_result) && (
+                <div className="max-h-40 overflow-y-auto rounded-xl border border-border bg-background/70 p-3 text-foreground whitespace-pre-wrap">
+                  {action.browser_result as string}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -22,8 +22,15 @@ EMBEDDING_DIMENSIONS: dict[str, int] = {
 }
 
 
-def collection_name(user_id: str, doc_type: str) -> str:
-    return f"{user_id}_{doc_type}"
+def collection_name(user_id: str, doc_type: str, provider: str = "openai") -> str:
+    """Generate collection name namespaced by user, doc_type, and embedding provider.
+
+    Provider namespacing prevents dimension mismatch when users switch between
+    providers with different embedding dimensions (e.g., OpenAI 1536-d vs Google 768-d).
+    """
+    # Map provider to dimension to ensure collections are separated by embedding size
+    dimension = EMBEDDING_DIMENSIONS.get(provider, 768)
+    return f"{user_id}_{doc_type}_{provider}_{dimension}d"
 
 
 def extract_text(content: bytes, filename: str) -> str:
@@ -73,15 +80,41 @@ def _psycopg_url() -> str:
 
 
 def get_vector_store(user_id: str, doc_type: str, embeddings, provider: str = "openai"):
-    """Get or create PGVector store for a user+doc_type collection."""
+    """Get or create PGVector store for a user+doc_type+provider collection.
+
+    Provider is included in the collection name to prevent dimension mismatch
+    when users switch between embedding providers.
+    """
     from langchain_postgres import PGVector
 
-    table = collection_name(user_id, doc_type)
+    table = collection_name(user_id, doc_type, provider)
     return PGVector(
-        connection_string=_psycopg_url(),
+        connection=_psycopg_url(),
         collection_name=table,
-        embedding=embeddings,
+        embeddings=embeddings,
+        use_jsonb=True,
     )
+
+
+def _ensure_hnsw_index() -> None:
+    """Create the LangChain embedding HNSW index after the table exists."""
+    try:
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(_psycopg_url(), pool_pre_ping=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_langchain_embedding_hnsw
+                    ON public.langchain_pg_embedding
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """))
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        logger.warning("Failed to ensure langchain_pg_embedding HNSW index: %s", exc)
 
 
 def ingest_document(
@@ -100,6 +133,7 @@ def ingest_document(
     ]
     store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
     store.add_documents(docs)
+    _ensure_hnsw_index()
     return len(docs)
 
 
@@ -111,6 +145,21 @@ def retrieve(
     k: int = 5,
 ) -> list[Document]:
     """Retrieve top-k relevant chunks."""
-    embeddings = get_embedding_model(model_settings)
-    store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
-    return store.similarity_search(query, k=k)
+    try:
+        embeddings = get_embedding_model(model_settings)
+        store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
+        return store.similarity_search(query, k=k)
+    except Exception as exc:
+        logger.warning("Vector retrieval failed for %s/%s: %s", user_id, doc_type, exc)
+        if doc_type == "resume":
+            from app.core.sync_db import fetch_user_profile_text
+
+            profile_text = fetch_user_profile_text(user_id)
+            if profile_text:
+                return [
+                    Document(
+                        page_content=profile_text,
+                        metadata={"fallback": "raw_resume", "doc_type": doc_type},
+                    )
+                ]
+        return []

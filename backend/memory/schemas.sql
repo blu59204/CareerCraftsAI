@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS agent_learnings (
 
 CREATE TABLE IF NOT EXISTS memory_access_log (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES users(id),
+  user_id     UUID REFERENCES users(id) ON DELETE CASCADE,
   query       TEXT,
   results     JSONB,
   agent_type  TEXT,

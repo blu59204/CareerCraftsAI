@@ -30,15 +30,17 @@ class HunterService:
             logger.warning("HUNTER_API_KEY not configured")
             return None
 
-        params = {"domain": domain, "api_key": self.api_key}
+        params = {"domain": domain}
         if first_name:
             params["first_name"] = first_name
         if last_name:
             params["last_name"] = last_name
 
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(f"{HUNTER_API_BASE}/email-finder", params=params)
+                resp = await client.get(f"{HUNTER_API_BASE}/email-finder", params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json().get("data", {})
                 if data.get("email"):
@@ -62,14 +64,15 @@ class HunterService:
 
         params = {
             "domain": domain,
-            "api_key": self.api_key,
             "department": department,
             "limit": 10,
         }
 
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(f"{HUNTER_API_BASE}/domain-search", params=params)
+                resp = await client.get(f"{HUNTER_API_BASE}/domain-search", params=params, headers=headers)
                 resp.raise_for_status()
                 data = resp.json().get("data", {})
                 emails = data.get("emails", [])

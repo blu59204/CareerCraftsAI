@@ -224,6 +224,6 @@ async def delete_document(
     await db.delete(doc)
     await db.flush()
     try:
-        delete_file(storage_path)
+        delete_file(storage_path, owner_id=str(current_user.id))
     except Exception as exc:
         logger.warning("Supabase file delete failed for %s (best-effort): %s", storage_path, exc)

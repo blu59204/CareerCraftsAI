@@ -1,0 +1,71 @@
+{
+  "configVersion": "0.8.0",
+  "server": {
+    "port": "9867",
+    "bind": "0.0.0.0"
+  },
+  "instanceDefaults": {
+    "mode": "headless",
+    "blockImages": true,
+    "maxTabs": 20,
+    "stealthLevel": "light",
+    "tabEvictionPolicy": "close_lru"
+  },
+  "security": {
+    "allowEvaluate": false,
+    "allowMacro": false,
+    "allowScreencast": false,
+    "allowDownload": false,
+    "allowedDomains": [
+      "127.0.0.1",
+      "localhost",
+      "::1",
+      "host.docker.internal",
+      "google.com",
+      "www.google.com",
+      "linkedin.com",
+      "www.linkedin.com",
+      "greenhouse.io",
+      "*.greenhouse.io",
+      "lever.co",
+      "*.lever.co",
+      "workdayjobs.com",
+      "*.workdayjobs.com",
+      "myworkdayjobs.com",
+      "*.myworkdayjobs.com",
+      "ashbyhq.com",
+      "*.ashbyhq.com",
+      "smartrecruiters.com",
+      "*.smartrecruiters.com"
+    ],
+    "downloadAllowedDomains": [],
+    "allowUpload": false,
+    "allowClipboard": false,
+    "attach": {
+      "enabled": false,
+      "allowHosts": ["127.0.0.1", "localhost", "::1"],
+      "allowSchemes": ["ws", "wss"]
+    },
+    "idpi": {
+      "enabled": true,
+      "strictMode": true,
+      "scanContent": true,
+      "wrapContent": true,
+      "customPatterns": [],
+      "scanTimeoutSec": 5,
+      "shieldThreshold": 30
+    }
+  },
+  "multiInstance": {
+    "strategy": "always-on",
+    "allocationPolicy": "fcfs",
+    "instancePortStart": 9868,
+    "instancePortEnd": 9968
+  },
+  "timeouts": {
+    "actionSec": 30,
+    "navigateSec": 60,
+    "shutdownSec": 10,
+    "waitNavMs": 1000
+  }
+}

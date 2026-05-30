@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
@@ -25,6 +26,7 @@ import {
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 
 type Category = "All" | "Technical" | "Behavioral" | "Company-Specific";
@@ -68,15 +70,15 @@ const BASE_STAR_STORIES: StarStory[] = [
 const CATEGORY_TABS: Category[] = ["All", "Technical", "Behavioral", "Company-Specific"];
 
 const DIFFICULTY_CONFIG: Record<Difficulty, { label: string; className: string }> = {
-  Easy: { label: "Easy", className: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30" },
-  Medium: { label: "Medium", className: "bg-amber-500/15 text-amber-600 border-amber-500/30" },
-  Hard: { label: "Hard", className: "bg-red-500/15 text-red-500 border-red-500/30" },
+  Easy: { label: "Easy", className: "bg-success/15 text-success border-success/30" },
+  Medium: { label: "Medium", className: "bg-warning/15 text-warning border-warning/30" },
+  Hard: { label: "Hard", className: "bg-danger/15 text-danger border-danger/30" },
 };
 
 const CATEGORY_CONFIG: Record<Exclude<Category, "All">, string> = {
-  Technical: "bg-blue-500/15 text-blue-600 border-blue-500/30",
+  Technical: "bg-primary/15 text-primary border-blue-500/30",
   Behavioral: "bg-violet-500/15 text-violet-600 border-violet-500/30",
-  "Company-Specific": "bg-orange-500/15 text-orange-600 border-orange-500/30",
+  "Company-Specific": "bg-warning/15 text-warning border-warning/30",
 };
 
 const MOCK_INTERVIEW_QUESTIONS = [
@@ -154,8 +156,8 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
 
         {done ? (
           <div className="space-y-4 text-center">
-            <div className="flex h-14 w-14 mx-auto items-center justify-center rounded-full bg-green-100">
-              <Sparkles className="h-6 w-6 text-green-600" />
+            <div className="flex h-14 w-14 mx-auto items-center justify-center rounded-full bg-success/10">
+              <Sparkles className="h-6 w-6 text-success" />
             </div>
             <p className="text-base font-semibold">Interview complete!</p>
             <p className="text-sm text-muted-foreground">
@@ -424,13 +426,12 @@ export default function InterviewPrepPage() {
   return (
     <>
       <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-        {/* Header */}
-        <motion.div variants={fadeUp} className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-sm text-muted-foreground">Interview Prep</div>
-            <h1 className="mt-1 text-3xl font-medium">Practice makes perfect.</h1>
-          </div>
-          <div className="flex shrink-0 gap-2">
+        <CommandHeader
+          eyebrow="AI Workflow"
+          title="Practice makes perfect."
+          description="Generate role-specific questions, rehearse out loud, and turn STAR stories into interview-ready answers."
+          actions={
+          <div className="flex shrink-0 flex-wrap gap-2">
             <LiquidGlassButton tone="ghost" size="sm" onClick={() => setMockOpen(true)}>
               <Mic className="h-4 w-4" />
               Mock interview
@@ -449,7 +450,8 @@ export default function InterviewPrepPage() {
               {generateMutation.isPending ? "Generating…" : "Generate questions"}
             </LiquidGlassButton>
           </div>
-        </motion.div>
+          }
+        />
 
         {/* Target job row */}
         <motion.div
@@ -568,9 +570,9 @@ export default function InterviewPrepPage() {
                     <span className="text-5xl font-semibold tabular-nums leading-none">{aiScore}</span>
                     <span className="mb-1 text-lg text-muted-foreground">%</span>
                     <span className={`mb-1 rounded-full border px-2 py-0.5 text-xs font-medium ${
-                      aiScore >= 80 ? "bg-green-500/15 border-green-500/30 text-green-600"
-                      : aiScore >= 60 ? "bg-amber-500/15 border-amber-500/30 text-amber-600"
-                      : "bg-red-500/15 border-red-500/30 text-red-500"
+                      aiScore >= 80 ? "bg-success/15 border-success/30 text-success"
+                      : aiScore >= 60 ? "bg-warning/15 border-warning/30 text-warning"
+                      : "bg-danger/15 border-danger/30 text-danger"
                     }`}>
                       {aiScore >= 80 ? "Strong" : aiScore >= 60 ? "Good" : "Needs Work"}
                     </span>
@@ -730,7 +732,13 @@ export default function InterviewPrepPage() {
                     className="group w-64 shrink-0 overflow-hidden rounded-2xl border border-border bg-card/60 transition-shadow hover:shadow-md"
                   >
                     <div className="relative">
-                      <img src={v.thumbnail} alt={v.title} className="h-36 w-full object-cover" />
+                      <Image
+                        src={v.thumbnail}
+                        alt={v.title}
+                        width={320}
+                        height={180}
+                        className="h-36 w-full object-cover"
+                      />
                       <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
                         <Play className="h-8 w-8 text-white" />
                       </div>

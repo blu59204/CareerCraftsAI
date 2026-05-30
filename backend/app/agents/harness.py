@@ -35,9 +35,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from app.agents.orchestrator import orchestrator
+from app.agents.semantic_memory import SemanticMemoryBridge
 from app.agents.state import AgentState
 from app.agents.strategies import TASK_TO_AGENT, strategies_for_task
-from app.agents.memory import MemoryManager
+from app.agents.memory import MemoryManager as HarnessMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,8 @@ class AgentHarness:
     """
 
     def __init__(self, db_url: str, redis_url: str) -> None:
-        self._memory = MemoryManager(db_url=db_url, redis_url=redis_url)
+        self._memory = HarnessMemoryManager(db_url=db_url, redis_url=redis_url)
+        self._semantic_memory = SemanticMemoryBridge()
         self._initialized = False
         self._reflection_hooks: list[ReflectionHook] = []
         self._init_lock = asyncio.Lock()
@@ -136,6 +138,8 @@ class AgentHarness:
 
         # ── 1. Build memory context ──────────────────────────────────
         mem_context: dict[str, Any] = {}
+        semantic_context: dict[str, Any] = {}
+        task_text = _summarise(context, 1000)
         try:
             mem_context = await self._memory.build_agent_context(
                 user_id=user_id,
@@ -144,6 +148,16 @@ class AgentHarness:
             )
         except Exception as exc:
             logger.warning("Harness: memory context fetch failed, continuing without: %s", exc)
+
+        try:
+            semantic_context = await self._semantic_memory.build_context(
+                user_id=user_id,
+                agent_type=agent_type,
+                task_text=task_text,
+                user_settings=user_settings,
+            )
+        except Exception as exc:
+            logger.warning("Harness: pgvector memory context failed, continuing without: %s", exc)
 
         # ── 2 & 3. Strategy selection & context injection ────────────
         strategy = "standard"
@@ -159,6 +173,7 @@ class AgentHarness:
         enriched_context: dict[str, Any] = {
             **context,
             "_memory": mem_context,
+            "_pgvector_memory": semantic_context,
             "_strategy": strategy,
         }
 
@@ -208,7 +223,7 @@ class AgentHarness:
                 task_type,
                 exc,
             )
-            error_msg = str(exc)
+            error_msg = "Agent failed"
             result_state = {
                 **state,
                 "status": "failed",
@@ -228,6 +243,19 @@ class AgentHarness:
                     agent_type=agent_type,
                     output=output,
                 )
+            try:
+                await self._semantic_memory.save_after_run(
+                    user_id=user_id,
+                    agent_type=agent_type,
+                    task_type=task_type,
+                    context=context,
+                    output=output if isinstance(output, dict) else {"output": output},
+                    success=success,
+                    strategy=strategy,
+                    user_settings=user_settings,
+                )
+            except Exception as exc:
+                logger.warning("Harness: pgvector memory save failed: %s", exc)
 
         context_summary = _summarise(context)
 
@@ -334,6 +362,22 @@ class AgentHarness:
         Also saves the workflow as a reusable procedure (procedural memory).
         """
         new_learnings: list[dict[str, Any]] = []
+        output_summary = _summarise(output)
+
+        if output_summary:
+            await self._memory.set_preference(
+                user_id,
+                f"last_{agent_type}_output",
+                output_summary[:1000],
+            )
+
+        action_type = output.get("type", agent_type)
+        if action_type:
+            await self._memory.set_preference(
+                user_id,
+                f"last_{agent_type}_action",
+                str(action_type)[:200],
+            )
 
         # Example: if resume output includes match_score, infer what worked
         if agent_type == "resume":
@@ -341,6 +385,38 @@ class AgentHarness:
             if score and isinstance(score, (int, float)) and score >= 80:
                 new_learnings.append(
                     {"learning": "high_keyword_match", "success_rate": 1.0, "sample_count": 1}
+                )
+
+        if agent_type == "job_search":
+            matches = output.get("matches") or output.get("result", {}).get("matches") or []
+            if isinstance(matches, list) and matches:
+                companies = [
+                    str(item.get("company"))
+                    for item in matches[:5]
+                    if isinstance(item, dict) and item.get("company")
+                ]
+                roles = [
+                    str(item.get("title") or item.get("role"))
+                    for item in matches[:5]
+                    if isinstance(item, dict) and (item.get("title") or item.get("role"))
+                ]
+                if companies:
+                    await self._memory.set_preference(user_id, "recent_job_companies", json.dumps(companies))
+                if roles:
+                    await self._memory.set_preference(user_id, "recent_job_roles", json.dumps(roles))
+
+        if agent_type == "linkedin" and action_type == "linkedin_edits":
+            if output.get("headline"):
+                await self._memory.set_preference(
+                    user_id,
+                    "last_linkedin_headline",
+                    str(output["headline"])[:300],
+                )
+            if output.get("about"):
+                await self._memory.set_preference(
+                    user_id,
+                    "last_linkedin_about",
+                    str(output["about"])[:1200],
                 )
 
         # If email output has open_rate signal
@@ -358,7 +434,6 @@ class AgentHarness:
             )
 
         # Save as procedural memory — the workflow that succeeded
-        action_type = output.get("type", agent_type)
         trigger = f"{agent_type}_{action_type}"
         workflow = {
             "agent_type": agent_type,
@@ -454,7 +529,7 @@ class AgentHarness:
         try:
             from langchain_core.messages import HumanMessage as HM
 
-            response = await asyncio.get_event_loop().run_in_executor(
+            response = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: llm.invoke([HM(content=prompt)])
             )
             raw = response.content.strip()
