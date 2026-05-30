@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-
-from app.core.rate_limit import limiter
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.core.security import decrypt_api_key, encrypt_api_key
 from app.models.db import AgentRun, JobApplication, User, UserModelSettings, UserPreferences
 from app.models.schemas import (
@@ -36,39 +35,29 @@ async def get_dashboard_stats(
 ):
     uid = current_user.id
 
-    # applications_count
-    apps_count_res = await db.execute(
-        select(func.count(JobApplication.id)).where(JobApplication.user_id == uid)
-    )
-    applications_count: int = apps_count_res.scalar_one() or 0
-
-    # interviews_count
-    interviews_res = await db.execute(
-        select(func.count(JobApplication.id)).where(
+    # One aggregate query keeps dashboard load to 2 DB round trips total
+    # (stats + recent runs) instead of 5; AVG ignores NULL match scores.
+    stats_res = await db.execute(
+        select(
+            func.count(JobApplication.id),
+            func.coalesce(
+                func.sum(case((JobApplication.status == "interview", 1), else_=0)),
+                0,
+            ),
+            func.avg(JobApplication.match_score),
+            func.coalesce(
+                func.sum(case((JobApplication.status == "applied", 1), else_=0)),
+                0,
+            ),
+        ).where(
             JobApplication.user_id == uid,
-            JobApplication.status == "interview",
         )
     )
-    interviews_count: int = interviews_res.scalar_one() or 0
-
-    # avg_match_score
-    avg_res = await db.execute(
-        select(func.avg(JobApplication.match_score)).where(
-            JobApplication.user_id == uid,
-            JobApplication.match_score.isnot(None),
-        )
-    )
-    avg_raw = avg_res.scalar_one()
+    applications_count, interviews_count, avg_raw, followups_due = stats_res.one()
+    applications_count = int(applications_count or 0)
+    interviews_count = int(interviews_count or 0)
+    followups_due = int(followups_due or 0)
     avg_match_score: float = float(avg_raw) if avg_raw is not None else 0.0
-
-    # followups_due (status == 'applied', implying follow-up needed)
-    followups_res = await db.execute(
-        select(func.count(JobApplication.id)).where(
-            JobApplication.user_id == uid,
-            JobApplication.status == "applied",
-        )
-    )
-    followups_due: int = followups_res.scalar_one() or 0
 
     # recent_agent_runs — last 5
     runs_res = await db.execute(
@@ -239,7 +228,9 @@ async def test_model(
     current_user: User = Depends(get_current_user),
 ):
     import uuid as _uuid
+
     from langchain_core.messages import HumanMessage
+
     from app.core.model_router import _build_llm
 
     result = await db.execute(
@@ -263,7 +254,7 @@ async def test_model(
         resp = llm.invoke([HumanMessage(content="Reply with exactly: OK")])
         return {"success": True, "response": resp.content.strip()[:200]}
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 
