@@ -15,7 +15,7 @@ import logging
 
 import jwt
 from fastapi import HTTPException
-from jwt import PyJWKClient
+from jwt import PyJWKClient, PyJWKClientError
 
 from app.core.config import settings
 
@@ -61,7 +61,7 @@ def verify_supabase_jwt(token: str) -> dict:
     except jwt.ExpiredSignatureError as exc:
         logger.error(f"JWT expired: {exc} | token_prefix={token[:32]}")
         raise HTTPException(status_code=401, detail="Token expired") from exc
-    except jwt.InvalidTokenError as exc:
+    except (jwt.InvalidTokenError, PyJWKClientError) as exc:
         logger.error(f"JWT verify failed: {exc} | token_prefix={token[:32]}")
         raise HTTPException(status_code=401, detail="Invalid token") from exc
 

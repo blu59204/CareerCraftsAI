@@ -13,7 +13,6 @@ import time
 
 import jwt
 import pytest
-from cryptography.exceptions import InvalidTag
 from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
@@ -217,9 +216,10 @@ class TestJWTEdgeCases:
             verify_supabase_jwt("")
         assert exc_info.value.status_code == 401
 
-    def test_rs256_token_against_hs256_verifier_returns_401(self):
+    def test_rs256_token_against_hs256_verifier_returns_401(self, monkeypatch):
         """A token claiming RS256 algorithm must be rejected (alg-mismatch attack)."""
         from fastapi import HTTPException
+        from jwt import PyJWKClientError
 
         # jwt.encode with RS256 requires an RSA key; instead forge a header manually
         # to test the algorithm enforcement path in PyJWT.
@@ -231,6 +231,12 @@ class TestJWTEdgeCases:
         ).rstrip(b"=").decode()
         fake_sig = base64.urlsafe_b64encode(b"fakesig").rstrip(b"=").decode()
         forged_token = f"{header}.{payload_b64}.{fake_sig}"
+
+        monkeypatch.setattr(
+            verify_supabase_jwt.__globals__["_jwks_client"],
+            "get_signing_key_from_jwt",
+            lambda _token: (_ for _ in ()).throw(PyJWKClientError("bad jwks")),
+        )
 
         with pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(forged_token)
