@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { User, Check, Globe, AlertTriangle, LogOut } from "lucide-react";
@@ -13,6 +13,7 @@ import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { connectGoogleForGmail } from "@/lib/google-oauth";
+import { createClient } from "@/lib/supabase";
 
 type Tab = "account" | "security" | "notifications";
 
@@ -66,14 +67,15 @@ function getInitials(fullName: string | null | undefined): string {
 
 export default function AccountSettingsPage() {
   const queryClient = useQueryClient();
-  const { openUserProfile, signOut } = useClerk();
-  const { user: clerkUser } = useUser();
+  const router = useRouter();
+  const supabase = createClient();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [agentAlerts, setAgentAlerts] = useState(true);
   const [followUpReminders, setFollowUpReminders] = useState(true);
   const [weeklyDigest, setWeeklyDigest] = useState(false);
   const [twoFactor, setTwoFactor] = useState(false);
+  const [supabaseUser, setSupabaseUser] = useState<any>(null);
 
   const [name, setName] = useState("");
   const [headline, setHeadline] = useState("");
@@ -105,15 +107,23 @@ export default function AccountSettingsPage() {
   }, [user]);
 
   useEffect(() => {
-    setTwoFactor(Boolean(clerkUser?.twoFactorEnabled));
-  }, [clerkUser?.twoFactorEnabled]);
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setSupabaseUser(user);
+    });
+  }, [supabase]);
 
-  const hasLinkedIn = clerkUser?.externalAccounts.some((account) => account.provider === "linkedin_oidc");
-  const hasGithub = clerkUser?.externalAccounts.some((account) => account.provider === "github");
-  const openClerkAccount = () => openUserProfile();
+  const hasLinkedIn = supabaseUser?.app_metadata?.provider === "linkedin_oidc" ||
+                      supabaseUser?.identities?.some((id: any) => id.provider === "linkedin_oidc");
+  const hasGithub = supabaseUser?.app_metadata?.provider === "github" ||
+                    supabaseUser?.identities?.some((id: any) => id.provider === "github");
+
+  const handleManageAuth = () => {
+    toast.info("OAuth connections are managed through Supabase Auth. Visit /login to connect additional providers.");
+  };
+
   const handleSignOut = async () => {
-    await signOut();
-    window.location.href = "/";
+    await supabase.auth.signOut();
+    router.push("/");
   };
 
   const updateMutation = useMutation({
@@ -218,7 +228,7 @@ export default function AccountSettingsPage() {
                 <label className="mb-1.5 block text-sm font-medium">
                   Email
                   <span className="ml-2 rounded-full bg-success/15 px-2 py-0.5 text-xs font-normal text-success">
-                    Connected via Clerk
+                    Connected via Supabase
                   </span>
                 </label>
                 <input
@@ -365,7 +375,7 @@ export default function AccountSettingsPage() {
                       <Check className="h-3 w-3" /> Connected
                     </span>
                   )}
-                  <LiquidGlassButton tone="primary" size="sm" onClick={openClerkAccount}>
+                  <LiquidGlassButton tone="primary" size="sm" onClick={handleManageAuth}>
                     {hasLinkedIn ? "Manage" : "Connect"}
                   </LiquidGlassButton>
                 </div>
@@ -387,10 +397,10 @@ export default function AccountSettingsPage() {
                       <span className="flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
                         <Check className="h-3 w-3" /> Connected
                       </span>
-                      <LiquidGlassButton tone="ghost" size="sm" onClick={openClerkAccount}>Manage</LiquidGlassButton>
+                      <LiquidGlassButton tone="ghost" size="sm" onClick={handleManageAuth}>Manage</LiquidGlassButton>
                     </>
                   ) : (
-                    <LiquidGlassButton tone="primary" size="sm" onClick={openClerkAccount}>Connect</LiquidGlassButton>
+                    <LiquidGlassButton tone="primary" size="sm" onClick={handleManageAuth}>Connect</LiquidGlassButton>
                   )}
                 </div>
               </div>
@@ -438,12 +448,12 @@ export default function AccountSettingsPage() {
             <div className="mb-6 text-sm font-medium">Change password</div>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Passwords and connected login methods are managed by Clerk.
+                Passwords and connected login methods are managed by Supabase Auth.
               </p>
               <LiquidGlassButton
                 tone="primary"
                 size="sm"
-                onClick={openClerkAccount}
+                onClick={() => toast.info("Password management is handled through Supabase. Use the password reset flow on the login page.")}
               >
                 Manage password
               </LiquidGlassButton>
@@ -459,7 +469,7 @@ export default function AccountSettingsPage() {
                   Currently: {twoFactor ? "enabled" : "disabled"}
                 </div>
               </div>
-              <Toggle enabled={twoFactor} onToggle={openClerkAccount} />
+              <Toggle enabled={twoFactor} onToggle={() => toast.info("Two-factor authentication is managed through Supabase Auth settings.")} />
             </div>
           </motion.div>
 

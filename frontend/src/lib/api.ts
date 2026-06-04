@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getClerkAuthToken } from "@/lib/clerk-token";
+import { getSupabaseAuthToken } from "@/lib/supabase-token";
 
 export const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1",
@@ -13,7 +13,7 @@ const pendingRequests = new Map<string, Promise<unknown>>();
 apiClient.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
     try {
-      const token = await getClerkAuthToken();
+      const token = await getSupabaseAuthToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -24,23 +24,19 @@ apiClient.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Response interceptor — redirect to login on 401 only once per page load
-let redirectingToLogin = false;
+// Response interceptor — log the failure and reject. We do NOT auto-redirect or
+// loop on 401 here; the auth guard surfaces a single error page and lets the user
+// choose to log in again. This avoids the dashboard⇄login redirect loop.
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const hasClerkSession =
-      typeof window !== "undefined" ? Boolean(await getClerkAuthToken().catch(() => null)) : false;
-
-    if (
-      error?.response?.status === 401 &&
-      typeof window !== "undefined" &&
-      !hasClerkSession &&
-      !window.location.pathname.startsWith("/login") &&
-      !redirectingToLogin
-    ) {
-      redirectingToLogin = true;
-      window.location.href = `/login?redirect_url=${encodeURIComponent(window.location.pathname)}`;
+    // Surface which request failed and the backend's reason (helps diagnose 400/422/500).
+    if (typeof window !== "undefined" && error?.response) {
+      const { config, response } = error;
+      console.error(
+        `API ${config?.method?.toUpperCase?.() ?? "?"} ${config?.url ?? "?"} -> ${response.status}`,
+        response.data?.detail ?? response.data,
+      );
     }
     return Promise.reject(error);
   }

@@ -390,9 +390,9 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               {isSignUp && (
                 <div
                   key={captchaKey}
-                  id="clerk-captcha"
-                  data-cl-theme="auto"
-                  data-cl-size="flexible"
+                  id="auth-captcha"
+                  data-theme="auto"
+                  data-size="flexible"
                   className="animate-element animate-delay-500"
                 />
               )}
