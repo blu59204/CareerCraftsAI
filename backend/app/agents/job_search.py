@@ -3,17 +3,17 @@ import concurrent.futures
 import inspect
 import json
 import logging
-import time
+import os
 from urllib.parse import quote_plus
 
 import httpx
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.state import AgentState
+from app.core.config import settings as app_settings
 from app.core.event_bus import emit
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
-from app.services.pinchtab_service import new_session
 
 logger = logging.getLogger(__name__)
 SOURCE_TIMEOUT_SEC = 45
@@ -208,6 +208,134 @@ def _search_google_jobs_source(
         timeout_sec=SOURCE_TIMEOUT_SEC,
     )
     return _job_listings_to_dicts(google_jobs)
+
+
+AGENTQL_JOBS_QUERY = """
+{
+    search_results[] {
+        title
+        url
+        snippet
+    }
+}
+"""
+
+
+def _domain_of(url: str) -> str:
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower().lstrip("www.")
+        return host.split(":")[0] or "Unknown"
+    except Exception:
+        return "Unknown"
+
+
+def _search_searxng_jobs(query: str, location: str, max_results: int) -> list[dict]:
+    """Query a self-hosted SearXNG meta-search for real jobs (JSON, no CAPTCHA).
+
+    SearXNG aggregates Google/Bing/DuckDuckGo/Brave results and accepts dork
+    operators (site:, OR, -, filetype:). Off unless SEARXNG_URL is configured.
+    """
+    base = (app_settings.SEARXNG_URL or "").rstrip("/")
+    if not base:
+        return []
+    try:
+        resp = httpx.get(
+            f"{base}/search",
+            params={"q": f"{query} jobs {location}", "format": "json"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", []) or []
+    except Exception as exc:
+        logger.warning("SearXNG search failed: %s", exc)
+        return []
+    jobs: list[dict] = []
+    for item in results:
+        url = (item or {}).get("url")
+        title = (item or {}).get("title")
+        if not url or not title:
+            continue
+        jobs.append({
+            "title": title,
+            "company": _domain_of(url),
+            "location": location,
+            "description": (item.get("content") or "")[:2000],
+            "job_url": url,
+            "platform": "searxng",
+        })
+        if len(jobs) >= max_results:
+            break
+    return jobs
+
+
+async def _search_agentql_jobs_browser(
+    query: str,
+    location: str,
+    max_results: int,
+    run_id: str,
+    live_browser: bool = True,
+) -> list[dict]:
+    """Scrape real jobs with a live browser using AgentQL (TinyFish).
+
+    Searches DuckDuckGo HTML (bot-friendly, no CAPTCHA, supports site:/OR/-
+    operators) and extracts organic results — each links to a real job posting
+    on LinkedIn/Naukri/company sites. Google is avoided because it CAPTCHAs
+    automated requests. Gated behind AGENTQL_API_KEY; returns [] when the key or
+    library is unavailable so callers fall back gracefully.
+    """
+    if not app_settings.AGENTQL_API_KEY:
+        return []
+    try:
+        import agentql
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        logger.warning("AgentQL unavailable for live job search: %s", exc)
+        return []
+
+    # AgentQL SDK reads the key from the environment.
+    os.environ.setdefault("AGENTQL_API_KEY", app_settings.AGENTQL_API_KEY)
+
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(f'{query} jobs {location}')}"
+    emit(run_id, "browser", {
+        "phase": "visible_browser_opening",
+        "source": "agentql",
+        "url": url,
+        "message": "Opening live browser (AgentQL) for DuckDuckGo job search results",
+    })
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=not live_browser)
+        page = await agentql.wrap_async(browser.new_page())
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_page_ready_state()
+            data = await page.query_data(AGENTQL_JOBS_QUERY)
+            jobs: list[dict] = []
+            for item in (data or {}).get("search_results", []) or []:
+                title = (item or {}).get("title")
+                link = (item or {}).get("url")
+                if not title or not link:
+                    continue
+                jobs.append({
+                    "title": title,
+                    "company": _domain_of(link),
+                    "location": location,
+                    "description": (item.get("snippet") or "")[:2000],
+                    "job_url": link,
+                    "platform": "google",
+                })
+                if len(jobs) >= max_results:
+                    break
+            emit(run_id, "browser", {"phase": "visible_browser_done", "source": "agentql", "count": len(jobs)})
+            if live_browser:
+                await page.wait_for_timeout(3000)
+            return jobs
+        except Exception as exc:
+            logger.warning("AgentQL live job search failed: %s", exc)
+            emit(run_id, "browser", {"phase": "visible_browser_failed", "source": "agentql", "error": "AgentQL search failed"})
+            return []
+        finally:
+            await browser.close()
 
 
 def _remoteok_row_to_job(raw_text: str, job_url: str) -> dict | None:
@@ -461,6 +589,143 @@ def _search_public_ats_jobs(
     return _dedupe_jobs(filtered, max_results)
 
 
+def _strip_html(text: str) -> str:
+    import re
+
+    return re.sub(r"<[^>]+>", " ", text or "").replace("&nbsp;", " ").strip()
+
+
+def _search_open_job_apis(query: str, location: str, max_results: int) -> list[dict]:
+    """Real job listings from free, key-less JSON APIs (Remotive, Arbeitnow, Jobicy).
+
+    Every returned job carries a real `job_url` apply link. Reliable and fast —
+    no scraping, no rate-limited search engines. This is the primary source.
+    """
+    jobs: list[dict] = []
+    q = (query or "").strip()
+    first_term = q.split()[0] if q else "developer"
+    terms = [t.lower() for t in q.split() if len(t) > 2]
+
+    def _relevant(text: str) -> bool:
+        if not terms:
+            return True
+        blob = text.lower()
+        return any(t in blob for t in terms)
+
+    with httpx.Client(timeout=15, follow_redirects=True,
+                      headers={"User-Agent": "Mozilla/5.0 (CareerCraft)"}) as client:
+        # 0a) JSearch (RapidAPI) — aggregates Google for Jobs / LinkedIn / Indeed /
+        # Naukri. Best coverage incl. India. Real apply links. Used when key is set.
+        if app_settings.RAPIDAPI_KEY:
+            try:
+                jq = q or first_term
+                if location and location.lower() != "any":
+                    jq = f"{jq} in {location}"
+                r = client.get(
+                    "https://jsearch.p.rapidapi.com/search",
+                    params={"query": jq, "page": "1", "num_pages": "1", "date_posted": "month"},
+                    headers={
+                        "X-RapidAPI-Key": app_settings.RAPIDAPI_KEY,
+                        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+                    },
+                )
+                for j in (r.json().get("data") or [])[: max_results * 2]:
+                    loc = ", ".join(
+                        p for p in (j.get("job_city"), j.get("job_state"), j.get("job_country")) if p
+                    )
+                    jobs.append({
+                        "title": j.get("job_title", ""),
+                        "company": j.get("employer_name", ""),
+                        "location": loc or "—",
+                        "description": _strip_html(j.get("job_description", ""))[:600],
+                        "job_url": j.get("job_apply_link", ""),
+                        "platform": "jsearch",
+                    })
+            except Exception as exc:
+                logger.warning("JSearch API failed: %s", exc)
+
+        # 0b) Adzuna — free key, strong India coverage. Country code in path.
+        if app_settings.ADZUNA_APP_ID and app_settings.ADZUNA_APP_KEY:
+            try:
+                country = "in" if (location or "").lower() in ("", "any", "india") else "gb"
+                r = client.get(
+                    f"https://api.adzuna.com/v1/api/jobs/{country}/search/1",
+                    params={
+                        "app_id": app_settings.ADZUNA_APP_ID,
+                        "app_key": app_settings.ADZUNA_APP_KEY,
+                        "results_per_page": max_results,
+                        "what": q or first_term,
+                        "content-type": "application/json",
+                    },
+                )
+                for j in (r.json().get("results") or []):
+                    jobs.append({
+                        "title": j.get("title", ""),
+                        "company": (j.get("company") or {}).get("display_name", ""),
+                        "location": (j.get("location") or {}).get("display_name", ""),
+                        "description": _strip_html(j.get("description", ""))[:600],
+                        "job_url": j.get("redirect_url", ""),
+                        "platform": "adzuna",
+                    })
+            except Exception as exc:
+                logger.warning("Adzuna API failed: %s", exc)
+
+        # 1) Remotive — supports server-side search.
+        try:
+            r = client.get("https://remotive.com/api/remote-jobs",
+                           params={"search": q or first_term, "limit": max_results})
+            for j in (r.json().get("jobs") or [])[: max_results * 2]:
+                jobs.append({
+                    "title": j.get("title", ""),
+                    "company": j.get("company_name", ""),
+                    "location": j.get("candidate_required_location") or "Remote",
+                    "description": _strip_html(j.get("description", ""))[:600],
+                    "job_url": j.get("url", ""),
+                    "platform": "remotive",
+                })
+        except Exception as exc:
+            logger.warning("Remotive API failed: %s", exc)
+
+        # 2) Arbeitnow — recent ATS-sourced board; filter client-side by query.
+        try:
+            r = client.get("https://www.arbeitnow.com/api/job-board-api")
+            for j in (r.json().get("data") or []):
+                title = j.get("title", "")
+                tags = " ".join(j.get("tags") or [])
+                if not _relevant(f"{title} {tags} {j.get('description','')[:300]}"):
+                    continue
+                jobs.append({
+                    "title": title,
+                    "company": j.get("company_name", ""),
+                    "location": j.get("location") or ("Remote" if j.get("remote") else ""),
+                    "description": _strip_html(j.get("description", ""))[:600],
+                    "job_url": j.get("url", ""),
+                    "platform": "arbeitnow",
+                })
+        except Exception as exc:
+            logger.warning("Arbeitnow API failed: %s", exc)
+
+        # 3) Jobicy — remote jobs feed, tag-filtered.
+        try:
+            r = client.get("https://jobicy.com/api/v2/remote-jobs",
+                           params={"count": max_results, "tag": first_term})
+            for j in (r.json().get("jobs") or []):
+                jobs.append({
+                    "title": j.get("jobTitle", ""),
+                    "company": j.get("companyName", ""),
+                    "location": j.get("jobGeo") or "Remote",
+                    "description": _strip_html(j.get("jobExcerpt", ""))[:600],
+                    "job_url": j.get("url", ""),
+                    "platform": "jobicy",
+                })
+        except Exception as exc:
+            logger.warning("Jobicy API failed: %s", exc)
+
+    # Keep only jobs with a real apply link, then dedupe.
+    jobs = [j for j in jobs if j.get("job_url") and j.get("title")]
+    return _dedupe_jobs(jobs, max_results)
+
+
 def job_search_agent_node(state: AgentState) -> AgentState:
     session = None
     try:
@@ -482,15 +747,9 @@ def job_search_agent_node(state: AgentState) -> AgentState:
         user_profile = "\n\n".join(part for part in (preference_profile, resume_profile) if part)
         llm = _build_llm(model_settings)
 
-        # ── Think: What to prioritize when scoring jobs ──────────────
-        from app.agents.thinking import think_and_select
-        thinking = think_and_select(
-            llm=llm,
-            task_description=f"Search and score jobs for query: '{query}' in '{location}'",
-            user_context=user_profile[:1000],
-            target_context=f"Search: {query}, Location: {location}",
-            selection_criteria="What are the user's must-haves? What should disqualify a job? What signals a great match?",
-        )
+        # Note: per-job LLM scoring and the pre-scoring "thinking" model step were
+        # removed from the hot path — they added one slow/rate-limited model call per
+        # job and blew past the run timeout. Real listings are scored heuristically.
 
         jobs_raw: list[dict] = []
         emit(run_id, "browser", {
@@ -502,65 +761,104 @@ def job_search_agent_node(state: AgentState) -> AgentState:
         })
 
         google_jobs_tried = False
-        if live_browser:
-            google_jobs_tried = True
+
+        # Primary source: free key-less job-board APIs (Remotive/Arbeitnow/Jobicy).
+        # Real listings with real apply links, no scraping or rate-limited engines.
+        if not jobs_raw and not live_browser:
             try:
-                emit(
-                    run_id,
-                    "browser",
-                    {
-                        "phase": "visible_browser_opening",
-                        "source": "google_jobs",
-                        "message": "Opening a visible browser for live job search",
-                    },
+                jobs_raw = _run_sync_with_timeout(
+                    _search_open_job_apis, query, location, max_results,
+                    timeout_sec=SOURCE_TIMEOUT_SEC,
                 )
-                jobs_raw = _search_google_jobs_source(
-                    llm=llm,
-                    user_id=user_id,
-                    query=query,
-                    location=location,
-                    max_results=max_results,
-                    live_browser=True,
-                    run_id=run_id,
+                if jobs_raw:
+                    emit(run_id, "browser", {"phase": "open_apis_done",
+                                             "source": "remotive+arbeitnow+jobicy",
+                                             "count": len(jobs_raw)})
+            except Exception as exc:
+                logger.warning("Open job APIs failed: %s", exc)
+                emit(run_id, "browser", {"phase": "open_apis_failed", "error": "Job APIs unavailable"})
+
+        # Secondary source when configured: SearXNG meta-search (JSON, no CAPTCHA,
+        # honors dork queries). Works in headless and live-browser modes.
+        if not jobs_raw and app_settings.SEARXNG_URL:
+            jobs_raw = _run_sync_with_timeout(
+                _search_searxng_jobs, query, location, max_results,
+                timeout_sec=SOURCE_TIMEOUT_SEC,
+            )
+            if jobs_raw:
+                emit(run_id, "browser", {"phase": "searxng_done", "count": len(jobs_raw)})
+        if live_browser:
+            # Prefer AgentQL (robust extraction) when a key is configured.
+            if app_settings.AGENTQL_API_KEY:
+                jobs_raw = _run_async_result(
+                    _search_agentql_jobs_browser(
+                        query=query,
+                        location=location,
+                        max_results=max_results,
+                        run_id=run_id,
+                        live_browser=True,
+                    ),
+                    timeout_sec=SOURCE_TIMEOUT_SEC,
                 )
-                emit(
-                    run_id,
-                    "browser",
-                    {
-                        "phase": "visible_browser_done",
-                        "source": "google_jobs",
-                        "count": len(jobs_raw),
-                    },
-                )
-                if not jobs_raw:
+            if not jobs_raw:
+                google_jobs_tried = True
+                try:
                     emit(
                         run_id,
                         "browser",
                         {
-                            "phase": "visible_browser_retry",
-                            "source": "remoteok",
-                            "reason": "google_jobs_empty_or_blocked",
+                            "phase": "visible_browser_opening",
+                            "source": "google_jobs",
+                            "message": "Opening a visible browser for live job search",
                         },
                     )
-                    jobs_raw = _run_async_result(
-                        _search_remoteok_jobs_browser(
-                            query=query,
-                            max_results=max_results,
-                            run_id=run_id,
-                            live_browser=True,
-                        ),
-                        timeout_sec=SOURCE_TIMEOUT_SEC,
+                    jobs_raw = _search_google_jobs_source(
+                        llm=llm,
+                        user_id=user_id,
+                        query=query,
+                        location=location,
+                        max_results=max_results,
+                        live_browser=True,
+                        run_id=run_id,
                     )
-            except Exception as google_exc:
-                logger.warning("Visible Google Jobs search failed (%s) - trying JobSpy", google_exc)
-                emit(
-                    run_id,
-                    "browser",
-                    {
-                        "phase": "visible_browser_failed",
-                        "error": "Visible browser search failed",
-                    },
-                )
+                    emit(
+                        run_id,
+                        "browser",
+                        {
+                            "phase": "visible_browser_done",
+                            "source": "google_jobs",
+                            "count": len(jobs_raw),
+                        },
+                    )
+                    if not jobs_raw:
+                        emit(
+                            run_id,
+                            "browser",
+                            {
+                                "phase": "visible_browser_retry",
+                                "source": "remoteok",
+                                "reason": "google_jobs_empty_or_blocked",
+                            },
+                        )
+                        jobs_raw = _run_async_result(
+                            _search_remoteok_jobs_browser(
+                                query=query,
+                                max_results=max_results,
+                                run_id=run_id,
+                                live_browser=True,
+                            ),
+                            timeout_sec=SOURCE_TIMEOUT_SEC,
+                        )
+                except Exception as google_exc:
+                    logger.warning("Visible Google Jobs search failed (%s) - trying JobSpy", google_exc)
+                    emit(
+                        run_id,
+                        "browser",
+                        {
+                            "phase": "visible_browser_failed",
+                            "error": "Visible browser search failed",
+                        },
+                    )
 
         try:
             if not jobs_raw:
@@ -595,7 +893,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
                     run_id=run_id,
                 )
             except Exception as google_exc:
-                logger.warning("Google Jobs unavailable (%s) — trying PinchTab", google_exc)
+                logger.warning("Google Jobs unavailable (%s) — falling through to ATS", google_exc)
                 emit(
                     run_id,
                     "browser",
@@ -648,7 +946,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
                     {"phase": "remoteok_done", "source": "remoteok", "count": len(jobs_raw)},
                 )
             except Exception as remoteok_exc:
-                logger.warning("RemoteOK unavailable (%s) — trying PinchTab", remoteok_exc)
+                logger.warning("RemoteOK unavailable (%s) — no remaining sources", remoteok_exc)
                 emit(
                     run_id,
                     "browser",
@@ -662,25 +960,18 @@ def job_search_agent_node(state: AgentState) -> AgentState:
             )
 
         if not jobs_raw:
-            try:
-                session = new_session(user_id)
-                url = LINKEDIN_SEARCH_URL.format(
-                    query=query.replace(" ", "%20"),
-                    location=location.replace(" ", "%20"),
-                )
-                emit(run_id, "browser", {"phase": "pinchtab_navigate", "url": url})
-                session.navigate(url, block_images=True)
-                time.sleep(2)
-                page_text = session.text()
-                jobs_raw = _extract_jobs_from_text(llm, page_text, max_results)
-                emit(run_id, "browser", {"phase": "pinchtab_extracted", "count": len(jobs_raw)})
-            except Exception as browser_exc:
-                logger.warning("PinchTab also unavailable (%s) — returning no jobs", browser_exc)
-                emit(run_id, "browser", {"phase": "pinchtab_failed", "error": "Browser search failed"})
-                jobs_raw = []
+            # All remote APIs (Google Jobs, Greenhouse/Lever ATS, RemoteOK)
+            # returned no results. The browser-use fallback (browser_control_service)
+            # is the primary modern path and is invoked from the orchestrator; here
+            # we honestly report zero results rather than mock data.
+            emit(run_id, "browser", {"phase": "all_sources_empty", "sources_tried": ["google_jobs", "ats", "remoteok"]})
 
+        # Score real listings with the fast deterministic heuristic. Per-job LLM
+        # scoring is skipped here on purpose: with a rate-limited/slow model it adds
+        # one network round-trip per job and pushes the whole run past its timeout.
+        # The heuristic is a real keyword/skills-overlap score on the real jobs.
         scored = [
-            {**job, "match_score": _score_job(llm, job, user_profile, thinking)}
+            {**job, "match_score": _heuristic_score_job(job, user_profile)}
             for job in jobs_raw
         ]
         scored.sort(key=lambda j: j["match_score"], reverse=True)

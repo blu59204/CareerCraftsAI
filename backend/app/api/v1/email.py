@@ -15,7 +15,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
-from app.services.gmail_service import GmailMCPClient
+from app.services.gmail_service import GmailMCPClient, GmailSendError
 
 router = APIRouter(prefix="/email", tags=["email"])
 logger = logging.getLogger(__name__)
@@ -193,6 +193,10 @@ async def approve_and_send(
     try:
         gmail = GmailMCPClient(str(current_user.id))
         gmail.send_message(to=recipient, subject=subject, body=body)
+    except GmailSendError as exc:
+        # Actionable Gmail reason (scopes, API disabled, revoked token) — safe to show.
+        logger.warning("Email approval send failed for run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("Email approval send failed for run %s: %s", run_id, exc)
         raise HTTPException(status_code=502, detail="Email send failed") from exc

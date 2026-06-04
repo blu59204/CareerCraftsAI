@@ -55,7 +55,7 @@ class UserPreferencesResponse(UserPreferencesSchema):
 
 class ModelSettingsCreate(BaseModel):
     provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim"]
-    api_key: str = Field(min_length=1, max_length=200)
+    api_key: str = Field(min_length=1, max_length=4096)
     model_name: str
     ollama_url: str | None = None
 
@@ -245,3 +245,21 @@ class OutreachMessageResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ─── Job Search Profile Schemas ───────────────────────────────────────────────
+
+
+class JobSearchProfileResponse(BaseModel):
+    resume_found: bool
+    resume_filename: str | None = None
+    role_suggestions: list[str] = []
+    skills: list[str] = []
+    inferred_years_experience: int | None = None
+    inferred_experience_level: str | None = None
+    saved_preferences: UserPreferencesSchema
+    search_query_preview: str
+    location_preview: str
+    work_mode_preview: str | None = None
+    missing_fields: list[str] = []
+    analysis_notes: list[str] = []

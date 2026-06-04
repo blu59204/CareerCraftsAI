@@ -10,7 +10,7 @@ from app.agents.linkedin_agent import linkedin_agent_node
 from app.agents.linkedin_outreach_agent import linkedin_outreach_agent_node
 from app.agents.resume_agent import resume_agent_node
 from app.agents.cover_letter_agent import cover_letter_node
-from app.agents.interview_coach_agent import start_session_node
+from app.agents.interview_coach_agent import start_session_node, evaluate_answer_node
 from app.agents.salary_agent import salary_report_node
 from app.agents.company_research_agent import company_research_node as _async_company_research_node
 from app.agents.nl_search_agent import nl_search_node
@@ -34,7 +34,7 @@ _TASK_ROUTES: dict[str, str] = {
     "interview_prep": "interview_prep",
     "cover_letter": "cover_letter",
     "interview_coach": "interview_coach",
-    "evaluate_answer": "interview_coach",
+    "evaluate_answer": "evaluate_answer",
     "salary_intelligence": "salary",
     "company_research": "company_research",
     "nl_job_search": "nl_search",
@@ -82,6 +82,7 @@ def build_graph() -> StateGraph:
     graph.add_node("interview_prep", _wrap_with_events(interview_prep_agent_node, "InterviewPrepAgent"))
     graph.add_node("cover_letter", _wrap_with_events(cover_letter_node, "CoverLetterAgent"))
     graph.add_node("interview_coach", _wrap_with_events(start_session_node, "InterviewCoachAgent"))
+    graph.add_node("evaluate_answer", _wrap_with_events(evaluate_answer_node, "InterviewCoachAgent"))
     graph.add_node("salary", _wrap_with_events(salary_report_node, "SalaryAgent"))
     graph.add_node("company_research", _wrap_with_events(company_research_node, "CompanyResearchAgent"))
     graph.add_node("nl_search", _wrap_with_events(nl_search_node, "NLSearchAgent"))
@@ -97,6 +98,7 @@ def build_graph() -> StateGraph:
             "interview_prep": "interview_prep",
             "cover_letter": "cover_letter",
             "interview_coach": "interview_coach",
+            "evaluate_answer": "evaluate_answer",
             "salary": "salary",
             "company_research": "company_research",
             "nl_search": "nl_search",
@@ -106,8 +108,8 @@ def build_graph() -> StateGraph:
         },
     )
     for node in ("resume", "job_search", "linkedin", "email", "interview_prep",
-                 "cover_letter", "interview_coach", "salary", "company_research", "nl_search",
-                 "linkedin_outreach", "email_monitor"):
+                 "cover_letter", "interview_coach", "evaluate_answer", "salary",
+                 "company_research", "nl_search", "linkedin_outreach", "email_monitor"):
         graph.add_edge(node, END)
     return graph.compile()
 

@@ -18,7 +18,7 @@ from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
 
-from app.services.browser_control_service import run_browser_task, _get_browser_config
+from app.services.browser_control_service import run_browser_task
 
 logger = logging.getLogger(__name__)
 _RANDOM = secrets.SystemRandom()

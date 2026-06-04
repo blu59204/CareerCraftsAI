@@ -8,6 +8,7 @@ created once (protected by a threading.Lock) and reused across all calls,
 avoiding both connection pool exhaustion and the asyncio.run() RuntimeError.
 """
 import asyncio
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -19,6 +20,24 @@ from app.core.config import settings
 _lock = threading.Lock()
 _sync_engine = None
 _sync_factory = None
+
+
+def _run_fresh(coro):
+    """Run a coroutine on a fresh event loop.
+
+    On Windows, use a ProactorEventLoop so Playwright (and any other code that
+    spawns a subprocess) works — the default Selector loop that uvicorn installs
+    raises NotImplementedError on subprocess creation.
+    """
+    if sys.platform == "win32":
+        loop = asyncio.ProactorEventLoop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+    return asyncio.run(coro)
 
 
 def run_coro_sync(coro):
@@ -39,12 +58,12 @@ def run_coro_sync(coro):
 
     if running is None:
         # No loop in this thread — safe to spin up a throwaway loop.
-        return asyncio.run(coro)
+        return _run_fresh(coro)
 
     # A loop is already running here; run the coroutine on a separate thread
     # with its own fresh loop to avoid cross-loop reuse.
     with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        return pool.submit(_run_fresh, coro).result()
 
 
 def _get_sync_factory():

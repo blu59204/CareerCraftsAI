@@ -15,11 +15,6 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_KEY: str
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_JWT_SECRET: str
-    CLERK_SECRET_KEY: str | None = None
-    CLERK_ISSUER: str | None = None
-    CLERK_JWKS_URL: str | None = None
-    CLERK_AUTHORIZED_PARTIES: str | None = None
-    CLERK_JWT_AUDIENCE: str | None = None
 
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_PASSWORD: str | None = None
@@ -27,13 +22,18 @@ class Settings(BaseSettings):
     # Internal URL agents use to reach the LLM gateway proxy. Override in
     # containerized deploys (e.g. http://backend:8000/llm-gateway/v1).
     LLM_GATEWAY_URL: str = "http://localhost:8000/llm-gateway/v1"
-    PINCHTAB_URL: str = "http://localhost:9867"
-    PINCHTAB_TOKEN: str = ""
     RESEND_API_KEY: str = ""
     YOUTUBE_API_KEY: str = ""
     PROXYCURL_API_KEY: str = ""
     EXA_API_KEY: str | None = None
+    AGENTQL_API_KEY: str | None = None
+    SEARXNG_URL: str | None = None
     FIRECRAWL_API_KEY: str | None = None
+    # JSearch (RapidAPI) — aggregates Google for Jobs / LinkedIn / Indeed / Naukri.
+    RAPIDAPI_KEY: str | None = None
+    # Adzuna (free key) — strong India + general coverage.
+    ADZUNA_APP_ID: str | None = None
+    ADZUNA_APP_KEY: str | None = None
     GOOGLE_OAUTH_CLIENT_ID: str | None = None
     GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
 

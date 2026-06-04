@@ -3,7 +3,7 @@ nl_search_agent.py — NL (Natural Language) Job Search Agent.
 
 Parses plain-language job search queries into structured SearchParameters,
 validates them, and returns a structured interpretation for user confirmation
-before passing the query to the existing Job_Search_Agent via PinchTab.
+before delegating to the existing Job_Search_Agent.
 """
 
 import json
@@ -19,7 +19,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings
-from app.services.pinchtab_service import new_session
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +197,7 @@ def nl_search_node(state: AgentState) -> AgentState:
     1. Extract parameters from NL query via LLM
     2. Validate (role_title required — reject with 422 equivalent if missing)
     3. Return structured interpretation for user confirmation (HITL gate)
-    4. On approval, pass to Job_Search_Agent via PinchTab
+    4. On approval, delegate to Job_Search_Agent (Google Jobs + ATS + RemoteOK)
     """
     start_ts = time.monotonic()
     session = None
@@ -276,7 +275,10 @@ def nl_search_node(state: AgentState) -> AgentState:
                 ],
             }
 
-        # Step 4: User confirmed — execute search via PinchTab (Job_Search_Agent pattern)
+        # Step 4: User confirmed — delegate to Job_Search_Agent which queries
+        # Google Jobs, Greenhouse/Lever ATS, and RemoteOK in parallel. Browser-based
+        # search is the responsibility of the orchestrator via browser-use; NL
+        # search here returns no jobs directly.
         search_query = _build_search_query(params)
         location = params.location or "Remote"
 
@@ -286,22 +288,9 @@ def nl_search_node(state: AgentState) -> AgentState:
         user_profile = fetch_user_profile_text(user_id)
         max_results = min(int(ctx.get("max_results", 10)), 25)
 
+        # Honest fallback: NL search path doesn't do live browser work itself.
+        # The orchestrator handles browser-use when needed.
         jobs_raw: list[dict] = []
-        try:
-            session = new_session(user_id)
-            url = (
-                f"https://www.linkedin.com/jobs/search/"
-                f"?keywords={search_query.replace(' ', '%20')}"
-                f"&location={location.replace(' ', '%20')}&f_TPR=r86400"
-            )
-            session.navigate(url, block_images=True)
-            time.sleep(2)
-            page_text = session.text()
-            jobs_raw = _extract_jobs_from_text(llm, page_text, max_results)
-        except Exception as browser_exc:
-            logger.warning("PinchTab unavailable (%s) — using fallback", browser_exc)
-            # Fallback: return empty results rather than mock data for NL search
-            jobs_raw = []
 
         # Score jobs against user profile
         scored = [

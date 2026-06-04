@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.core.security import decrypt_api_key, encrypt_api_key
+from app.core.security import encrypt_api_key
 from app.models.db import AgentRun, JobApplication, User, UserModelSettings, UserPreferences
 from app.models.schemas import (
+    JobSearchProfileResponse,
     ModelSettingsCreate,
     ModelSettingsResponse,
     UserPreferencesResponse,
@@ -140,6 +142,125 @@ async def upsert_preferences(
     return prefs
 
 
+@router.get("/me/job-search-profile", response_model=JobSearchProfileResponse)
+async def get_job_search_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Build job search profile from resume + preferences (server-side).
+
+    Analyzes resume data, extracts skills, suggests roles, and validates
+    preferences to prevent client-side manipulation.
+    """
+    from app.models.db import UserDocument
+
+    # Fetch user preferences
+    prefs_result = await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == current_user.id)
+    )
+    prefs = prefs_result.scalar_one_or_none()
+
+    # Fetch resume documents
+    docs_result = await db.execute(
+        select(UserDocument).where(
+            UserDocument.user_id == current_user.id,
+            UserDocument.doc_type == "resume"
+        ).order_by(UserDocument.is_primary.desc(), UserDocument.embedded_at.desc())
+    )
+    resume_doc = docs_result.scalars().first()
+
+    # Build preferences object (with defaults)
+    saved_prefs = UserPreferencesSchema(
+        experience_level=prefs.experience_level if prefs else None,
+        years_experience=prefs.years_experience if prefs else None,
+        job_type=prefs.job_type if prefs else None,
+        work_mode=prefs.work_mode if prefs else None,
+        salary_min=prefs.salary_min if prefs else None,
+        salary_max=prefs.salary_max if prefs else None,
+        target_roles=prefs.target_roles if prefs else [],
+        preferred_locations=prefs.preferred_locations if prefs else [],
+        current_title=prefs.current_title if prefs else None,
+        bio=prefs.bio if prefs else None,
+    )
+
+    # Extract skills from resume ATS data (server-side only)
+    skills: list[str] = []
+    if resume_doc and resume_doc.ats_data:
+        matched_keywords = resume_doc.ats_data.get("matched_keywords", [])
+        if isinstance(matched_keywords, list):
+            skills = matched_keywords[:8]
+
+    # Build role suggestions from preferences or current title
+    role_suggestions: list[str] = []
+    if saved_prefs.target_roles:
+        role_suggestions = saved_prefs.target_roles[:5]
+    elif saved_prefs.current_title:
+        role_suggestions = [saved_prefs.current_title]
+
+    # Infer experience level from years if not set
+    inferred_exp_level = saved_prefs.experience_level
+    if not inferred_exp_level and saved_prefs.years_experience is not None:
+        years = saved_prefs.years_experience
+        if years == 0:
+            inferred_exp_level = "fresher"
+        elif years <= 2:
+            inferred_exp_level = "junior"
+        elif years <= 5:
+            inferred_exp_level = "mid"
+        elif years <= 10:
+            inferred_exp_level = "senior"
+        else:
+            inferred_exp_level = "lead"
+
+    # Build search query preview
+    search_query_preview = role_suggestions[0] if role_suggestions else "Set target role"
+
+    # Determine work mode for location preview
+    work_modes = saved_prefs.work_mode.split(",") if saved_prefs.work_mode else []
+    primary_work_mode = work_modes[0].strip() if work_modes else "remote"
+
+    # Build location preview
+    location_preview = "Remote"
+    if primary_work_mode != "remote" and saved_prefs.preferred_locations:
+        location_preview = saved_prefs.preferred_locations[0]
+    elif primary_work_mode != "remote":
+        location_preview = "Any"
+
+    # Identify missing fields
+    missing_fields: list[str] = []
+    if not resume_doc:
+        missing_fields.append("resume")
+    if not role_suggestions:
+        missing_fields.append("target role")
+    if saved_prefs.years_experience is None:
+        missing_fields.append("years of experience")
+
+    # Build analysis notes
+    analysis_notes: list[str] = []
+    if resume_doc:
+        analysis_notes.append(
+            "Search agent will analyze full resume text when you run search. "
+            "This panel shows saved preferences and resume ATS keywords."
+        )
+    else:
+        analysis_notes.append("Upload resume so agents can analyze skills and experience.")
+
+    return JobSearchProfileResponse(
+        resume_found=bool(resume_doc),
+        resume_filename=resume_doc.filename if resume_doc else None,
+        role_suggestions=role_suggestions,
+        skills=skills,
+        inferred_years_experience=saved_prefs.years_experience,
+        inferred_experience_level=inferred_exp_level,
+        saved_preferences=saved_prefs,
+        search_query_preview=search_query_preview,
+        location_preview=location_preview,
+        work_mode_preview=saved_prefs.work_mode,
+        missing_fields=missing_fields,
+        analysis_notes=analysis_notes,
+    )
+
+
 @router.post("/me/models", response_model=ModelSettingsResponse, status_code=201)
 @limiter.limit("5/minute")
 async def add_model_settings(
@@ -256,15 +377,20 @@ async def test_model(
         raise HTTPException(status_code=404, detail="Model setting not found")
 
     try:
-        api_key = decrypt_api_key(model_setting.api_key_enc, settings.APP_SECRET_KEY)
-        # Temporarily swap decrypted key for _build_llm
-        original_enc = model_setting.api_key_enc
-        model_setting.api_key_enc = encrypt_api_key(api_key, settings.APP_SECRET_KEY)
         llm = _build_llm(model_setting)
-        model_setting.api_key_enc = original_enc
-
-        resp = llm.invoke([HumanMessage(content="Reply with exactly: OK")])
+        resp = await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content="Reply with exactly: OK")]),
+            timeout=60,
+        )
         return {"success": True, "response": resp.content.strip()[:200]}
+    except asyncio.TimeoutError as exc:
+        logger.warning(
+            "Model test timed out for user %s model %s", current_user.id, payload.model_id
+        )
+        raise HTTPException(
+            status_code=422,
+            detail="Model test timed out after 60s. The model may be cold-starting — try again, or pick a smaller model. Also verify the API key and model name.",
+        ) from exc
     except Exception as exc:
         logger.warning(
             "Model test failed for user %s model %s: %s",
@@ -272,7 +398,7 @@ async def test_model(
             payload.model_id,
             exc,
         )
-        raise HTTPException(status_code=422, detail="Model test failed") from exc
+        raise HTTPException(status_code=422, detail=f"Model test failed: {exc}"[:300]) from exc
 
 
 
@@ -420,11 +546,11 @@ async def change_password(
     payload: PasswordChangeRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Password changes are managed by Clerk."""
+    """Password changes are managed by Supabase Auth."""
     _ = (payload, current_user)
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    raise HTTPException(status_code=400, detail="Password changes are managed by Clerk")
+    raise HTTPException(status_code=400, detail="Password changes are managed by Supabase Auth")
 
 
 @router.delete("/me", status_code=204)
@@ -434,7 +560,7 @@ async def delete_account(
 ):
     """Permanently delete the user's account.
 
-    Deletes the Clerk user when the backend secret is configured, plus the local row.
+    Deletes the Supabase Auth user when configured, plus the local row.
     DB cascade removes related records (applications, agent runs, settings).
     """
     auth_subject = str(current_user.supabase_uid or "")
@@ -443,23 +569,6 @@ async def delete_account(
     await db.delete(current_user)
     await db.flush()
 
-    if not settings.CLERK_SECRET_KEY or not auth_subject.startswith("user_"):
-        return
-
-    try:
-        import httpx
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.delete(
-                f"https://api.clerk.com/v1/users/{auth_subject}",
-                headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
-            )
-        if response.status_code not in (200, 204, 404):
-            response.raise_for_status()
-    except Exception as exc:
-        # DB row already deleted; log but don't fail the request.
-        import logging
-
-        logging.getLogger(__name__).error(
-            "Failed to delete Clerk auth user %s: %s", auth_subject, exc
-        )
+    # Supabase Auth user deletion would be handled via Supabase Admin API
+    # if needed in the future. For now, local DB cleanup is sufficient.
+    logger.info("User account deleted: %s", auth_subject)

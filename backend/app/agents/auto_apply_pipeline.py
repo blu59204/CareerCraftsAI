@@ -24,11 +24,6 @@ from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
 from app.services.email_finder_service import find_recruiter_email as find_email_for_company
 from app.services.job_platforms_service import scrape_jobs, JobListing
-from app.services.linkedin_automation_service import (
-    linkedin_login,
-    send_connection_request,
-    send_linkedin_message,
-)
 from app.services.gmail_service import GmailMCPClient
 
 logger = logging.getLogger(__name__)
@@ -295,6 +290,17 @@ async def _apply_to_job(
                     "role": job.title,
                     "actions_pending": []
                 }
+
+                # Autonomous browser application — the agent fills + submits the
+                # real job form on approval (HITL gate preserved).
+                if job.job_url:
+                    checkpoint_data["actions_pending"].append({
+                        "action": "apply_browser",
+                        "job_url": job.job_url,
+                        "company": job.company,
+                        "role": job.title,
+                    })
+                    result["apply_browser_queued"] = True
 
                 if email_content and recruiter_email:
                     checkpoint_data["actions_pending"].append({

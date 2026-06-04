@@ -386,6 +386,32 @@ async def approve_or_cancel(
                 except Exception as exc:
                     logger.warning("Auto-apply LinkedIn send failed for run %s: %s", run_id, exc)
                     raise HTTPException(status_code=502, detail="LinkedIn send failed") from exc
+            elif item_type == "apply_browser":
+                job_url = action.get("job_url")
+                if not job_url:
+                    raise HTTPException(status_code=422, detail="Pending apply action is missing job_url")
+                try:
+                    if llm is None:
+                        model_settings = fetch_model_settings(str(current_user.id))
+                        if not model_settings:
+                            raise RuntimeError("No active model settings configured")
+                        llm = _build_llm(model_settings)
+                    from app.core.sync_db import fetch_user_profile_text
+                    from app.services.browser_control_service import apply_to_job as browser_apply
+
+                    status = await browser_apply(
+                        llm=llm,
+                        user_id=str(current_user.id),
+                        job_url=job_url,
+                        applicant_info=fetch_user_profile_text(str(current_user.id)),
+                        submit=True,
+                        live_browser=bool(pending.get("live_browser", True)),
+                        run_id=run_id,
+                    )
+                    executed.append({"action": item_type, "job_url": job_url, "status": status[:200]})
+                except Exception as exc:
+                    logger.warning("Auto-apply browser submit failed for run %s: %s", run_id, exc)
+                    raise HTTPException(status_code=502, detail="Application submit failed") from exc
             else:
                 raise HTTPException(status_code=422, detail=f"Unsupported auto-apply action: {item_type}")
         pending = {"type": action_type, "executed": executed}

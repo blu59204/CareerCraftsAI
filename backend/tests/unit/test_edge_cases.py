@@ -151,11 +151,11 @@ class TestInputValidation:
         assert len(obj.api_key) == 200
 
     def test_api_key_over_max_length_rejected(self):
-        """api_key max_length=200 — 201 chars must fail."""
+        """api_key max_length=4096 — 4097 chars must fail."""
         with pytest.raises(ValidationError):
             ModelSettingsCreate(
                 provider="openai",
-                api_key="k" * 201,
+                api_key="k" * 4097,
                 model_name="gpt-4o",
             )
 

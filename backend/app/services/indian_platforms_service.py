@@ -13,16 +13,10 @@ import secrets
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
-try:
-    from browser_use import Agent, Browser, BrowserConfig
-    BROWSER_USE_AVAILABLE = True
-except ImportError:
-    BROWSER_USE_AVAILABLE = False
-    Agent = Browser = BrowserConfig = None  # type: ignore
 from langchain_core.language_models import BaseChatModel
 
-from app.services.browser_control_service import _get_browser_config
 from app.core.event_bus import emit
+from app.services.browser_control_service import run_browser_task
 from app.services.job_platforms_service import JobListing
 
 logger = logging.getLogger(__name__)
@@ -125,20 +119,13 @@ async def scrape_indian_platform(
 
     task = _EXTRACT_PROMPT.format(url=search_url, limit=results_wanted)
 
-    browser_config = _get_browser_config(user_id)
-    browser = Browser(config=browser_config)
-    agent = Agent(task=task, llm=llm, browser=browser, max_actions_per_step=3)
-
     try:
         await _human_delay()
-        result = await agent.run(max_steps=10)
-        raw_text = result.final_result() if result else ""
+        raw_text = await run_browser_task(llm, task, user_id, max_steps=10)
         return _parse_extraction_result(raw_text, platform)
     except Exception as exc:
         logger.error("Failed to scrape %s: %s", platform, exc)
         return []
-    finally:
-        await browser.close()
 
 
 def _parse_extraction_result(raw_text: str, platform: str) -> list[JobListing]:
@@ -414,16 +401,6 @@ async def search_google_jobs(
     Returns:
         List of JobListing from Google Jobs
     """
-    if not BROWSER_USE_AVAILABLE:
-        return await _search_google_jobs_playwright(
-            user_id=user_id,
-            search_term=search_term,
-            location=location,
-            results_wanted=results_wanted,
-            live_browser=live_browser,
-            run_id=run_id,
-        )
-
     query = f"{search_term} jobs in {location}".replace(" ", "+")
     url = f"https://www.google.com/search?q={query}&ibp=htl;jobs"
 
@@ -445,34 +422,24 @@ async def search_google_jobs(
             "task": "Search Google Jobs for real-time job listings",
         })
 
-    browser_config = _get_browser_config(user_id, live_browser=live_browser)
-    browser = Browser(config=browser_config)
-    agent = Agent(task=task, llm=llm, browser=browser, max_actions_per_step=3)
-
     try:
         await _human_delay()
         if run_id:
             emit(run_id, "browser", {"phase": "extracting", "source": "google_jobs"})
-        result = await agent.run(max_steps=12)
-        raw_text = result.final_result() if result else ""
+        raw_text = await run_browser_task(
+            llm, task, user_id, max_steps=12, live_browser=live_browser, run_id=run_id
+        )
         jobs = _parse_extraction_result(raw_text, "google_jobs")
         if run_id:
             emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
         return jobs
     except Exception as exc:
         logger.error("Google Jobs search failed: %s", exc)
-        if run_id:
-                emit(
-                    run_id,
-                    "browser",
-                    {
-                        "phase": "failed",
-                        "source": "google_jobs",
-                        "error": "Google Jobs search failed",
-                    },
-                )
-        return []
-    finally:
-        await browser.close()
-        if run_id:
-            emit(run_id, "browser", {"phase": "closed", "source": "google_jobs"})
+        return await _search_google_jobs_playwright(
+            user_id=user_id,
+            search_term=search_term,
+            location=location,
+            results_wanted=results_wanted,
+            live_browser=live_browser,
+            run_id=run_id,
+        )

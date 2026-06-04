@@ -18,6 +18,10 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105  # nosec 
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 
 
+class GmailSendError(RuntimeError):
+    """Raised when the Gmail API rejects a send, carrying an actionable reason."""
+
+
 class GmailMCPClient:
     """Gmail operations via langchain-google-community GmailToolkit."""
 
@@ -127,8 +131,31 @@ class GmailMCPClient:
             json={"raw": raw},
             timeout=20,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # Surface Google's actual reason (insufficient scopes, Gmail API not
+            # enabled, revoked token) so the caller can show an actionable message.
+            raise GmailSendError(self._extract_google_error(response))
         return response.json()
+
+    @staticmethod
+    def _extract_google_error(response: httpx.Response) -> str:
+        try:
+            err = response.json().get("error", {})
+        except Exception:
+            return f"Gmail API error {response.status_code}"
+        message = err.get("message") if isinstance(err, dict) else None
+        status = response.status_code
+        lowered = (message or "").lower()
+        if status == 403 and "insufficient" in lowered:
+            return (
+                "Gmail was connected without send permission. Disconnect Google in "
+                "Settings, then Connect Gmail again and approve the 'Send email' access."
+            )
+        if status == 403 and "has not been used" in lowered:
+            return "Gmail API is not enabled in the Google Cloud project. Enable it and retry."
+        if status == 401:
+            return "Google rejected the stored token. Disconnect and reconnect Gmail in Settings."
+        return message or f"Gmail API error {status}"
 
     def search_threads(self, query: str, max_results: int = 10) -> list[dict]:
         try:

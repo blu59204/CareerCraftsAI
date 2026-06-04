@@ -1,28 +1,22 @@
 """
-browser_control_service.py — AI-powered browser automation via browser-use.
+browser_control_service.py — AI browser automation via browser-use.
 
-Open source, self-hostable. Uses Playwright under the hood.
-The LLM agent controls a real Chrome browser to perform actions on LinkedIn,
-Gmail, and any website — just like a human would.
-
-Replaces PinchTab with a fully open-source stack:
-  - browser-use (AI browser agent)
-  - Playwright (browser automation engine)
-  - Persistent cookies (no re-login every time)
+The user's active BYOK model drives a real Chromium browser (Playwright under
+the hood) to perform tasks on LinkedIn, Gmail, job boards, and any website —
+just like a human would. A persistent per-user profile keeps cookies/logins
+across runs. browser-use is the sole browser-control engine.
 """
-import asyncio
-import json
 import logging
-import os
 from pathlib import Path
-from typing import Any
 
-try:
-    from browser_use import Agent, Browser, BrowserConfig
-    BROWSER_USE_AVAILABLE = True
-except ImportError:
-    BROWSER_USE_AVAILABLE = False
-    Agent = Browser = BrowserConfig = None  # type: ignore
+from browser_use import (
+    Agent,
+    Browser,
+    ChatAnthropic,
+    ChatGoogle,
+    ChatOllama,
+    ChatOpenAI,
+)
 from langchain_core.language_models import BaseChatModel
 
 from app.core.config import settings
@@ -34,201 +28,32 @@ logger = logging.getLogger(__name__)
 BROWSER_DATA_DIR = Path(settings.BASE_DIR if hasattr(settings, "BASE_DIR") else ".") / ".browser_data"
 
 
-def _get_browser_config(user_id: str, live_browser: bool = False) -> BrowserConfig:
-    """Get browser config with persistent user data directory."""
-    user_dir = BROWSER_DATA_DIR / user_id
-    user_dir.mkdir(parents=True, exist_ok=True)
-    return BrowserConfig(
-        headless=not live_browser,
-        user_data_dir=str(user_dir),
-    )
+def _build_bu_llm(user_id: str):
+    """Build a browser-use LLM from the user's active BYOK model settings.
 
+    browser-use uses its own LLM client classes (not LangChain), so we map the
+    stored provider/model/key onto them. OpenAI-compatible providers (incl.
+    NVIDIA NIM) route through ChatOpenAI with a custom base_url.
+    """
+    from app.core.security import decrypt_api_key
+    from app.core.sync_db import fetch_model_settings
 
-async def _page_snapshot(page, limit: int = 80) -> list[dict[str, Any]]:
-    """Return compact interactive DOM snapshot and tag nodes for action lookup."""
-    return await page.evaluate(
-        """(limit) => {
-            const selectors = [
-              'button', 'a[href]', 'input', 'textarea', 'select',
-              '[role="button"]', '[contenteditable="true"]'
-            ].join(',');
-            const visible = (el) => {
-              const style = window.getComputedStyle(el);
-              const box = el.getBoundingClientRect();
-              return style && style.visibility !== 'hidden' && style.display !== 'none'
-                && box.width > 0 && box.height > 0;
-            };
-            return Array.from(document.querySelectorAll(selectors))
-              .filter(visible)
-              .slice(0, limit)
-              .map((el, i) => {
-                el.setAttribute('data-cc-agent-id', String(i));
-                const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-                return {
-                  index: i,
-                  tag: el.tagName.toLowerCase(),
-                  type: el.getAttribute('type') || '',
-                  role: el.getAttribute('role') || '',
-                  name: el.getAttribute('name') || '',
-                  label: el.getAttribute('aria-label') || el.getAttribute('placeholder') || text,
-                  href: el.getAttribute('href') || '',
-                  value: el.tagName.toLowerCase() === 'input' && el.getAttribute('type') === 'password'
-                    ? ''
-                    : (el.value || '').slice(0, 120)
-                };
-              });
-        }""",
-        limit,
-    )
-
-
-def _extract_json_action(text: str) -> dict[str, Any]:
-    content = text.strip()
-    if content.startswith("```"):
-        content = "\n".join(line for line in content.splitlines() if not line.startswith("```"))
-    start = content.find("{")
-    end = content.rfind("}")
-    if start >= 0 and end > start:
-        content = content[start:end + 1]
-    try:
-        action = json.loads(content)
-    except json.JSONDecodeError:
-        return {"action": "done", "summary": text[:1000]}
-    if not isinstance(action, dict):
-        return {"action": "done", "summary": text[:1000]}
-    return action
-
-
-async def _run_playwright_agent(
-    llm: BaseChatModel,
-    task: str,
-    user_id: str,
-    max_steps: int,
-    live_browser: bool,
-    run_id: str | None,
-) -> str:
-    """Fallback browser agent: selected LLM controls Playwright via JSON actions."""
-    try:
-        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.async_api import async_playwright
-    except ImportError as exc:  # pragma: no cover - dependency optional in tests
-        raise RuntimeError("Playwright is required for browser control") from exc
-
-    from langchain_core.messages import HumanMessage, SystemMessage
-
-    user_dir = BROWSER_DATA_DIR / user_id / "agent"
-    user_dir.mkdir(parents=True, exist_ok=True)
-
-    system = """You control a real browser through JSON tool actions.
-Return JSON only. Valid actions:
-{"action":"navigate","url":"https://..."}
-{"action":"click","index":0}
-{"action":"fill","index":0,"value":"text"}
-{"action":"select","index":0,"value":"option text/value"}
-{"action":"press","key":"Enter"}
-{"action":"wait","ms":1000}
-{"action":"done","summary":"what happened"}
-
-Rules:
-- Use page elements by index from OBSERVATION.
-- For job applications, fill forms but stop before final Submit/Send Application unless task explicitly says submission is already approved.
-- If CAPTCHA, OTP, payment, account creation, missing required user data, or final review page appears, return done with REQUIRES_MANUAL.
-- Never invent credentials, degrees, work authorization, or certifications.
-- Keep actions small and human-like."""
-
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(user_dir),
-            headless=not live_browser,
-            viewport={"width": 1366, "height": 900},
-        )
-        page = context.pages[0] if context.pages else await context.new_page()
-        history: list[str] = []
-        try:
-            for step in range(max_steps):
-                elements = await _page_snapshot(page)
-                body_text = ""
-                try:
-                    body_text = (await page.locator("body").inner_text(timeout=2500))[:2500]
-                except Exception:
-                    body_text = ""
-
-                prompt = {
-                    "task": task,
-                    "step": step + 1,
-                    "url": page.url,
-                    "title": await page.title(),
-                    "page_text": body_text,
-                    "elements": elements,
-                    "recent_actions": history[-5:],
-                }
-                if run_id:
-                    emit(run_id, "browser", {
-                        "phase": "observing",
-                        "url": page.url,
-                        "step": step + 1,
-                        "elements": len(elements),
-                    })
-
-                response = llm.invoke([
-                    SystemMessage(content=system),
-                    HumanMessage(content=json.dumps(prompt, ensure_ascii=False)),
-                ])
-                action = _extract_json_action(str(response.content))
-                name = str(action.get("action", "done")).lower()
-
-                if run_id:
-                    safe_action = {k: v for k, v in action.items() if k != "value"}
-                    emit(run_id, "browser", {"phase": "action", "step": step + 1, "action": safe_action})
-
-                try:
-                    if name == "navigate":
-                        url = str(action.get("url") or "")
-                        if not url:
-                            return "REQUIRES_MANUAL: agent requested navigate without URL"
-                        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                        history.append(f"navigate {url}")
-                    elif name == "click":
-                        index = int(action.get("index"))
-                        await page.locator(f'[data-cc-agent-id="{index}"]').first.click(timeout=5000)
-                        history.append(f"click {index}")
-                    elif name == "fill":
-                        index = int(action.get("index"))
-                        value = str(action.get("value") or "")
-                        node = page.locator(f'[data-cc-agent-id="{index}"]').first
-                        await node.fill(value, timeout=5000)
-                        history.append(f"fill {index}")
-                    elif name == "select":
-                        index = int(action.get("index"))
-                        value = str(action.get("value") or "")
-                        await page.locator(f'[data-cc-agent-id="{index}"]').first.select_option(
-                            label=value,
-                            timeout=5000,
-                        )
-                        history.append(f"select {index}")
-                    elif name == "press":
-                        key = str(action.get("key") or "Enter")
-                        await page.keyboard.press(key)
-                        history.append(f"press {key}")
-                    elif name == "wait":
-                        await page.wait_for_timeout(int(action.get("ms") or 1000))
-                        history.append("wait")
-                    else:
-                        return str(action.get("summary") or "Browser task completed")
-                except PlaywrightTimeoutError as exc:
-                    history.append(f"{name} failed: timeout")
-                    logger.warning("Playwright browser action timed out: %s", exc)
-                except Exception as exc:
-                    history.append(f"{name} failed")
-                    logger.warning("Playwright browser action failed: %s", exc)
-
-                await page.wait_for_timeout(1200)
-
-            return "REQUIRES_MANUAL: reached max browser steps before completion"
-        finally:
-            if live_browser:
-                await page.wait_for_timeout(3000)
-            await context.close()
+    ms = fetch_model_settings(user_id)
+    if not ms:
+        raise RuntimeError("No active model settings configured")
+    key = decrypt_api_key(ms.api_key_enc, settings.APP_SECRET_KEY)
+    provider = ms.provider
+    model = ms.model_name
+    if provider == "anthropic":
+        return ChatAnthropic(model=model, api_key=key)
+    if provider == "google":
+        return ChatGoogle(model=model, api_key=key)
+    if provider == "ollama":
+        return ChatOllama(model=model, host=ms.ollama_url)
+    if provider == "nvidia_nim":
+        return ChatOpenAI(model=model, api_key=key, base_url="https://integrate.api.nvidia.com/v1")
+    # openai + any OpenAI-compatible default
+    return ChatOpenAI(model=model, api_key=key)
 
 
 async def run_browser_task(
@@ -239,19 +64,17 @@ async def run_browser_task(
     live_browser: bool = False,
     run_id: str | None = None,
 ) -> str:
-    """Run a browser task using AI agent.
+    """Run a natural-language browser task with browser-use.
 
-    The agent controls a real browser and executes the task described in natural language.
-
-    Args:
-        llm: The LangChain LLM to use for decision-making
-        task: Natural language description of what to do
-        user_id: User ID for persistent browser session
-        max_steps: Max browser actions before stopping
-
-    Returns:
-        Result text from the agent
+    `llm` is accepted for call-site compatibility but the browser-use LLM is
+    built from the user's active model settings (browser-use needs its own
+    client). The agent sees the screen (vision), reasons, and acts step by step.
     """
+    del llm  # browser-use builds its own LLM client from model settings.
+
+    user_dir = BROWSER_DATA_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+
     if run_id:
         emit(run_id, "browser", {
             "phase": "starting",
@@ -259,39 +82,51 @@ async def run_browser_task(
             "task": task[:240],
         })
 
-    if not BROWSER_USE_AVAILABLE:
-        if run_id:
-            emit(run_id, "browser", {"phase": "fallback", "engine": "playwright_llm"})
-        final = await _run_playwright_agent(llm, task, user_id, max_steps, live_browser, run_id)
-        if run_id:
-            emit(run_id, "browser", {"phase": "completed", "result": final[:500]})
-        return final
+    bu_llm = _build_bu_llm(user_id)
+    browser = Browser(headless=not live_browser, user_data_dir=str(user_dir))
 
-    config = _get_browser_config(user_id, live_browser=live_browser)
-    browser = Browser(config=config)
+    async def _emit_frame(browser_state_summary, model_output, n_steps):
+        # Stream the live screenshot to the UI (in-page browser view).
+        if not run_id:
+            return
+        shot = getattr(browser_state_summary, "screenshot", None)
+        if not shot:
+            return
+        try:
+            emit(run_id, "browser_frame", {
+                "step": n_steps,
+                "url": getattr(browser_state_summary, "url", "") or "",
+                "title": getattr(browser_state_summary, "title", "") or "",
+                "screenshot": shot,
+            })
+        except Exception:
+            pass
 
     agent = Agent(
         task=task,
-        llm=llm,
+        llm=bu_llm,
         browser=browser,
-        max_actions_per_step=3,
+        use_vision=True,
+        register_new_step_callback=_emit_frame,
     )
-
     try:
         if run_id:
             emit(run_id, "browser", {"phase": "running"})
         result = await agent.run(max_steps=max_steps)
-        final = result.final_result() if result else "Task completed"
+        final = (result.final_result() if result else None) or "Task completed"
         if run_id:
-            emit(run_id, "browser", {"phase": "completed", "result": final[:500]})
-        return final
+            emit(run_id, "browser", {"phase": "completed", "result": str(final)[:500]})
+        return str(final)
     except Exception as exc:
         logger.warning("Browser task failed for run %s: %s", run_id, exc)
         if run_id:
             emit(run_id, "browser", {"phase": "failed", "error": "Browser task failed"})
         raise
     finally:
-        await browser.close()
+        try:
+            await browser.kill()
+        except Exception:
+            pass
         if run_id:
             emit(run_id, "browser", {"phase": "closed"})
 
@@ -409,6 +244,37 @@ async def linkedin_easy_apply(
         f"Do not submit without explicit user approval."
     )
     return await run_browser_task(llm, task, user_id, max_steps=20, live_browser=live_browser, run_id=run_id)
+
+
+async def apply_to_job(
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    applicant_info: str,
+    submit: bool = False,
+    live_browser: bool = False,
+    run_id: str | None = None,
+) -> str:
+    """Autonomously fill any job application form via the browser agent.
+
+    submit=False: fill through to the final review screen and stop (READY_FOR_REVIEW).
+    submit=True: fill and click the final Submit/Apply button (SUBMITTED).
+    """
+    final = (
+        "Click the final Submit/Apply button to submit the application, then confirm SUBMITTED."
+        if submit
+        else "Stop before the final Submit/Apply button and report READY_FOR_REVIEW with what was filled."
+    )
+    task = (
+        f"Go to {job_url}. Click the Apply / Easy Apply / Apply now button. "
+        f"Fill every required field of the application form using this applicant profile:\n{applicant_info[:1500]}\n"
+        f"Use reasonable, truthful answers; leave optional fields blank if unknown. "
+        f"Upload a resume only if a file picker requires it and a file is available, otherwise skip. "
+        f"Proceed through multi-step forms. {final} "
+        f"If login, CAPTCHA, OTP, payment, account creation, or missing required personal data blocks "
+        f"progress, stop and report REQUIRES_MANUAL."
+    )
+    return await run_browser_task(llm, task, user_id, max_steps=25, live_browser=live_browser, run_id=run_id)
 
 
 async def linkedin_update_profile(

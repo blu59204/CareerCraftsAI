@@ -137,7 +137,9 @@ class MemoryEmbedder:
             base_url="https://integrate.api.nvidia.com/v1",
         )
         resp = await client.embeddings.create(
-            model="nvidia/nv-embedqa-e5-v5", input=text
+            model="nvidia/nv-embedqa-e5-v5",
+            input=text,
+            extra_body={"input_type": "query", "truncate": "END"},
         )
         return resp.data[0].embedding
 
