@@ -58,3 +58,11 @@ D:\CareerCraft AI\motionsites.ai-prompt-library
 **/.browser_data/
 .playwright-cli/
 .playwright-mcp/
+
+# Root-level status reports, temp screenshots, session logs (transient clutter)
+/*.txt
+/*.png
+
+# Test/smoke output directories (screenshot + log artifacts, never source)
+output/
+backend/output/
