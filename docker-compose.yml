@@ -39,15 +39,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  pinchtab:
-    image: pinchtab/pinchtab
-    shm_size: "2g"
-    environment:
-      PINCHTAB_CONFIG: /config/config.json
-    volumes:
-      - ./pinchtab/config.json:/config/config.json:ro
-    restart: unless-stopped
-
   redis:
     image: redis:7-alpine
     ports:

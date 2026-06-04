@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<Status, string> = {
 const STATIC_SERVICES: { name: string; status: Status }[] = [
   { name: "Authentication (Supabase)", status: "unknown" },
   { name: "Agent Orchestrator", status: "unknown" },
-  { name: "Job Search (PinchTab)", status: "unknown" },
+  { name: "Job Search (browser-use)", status: "unknown" },
   { name: "Email Agent (Gmail MCP)", status: "unknown" },
   { name: "RAG Pipeline", status: "unknown" },
 ];

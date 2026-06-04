@@ -29,8 +29,3 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-
-  pinchtab:
-    image: ghcr.io/pinchtab/pinchtab:0.7.6
-    ports:
-      - "9867:9867"
