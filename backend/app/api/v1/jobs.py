@@ -5,8 +5,10 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+import urllib.parse
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +16,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import apply_harness_result
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, JobApplication, User, UserDocument, UserPreferences
+from app.schemas.jobs import JobSearchQuerySchema
 from app.services.queue_service import enqueue_job_search
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -23,11 +26,15 @@ NL_SEARCH_TIMEOUT_SECONDS = 120
 VALID_STATUSES = {"saved", "applied", "viewed", "interview", "offer", "rejected"}
 
 
-class JobSearchRequest(BaseModel):
+class JobSearchRequest(JobSearchQuerySchema):
     search_query: str = Field(default="", max_length=200)
     location: str = "Remote"
     max_results: int = 10
-    live_browser: bool = True
+    # Default to False: the free keyless job-board APIs (Remotive / Arbeitnow
+    # / Jobicy) and JobSpy are fast and return real apply links. live_browser
+    # opens a visible Chromium for the demo, but it triggers CAPTCHAs and
+    # frequently returns zero jobs. Flip on explicitly via the UI.
+    live_browser: bool = False
     work_mode: str | None = None
     experience_level: str | None = None
     years_experience: int | None = Field(None, ge=0, le=60)
@@ -40,6 +47,7 @@ class JobSearchResponse(BaseModel):
     run_id: str
     queue_job_id: str
     status: str = "queued"
+    queued: bool = True
 
 
 class ApplicationResponse(BaseModel):
@@ -76,11 +84,19 @@ class StatusUpdateBody(BaseModel):
 
 
 class PrepareApplyBody(BaseModel):
-    live_browser: bool = True
+    live_browser: bool = False
 
 
 class NLSearchRequest(BaseModel):
     query: str = Field(min_length=5, max_length=500)
+
+    @field_validator("query")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        import re
+        v = v.replace("\x00", "")
+        v = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", v)
+        return v[:500]
 
 
 def is_example_job_url(job_url: str | None) -> bool:
@@ -469,6 +485,136 @@ async def get_job_search_profile(
     )
 
 
+# ---------------------------------------------------------------------------
+# Strategy preview endpoints — show the user what the system WOULD search.
+#
+# These don't actually fire searches. They surface the catalogs from
+# ``app.services.search_presets`` so the UI can display the query plan
+# (Google dorks, company career pages, ready-to-fetch job-board URLs)
+# before the user clicks "Run search".
+# ---------------------------------------------------------------------------
+
+
+@router.get("/search/dorks")
+async def list_search_dorks(
+    q: str = "GenAI Python fresher",
+    location: str = "India",
+    region: str = "india",
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),
+):
+    """Return Google dork strings the system would fire for a query.
+
+    Region defaults to ``"india"`` (filters to India-targeted dorks).
+    Pass ``region="global"`` for the full 17-dork list.
+    """
+    from app.services.search_presets import GOOGLE_DORKS, dorks_for_engine
+
+    if region.lower() == "global":
+        dorks = list(GOOGLE_DORKS)
+    else:
+        # All current dorks are google_cse-tagged, but include any
+        # engine so future additions to non-Google dorks also flow through.
+        dorks = list(GOOGLE_DORKS)
+
+    out: list[dict] = []
+    for d in dorks[: max(1, min(limit, 50))]:
+        raw_dork = d.get("dork", "")
+        # Substitute {q} / {loc} / {location} placeholders if present.
+        for needle, repl in (
+            ("{q}", q),
+            ("{loc}", location),
+            ("{location}", location),
+        ):
+            raw_dork = raw_dork.replace(needle, repl)
+        out.append({
+            "name": d.get("name", ""),
+            "dork": raw_dork,
+            "use_for": d.get("use_for", ""),
+            "engine": d.get("engine", "google_cse"),
+            "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(raw_dork)}",
+        })
+    return {"q": q, "location": location, "region": region, "count": len(out), "dorks": out}
+
+
+@router.get("/search/companies")
+async def list_company_careers(
+    region: str = "all",
+    current_user: User = Depends(get_current_user),
+):
+    """Return the 16 company career pages the system can scrape directly."""
+    from app.services.search_presets import COMPANY_CAREER_PAGES
+
+    pages = list(COMPANY_CAREER_PAGES)
+    indian_keywords = (
+        "tcs", "infosys", "wipro", "hcl", "tech mahindra", "cognizant",
+        "capgemini", "accenture", "ltimindtree", "mindtree", "mphasis",
+    )
+    if region.lower() == "india":
+        pages = [
+            c for c in pages
+            if any(kw in c.get("name", "").lower() for kw in indian_keywords)
+        ] or pages
+    elif region.lower() == "global":
+        pages = [
+            c for c in pages
+            if not any(kw in c.get("name", "").lower() for kw in indian_keywords)
+        ]
+
+    out: list[dict] = []
+    for c in pages:
+        out.append({
+            "name": c.get("name", ""),
+            "url": c.get("url", ""),
+            "apply_via": c.get("apply_via", "browser_use"),
+            "notes": c.get("notes", ""),
+        })
+    return {"region": region, "count": len(out), "companies": out}
+
+
+@router.get("/search/presets")
+async def list_search_presets(
+    q: str = "GenAI Python fresher",
+    location: str = "India",
+    region: str = "all",
+    limit: int = 25,
+    current_user: User = Depends(get_current_user),
+):
+    """Return ready-to-fetch job-board URLs for a query.
+
+    These are the 27 SEARCH_PRESETS from ``search_presets.py`` with
+    ``{q}`` and ``{loc}`` substituted.  Some presets have fully-baked
+    URLs (e.g. Naukri's direct search) — those pass through unchanged.
+    """
+    from app.services.search_presets import SEARCH_PRESETS, build_url, presets_for_region
+
+    if region.lower() in ("india", "global", "remote"):
+        presets = presets_for_region(region)
+    else:
+        presets = list(SEARCH_PRESETS)
+
+    out: list[dict] = []
+    for preset in presets[: max(1, min(limit, 50))]:
+        try:
+            url = build_url(preset, q=q, loc=location, location=location)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to build URL for preset %s: %s", preset.get("name", "?"), exc
+            )
+            url = preset.get("url", "")
+        out.append({
+            "name": preset.get("name", ""),
+            "url": url,
+            "method": preset.get("method", "fetch"),
+            "region": preset.get("region", "global"),
+            "date_filter": preset.get("date_filter", ""),
+            "exp_filter": preset.get("exp_filter", ""),
+            "notes": preset.get("notes", ""),
+        })
+    return {"q": q, "location": location, "region": region, "count": len(out), "presets": out}
+
+
 @router.post("/search/natural")
 @limiter.limit("10/minute")
 async def natural_language_search(
@@ -513,6 +659,28 @@ async def natural_language_search(
     return {"run_id": run_id, "status": agent_run.status}
 
 
+async def _resolve_live_browser(
+    db: AsyncSession,
+    current_user: User,
+    request_value: bool,
+) -> bool:
+    """Merge per-user preference with the request.
+
+    The request flag wins when the caller explicitly opted in (True) — this
+    lets a UI button force the visible browser for a one-off run.  When the
+    caller didn't override (False), the user's saved ``prefer_live_browser``
+    preference decides.  Defaulting at the schema layer stays False so
+    BYOK-no-preference users still get the fast headless waterfall.
+    """
+    if request_value:
+        return True
+    prefs_result = await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == current_user.id)
+    )
+    prefs = prefs_result.scalar_one_or_none()
+    return bool(prefs and getattr(prefs, "prefer_live_browser", False))
+
+
 @router.post("/search", response_model=JobSearchResponse)
 @limiter.limit("10/minute")
 async def search_jobs(
@@ -524,7 +692,32 @@ async def search_jobs(
     if payload.max_results > 25:
         raise HTTPException(status_code=400, detail="max_results cannot exceed 25")
 
+    # Block the run early if the user hasn't configured an LLM model yet.
+    # Otherwise the agent silently returns zero jobs (BYOK apps fail with
+    # "Agent failed" + no detail). 409 signals "you must finish setup first".
+    from app.models.db import UserModelSettings
+    model_row = (await db.execute(
+        select(UserModelSettings).where(
+            UserModelSettings.user_id == current_user.id,
+            UserModelSettings.is_active == True,  # noqa: E712
+        )
+    )).scalars().first()
+    if not model_row:
+        raise HTTPException(
+            status_code=409,
+            detail="No active model configured. Pick a provider under Settings → AI Model before running job search.",
+        )
+
     search_query, location, work_mode, search_source = await _resolve_search_context(db, current_user, payload)
+    live_browser = await _resolve_live_browser(db, current_user, payload.live_browser)
+
+    titles = [t.strip() for t in (payload.titles or []) if t.strip()]
+    structured_locations = [loc.strip() for loc in (payload.locations or []) if loc.strip()]
+    if titles:
+        search_query = " ".join(titles)
+    if structured_locations:
+        location = structured_locations[0]
+    platforms = payload.platforms or ["linkedin", "indeed", "naukri"]
 
     run_id = str(uuid.uuid4())
     agent_run = AgentRun(
@@ -536,28 +729,39 @@ async def search_jobs(
             "search_query": search_query,
             "location": location,
             "max_results": payload.max_results,
-            "live_browser": payload.live_browser,
+            "live_browser": live_browser,
             "work_mode": work_mode,
             "search_source": search_source,
+            "titles": titles,
+            "platforms": platforms,
         },
     )
     db.add(agent_run)
     await db.flush()
 
+    from app.services.queue_service import make_job_search_id
+
+    remote = (payload.remote or "").strip() or work_mode or "any"
+
     try:
-        queue_job_id = await enqueue_job_search(
+        queue_job_id, queued = await enqueue_job_search(
             user_id=str(current_user.id),
             run_id=run_id,
             search_query=search_query,
             location=location,
             max_results=payload.max_results,
-            live_browser=payload.live_browser,
+            live_browser=live_browser,
             work_mode=work_mode,
+            job_id=make_job_search_id(
+                str(current_user.id), search_query, location, payload.max_results
+            ),
+            platforms=platforms,
+            remote=remote,
         )
     except RuntimeError as exc:
         logger.warning("Job search enqueue failed for run %s: %s", run_id, exc)
         raise HTTPException(status_code=503, detail="Job search service unavailable") from exc
-    return JobSearchResponse(run_id=run_id, queue_job_id=queue_job_id)
+    return JobSearchResponse(run_id=run_id, queue_job_id=queue_job_id, queued=queued)
 
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
@@ -634,13 +838,15 @@ async def prepare_application_apply(
     if not app.job_url:
         raise HTTPException(status_code=400, detail="Application has no job URL")
 
+    live_browser = await _resolve_live_browser(db, current_user, body.live_browser)
+
     run_id = str(uuid.uuid4())
     agent_run = AgentRun(
         id=uuid.UUID(run_id),
         user_id=current_user.id,
         agent_type="apply_prepare",
         status="running",
-        input={"application_id": str(application_id), "live_browser": body.live_browser},
+        input={"application_id": str(application_id), "live_browser": live_browser},
     )
     db.add(agent_run)
     await db.commit()
@@ -650,7 +856,7 @@ async def prepare_application_apply(
         from app.core.event_bus import emit
         from app.core.model_router import _build_llm
         from app.core.sync_db import fetch_model_settings
-        from app.services.browser_control_service import run_browser_task
+        from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
         from app.services.form_filler_service import build_user_form_profile, _build_profile_context
 
         try:
@@ -679,7 +885,7 @@ async def prepare_application_apply(
                 task=task,
                 user_id=str(current_user.id),
                 max_steps=25,
-                live_browser=body.live_browser,
+                live_browser=live_browser,
                 run_id=run_id,
             )
             emit(run_id, "checkpoint", {

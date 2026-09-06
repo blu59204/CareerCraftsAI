@@ -6,7 +6,7 @@ const BACKEND_URL =
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET ?? process.env.APP_SECRET_KEY ?? "";
 
 export async function processJobSearch(job: Job): Promise<void> {
-  const { user_id, run_id, search_query, location, max_results, live_browser, work_mode } =
+  const { user_id, run_id, search_query, location, max_results, live_browser, work_mode, platforms, remote } =
     job.data as {
       user_id: string;
       run_id: string;
@@ -15,12 +15,14 @@ export async function processJobSearch(job: Job): Promise<void> {
       max_results: number;
       live_browser?: boolean;
       work_mode?: string;
+      platforms?: string[];
+      remote?: string;
     };
 
   try {
     await axios.post(
       `${BACKEND_URL}/internal/agents/run-job-search`,
-      { user_id, run_id, search_query, location, max_results, live_browser: live_browser ?? false, work_mode: work_mode ?? "" },
+      { user_id, run_id, search_query, location, max_results, live_browser: live_browser ?? false, work_mode: work_mode ?? "", platforms: platforms ?? [], remote: remote ?? "any" },
       {
         headers: { "x-internal-secret": INTERNAL_SECRET },
         timeout: 130_000, // 130s — just above backend 120s server timeout
