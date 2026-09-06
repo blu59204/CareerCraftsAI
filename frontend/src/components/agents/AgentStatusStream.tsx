@@ -1,6 +1,6 @@
 "use client";
-import { useAgentStore } from "@/store/agentSlice";
-import { useAgentStream } from "@/lib/sse";
+import { useEffect } from "react";
+import { useAgentStore } from "@/store/agentStore";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CheckCircle2, Clock3, Loader2, Terminal, TriangleAlert } from "lucide-react";
@@ -27,7 +27,12 @@ interface Props {
 }
 
 export function AgentStatusStream({ runId, onApprove, onCancel }: Props) {
-  useAgentStream(runId);
+  const setActiveRun = useAgentStore((s) => s.setActiveRun);
+  // Register this run as active; the persistent stream in AppShell handles the
+  // SSE connection so it survives page navigation.
+  useEffect(() => {
+    setActiveRun(runId);
+  }, [runId, setActiveRun]);
   const run = useAgentStore((s) => s.runs[runId]);
   if (!run) {
     return (
@@ -59,6 +64,20 @@ export function AgentStatusStream({ runId, onApprove, onCancel }: Props) {
           Live log
         </div>
       </div>
+      {run.lastFrame?.screenshot_b64 && (
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+            <span className="truncate">{run.lastFrame.title || run.lastFrame.url}</span>
+            <span className="shrink-0 pl-2">live · step {run.lastFrame.step}</span>
+          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`data:${run.lastFrame.mime ?? "image/png"};base64,${run.lastFrame.screenshot_b64}`}
+            alt="Live browser view"
+            className="w-full"
+          />
+        </div>
+      )}
       <ScrollArea className="h-64 rounded-xl border border-border bg-card p-3 font-mono text-xs text-card-foreground shadow-inner">
         {run.events.map((e, i) => (
           <div key={i} className="mb-2 break-words leading-relaxed">

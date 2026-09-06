@@ -27,7 +27,7 @@ import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
-import { useAgentStore } from "@/store/agentSlice";
+import { useAgentStore } from "@/store/agentStore";
 
 const AGENTS = [
   { key: "resume_optimize", label: "Resume", icon: FileText, accent: "from-cyan-500/20 to-blue-500/5", note: "Tailored resume draft" },
@@ -106,6 +106,10 @@ export default function AgentsPage() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const qc = useQueryClient();
   const initRun = useAgentStore((s) => s.initRun);
+  const storeActiveRunId = useAgentStore((s) => s.activeRunId);
+  const setActiveRun = useAgentStore((s) => s.setActiveRun);
+  // Persisted run survives navigation + reload, so the panel reappears on return.
+  const displayRunId = activeRunId ?? storeActiveRunId;
 
   const runMutation = useMutation({
     mutationFn: () =>
@@ -231,16 +235,18 @@ export default function AgentsPage() {
 
           <div className="mt-5 min-h-[240px] rounded-xl border border-border bg-background/45 p-4">
           {/* BUG 12: mount AgentStatusStream when a run is active */}
-          {activeRunId ? (
+          {displayRunId ? (
             <AgentStatusStream
-              runId={activeRunId}
+              runId={displayRunId}
               onApprove={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
                 setActiveRunId(null);
+                setActiveRun(null);
               }}
               onCancel={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
                 setActiveRunId(null);
+                setActiveRun(null);
               }}
             />
           ) : (
@@ -309,7 +315,7 @@ export default function AgentsPage() {
         </div>
 
         {/* BUG 7: wire approval callbacks with actual run_id — only show if NOT the same as activeRunId to avoid duplicates */}
-        {awaitingRun && awaitingRun.id !== activeRunId && (
+        {awaitingRun && awaitingRun.id !== displayRunId && (
           <AgentStatusStream
             runId={awaitingRun.id}
             onApprove={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}

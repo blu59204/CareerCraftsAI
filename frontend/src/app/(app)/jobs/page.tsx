@@ -30,7 +30,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
-import { useAgentStore } from "@/store/agentSlice";
+import { useAgentStore } from "@/store/agentStore";
 
 const XRAY_TEMPLATES = [
   `site:linkedin.com/jobs "Frontend Engineer" "React" "Remote"`,
@@ -626,7 +626,12 @@ function JobCard({ job, onPrepareApply }: { job: SavedJob; onPrepareApply: (job:
             tone="primary"
             size="sm"
             className="flex-1 gap-1.5"
-            onClick={() => onPrepareApply(job)}
+            onClick={() => {
+              // Open the real job posting so the user can apply directly...
+              if (job.job_url) window.open(job.job_url, "_blank", "noopener,noreferrer");
+              // ...and kick off the human-in-the-loop auto-apply prep.
+              onPrepareApply(job);
+            }}
           >
             <ExternalLink className="h-3.5 w-3.5" />
             Apply
@@ -666,7 +671,12 @@ export default function JobsPage() {
   const [profileInitialized, setProfileInitialized] = useState(false);
   const initRun = useAgentStore((s) => s.initRun);
   const addEvent = useAgentStore((s) => s.addEvent);
+  const setCheckpoint = useAgentStore((s) => s.setCheckpoint);
   const setRunStatus = useAgentStore((s) => s.setRunStatus);
+  const storeActiveRunId = useAgentStore((s) => s.activeRunId);
+  const setActiveRun = useAgentStore((s) => s.setActiveRun);
+  // Persisted run survives navigation + reload, so the live view reappears on return.
+  const displayRunId = activeRunId ?? storeActiveRunId;
   const activeRunStatus = useAgentStore((s) =>
     activeRunId ? s.runs[activeRunId]?.status : undefined,
   );
@@ -712,44 +722,8 @@ export default function JobsPage() {
   const { data: searchProfile } = useQuery<JobSearchProfile>({
     queryKey: ["job-search-profile"],
     queryFn: async () => {
-      const [{ data: saved }, { data: docs }] = await Promise.all([
-        apiClient.get("/users/me/preferences"),
-        apiClient.get("/rag/documents?doc_type=resume"),
-      ]);
-      const savedPrefs = (saved ?? {}) as JobSearchPrefs;
-      const savedWorkModes = splitCsv(savedPrefs.work_mode);
-      const primaryWorkMode = savedWorkModes[0] ?? "remote";
-      const resumeDocs = docs as Array<{ filename?: string; ats_data?: { matched_keywords?: string[] } | null }>;
-      const firstDoc = resumeDocs?.[0];
-      const skills = firstDoc?.ats_data?.matched_keywords?.slice(0, 8) ?? [];
-      const roles = savedPrefs.target_roles?.length
-        ? savedPrefs.target_roles
-        : savedPrefs.current_title
-          ? [savedPrefs.current_title]
-          : [];
-      return {
-        resume_found: Boolean(firstDoc),
-        resume_filename: firstDoc?.filename ?? null,
-        role_suggestions: roles,
-        skills,
-        inferred_years_experience: savedPrefs.years_experience ?? null,
-        inferred_experience_level: savedPrefs.experience_level ?? null,
-        saved_preferences: savedPrefs,
-        search_query_preview: roles[0] ?? "Set target role",
-        location_preview:
-          primaryWorkMode === "remote"
-            ? "Remote"
-            : savedPrefs.preferred_locations?.[0] ?? "Any",
-        work_mode_preview: savedPrefs.work_mode ?? "remote",
-        missing_fields: [
-          ...(!firstDoc ? ["resume"] : []),
-          ...(roles.length === 0 ? ["target role"] : []),
-          ...(savedPrefs.years_experience == null ? ["years of experience"] : []),
-        ],
-        analysis_notes: firstDoc
-          ? ["Search agent will analyze full resume text when you run search. This panel shows saved preferences and resume ATS keywords."]
-          : ["Upload resume so agents can analyze skills and experience."],
-      };
+      const { data } = await apiClient.get("/users/me/job-search-profile");
+      return data;
     },
   });
 
@@ -870,11 +844,8 @@ export default function JobsPage() {
             run.status === "awaiting_approval")
         ) {
           if (run.status === "awaiting_approval") {
-            addEvent(activeRunId, {
-              type: "checkpoint",
-              data: run.output ?? {},
-              ts: Math.floor(Date.now() / 1000),
-            });
+            addEvent(activeRunId, "checkpoint", run.output ?? {});
+            setCheckpoint(activeRunId, (run.output ?? {}) as Record<string, unknown>);
           } else {
             setRunStatus(activeRunId, run.status);
           }
@@ -887,7 +858,7 @@ export default function JobsPage() {
       stopped = true;
       window.clearInterval(interval);
     };
-  }, [activeRunId, activeRunStatus, addEvent, setRunStatus]);
+  }, [activeRunId, activeRunStatus, addEvent, setCheckpoint, setRunStatus]);
 
   const prepareApplyMutation = useMutation({
     mutationFn: (job: SavedJob) =>
@@ -1110,15 +1081,19 @@ export default function JobsPage() {
         )}
       </AnimatePresence>
 
-      {activeRunId && (
+      {displayRunId && (
         <motion.div variants={fadeUp}>
           <AgentStatusStream
-            runId={activeRunId}
+            runId={displayRunId}
             onApprove={() => {
               qc.invalidateQueries({ queryKey: ["jobs-saved"] });
               setActiveRunId(null);
+              setActiveRun(null);
             }}
-            onCancel={() => setActiveRunId(null)}
+            onCancel={() => {
+              setActiveRunId(null);
+              setActiveRun(null);
+            }}
           />
         </motion.div>
       )}
