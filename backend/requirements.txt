@@ -1,62 +1,93 @@
-# Install with: pip install -r requirements.txt -c constraints.txt
-# This blocks langgraph-checkpoint-sqlite (CVE-2025-67644)
+# CareerCraft AI — Python Backend Dependencies
+# Install: pip install -r requirements.txt -c constraints.txt
+# Synced from running container (2026-06-05 build that resolved successfully)
+
+# Web framework
 fastapi>=0.111.0
-uvicorn[standard]>=0.29.0
-pydantic[email]>=2.7.4,<3.0.0
-pydantic-settings>=2.2.1
+uvicorn[standard]>=0.30.1
+python-multipart>=0.0.9
+email-validator>=2.0.0
+
+# Database
 sqlalchemy[asyncio]>=2.0.30
-asyncpg>=0.29.0
+asyncpg>=0.30.0
 alembic>=1.13.1
+pgvector>=0.3.2
+
+# Supabase
+supabase>=2.30.0
+langchain-postgres>=0.0.17
+psycopg[binary]>=3.3.4
+
+# Config & validation
+pydantic>=2.7.4
+pydantic-settings>=2.3.0
+
+# Auth & security
+python-jose[cryptography]>=3.3.0
+cryptography>=42.0.8
+slowapi>=0.1.9
+
+# AI/ML stack — pinned in constraints.txt; versions below are the floor,
+# exact pins in constraints.txt win on fresh installs.
 langchain>=0.3.0
-langchain-core>=0.3.17
-langchain-anthropic>=0.3.0
-langchain-openai>=0.3.0
-langchain-google-genai>=2.0.0
+langchain-core>=0.3.0
+langchain-anthropic>=0.1.23
+langchain-openai>=0.1.17
+langchain-google-genai>=1.0.7
 langchain-ollama>=0.2.0
 langgraph>=0.2.0
-cryptography>=42.0.5
-PyJWT>=2.9.0
-slowapi>=0.1.9
-python-multipart>=0.0.9
-httpx>=0.26.0,<0.29.0
-redis>=5.0.4
-bullmq>=2.25.0
-pytest>=8.2.0
-pytest-asyncio>=0.23.6
-pytest-mock>=3.14.0
-hypothesis>=6.100.0
-bandit>=1.7.8
-ruff>=0.4.4
-black>=24.4.2
-coverage>=7.5.1
-pymupdf==1.27.2.3
-python-docx==1.2.0
-supabase==2.30.0
-langchain-postgres==0.0.17
-psycopg[binary]==3.3.4
-langchain-community==0.4.2
-langchain-google-community>=4.0.0
-reportlab>=4.1.0
+langchain-community>=0.3.0
+langchain-google-community>=2.0.0
 openai>=1.0.0
-google-generativeai>=0.5.0
-ollama>=0.1.0
-pgvector>=0.3.0
-google-api-python-client>=2.100.0
-python-jobspy>=1.1.75,<1.2.0
-# browser-use is the sole browser-control engine (AI agent drives Chromium).
-# Installed separately in Dockerfile with --no-deps to avoid markdownify conflict.
-# browser-use==0.12.9 (see Dockerfile)
-# browser-use runtime deps (markdownify excluded - python-jobspy provides compatible ver):
+ollama>=0.4.0
+tiktoken>=0.7.0
+
+# Redis & queue
+redis>=5.0.0
+bullmq>=2.25.0
+
+# HTTP
+httpx>=0.27.0
+
+# Email
+resend>=0.8.0
+
+# YouTube search
+youtube-search-python>=1.6.0
+
+# Document processing
+pymupdf>=1.24.0
+python-docx>=1.1.0
+reportlab>=4.2.0
+pypdf>=6.0.0
+python-jobspy>=1.1.75
+
+# Playwright (browser automation)
+playwright>=1.44.0
+agentql>=1.0.0
+
+# browser-use runtime deps (browser-use installed separately via Dockerfile)
 cdp-use>=1.4.0
 bubus>=1.5.0
 browser-use-sdk>=3.4.0
 screeninfo>=0.8.0
 pyotp>=2.9.0
-pypdf>=6.0.0
+dnspython>=2.6.0
+
+# Utilities
+google-api-python-client>=2.100.0
 posthog>=7.0.0
 uuid7>=0.1.0
 psutil>=5.9.0
-playwright>=1.44.0; python_version >= "3.11"
-# AgentQL (TinyFish): robust AI element/data querying on top of Playwright for live job scraping.
-agentql>=1.0.0
-dnspython>=2.6.0
+
+# Dev & test
+pytest>=8.2.0
+pytest-asyncio>=0.23.6
+pytest-mock>=3.14.0
+pytest-timeout>=2.3.0
+hypothesis>=6.100.0
+bandit>=1.7.8
+ruff>=0.4.0
+black>=24.0.0
+coverage>=7.5.0

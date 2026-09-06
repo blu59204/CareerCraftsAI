@@ -19,7 +19,16 @@ target-version = ["py312"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# No unit test may hit network or a browser: fail fast instead of hanging.
+timeout = 60
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "e2e: end-to-end browser tests (requires RUN_E2E=1 and full Docker stack)",
+    "api: API-only tests, no browser required",
+    "security: security verification tests (JWT, HITL gates, rate limiting)",
+    "browser: Playwright browser interaction tests",
+    "integration: tests requiring real infrastructure (DB, Redis, LLM)",
+]
 
 [tool.coverage.run]
 source = ["app"]
