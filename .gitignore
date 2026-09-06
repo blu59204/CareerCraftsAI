@@ -66,3 +66,7 @@ D:\CareerCraft AI\motionsites.ai-prompt-library
 # Test/smoke output directories (screenshot + log artifacts, never source)
 output/
 backend/output/
+_inventory_git.txt
+_inventory_files.csv
+_tmp_*.png
+.tmp_*.png
