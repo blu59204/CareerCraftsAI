@@ -33,6 +33,9 @@ class OptimizeResponse(BaseModel):
     resume_text: str | None = None
     pdf_available: bool = False
     template: str = "modern"
+    ats_score: int | None = None
+    missing_keywords: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
 
 
 class AtsScoreRequest(BaseModel):
@@ -94,9 +97,16 @@ async def optimize_resume(
     agent_run.status = result_state["status"]
     agent_run.completed_at = datetime.now(timezone.utc)
     if result_state.get("pending_action"):
+        pending_action = result_state["pending_action"] or {}
+        ats = pending_action.get("ats_score") or {}
         agent_run.output = {
-            "type": result_state["pending_action"].get("type"),
-            "pdf_b64": result_state["pending_action"].get("pdf_b64"),
+            "type": pending_action.get("type"),
+            "resume_text": pending_action.get("resume_text"),
+            "pdf_b64": pending_action.get("pdf_b64"),
+            "pdf_path": pending_action.get("pdf_path"),
+            "ats_score": ats.get("composite_score") if isinstance(ats, dict) else None,
+            "missing_keywords": ats.get("missing_keywords", []) if isinstance(ats, dict) else [],
+            "suggestions": ats.get("suggestions", []) if isinstance(ats, dict) else [],
         }
 
     if result_state["status"] == "failed":
@@ -104,12 +114,16 @@ async def optimize_resume(
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
     pending = result_state.get("pending_action") or {}
+    ats = pending.get("ats_score") or {}
     return OptimizeResponse(
         run_id=run_id,
         status=result_state["status"],
         resume_text=pending.get("resume_text"),
         pdf_available=bool(pending.get("pdf_b64")),
         template=payload.template,
+        ats_score=ats.get("composite_score") if isinstance(ats, dict) else None,
+        missing_keywords=ats.get("missing_keywords", []) if isinstance(ats, dict) else [],
+        suggestions=ats.get("suggestions", []) if isinstance(ats, dict) else [],
     )
 
 
