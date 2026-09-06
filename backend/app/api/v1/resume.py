@@ -1,8 +1,8 @@
 import asyncio
-import base64
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -24,18 +24,23 @@ logger = logging.getLogger(__name__)
 
 class OptimizeRequest(BaseModel):
     jd_text: str = Field(max_length=20000)
-    template: str = Field(default="modern")
+    template: Literal["modern", "classic", "technical"] = Field(default="modern")
 
 
 class OptimizeResponse(BaseModel):
     run_id: str
     status: str
-    resume_text: str | None = None
-    pdf_available: bool = False
     template: str = "modern"
+    pdf_available: bool = False
+    pdf_document_id: str | None = None
+    # Mirrors prompts/resume_prompt.OUTPUT_SCHEMA:
+    resume_markdown: str | None = None
+    summary: str | None = None
     ats_score: int | None = None
-    missing_keywords: list[str] = Field(default_factory=list)
-    suggestions: list[str] = Field(default_factory=list)
+    keywords_matched: list[str] = Field(default_factory=list)
+    keywords_missing: list[str] = Field(default_factory=list)
+    changes_made: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AtsScoreRequest(BaseModel):
@@ -96,61 +101,68 @@ async def optimize_resume(
 
     agent_run.status = result_state["status"]
     agent_run.completed_at = datetime.now(timezone.utc)
-    if result_state.get("pending_action"):
-        pending_action = result_state["pending_action"] or {}
-        ats = pending_action.get("ats_score") or {}
+    pending = result_state.get("pending_action") or {}
+    if pending:
+        # Small DB footprint: ids + score only. No markdown, no binary.
         agent_run.output = {
-            "type": pending_action.get("type"),
-            "resume_text": pending_action.get("resume_text"),
-            "pdf_b64": pending_action.get("pdf_b64"),
-            "pdf_path": pending_action.get("pdf_path"),
-            "ats_score": ats.get("composite_score") if isinstance(ats, dict) else None,
-            "missing_keywords": ats.get("missing_keywords", []) if isinstance(ats, dict) else [],
-            "suggestions": ats.get("suggestions", []) if isinstance(ats, dict) else [],
+            "type": pending.get("type", "resume_ready"),
+            "pdf_document_id": pending.get("pdf_document_id"),
+            "ats_score": pending.get("ats_score"),
         }
 
-    if result_state["status"] == "failed":
+    if result_state["status"] in ("failed", "error"):
         logger.warning("Resume optimize agent failed for run %s: %s", run_id, result_state.get("error"))
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
-    pending = result_state.get("pending_action") or {}
-    ats = pending.get("ats_score") or {}
     return OptimizeResponse(
         run_id=run_id,
         status=result_state["status"],
-        resume_text=pending.get("resume_text"),
-        pdf_available=bool(pending.get("pdf_b64")),
         template=payload.template,
-        ats_score=ats.get("composite_score") if isinstance(ats, dict) else None,
-        missing_keywords=ats.get("missing_keywords", []) if isinstance(ats, dict) else [],
-        suggestions=ats.get("suggestions", []) if isinstance(ats, dict) else [],
+        pdf_available=bool(pending.get("pdf_document_id")),
+        pdf_document_id=pending.get("pdf_document_id"),
+        resume_markdown=pending.get("resume_markdown"),
+        summary=pending.get("summary"),
+        ats_score=pending.get("ats_score"),
+        keywords_matched=pending.get("keywords_matched", []),
+        keywords_missing=pending.get("keywords_missing", []),
+        changes_made=pending.get("changes_made", []),
+        warnings=pending.get("warnings", []),
     )
 
 
-@router.get("/download/{run_id}")
+@router.get("/download/{document_id}")
 async def download_pdf(
-    run_id: str,
+    document_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.services.storage_service import download_file
+
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="Document not found")
     result = await db.execute(
-        select(AgentRun).where(
-            AgentRun.id == uuid.UUID(run_id),
-            AgentRun.user_id == current_user.id,
+        select(UserDocument).where(
+            UserDocument.id == doc_uuid,
+            UserDocument.user_id == current_user.id,
         )
     )
-    run = result.scalar_one_or_none()
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
-    if not run.output or "pdf_b64" not in run.output:
-        raise HTTPException(status_code=404, detail="PDF not available for this run")
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        pdf_bytes = download_file(doc.storage_path, str(current_user.id))
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Document not found")
+    except RuntimeError:
+        raise HTTPException(status_code=502, detail="Storage download failed")
 
-    pdf_bytes = base64.b64decode(run.output["pdf_b64"])
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=resume_{run_id[:8]}.pdf"
+            "Content-Disposition": f"attachment; filename=resume_{document_id[:8]}.pdf"
         },
     )
 

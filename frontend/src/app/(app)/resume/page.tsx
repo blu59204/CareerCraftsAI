@@ -39,8 +39,16 @@ interface ResumeDoc {
 interface OptimizeResult {
   run_id: string;
   status: string;
-  resume_text?: string;
+  template?: string;
   pdf_available?: boolean;
+  pdf_document_id?: string | null;
+  resume_markdown?: string;
+  summary?: string;
+  ats_score?: number | null;
+  keywords_matched?: string[];
+  keywords_missing?: string[];
+  changes_made?: string[];
+  warnings?: string[];
 }
 
 interface AgentRun {
@@ -446,9 +454,9 @@ function HistoryTab({ agentRuns, isLoading, onDownload }: HistoryTabProps) {
             >
               {run.status.replace("_", " ")}
             </span>
-            {run.status === "completed" && run.pdf_available && (
+            {(run.output?.pdf_document_id as string | undefined) && (
               <button
-                onClick={() => onDownload(run.id)}
+                onClick={() => onDownload(run.output?.pdf_document_id as string)}
                 className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors"
               >
                 <Download className="h-3.5 w-3.5" />
@@ -482,7 +490,10 @@ export default function ResumePage() {
 
   // Optimize / tailor state
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>("modern");
-  const [lastRunId, setLastRunId] = useState<string | null>(null);
+  const [lastDocId, setLastDocId] = useState<string | null>(null);
+  const [lastAtsScore, setLastAtsScore] = useState<number | null>(null);
+  const [lastMissingKeywords, setLastMissingKeywords] = useState<string[]>([]);
+  const [lastWarnings, setLastWarnings] = useState<string[]>([]);
   const [resumePreviewText, setResumePreviewText] = useState<string | null>(null);
 
   // Suggestions state
@@ -549,13 +560,47 @@ export default function ResumePage() {
       return data as OptimizeResult;
     },
     onSuccess: (data) => {
-      setLastRunId(data.run_id);
-      if (data.resume_text) setResumePreviewText(data.resume_text);
-      toast.success("Resume tailored! Review the preview below.");
+      if (data.resume_markdown) setResumePreviewText(data.resume_markdown);
+      if (data.pdf_document_id) setLastDocId(data.pdf_document_id);
+      setLastAtsScore(data.ats_score ?? null);
+      setLastMissingKeywords(data.keywords_missing ?? []);
+      setLastWarnings(data.warnings ?? []);
+      toast.success(
+        data.ats_score != null
+          ? `Resume tailored! ATS score ${data.ats_score}. Review the preview below.`
+          : "Resume tailored! Review the preview below."
+      );
       queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
       queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
     },
     onError: () => toast.error("Optimization failed — check model settings"),
+  });
+
+  // -------------------------------------------------------------------------
+  // Mutation: save resume to the user's Google Drive
+  // -------------------------------------------------------------------------
+  const saveToDriveMutation = useMutation<
+    { id: string; name: string; web_view_link?: string },
+    Error,
+    string
+  >({
+    mutationFn: async (docId: string) => {
+      const { data } = await apiClient.post(`/rag/documents/${docId}/save-to-drive`);
+      return data as { id: string; name: string; web_view_link?: string };
+    },
+    onSuccess: (data) => {
+      if (data.web_view_link) {
+        toast.success("Saved to Google Drive", {
+          action: { label: "Open", onClick: () => window.open(data.web_view_link, "_blank") },
+        });
+      } else {
+        toast.success(`Saved ${data.name} to Google Drive`);
+      }
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || "Could not save to Drive — connect Google in Settings");
+    },
   });
 
   // -------------------------------------------------------------------------
@@ -590,8 +635,8 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   // PDF download handler
   // -------------------------------------------------------------------------
-  const handleDownloadPdf = async (runId?: string) => {
-    const id = runId ?? lastRunId;
+  const handleDownloadPdf = async (documentId?: string) => {
+    const id = documentId ?? lastDocId;
     if (!id) {
       toast.info("Tailor your resume first to generate a PDF");
       return;
@@ -713,10 +758,23 @@ export default function ResumePage() {
                   className="absolute right-0 top-10 z-10 min-w-[200px] rounded-2xl border border-border bg-card p-2 shadow-lg"
                 >
                   <button
-                    onClick={() => { toast.info("Google Drive integration coming soon — download PDF for now"); setShowExportMenu(false); }}
-                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted"
+                    disabled={saveToDriveMutation.isPending}
+                    onClick={() => {
+                      setShowExportMenu(false);
+                      if (!primaryDoc?.id) {
+                        toast.info("Upload a resume first, then save it to Drive");
+                        return;
+                      }
+                      saveToDriveMutation.mutate(primaryDoc.id);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
                   >
-                    <CloudUpload className="h-4 w-4 text-muted-foreground" /> Save to Google Drive
+                    {saveToDriveMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    ) : (
+                      <CloudUpload className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    {saveToDriveMutation.isPending ? "Saving…" : "Save to Google Drive"}
                   </button>
                   <button
                     onClick={() => { toast.info("Google Docs integration coming soon"); setShowExportMenu(false); }}
@@ -738,7 +796,13 @@ export default function ResumePage() {
             </AnimatePresence>
           </div>
 
-          <LiquidGlassButton tone="primary" size="sm" onClick={() => handleDownloadPdf()}>
+          <LiquidGlassButton
+            tone="primary"
+            size="sm"
+            onClick={() => handleDownloadPdf()}
+            disabled={!lastDocId}
+            title={lastDocId ? "Download tailored PDF" : "Tailor your resume first to generate a PDF"}
+          >
             <Download className="h-4 w-4" /> Export
           </LiquidGlassButton>
         </div>
@@ -748,7 +812,7 @@ export default function ResumePage() {
       {/* Tab nav */}
       <motion.div variants={fadeUp}>
         <div className="flex gap-1 rounded-full border border-border bg-muted/40 p-1 text-sm">
-          {(["builder", "templates", "cover-letter", "history"] as const).map((t) => (
+          {(["builder", "templates", "history"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -758,7 +822,7 @@ export default function ResumePage() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              {t === "cover-letter" ? "Cover Letter" : t}
+              {t}
             </button>
           ))}
         </div>
@@ -772,22 +836,6 @@ export default function ResumePage() {
             onSelect={setSelectedTemplate}
             onTailor={() => optimizeMutation.mutate(jdText)}
             isTailoring={optimizeMutation.isPending}
-          />
-        </motion.div>
-      )}
-
-      {/* Cover Letter tab */}
-      {tab === "cover-letter" && (
-        <motion.div variants={fadeUp}>
-          <CoverLetterGenerator
-            jd={coverJd}
-            setJd={setCoverJd}
-            tone={coverTone}
-            setTone={setCoverTone}
-            letter={coverLetter}
-            setLetter={setCoverLetter}
-            generating={generating}
-            onGenerate={generateCoverLetter}
           />
         </motion.div>
       )}
@@ -925,6 +973,18 @@ export default function ResumePage() {
             {/* Center: resume preview */}
             <section className="rounded-3xl border border-border bg-card/40 p-6">
               <div className="text-sm text-muted-foreground">Preview</div>
+              {lastAtsScore != null && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Tailored ATS score: <span className="font-medium text-foreground">{lastAtsScore}</span>
+                  {lastMissingKeywords.length > 0 &&
+                    ` · missing: ${lastMissingKeywords.slice(0, 5).join(", ")}`}
+                </div>
+              )}
+              {lastWarnings.length > 0 && (
+                <div className="mt-1 text-xs text-warning">
+                  {lastWarnings.slice(0, 2).join(" ")}
+                </div>
+              )}
               <div className="mt-3 aspect-[8.5/11] w-full overflow-hidden rounded-2xl border border-border bg-background p-8 text-sm">
                 {resumePreviewText ? (
                   <pre className="whitespace-pre-wrap text-sm font-sans leading-relaxed text-foreground">
