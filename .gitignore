@@ -38,10 +38,10 @@ supabase/.branches
 supabase/.temp
 
 # AI tooling / agent configs (not needed in repo)
+# NOTE: .github/ is intentionally NOT ignored — CI workflows must be tracked.
 .claude/
 .codex/
 .agents/
-.github/
 .kiro/
 .cursor/
 .windsurf/
