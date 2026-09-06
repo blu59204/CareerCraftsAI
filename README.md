@@ -4,6 +4,32 @@
 
 Your data stays yours. You pay only for your own AI usage.
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-green.svg)](https://fastapi.tiangolo.com/)
+[![Tests](https://img.shields.io/badge/tests-403%20collected-brightgreen.svg)](#testing)
+
+---
+
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Architecture](#architecture)
+- [Feature Highlights](#feature-highlights)
+- [Tech Stack](#tech-stack)
+- [Quick Start](#quick-start)
+- [Development](#development)
+- [Project Structure](#project-structure)
+- [Supported AI Providers](#supported-ai-providers)
+- [API Overview](#api-overview)
+- [Human-in-the-Loop](#human-in-the-loop)
+- [Security](#security)
+- [Database Schema](#database-schema)
+- [Deployment](#deployment-production)
+- [Documentation](#documentation)
+- [License](#license)
+
 ---
 
 ## What It Does
@@ -13,7 +39,7 @@ CareerCraft AI deploys a harness of specialized AI agents that collaborate to au
 | Agent | What it does |
 |---|---|
 | **Orchestrator** | LangGraph supervisor — routes tasks, manages shared state, streams live progress |
-| **Job Search** | Browses LinkedIn, Naukri, Indeed, and other job boards via PinchTab; scores matches 0–100 |
+| **Job Search** | Browses LinkedIn, Naukri, Indeed, and other job boards via Playwright; scores matches 0–100 |
 | **Resume** | RAG-powered resume rewriting tailored to a specific JD; generates ATS-optimized PDF |
 | **Cover Letter** | Generates personalized, role-specific cover letters with multiple tone variants |
 | **LinkedIn** | Rewrites headline, About section, and experience bullets for a target role |
@@ -28,7 +54,7 @@ CareerCraft AI deploys a harness of specialized AI agents that collaborate to au
 | **Auto-Apply Pipeline** | End-to-end automated application: finds job → tailors resume → fills form → submits |
 | **RAG** | Retrieves context from your uploaded documents via pgvector |
 
-Every action that sends an email or submits an application requires **explicit human approval** — agents prepare, you decide.
+> Every action that sends an email or submits an application requires **explicit human approval** — agents prepare, you decide.
 
 ---
 
@@ -36,7 +62,7 @@ Every action that sends an email or submits an application requires **explicit h
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Next.js 14 App Router  (port 3000)                         │
+│  Next.js 16 App Router  (port 3000)                         │
 │  Dashboard · Resume · Jobs · Applications · Email           │
 │  LinkedIn · Interview · Company · Salary · Leads · Settings │
 └────────────────────────┬────────────────────────────────────┘
@@ -78,14 +104,14 @@ Every action that sends an email or submits an application requires **explicit h
 
 **Infrastructure:** Hybrid — Supabase Cloud for managed services, Docker Compose on your VPS for application logic.
 
+> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system design.
+
 ---
 
 ## Feature Highlights
 
 ### Auto-Apply Pipeline
-End-to-end automated job application. The pipeline finds matching jobs, tailors your resume, fills out application forms using browser automation (PinchTab), and submits — all with a human approval gate before anything is sent.
-
-Supports Indian job platforms (Naukri, Shine, Freshersworld) and international boards (LinkedIn, Indeed, Glassdoor).
+End-to-end automated job application. The pipeline finds matching jobs, tailors your resume, fills out application forms using browser automation (Playwright), and submits — all with a human approval gate before anything is sent. Supports Indian job platforms (Naukri, Shine, Freshersworld) and international boards (LinkedIn, Indeed, Glassdoor).
 
 ### ATS Scoring
 Every generated resume is scored against the target job description using keyword analysis, section completeness, and formatting rules. Score and improvement suggestions are shown before you download.
@@ -125,14 +151,14 @@ Tracks LLM token usage per user per agent run. Enforces configurable budgets to 
 - Python 3.12 · FastAPI 0.111+ · SQLAlchemy 2.0 async
 - LangGraph 0.2+ · LangChain 0.3+ · langchain-postgres 0.0.17
 - AES-256-GCM API key encryption (PBKDF2 key derivation)
-- Redis 7 + BullMQ 5 · PinchTab 0.7.6 (browser automation)
+- Redis 7 + BullMQ 5 · Playwright/Chromium (browser automation)
 - ReportLab 4 (PDF) · PyMuPDF + python-docx (parsing)
 - Hunter.io · ProxyCurl · Exa · Resend integrations
 
 **Frontend**
-- Next.js 14 App Router · TypeScript 5 · Tailwind CSS
+- Next.js 16.2.6 App Router · TypeScript 6 · Tailwind CSS 3.4
 - shadcn/ui · Zustand 4 · TanStack Query 5
-- Motion (Framer Motion successor) · Sonner notifications
+- Motion (Framer Motion successor) · Sonner notifications · Three.js
 
 **Infrastructure**
 - Supabase (PostgreSQL 16 + pgvector 0.7+ + Storage + Auth)
@@ -174,6 +200,7 @@ REDIS_URL=redis://redis:6379
 HUNTER_API_KEY=<hunter.io key for email finding>
 PROXYCURL_API_KEY=<proxycurl key for LinkedIn data>
 EXA_API_KEY=<exa.ai key for web search>
+RESEND_API_KEY=<resend.com key for transactional email>
 ```
 
 ### 2. Run database migrations
@@ -210,7 +237,7 @@ Go to **Resume → Upload** and upload your current resume (PDF or DOCX). This s
 
 ```bash
 make dev              # start full stack (hot reload)
-make test             # run unit + security tests (46 tests)
+make test             # run unit + security tests (403 collected, see tests/)
 make lint             # ruff + eslint check
 make format           # ruff --fix + black + eslint --fix
 make build            # build all Docker images
@@ -230,7 +257,7 @@ uvicorn app.main:app --reload --port 8000
 
 pytest tests/unit -v               # 40 unit tests
 pytest tests/security -v           # 6 security tests
-pytest tests/unit tests/security -v  # all 46 tests
+pytest tests/unit tests/security -v  # all 403 collected tests
 pytest -k "test_name" -v           # single test
 
 bandit -r app/ -f txt              # SAST scan
@@ -246,6 +273,7 @@ npm run dev           # dev server :3000
 npm run build
 npm run lint
 npm run type-check    # tsc --noEmit
+npm run test          # jest
 ```
 
 ### Worker only
@@ -256,6 +284,8 @@ npm install
 npm run build
 npm run dev           # ts-node (dev)
 ```
+
+> See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
 
 ---
 
@@ -314,24 +344,14 @@ CareerCraftsAI/
 │   │       ├── pdf_service.py            # ReportLab PDF generation
 │   │       ├── ats_service.py            # ATS keyword scoring
 │   │       ├── auto_apply_service.py     # Auto-apply orchestration
-│   │       ├── form_filler_service.py    # Browser form filling
-│   │       ├── browser_control_service.py # PinchTab browser control
+│   │       ├── browser_control_service.py # Playwright browser control
 │   │       ├── job_platforms_service.py  # Multi-platform job search
-│   │       ├── indian_platforms_service.py # Naukri, Shine, etc.
-│   │       ├── email_finder_service.py   # Hunter.io email lookup
-│   │       ├── linkedin_automation_service.py # LinkedIn outreach
-│   │       ├── linkedin_outreach_service.py   # Outreach queue
+│   │       ├── gmail_service.py          # Gmail MCP integration
 │   │       ├── hunter_service.py         # Hunter.io integration
 │   │       ├── proxycurl_service.py      # ProxyCurl LinkedIn data
 │   │       ├── exa_service.py            # Exa web search
-│   │       ├── persona_service.py        # Resume persona management
 │   │       ├── token_budget_service.py   # LLM token budget tracking
-│   │       ├── llm_proxy_service.py      # LLM proxy + caching
-│   │       ├── gmail_service.py          # Gmail MCP integration
-│   │       ├── storage_service.py        # Supabase Storage
-│   │       ├── queue_service.py          # BullMQ job enqueuing
-│   │       ├── resend_service.py         # Transactional email
-│   │       └── youtube_service.py        # YouTube interview prep
+│   │       └── resend_service.py         # Transactional email
 │   └── tests/
 │       ├── unit/                         # 40 tests — mocked, fast CI
 │       ├── security/                     # 6 tests — auth + input validation
@@ -339,20 +359,6 @@ CareerCraftsAI/
 ├── frontend/src/
 │   ├── app/
 │   │   ├── (app)/                        # Authenticated routes
-│   │   │   ├── dashboard/
-│   │   │   ├── resume/
-│   │   │   ├── jobs/
-│   │   │   ├── applications/
-│   │   │   ├── email/
-│   │   │   ├── linkedin/
-│   │   │   ├── interview/
-│   │   │   ├── interview-prep/
-│   │   │   ├── company/
-│   │   │   ├── salary/
-│   │   │   ├── leads/
-│   │   │   ├── agents/
-│   │   │   ├── onboarding/
-│   │   │   └── settings/
 │   │   ├── (auth)/                       # Login · Register
 │   │   └── (marketing)/                  # Landing · Pricing · Docs · About
 │   ├── components/                       # UI components + agent stream + approval modal
@@ -411,6 +417,8 @@ Multiple providers can be configured simultaneously — select the active model 
 
 Full interactive docs at `http://localhost:8000/docs` (dev mode).
 
+> See [docs/API.md](docs/API.md) for full API reference with request/response schemas.
+
 ---
 
 ## Human-in-the-Loop
@@ -437,13 +445,16 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 
 - **API keys** encrypted at rest with AES-256-GCM (PBKDF2, unique salt per key, decrypted only at request time)
 - **Authentication** via Supabase JWT verified on every protected route (HS256, audience=`authenticated`)
+- **Row-Level Security** enforced in PostgreSQL — users can only access their own data
 - **Rate limiting** 60 req/min per user via slowapi
 - **Internal endpoints** (`/internal/*`) blocked at Nginx — worker calls never reach the public internet
-- **Browser isolation** PinchTab creates a separate browser context per user
+- **Browser isolation** Playwright creates a separate browser context per user
 - **Dependency audit** `pip-audit` + `npm audit` in CI; `bandit` SAST on every PR
 - **CVE-2025-68664** (LangChain serialization) — patched, using langchain-core 1.4.0
 - **CVE-2025-67644** (LangGraph SQLite injection) — blocked via `constraints.txt`
 - **langchain-community** sunset — replaced with `langchain-postgres` for vector store
+
+> See [docs/SECURITY.md](docs/SECURITY.md) for the full security posture.
 
 ---
 
@@ -472,6 +483,8 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 | 0017 | `ats_scores` |
 | 0018 | RLS fix for `supabase_uid` |
 | 0019 | LinkedIn credentials + auto mode |
+
+> See [docs/DATABASE.md](docs/DATABASE.md) for full schema reference with column types and RLS policies.
 
 ---
 
@@ -515,6 +528,8 @@ supabase db push --db-url "$DATABASE_URL"
 
 Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 
+> See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete production deployment guide.
+
 ---
 
 ## Post-Launch Checklist
@@ -532,14 +547,18 @@ Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 
 ## Documentation
 
-| Document | Path |
-|---|---|
-| Product Requirements | `CareerCraft AI.md` |
-| System Design | `docs/superpowers/specs/` |
-| Implementation Plans | `docs/superpowers/plans/` |
-| Architecture Decisions | `docs/adr/` |
-| AI Assistant Context | `CLAUDE.md` |
-| Agent Configuration | `AGENTS.md` |
+| Document | Path | Description |
+|---|---|---|
+| Product Requirements | `CareerCraft AI.md` | Authoritative PRD |
+| Architecture | `docs/ARCHITECTURE.md` | System design, data flows, decisions |
+| Agent Reference | `AGENTS.md` | All agents: inputs, outputs, config |
+| API Reference | `docs/API.md` | Full endpoint docs with schemas |
+| Database Schema | `docs/DATABASE.md` | All tables, columns, RLS policies |
+| Deployment Guide | `docs/DEPLOYMENT.md` | VPS, Docker, CI/CD, SSL |
+| Development Guide | `docs/DEVELOPMENT.md` | Local setup, testing, conventions |
+| Security | `docs/SECURITY.md` | Auth, encryption, CVEs, auditing |
+| Contributing | `docs/CONTRIBUTING.md` | PR process, code standards |
+| Configuration | `docs/CONFIGURATION.md` | All environment variables |
 
 ---
 
