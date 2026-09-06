@@ -125,7 +125,8 @@ async def _get_session(token: str) -> dict | None:
         return None
 
 
-@router.api_route("/v1/{path:path}", methods=["POST", "GET"])
+@router.post("/v1/{path:path}", operation_id="proxy_llm_request_post")
+@router.get("/v1/{path:path}", operation_id="proxy_llm_request_get")
 async def proxy_llm_request(path: str, request: Request) -> Response:
     """Proxy LLM requests — inject real API key at transport layer.
 
