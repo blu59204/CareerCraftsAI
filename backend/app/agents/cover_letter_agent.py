@@ -1,10 +1,10 @@
 """
 cover_letter_agent.py — LangGraph node for personalized cover letter generation.
 
-Uses RAG context (top 5 resume chunks) and the job description to generate
-a cover letter in the user's chosen tone (formal/casual/bold). The result
-is stored in `user_documents` and `cover_letter_versions`, logged to
-`agent_runs`, and returned with `awaiting_approval` status for HITL gate.
+All prompt text lives in app/agents/prompts/cover_letter_prompt.py. The node
+retrieves RAG context, parses the LLM output into OUTPUT_SCHEMA (one retry),
+optionally persists a version row, and returns awaiting_approval with the
+draft for human review. Cover letters are never sent automatically.
 """
 
 from __future__ import annotations
@@ -12,70 +12,34 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.cover_letter_prompt import OUTPUT_SCHEMA as CoverLetterOutput
+from app.agents.prompts.cover_letter_prompt import SYSTEM_PROMPT as COVER_SYSTEM_PROMPT
+from app.agents.prompts.cover_letter_prompt import build_user_prompt as build_cover_prompt
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
-from app.core.sync_db import _get_sync_factory, fetch_model_settings
+from app.core.sync_db import _get_sync_factory, _to_uuid, fetch_model_settings
 from app.services.rag_service import retrieve
 
 logger = logging.getLogger(__name__)
 
 VALID_TONES = {"formal", "casual", "bold"}
 
-SYSTEM_PROMPTS = {
-    "formal": (
-        "You are a professional cover letter writer. Write in a polished, formal tone. "
-        "Use complete sentences, professional language, and maintain a respectful distance. "
-        "Avoid slang or overly casual phrasing."
-    ),
-    "casual": (
-        "You are a cover letter writer with a friendly, approachable style. Write in a "
-        "conversational yet professional tone. Be personable and warm while still "
-        "demonstrating competence and enthusiasm."
-    ),
-    "bold": (
-        "You are a cover letter writer with a confident, assertive style. Write with "
-        "strong conviction, lead with impact statements, and make bold claims backed by "
-        "evidence. Be direct and memorable."
-    ),
-}
-
-BASE_SYSTEM_PROMPT = """
-Given the candidate's resume context and a job description, write a compelling cover letter that:
-1. Opens with a strong hook relevant to the specific role
-2. Connects the candidate's experience directly to job requirements
-3. Highlights 2-3 key achievements that demonstrate fit
-4. Closes with a confident call to action
-
-Return ONLY the cover letter text — no commentary, no markdown fences, no subject line."""
-
-
-def _build_cover_letter_prompt(resume_chunks_text: str, jd_text: str, tone: str) -> list:
-    """Build the message list for cover letter generation."""
-    system_content = SYSTEM_PROMPTS[tone] + "\n\n" + BASE_SYSTEM_PROMPT
-    user_content = (
-        f"CANDIDATE RESUME CONTEXT:\n{resume_chunks_text}\n\n"
-        f"JOB DESCRIPTION:\n{jd_text}\n\n"
-        f"Write the cover letter in a {tone} tone."
-    )
-    return [
-        SystemMessage(content=system_content),
-        HumanMessage(content=user_content),
-    ]
-
 
 def _store_cover_letter(
     user_id: str,
     job_application_id: str,
-    cover_letter_text: str,
+    parsed: "CoverLetterOutput",
     tone: str,
 ) -> dict:
-    """
-    Store the generated cover letter in user_documents and cover_letter_versions.
-    Returns dict with document_id, version_number.
+    """Persist the draft to user_documents + cover_letter_versions.
+
+    Verifies the application belongs to the user (IDOR guard) and returns
+    {document_id, version_number}. Cover letter text lives in the DB row
+    (raw_text); no Storage upload — there is no binary artifact.
     """
     from sqlalchemy import func, select, update
 
@@ -83,225 +47,159 @@ def _store_cover_letter(
 
     factory = _get_sync_factory()
     with factory() as db:
-        # Create user_documents entry
-        doc_id = uuid.uuid4()
-        doc = UserDocument(
-            id=doc_id,
-            user_id=user_id,
-            doc_type="cover_letter",
-            filename=f"cover_letter_{tone}_{doc_id.hex[:8]}.txt",
-            storage_path=f"cover_letters/{user_id}/{doc_id}.txt",
-            raw_text=cover_letter_text,
-            is_primary=False,
-        )
-        db.add(doc)
-
-        # Determine next version number for this application
-        version_result = db.execute(
-            select(func.coalesce(func.max(CoverLetterVersion.version_number), 0)).where(
-                CoverLetterVersion.job_application_id == job_application_id
+        app_row = db.execute(
+            select(JobApplication.id).where(
+                JobApplication.id == _to_uuid(job_application_id),
+                JobApplication.user_id == _to_uuid(user_id),
             )
-        )
-        next_version = version_result.scalar() + 1
+        ).scalar_one_or_none()
+        if app_row is None:
+            raise ValueError("Job application not found for this user")
 
-        # Create cover_letter_versions entry
-        version = CoverLetterVersion(
+        doc_id = uuid.uuid4()
+        db.add(UserDocument(
+            id=doc_id,
+            user_id=_to_uuid(user_id),
+            doc_type="cover_letter",
+            filename=f"cover_letter_{tone}_{doc_id.hex[:8]}.md",
+            storage_path=f"cover_letters/{user_id}/{doc_id}.md",
+            raw_text=parsed.cover_letter_markdown,
+            is_primary=False,
+        ))
+
+        # NOTE: max+1 is not atomic; concurrent generates for the same
+        # application could duplicate a version number. Accepted: cover
+        # letter generation is low-volume and human-paced. If this ever
+        # runs concurrently, add a UNIQUE(job_application_id,
+        # version_number) constraint and retry on conflict.
+        next_version = (
+            db.execute(
+                select(func.coalesce(func.max(CoverLetterVersion.version_number), 0)).where(
+                    CoverLetterVersion.job_application_id == _to_uuid(job_application_id)
+                )
+            ).scalar()
+            or 0
+        ) + 1
+
+        db.add(CoverLetterVersion(
             id=uuid.uuid4(),
-            user_id=user_id,
-            job_application_id=job_application_id,
+            user_id=_to_uuid(user_id),
+            job_application_id=_to_uuid(job_application_id),
             document_id=doc_id,
             tone=tone,
             version_number=next_version,
-        )
-        db.add(version)
-
-        # Update job_applications.cover_letter_id to point to latest
+        ))
         db.execute(
             update(JobApplication)
-            .where(JobApplication.id == job_application_id)
+            .where(
+                JobApplication.id == _to_uuid(job_application_id),
+                JobApplication.user_id == _to_uuid(user_id),
+            )
             .values(cover_letter_id=doc_id)
         )
-
         db.commit()
-
-        return {
-            "document_id": str(doc_id),
-            "version_number": next_version,
-        }
-
-
-def _log_agent_run(
-    user_id: str,
-    status: str,
-    input_data: dict,
-    output_data: dict | None,
-    tokens_used: int | None,
-    duration_ms: int,
-) -> str:
-    """Log this run to agent_runs table. Returns run ID."""
-    from app.models.db import AgentRun
-
-    factory = _get_sync_factory()
-    run_id = uuid.uuid4()
-    with factory() as db:
-        run = AgentRun(
-            id=run_id,
-            user_id=user_id,
-            agent_type="cover_letter",
-            status=status,
-            input=input_data,
-            output=output_data,
-            tokens_used=tokens_used,
-            duration_ms=duration_ms,
-            completed_at=datetime.now(timezone.utc) if status != "running" else None,
-        )
-        db.add(run)
-        db.commit()
-    return str(run_id)
+        return {"document_id": str(doc_id), "version_number": next_version}
 
 
 def cover_letter_node(state: AgentState) -> AgentState:
-    """LangGraph node for cover letter generation."""
+    """Standard-shape LangGraph node: RAG -> LLM JSON -> optional persist."""
     start_ts = time.monotonic()
+    run_id = state["run_id"]
+    user_id = state["user_id"]
+    ctx = state.get("context", {}) or {}
+    # Accept both key spellings: the /generate endpoint sends application_id.
+    tone = ctx.get("tone", "formal")
+    job_application_id = ctx.get("job_application_id") or ctx.get("application_id")
+    jd_text = ctx.get("jd_text", "")
+
+    from app.core.event_bus import emit
+
+    if tone not in VALID_TONES:
+        return {**state, "status": "failed",
+                "error": f"missing/invalid: tone must be one of {sorted(VALID_TONES)}"}
+    if not (jd_text or "").strip():
+        return {**state, "status": "failed", "error": "missing: jd_text"}
 
     try:
-        user_id = state["user_id"]
-        context = state["context"]
-        tone = context.get("tone", "formal")
-        job_application_id = context.get("job_application_id")
-        jd_text = context.get("jd_text", "")
-
-        # Validate tone
-        if tone not in VALID_TONES:
-            return {
-                **state,
-                "status": "failed",
-                "error": f"Invalid tone: '{tone}'. Must be one of: formal, casual, bold",
-            }
-
-        # job_application_id is optional. When provided, the result is persisted
-        # to cover_letter_versions; when absent (ad-hoc generation from the
-        # resume tool with only a JD), we generate and return without persisting.
-
-        # Get model settings
+        emit(run_id, "thinking", {"step": "start", "message": "Retrieving resume context..."})
         model_settings = fetch_model_settings(user_id)
         if not model_settings:
-            return {
-                **state,
-                "status": "failed",
-                "error": "No active model configured. Add a model in Settings.",
-            }
+            return {**state, "status": "failed", "error": "missing: active model settings"}
 
-        # Check primary resume exists
         from app.core.sync_db import fetch_user_profile_text
 
-        primary_resume_text = fetch_user_profile_text(user_id)
-        if not primary_resume_text:
-            return {
-                **state,
-                "status": "failed",
-                "error": "No primary resume found. Please upload a resume first.",
-            }
-
-        # Retrieve top 5 resume chunks via RAG
-        resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=5)
-        context_text = "\n\n".join(chunk.page_content for chunk in resume_chunks)
-
-        # If RAG returns nothing, fall back to the raw profile text
+        # RAG is best-effort: a transient retrieval failure degrades to
+        # profile text (or empty context) instead of failing the whole run.
+        try:
+            resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=5)
+            chunk_texts = [c.page_content if hasattr(c, "page_content") else str(c) for c in resume_chunks]
+        except Exception as rag_exc:
+            logger.warning("Cover letter RAG retrieval failed, continuing: %s", rag_exc)
+            resume_chunks, chunk_texts = [], []
+        context_text = "\n\n".join(chunk_texts)
         if not context_text.strip():
-            context_text = primary_resume_text
+            try:
+                context_text = fetch_user_profile_text(user_id) or ""
+            except Exception as prof_exc:
+                logger.warning("Cover letter profile fallback failed, continuing: %s", prof_exc)
+        emit(run_id, "tool_call", {"tool": "rag_retrieve", "input": {"k": 5}})
+        emit(run_id, "tool_result", {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}})
 
-        # ── Think: Which achievements to highlight, what angle ────────
-        from app.agents.thinking import think_and_select
         llm = _build_llm(model_settings)
 
-        thinking = think_and_select(
-            llm=llm,
-            task_description=f"Write a {tone} cover letter for this job application",
-            user_context=context_text,
-            target_context=jd_text,
-            selection_criteria="Which 2-3 achievements create the strongest case? What's the unique hook?",
+        emit(run_id, "thinking", {"step": "write", "message": f"Writing {tone} cover letter..."})
+        parsed = call_llm_json(
+            llm,
+            COVER_SYSTEM_PROMPT,
+            build_cover_prompt(
+                {"jd_text": jd_text, "tone": tone,
+                 "company": ctx.get("company", "NOT_PROVIDED"),
+                 "target_role": ctx.get("target_role", ctx.get("role", "NOT_PROVIDED"))},
+                chunk_texts or None,
+            ),
+            CoverLetterOutput,
         )
+        tokens_used = 0
 
-        # Build prompt and invoke LLM via model_router
-        messages = _build_cover_letter_prompt(context_text, jd_text, tone)
-        # Inject thinking into the user message
-        messages[-1] = HumanMessage(
-            content=(
-                f"STRATEGIC THINKING (follow this):\n{thinking}\n\n"
-                f"{messages[-1].content}"
-            )
-        )
-        response = llm.invoke(messages)
-        cover_letter_text = response.content
-
-        # Extract token usage if available
-        tokens_used = None
-        if hasattr(response, "usage_metadata") and response.usage_metadata:
-            tokens_used = response.usage_metadata.get("total_tokens")
-
-        duration_ms = int((time.monotonic() - start_ts) * 1000)
-
-        # Persist only when tied to a job application; otherwise return ad-hoc.
         document_id = None
         version_number = None
+        persist_warning = None
         if job_application_id:
-            store_result = _store_cover_letter(
-                user_id=user_id,
-                job_application_id=job_application_id,
-                cover_letter_text=cover_letter_text,
-                tone=tone,
-            )
-            document_id = store_result["document_id"]
-            version_number = store_result["version_number"]
+            try:
+                stored = _store_cover_letter(user_id, job_application_id, parsed, tone)
+                document_id = stored["document_id"]
+                version_number = stored["version_number"]
+            except ValueError:
+                # Unknown application id or owned by another user: fail
+                # loudly (generic message — no existence oracle) instead of
+                # silently returning an unlinked draft.
+                logger.warning("Cover letter persist refused for run %s", run_id)
+                emit(run_id, "error", {"message": "Agent failed"})
+                return {**state, "status": "failed", "error": "Agent failed"}
+            except Exception as se:
+                logger.warning("Cover letter persist failed, returning draft only: %s", se)
+                persist_warning = "Versioning failed — draft only, not linked to the application."
 
-        # Log to agent_runs
-        _log_agent_run(
-            user_id=user_id,
-            status="awaiting_approval",
-            input_data={
-                "job_application_id": str(job_application_id) if job_application_id else None,
-                "tone": tone,
-                "jd_text_length": len(jd_text),
-            },
-            output_data={
-                "document_id": document_id,
-                "version_number": version_number,
-                "content_length": len(cover_letter_text),
-            },
-            tokens_used=tokens_used,
-            duration_ms=duration_ms,
-        )
-
+        duration_ms = int((time.monotonic() - start_ts) * 1000)
+        pending = parsed.model_dump()
+        pending.update({
+            "type": "cover_letter_review",
+            "document_id": document_id,
+            "version_number": version_number,
+        })
+        if persist_warning:
+            pending["persist_warning"] = persist_warning
+        emit(run_id, "complete", {"result": {"document_id": document_id, "tone": tone}})
         return {
             **state,
             "status": "awaiting_approval",
-            "pending_action": {
-                "type": "cover_letter_review",
-                "content": cover_letter_text,
-                "tone": tone,
-                "job_application_id": str(job_application_id) if job_application_id else None,
-                "document_id": document_id,
-                "version_number": version_number,
-            },
-            "messages": state["messages"] + [AIMessage(content=cover_letter_text[:200])],
+            "pending_action": pending,
+            "result": pending,
+            "tokens_used": tokens_used,
+            "messages": state.get("messages", []) + [AIMessage(content=parsed.cover_letter_markdown[:200])],
+            "context": {**ctx, "duration_ms": duration_ms},
         }
-
     except Exception as exc:
-        duration_ms = int((time.monotonic() - start_ts) * 1000)
         logger.error("Cover letter agent failed for user %s: %s", state.get("user_id"), exc)
-
-        # Log failure to agent_runs
-        try:
-            _log_agent_run(
-                user_id=state["user_id"],
-                status="failed",
-                input_data={"context": str(state.get("context", {}))[:500]},
-                output_data=None,
-                tokens_used=None,
-                duration_ms=duration_ms,
-            )
-        except Exception:
-            logger.warning("Failed to log agent_run for cover letter failure")
-
+        emit(run_id, "error", {"message": "Agent failed"})
         return {**state, "status": "failed", "error": "Agent failed"}
