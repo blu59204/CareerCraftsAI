@@ -8,7 +8,7 @@ Your data stays yours. You pay only for your own AI usage.
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-green.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/tests-353%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-358%20passing-brightgreen.svg)](#testing)
 
 ---
 
@@ -237,7 +237,7 @@ Go to **Resume → Upload** and upload your current resume (PDF or DOCX). This s
 
 ```bash
 make dev              # start full stack (hot reload)
-make test             # run unit + security tests (353 passing · 0 failing · 61 integration/legacy-skipped)
+make test             # run unit + security tests (358 passing · 0 failing · 61 integration/legacy-skipped)
 make lint             # ruff + eslint check
 make format           # ruff --fix + black + eslint --fix
 make build            # build all Docker images
@@ -257,7 +257,7 @@ uvicorn app.main:app --reload --port 8000
 
 pytest tests/unit -v               # 40 unit tests
 pytest tests/security -v           # 6 security tests
-pytest tests/unit tests/security -v  # 353 passing · 0 failing · 61 skipped (INTEGRATION=1 runs live tests)
+pytest tests/unit tests/security -v  # 358 passing · 0 failing · 61 skipped (INTEGRATION=1 runs live tests)
 pytest -k "test_name" -v           # single test
 
 bandit -r app/ -f txt              # SAST scan
