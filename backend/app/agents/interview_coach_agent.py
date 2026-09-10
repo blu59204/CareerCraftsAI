@@ -430,6 +430,9 @@ def _log_agent_run(
     tokens_used: int | None = None,
 ) -> None:
     """Log an agent run to the agent_runs table."""
+    from app.core.event_bus import suppress_terminal_events
+    if suppress_terminal_events.get():
+        return
     from app.models.db import AgentRun
 
     factory = _get_sync_factory()

@@ -83,6 +83,16 @@ def _get_sync_factory():
     return _sync_factory
 
 
+import uuid as _uuid
+
+
+def _to_uuid(user_id: str):
+    try:
+        return _uuid.UUID(user_id)
+    except (ValueError, AttributeError):
+        return user_id
+
+
 def fetch_model_settings(user_id: str):
     """Return active UserModelSettings row for user_id, or None."""
     from app.models.db import UserModelSettings
@@ -91,7 +101,7 @@ def fetch_model_settings(user_id: str):
     with factory() as db:
         result = db.execute(
             select(UserModelSettings).where(
-                UserModelSettings.user_id == user_id,
+                UserModelSettings.user_id == _to_uuid(user_id),
                 UserModelSettings.is_active == True,  # noqa: E712
             )
         )
@@ -104,7 +114,7 @@ def fetch_user_full_name(user_id: str) -> str:
 
     factory = _get_sync_factory()
     with factory() as db:
-        result = db.execute(select(User.full_name).where(User.id == user_id))
+        result = db.execute(select(User.full_name).where(User.id == _to_uuid(user_id)))
         return result.scalars().first() or ""
 
 
@@ -116,7 +126,7 @@ def fetch_user_profile_text(user_id: str) -> str:
     with factory() as db:
         result = db.execute(
             select(UserDocument).where(
-                UserDocument.user_id == user_id,
+                UserDocument.user_id == _to_uuid(user_id),
                 UserDocument.doc_type == "resume",
                 UserDocument.is_primary == True,  # noqa: E712
             )

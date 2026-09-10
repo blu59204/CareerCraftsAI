@@ -70,3 +70,9 @@ _inventory_git.txt
 _inventory_files.csv
 _tmp_*.png
 .tmp_*.png
+
+# Deployment credentials and machine-local verification output
+.env.*.local
+*.secret
+deploy/secrets/
+*.tsbuildinfo

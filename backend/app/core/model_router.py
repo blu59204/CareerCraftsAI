@@ -12,8 +12,23 @@ from app.models.db import UserModelSettings
 from app.services.llm_proxy_service import get_redaction_callback
 
 logger = logging.getLogger(__name__)
-LLM_TIMEOUT_SECONDS = 30
-LLM_MAX_RETRIES = 1
+LLM_TIMEOUT_SECONDS = 60
+LLM_MAX_RETRIES = 2
+
+import threading
+
+_agent_token_accumulator: threading.local = threading.local()
+
+
+def _add_tokens(count: int) -> None:
+    current = getattr(_agent_token_accumulator, "total", 0)
+    _agent_token_accumulator.total = current + count
+
+
+def get_and_reset_tokens() -> int:
+    total = getattr(_agent_token_accumulator, "total", 0)
+    _agent_token_accumulator.total = 0
+    return total
 
 
 class TokenTrackingCallback(BaseCallbackHandler):
@@ -27,14 +42,17 @@ class TokenTrackingCallback(BaseCallbackHandler):
         token_usage = response.llm_output.get("token_usage", {}) if response.llm_output else {}
         total = token_usage.get("total_tokens", 0)
         if total > 0:
+            _add_tokens(total)
             from app.services.token_budget_service import consume_tokens
-            from app.core.sync_db import run_coro_sync
             try:
-                # This callback runs inside a sync LLM call on a worker thread,
-                # so there is no running loop here; run_coro_sync executes the
-                # async decrement to completion. (The previous get_event_loop()
-                # path silently no-op'd, so budgets never decremented.)
-                run_coro_sync(consume_tokens(self.user_id, total))
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.call_soon_threadsafe(
+                        lambda: asyncio.ensure_future(consume_tokens(self.user_id, total))
+                    )
+                else:
+                    loop.run_until_complete(consume_tokens(self.user_id, total))
             except Exception as exc:
                 logger.debug("Token budget tracking failed for user %s: %s", self.user_id, exc)
 
@@ -44,12 +62,30 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
         case "anthropic":
             from langchain_anthropic import ChatAnthropic
 
-            return ChatAnthropic(
-                model=model_settings.model_name,
-                api_key=api_key,
-                timeout=LLM_TIMEOUT_SECONDS,
-                max_retries=LLM_MAX_RETRIES,
+            # Extended thinking is only supported on claude-3-7-sonnet and above,
+            # and claude-sonnet-4-x / claude-opus-4-x families.
+            # Haiku models and older Sonnet/Opus do NOT support the thinking param —
+            # passing it causes a 400 "unsupported parameter" error from the API.
+            _THINKING_MODELS = (
+                "claude-3-7-sonnet",
+                "claude-sonnet-4",
+                "claude-opus-4",
             )
+            model_name: str = model_settings.model_name or ""
+            supports_thinking = any(model_name.startswith(m) for m in _THINKING_MODELS)
+
+            kwargs: dict = {
+                "model": model_name,
+                "api_key": api_key,
+                "timeout": LLM_TIMEOUT_SECONDS,
+                "max_retries": LLM_MAX_RETRIES,
+            }
+            if supports_thinking:
+                kwargs["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": settings.AGENT_THINKING_BUDGET_TOKENS,
+                }
+            return ChatAnthropic(**kwargs)
         case "openai":
             from langchain_openai import ChatOpenAI
 
@@ -86,13 +122,62 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
             )
+        case "openrouter":
+            # OpenRouter is OpenAI-compatible, so we use the ChatOpenAI
+            # client pointed at their public base URL. Any model on
+            # OpenRouter's catalog (e.g. moonshotai/kimi-k2) works.
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                model=model_settings.model_name,
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+                default_headers={
+                    # Recommended by OpenRouter for attribution/rankings.
+                    "HTTP-Referer": "https://careercraftai.local",
+                    "X-Title": "CareerCraft AI",
+                },
+                timeout=LLM_TIMEOUT_SECONDS,
+                max_retries=LLM_MAX_RETRIES,
+            )
+        case "opencode":
+            # OpenCode Zen (https://opencode.ai/zen) is Anomaly's hosted
+            # polyglot gateway: 50+ models (GPT, Claude, Gemini, Qwen,
+            # DeepSeek, MiniMax, Kimi, GLM, Grok, MiMo, Nemotron, Big
+            # Pickle, etc.) reachable with a single API key. Everything
+            # is exposed as OpenAI-compatible chat completions, so a
+            # plain ChatOpenAI client with the Zen base URL works.
+            #
+            # IMPORTANT: ChatOpenAI appends `/chat/completions` to the
+            # base_url automatically. If you include `/chat/completions`
+            # in the base_url, the client will request
+            #   .../v1/chat/completions/chat/completions
+            # which 404s and returns an HTML error page (the symptom:
+            # "Model test failed: <!DOCTYPE html>..." in the toast).
+            # Base URL must end in `/v1` only — NOT `/v1/chat/completions`.
+            #
+            # The full model catalog lives at:
+            #   https://opencode.ai/zen/v1/models
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                model=model_settings.model_name,
+                api_key=api_key,
+                base_url="https://opencode.ai/zen/v1",
+                default_headers={
+                    "HTTP-Referer": "https://careercraftai.local",
+                    "X-Title": "CareerCraft AI",
+                },
+                timeout=LLM_TIMEOUT_SECONDS,
+                max_retries=LLM_MAX_RETRIES,
+            )
         case _:
             raise HTTPException(
                 status_code=400, detail=f"Unknown provider: {model_settings.provider}"
             )
 
 
-async def get_llm(user_id: str, db) -> BaseChatModel:
+async def get_llm(user_id: str, db, task_type: str = "") -> BaseChatModel:
     from sqlalchemy import select
     from app.services.token_budget_service import check_budget
 
@@ -119,16 +204,131 @@ async def get_llm(user_id: str, db) -> BaseChatModel:
     api_key = decrypt_api_key(model_settings.api_key_enc, settings.APP_SECRET_KEY)
     llm = _make_llm(model_settings, api_key)
     llm.callbacks = [get_redaction_callback(), TokenTrackingCallback(user_id)]
-    return llm
+    return CachingLLM(llm, user_id, task_type)
+
+
+def _check_budget_sync(user_id: str) -> None:
+    """Synchronous token budget check for agent nodes that call _build_llm.
+
+    Uses a direct Redis connection (not asyncio) so it's safe to call from
+    LangGraph nodes running in a thread executor.  Raises HTTPException(429)
+    if the user has exhausted their daily budget.  Silently skips the check
+    on any Redis error so a Redis outage never blocks an agent run.
+    """
+    from app.services.token_budget_service import DEFAULT_DAILY_LIMIT, _budget_key
+
+    try:
+        import redis as sync_redis
+
+        url = settings.REDIS_URL
+        r = sync_redis.from_url(url, decode_responses=True, socket_connect_timeout=2)
+        key = _budget_key(user_id)
+        used = int(r.get(key) or 0)
+        if used >= DEFAULT_DAILY_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Daily token budget exceeded ({used}/{DEFAULT_DAILY_LIMIT}). "
+                    "Resets at midnight UTC."
+                ),
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Redis unavailable — degrade gracefully, never block the agent
+        logger.debug("Sync budget check skipped (Redis unavailable): %s", exc)
 
 
 def _build_llm(model_settings) -> BaseChatModel:
-    """Build LLM directly from model_settings object (no DB lookup needed)."""
+    """Build LLM directly from model_settings object (no DB lookup needed).
+
+    Enforces the daily token budget before building — raises HTTPException(429)
+    when the budget is exhausted.  The check uses a sync Redis call so it is
+    safe inside LangGraph nodes that run in a thread executor.
+    """
+    user_id = getattr(model_settings, "user_id", None)
+    if user_id:
+        _check_budget_sync(str(user_id))
+
     api_key = decrypt_api_key(model_settings.api_key_enc, settings.APP_SECRET_KEY)
     llm = _make_llm(model_settings, api_key)
     callbacks = [get_redaction_callback()]
-    user_id = getattr(model_settings, "user_id", None)
     if user_id:
         callbacks.append(TokenTrackingCallback(str(user_id)))
     llm.callbacks = callbacks
     return llm
+
+
+# ── LLM response caching (Redis, 1h TTL) ────────────────────────
+# Cache is skipped for email/auto_apply tasks since they're always
+# unique and shouldn't be cached. Uses sha256 of (user_id, task_type,
+# prompt_text) as the cache key.
+
+import hashlib
+
+_SKIP_CACHE_TASKS = {"email", "auto_apply", "email_monitor", "linkedin_outreach"}
+
+_llm_cache = None
+
+
+def _get_llm_cache():
+    global _llm_cache
+    if _llm_cache is None:
+        import redis as sync_redis
+        url = settings.REDIS_URL
+        if url.startswith("redis://"):
+            url = url.replace("redis://", "", 1)
+        _llm_cache = sync_redis.from_url(f"redis://{url}", decode_responses=True)
+    return _llm_cache
+
+
+def _cache_key(user_id: str, task_type: str, prompt: str) -> str:
+    h = hashlib.sha256(f"{user_id}:{task_type}:{prompt}".encode()).hexdigest()[:32]
+    return f"llm_cache:{h}"
+
+
+class CachingLLM:
+    """Wraps a BaseChatModel with Redis response caching.
+
+    Only caches for non-email, non-apply tasks. Cache TTL: 1 hour.
+    """
+
+    def __init__(self, llm: BaseChatModel, user_id: str, task_type: str):
+        self._llm = llm
+        self._user_id = user_id
+        self._task_type = task_type or ""
+        self._cache = _get_llm_cache()
+
+    @property
+    def callbacks(self):
+        return self._llm.callbacks
+
+    @callbacks.setter
+    def callbacks(self, value):
+        self._llm.callbacks = value
+
+    def invoke(self, messages, **kwargs):
+        if self._task_type in _SKIP_CACHE_TASKS:
+            return self._llm.invoke(messages, **kwargs)
+        prompt = str(messages[-1].content) if hasattr(messages[-1], "content") else str(messages)
+        key = _cache_key(self._user_id, self._task_type, prompt)
+        try:
+            cached = self._cache.get(key)
+            if cached:
+                import json
+                from langchain_core.messages import AIMessage
+                data = json.loads(cached)
+                return AIMessage(content=data["content"])
+        except Exception:
+            pass
+        result = self._llm.invoke(messages, **kwargs)
+        try:
+            content = result.content if hasattr(result, "content") else str(result)
+            import json
+            self._cache.setex(key, 3600, json.dumps({"content": content}))
+        except Exception:
+            pass
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._llm, name)

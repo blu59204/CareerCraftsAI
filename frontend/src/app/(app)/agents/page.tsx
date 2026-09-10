@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import {
@@ -30,6 +30,7 @@ import { apiClient } from "@/lib/api";
 import { useAgentStore } from "@/store/agentStore";
 
 const AGENTS = [
+  { key: "auto_apply", label: "Auto Apply", icon: Bot, accent: "from-cyan-500/20 to-violet-500/5", note: "Isolated browser + two reviews" },
   { key: "resume_optimize", label: "Resume", icon: FileText, accent: "from-cyan-500/20 to-blue-500/5", note: "Tailored resume draft" },
   { key: "job_search", label: "Job Search", icon: Search, accent: "from-emerald-500/20 to-cyan-500/5", note: "Fresh matching roles" },
   { key: "nl_job_search", label: "NL Search", icon: Search, accent: "from-teal-500/20 to-emerald-500/5", note: "Plain-English query parser" },
@@ -45,6 +46,7 @@ const AGENTS = [
 ];
 
 const DEFAULT_CONTEXT: Record<string, Record<string, unknown>> = {
+  auto_apply: { search_query: "software engineer", location: "Remote", max_applications: 1 },
   resume_optimize: { jd_text: "Software Engineer role focused on product delivery, reliability, and measurable impact." },
   job_search: { search_query: "software engineer", location: "Remote", max_results: 10 },
   nl_job_search: { query: "remote senior backend role at a product company using Python or TypeScript" },
@@ -87,6 +89,8 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function runMessage(run: AgentRun): string {
+  if (run.status === "queued") return "Queued for a worker";
+  if (run.status === "awaiting_approval") return "Waiting for approval";
   if (run.status === "running") return "In progress...";
   if (run.status === "failed") return run.output?.error ?? "Failed";
   if (run.duration_ms !== null) return `Completed in ${(run.duration_ms / 1000).toFixed(1)}s`;
@@ -104,34 +108,43 @@ function runStatus(run?: AgentRun) {
 export default function AgentsPage() {
   const [active, setActive] = useState("resume_optimize");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [contextText, setContextText] = useState(JSON.stringify(DEFAULT_CONTEXT.resume_optimize, null, 2));
   const qc = useQueryClient();
   const initRun = useAgentStore((s) => s.initRun);
   const storeActiveRunId = useAgentStore((s) => s.activeRunId);
   const setActiveRun = useAgentStore((s) => s.setActiveRun);
   // Persisted run survives navigation + reload, so the panel reappears on return.
   const displayRunId = activeRunId ?? storeActiveRunId;
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("run");
+    if (requested && /^[0-9a-f-]{36}$/i.test(requested)) setActiveRun(requested);
+  }, [setActiveRun]);
 
   const runMutation = useMutation({
-    mutationFn: () =>
-      apiClient.post<{ run_id: string }>("/agents/run", {
+    mutationFn: async () => {
+      const context = JSON.parse(contextText);
+      if (!context || Array.isArray(context) || typeof context !== "object") throw new Error("Context must be a JSON object");
+      return apiClient.post<{ run_id: string }>("/agents/run", {
         task_type: active,
-        context: DEFAULT_CONTEXT[active] ?? {},
-      }),
+        context,
+      });
+    },
     onSuccess: (res) => {
       toast.success(`${AGENTS.find((a) => a.key === active)?.label} Agent started`);
       initRun(res.data.run_id);
       setActiveRunId(res.data.run_id);
       setTimeout(() => qc.invalidateQueries({ queryKey: ["agent-runs"] }), 3000);
     },
-    onError: () => toast.error("Agent unavailable — backend not connected"),
+    onError: () => toast.error("Could not queue the agent. Check your context, model settings, and active-run limit."),
   });
 
   const { data: runs = [], isLoading: runsLoading } = useQuery<AgentRun[]>({
     queryKey: ["agent-runs"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=10");
-      return data;
+      return Array.isArray(data) ? data : data.runs ?? [];
     },
+    refetchInterval: 5000,
   });
 
   const { data: ragDocs = [] } = useQuery<RagDocument[]>({
@@ -187,7 +200,7 @@ export default function AgentsPage() {
             return (
               <button
                 key={a.key}
-                onClick={() => setActive(a.key)}
+                onClick={() => { setActive(a.key); setContextText(JSON.stringify(DEFAULT_CONTEXT[a.key] ?? {}, null, 2)); }}
                 className={`group min-h-[76px] rounded-xl border px-3 py-3 text-left transition ${
                   isActive
                     ? "border-primary/35 bg-primary/10 text-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]"
@@ -233,6 +246,12 @@ export default function AgentsPage() {
             </LiquidGlassButton>
           </div>
 
+          <label className="mt-4 block text-sm font-medium">
+            Task context (JSON)
+            <textarea value={contextText} onChange={event => setContextText(event.target.value)}
+              className="mt-2 min-h-28 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs"
+              spellCheck={false} />
+          </label>
           <div className="mt-5 min-h-[240px] rounded-xl border border-border bg-background/45 p-4">
           {/* BUG 12: mount AgentStatusStream when a run is active */}
           {displayRunId ? (
@@ -240,8 +259,6 @@ export default function AgentsPage() {
               runId={displayRunId}
               onApprove={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
-                setActiveRunId(null);
-                setActiveRun(null);
               }}
               onCancel={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
@@ -294,8 +311,8 @@ export default function AgentsPage() {
               </div>
             ) : (
               filteredRuns.map((run) => (
+                <button key={run.id} className="w-full text-left" onClick={() => { setActiveRunId(run.id); setActiveRun(run.id); }}>
                 <AgentStatusCard
-                  key={run.id}
                   agentName={`${run.agent_type.charAt(0).toUpperCase() + run.agent_type.slice(1).replace(/_/g, " ")} Agent`}
                   status={
                     run.status === "completed"
@@ -309,6 +326,7 @@ export default function AgentsPage() {
                   latestMessage={runMessage(run)}
                   startedAt={relativeTime(run.started_at)}
                 />
+                </button>
               ))
             )}
           </div>
@@ -316,11 +334,10 @@ export default function AgentsPage() {
 
         {/* BUG 7: wire approval callbacks with actual run_id — only show if NOT the same as activeRunId to avoid duplicates */}
         {awaitingRun && awaitingRun.id !== displayRunId && (
-          <AgentStatusStream
-            runId={awaitingRun.id}
-            onApprove={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}
-            onCancel={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}
-          />
+          <button className="w-full rounded-xl border border-border p-3 text-sm text-primary"
+            onClick={() => { setActiveRunId(awaitingRun.id); setActiveRun(awaitingRun.id); }}>
+            Open pending review · {awaitingRun.agent_type}
+          </button>
         )}
       </motion.aside>
     </motion.div>

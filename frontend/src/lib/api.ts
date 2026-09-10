@@ -1,8 +1,10 @@
 import axios from "axios";
 import { getSupabaseAuthToken } from "@/lib/supabase-token";
 
+const configuredUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+export const API_BASE_URL = configuredUrl.endsWith("/api/v1") ? configuredUrl : `${configuredUrl}/api/v1`;
 export const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1",
+  baseURL: API_BASE_URL,
   headers: { "Content-Type": "application/json" },
   timeout: 30_000,
 });

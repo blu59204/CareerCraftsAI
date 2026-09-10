@@ -20,6 +20,25 @@ const nextConfig = {
     ],
   },
 
+  // Proxy /api/v1/* → backend. Browser only ever talks to localhost:3000,
+  // so the frontend bundle never needs to know the backend's docker DNS
+  // name (which the host browser can't resolve).
+  //
+  // In docker (frontend container), BACKEND_URL=http://backend:8000
+  // is set by docker-compose and rewrites go through the docker network.
+  //
+  // In local dev (`npm run dev` on the host), set BACKEND_URL=http://localhost:8000
+  // in frontend/.env.local so the rewrite points at the host-local uvicorn.
+  async rewrites() {
+    const backendUrl = process.env.BACKEND_URL || "http://backend:8000";
+    return [
+      {
+        source: "/api/v1/:path*",
+        destination: `${backendUrl}/api/v1/:path*`,
+      },
+    ];
+  },
+
   // Cache public assets. Next.js manages /_next/static cache headers itself,
   // which keeps dev chunks from being pinned across Fast Refresh rebuilds.
   async headers() {

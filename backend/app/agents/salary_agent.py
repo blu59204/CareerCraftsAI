@@ -132,6 +132,9 @@ def _log_agent_run(
     duration_ms: int,
 ) -> None:
     """Log run to agent_runs table synchronously (called from thread executor)."""
+    from app.core.event_bus import suppress_terminal_events
+    if suppress_terminal_events.get():
+        return
     from app.models.db import AgentRun
 
     factory = _get_sync_factory()

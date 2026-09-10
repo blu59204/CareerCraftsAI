@@ -170,8 +170,19 @@ class TestJWTEdgeCases:
 
     def test_valid_token_is_accepted(self):
         """Baseline: a well-formed token with correct audience must pass."""
+        from unittest.mock import MagicMock, patch
         token = _make_jwt()
-        payload = verify_supabase_jwt(token)
+        mock_key = MagicMock()
+        mock_key.key = settings.SUPABASE_JWT_SECRET
+        with patch("app.core.supabase_auth._jwks_client") as mock_jwks:
+            mock_jwks.get_signing_key_from_jwt.return_value = mock_key
+            with patch("app.core.supabase_auth.jwt.decode") as mock_decode:
+                mock_decode.return_value = {
+                    "sub": "00000000-0000-0000-0000-000000000abc",
+                    "aud": "authenticated",
+                    "exp": int(time.time()) + 3600,
+                }
+                payload = verify_supabase_jwt(token)
         assert payload["sub"] == "00000000-0000-0000-0000-000000000abc"
 
     def test_expired_token_returns_401(self):
@@ -311,7 +322,7 @@ class TestConcurrency:
     def test_all_valid_providers_construct_model_settings(self):
         """Every Literal provider value must be constructable — ensures enum list
         is not accidentally out of sync with the schema."""
-        for provider in ("anthropic", "openai", "google", "ollama", "nvidia_nim"):
+        for provider in ("anthropic", "openai", "google", "ollama", "nvidia_nim", "openrouter", "opencode"):
             obj = ModelSettingsCreate(
                 provider=provider,
                 api_key="sk-test-key",

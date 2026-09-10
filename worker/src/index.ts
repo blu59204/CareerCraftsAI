@@ -65,6 +65,8 @@ async function main(): Promise<void> {
       connection,
       concurrency: 2,
       limiter: { max: 10, duration: 60_000 },
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 5000 },
     }
   );
 

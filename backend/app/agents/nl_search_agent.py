@@ -160,6 +160,9 @@ def _log_agent_run(
     duration_ms: int | None = None,
 ) -> None:
     """Log this NL search run to the agent_runs table."""
+    from app.core.event_bus import suppress_terminal_events
+    if suppress_terminal_events.get():
+        return  # The durable worker commits the authoritative run state.
     from app.core.sync_db import _get_sync_factory
     from app.models.db import AgentRun
 
@@ -197,7 +200,7 @@ def nl_search_node(state: AgentState) -> AgentState:
     1. Extract parameters from NL query via LLM
     2. Validate (role_title required — reject with 422 equivalent if missing)
     3. Return structured interpretation for user confirmation (HITL gate)
-    4. On approval, delegate to Job_Search_Agent (Google Jobs + ATS + RemoteOK)
+    4. On approval, scrape live jobs via JobSpy, score, and return matches
     """
     start_ts = time.monotonic()
     session = None
@@ -275,22 +278,19 @@ def nl_search_node(state: AgentState) -> AgentState:
                 ],
             }
 
-        # Step 4: User confirmed — delegate to Job_Search_Agent which queries
-        # Google Jobs, Greenhouse/Lever ATS, and RemoteOK in parallel. Browser-based
-        # search is the responsibility of the orchestrator via browser-use; NL
-        # search here returns no jobs directly.
+        # Step 4: User confirmed — scrape live jobs via JobSpy
         search_query = _build_search_query(params)
         location = params.location or "Remote"
 
-        from app.agents.job_search import _extract_jobs_from_text, _score_job
+        from app.agents.job_search import _score_job, _job_listings_to_dicts
         from app.core.sync_db import fetch_user_profile_text
+        from app.services.job_platforms_service import scrape_jobs
 
         user_profile = fetch_user_profile_text(user_id)
         max_results = min(int(ctx.get("max_results", 10)), 25)
 
-        # Honest fallback: NL search path doesn't do live browser work itself.
-        # The orchestrator handles browser-use when needed.
-        jobs_raw: list[dict] = []
+        listings = scrape_jobs(search_query, location, max_results * 2, 72)
+        jobs_raw = _job_listings_to_dicts(listings)
 
         # Score jobs against user profile
         scored = [

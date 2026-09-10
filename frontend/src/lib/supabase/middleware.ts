@@ -1,7 +1,15 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PREFIXES = ["/login", "/register", "/auth/callback", "/api/webhooks", "/about", "/contact", "/docs", "/privacy", "/terms", "/status", "/.well-known"];
+const PUBLIC_PREFIXES = [
+  "/login", "/register", "/auth/callback",
+  // The frontend rewrites /api/v1/* → backend, so the browser hits this
+  // prefix and the middleware must not gate it (the API does its own auth
+  // via the Supabase Bearer token in the request headers).
+  "/api/v1",
+  "/api/webhooks",
+  "/about", "/contact", "/docs", "/privacy", "/terms", "/status", "/.well-known",
+];
 const PUBLIC_EXACT = new Set(["/", "/pricing"]);
 
 function isPublic(pathname: string) {

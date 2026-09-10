@@ -7,6 +7,7 @@ import { CheckCircle2, Clock3, Loader2, Terminal, TriangleAlert } from "lucide-r
 import { ApprovalModal } from "./ApprovalModal";
 
 const STATUS_COLOR: Record<string, string> = {
+  queued: "text-muted-foreground border-border bg-muted",
   running: "text-primary border-primary/30 bg-primary/10",
   awaiting_approval: "text-warning border-warning/30 bg-warning/10",
   completed: "text-success border-success/30 bg-success/10",
@@ -89,6 +90,16 @@ export function AgentStatusStream({ runId, onApprove, onCancel }: Props) {
           <div className="animate-pulse text-muted-foreground">&#9610;</div>
         )}
       </ScrollArea>
+      {Array.isArray(run.result?.child_run_ids) && (
+        <div className="rounded-xl border border-border p-3 text-sm">
+          <p className="mb-2 font-medium">Application workflows</p>
+          {(run.result.child_run_ids as string[]).map(childId => (
+            <a key={childId} href={`/agents?run=${encodeURIComponent(childId)}`} className="mr-3 inline-block text-primary underline">
+              Open {childId.slice(0, 8)}
+            </a>
+          ))}
+        </div>
+      )}
       {run.status === "awaiting_approval" && run.pendingAction && (
         <ApprovalModal
           runId={runId}

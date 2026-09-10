@@ -48,7 +48,7 @@ export default function ApplicationsPage() {
     enabled: !!selectedId,
     queryFn: async () => {
       const { data } = await apiClient.get(`/agents/runs`, { params: { application_id: selectedId, limit: 10 } });
-      return data as AgentRun[];
+      return (Array.isArray(data) ? data : data.runs ?? []) as AgentRun[];
     },
   });
 

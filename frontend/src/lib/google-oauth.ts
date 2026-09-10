@@ -6,7 +6,8 @@ export const GMAIL_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/drive.readonly",
+  // drive.file = least-privilege write: app can only see/manage files it creates.
+  "https://www.googleapis.com/auth/drive.file",
 ].join(" ");
 
 export async function connectGoogleForGmail(nextPath: string) {

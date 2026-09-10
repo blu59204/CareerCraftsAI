@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 from langchain_core.language_models import BaseChatModel
 
 from app.core.event_bus import emit
-from app.services.browser_control_service import run_browser_task
+from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
 from app.services.job_platforms_service import JobListing
 
 logger = logging.getLogger(__name__)

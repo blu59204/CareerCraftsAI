@@ -38,11 +38,16 @@ class DocumentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _score_resume_background(doc_id: str, raw_text: str) -> None:
-    """Compute ATS score asynchronously after resume upload."""
+async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> None:
+    """Compute ATS score asynchronously after resume upload.
+
+    user_id is passed explicitly so the update query can scope to the owner —
+    prevents a latent IDOR if the background task is ever called with untrusted input.
+    """
     try:
         from app.services.ats_service import compute_ats_score
         from app.core.database import AsyncSessionLocal
+        from app.models.db import UserDocument
 
         # Background scoring without a JD uses a generic placeholder to get baseline scores
         generic_jd = (
@@ -54,7 +59,10 @@ async def _score_resume_background(doc_id: str, raw_text: str) -> None:
 
         async with AsyncSessionLocal() as db:
             res = await db.execute(
-                select(UserDocument).where(UserDocument.id == uuid.UUID(doc_id))
+                select(UserDocument).where(
+                    UserDocument.id == uuid.UUID(doc_id),
+                    UserDocument.user_id == uuid.UUID(str(user_id)),
+                )
             )
             doc = res.scalar_one_or_none()
             if doc:
@@ -153,7 +161,7 @@ async def upload_document(
 
     # Trigger ATS scoring in background for resumes
     if doc_type == "resume" and raw_text:
-        asyncio.create_task(_score_resume_background(str(doc.id), raw_text))
+        asyncio.create_task(_score_resume_background(str(doc.id), str(current_user.id), raw_text))
 
     return DocumentResponse(
         id=doc.id,

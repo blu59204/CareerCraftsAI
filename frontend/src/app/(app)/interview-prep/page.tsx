@@ -325,7 +325,7 @@ export default function InterviewPrepPage() {
     queryKey: ["interview-prep-run"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=50");
-      const runs = (data as { agent_type: string; status: string; output: Record<string, unknown> | null }[])
+      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { agent_type: string; status: string; output: Record<string, unknown> | null }[])
         .filter((r) => r.agent_type === "interview_prep" && r.status === "completed");
       return runs[0] ?? null;
     },

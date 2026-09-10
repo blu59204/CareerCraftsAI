@@ -4,6 +4,16 @@ import { usePathname } from "next/navigation";
 import { AppSidebar } from "./AppSidebar";
 import { AppTopbar } from "./AppTopbar";
 import { ConstellationBackground } from "./ConstellationBackground";
+import { useAgentStream } from "@/lib/sse";
+import { useAgentStore } from "@/store/agentStore";
+
+// Persistent SSE stream for the active run — lives in the shell so it keeps
+// streaming (and updating the store) even when the user navigates between pages.
+function ActiveRunStream() {
+  const activeRunId = useAgentStore((s) => s.activeRunId);
+  useAgentStream(activeRunId);
+  return null;
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -15,6 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="premium-command-bg relative min-h-screen overflow-x-hidden bg-background text-foreground">
       <ConstellationBackground />
+      <ActiveRunStream />
       <div className="app-surface flex min-h-screen">
         <AppSidebar />
         <div className="flex min-w-0 flex-1 flex-col">

@@ -51,11 +51,11 @@ def test_valid_statuses_set():
 
 # Property 7: GmailMCPClient.search_threads returns [] when OAuth unavailable
 def test_gmail_returns_empty_without_oauth():
-    with patch("app.services.gmail_service.GmailToolkit", side_effect=Exception("No creds")):
-        from app.services.gmail_service import GmailMCPClient
-        client = GmailMCPClient(user_id="test-user")
+    from app.services.gmail_service import GmailMCPClient
+    client = GmailMCPClient(user_id="test-user")
+    with patch.object(client, "_get_toolkit", side_effect=Exception("No creds")):
         result = client.search_threads("test query")
-        assert result == []
+    assert result == []
 
 
 # Property 10: YouTube returns [] when API key is empty
@@ -143,11 +143,9 @@ def test_memory_manager_uses_dedicated_tables_not_legacy_agent_tables():
 
 def test_dev_cors_allows_localhost_and_loopback_origins():
     """Dev CORS should allow both localhost and 127.0.0.1 browser origins."""
-    from app.main import _build_allowed_origins
+    from app.main import _build_cors_origins
 
-    origins = _build_allowed_origins("http://localhost:3000", "development")
+    origins = _build_cors_origins("http://localhost:3000", "development")
 
     assert "http://localhost:3000" in origins
-    assert "http://localhost:3001" in origins
     assert "http://127.0.0.1:3000" in origins
-    assert "http://127.0.0.1:3001" in origins

@@ -282,7 +282,7 @@ export default function LinkedInPage() {
     queryKey: ["linkedin-run"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=50");
-      const runs = (data as AgentRun[]).filter((r) => r.agent_type === "linkedin_optimize");
+      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as AgentRun[]).filter((r) => r.agent_type === "linkedin_optimize");
       return runs[0] ?? null;
     },
     refetchInterval: (query) => {
