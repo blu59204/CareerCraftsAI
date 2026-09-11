@@ -76,6 +76,13 @@ BEGIN
           AND column_name = 'target_keywords'
           AND udt_name = '_text'
     ) THEN
+        -- The column arrives from 0015 as TEXT[] carrying a text[] default.
+        -- ALTER TYPE cannot cast that default automatically and fails with
+        -- "default for column target_keywords cannot be cast automatically
+        -- to type jsonb", so drop it first; the statement after this block
+        -- re-establishes it as '[]'::jsonb.
+        ALTER TABLE public.resume_personas
+            ALTER COLUMN target_keywords DROP DEFAULT;
         ALTER TABLE public.resume_personas
             ALTER COLUMN target_keywords TYPE JSONB
             USING to_jsonb(target_keywords);
