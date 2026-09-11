@@ -18,6 +18,17 @@ problems, console = [], []
 with sync_playwright() as p:
     b = p.chromium.launch(headless=True)
     pg = b.new_context(viewport={"width": 1440, "height": 900}).new_page()
+    # The ngrok interstitial-skip header must be scoped to the app origin only.
+    # Setting it context-wide attaches it to the cross-origin clerk-js request,
+    # making it non-simple; Clerk's CDN rejects that preflight, the bundle is
+    # CORS-blocked and Clerk never initialises.
+    if "ngrok" in BASE:
+        _host = BASE.split("//", 1)[1].split("/")[0]
+        pg.route(
+            f"**{_host}/**",
+            lambda route: route.continue_(
+                headers={**route.request.headers, "ngrok-skip-browser-warning": "true"}),
+        )
     pg.on("console", lambda m: console.append(m.text[:180]) if m.type == "error" else None)
     api_bad = []
     pg.on("response", lambda r: api_bad.append(f"{r.status} {r.url[-58:]}")
