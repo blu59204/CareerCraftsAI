@@ -44,6 +44,23 @@ services:
     mem_limit: 768m
     cpus: 0.5
     restart: unless-stopped
+  postgres:
+    # Self-hosted database. Supabase's direct host (db.<ref>.supabase.co) is
+    # IPv6-only and this VM has no IPv6, so the managed database is simply
+    # unreachable from here; the pooler is the only IPv4 path and it rejects
+    # the tenant. Running Postgres locally removes that dependency entirely.
+    image: pgvector/pgvector:pg16
+    network_mode: host
+    # listen_addresses is pinned to loopback because network_mode: host means
+    # any other value would expose the database on the VM's public interface.
+    command: postgres -p 18132 -c listen_addresses=127.0.0.1
+    env_file: /opt/careercraft-secrets/postgres.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
+    mem_limit: 1g
+    cpus: 0.5
+    restart: unless-stopped
   redis:
     image: redis:8-alpine
     network_mode: host
@@ -78,3 +95,4 @@ services:
 volumes:
   redis_data:
   sandbox_metadata:
+  pgdata:
