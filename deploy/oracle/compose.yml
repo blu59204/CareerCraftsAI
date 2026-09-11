@@ -46,9 +46,6 @@ services:
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
         BACKEND_URL: http://127.0.0.1:18100
     network_mode: host
-    # CLERK_SECRET_KEY is server-side only; it comes from the 0600 secrets file
-    # rather than a build arg, which would bake it into an image layer.
-    env_file: /opt/careercraft-secrets/backend.env
     environment:
       PORT: 18101
       HOSTNAME: 127.0.0.1
@@ -56,6 +53,12 @@ services:
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      # Only the Clerk secret is passed, named explicitly. Using
+      # env_file: backend.env here injected DATABASE_URL, REDIS_URL and the
+      # Supabase service key into the frontend container — credentials it has
+      # no use for and should never hold — and the extra vars broke server-side
+      # rendering with a self-proxy to https://localhost:18101.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
     mem_limit: 768m
     cpus: 0.5
     restart: unless-stopped
