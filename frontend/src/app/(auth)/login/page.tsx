@@ -71,6 +71,9 @@ export default function LoginPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [verification, setVerification] = useState<AuthVerificationState | null>(null);
+  // Which flow the code field is completing — a new account, or a sign-in whose
+  // only enabled first factor is an emailed code.
+  const [verificationFlow, setVerificationFlow] = useState<"sign-up" | "sign-in" | "sign-in-second">("sign-up");
   const [destination, setDestination] = useState(DEFAULT_DESTINATION);
 
   // Read query params from the browser instead of `useSearchParams()` so this
@@ -124,16 +127,67 @@ export default function LoginPage() {
 
     if (mode === "sign-in") {
       try {
-        const result = await signIn.create({ identifier: email, password });
+        // Which first factors exist is instance configuration, not something
+        // the client can assume. Passing a password to create() when password
+        // is not an enabled first factor leaves the attempt in a non-complete
+        // state that surfaces as an unexplained "needs_second_factor", so ask
+        // Clerk what it supports before choosing a strategy.
+        const attempt = await signIn.create({ identifier: email });
+        const factors = attempt.supportedFirstFactors ?? [];
+        const supportsPassword = factors.some((f) => f.strategy === "password");
+        const emailCodeFactor = factors.find((f) => f.strategy === "email_code");
 
-        if (result.status === "complete") {
-          await setSignInActive({ session: result.createdSessionId });
-          router.push(destination);
+        if (supportsPassword && password) {
+          const result = await signIn.attemptFirstFactor({ strategy: "password", password });
+          if (result.status === "complete") {
+            await setSignInActive({ session: result.createdSessionId });
+            router.push(destination);
+            return;
+          }
+
+          // A correct password can still land on needs_second_factor — Clerk
+          // asks for an emailed code to confirm ownership. Previously this
+          // dead-ended with the raw status printed at the user, which is why
+          // password sign-in appeared broken. Drive the second factor instead.
+          if (result.status === "needs_second_factor") {
+            const second = (result.supportedSecondFactors ?? []).find(
+              (f) => f.strategy === "email_code",
+            );
+            if (second) {
+              await signIn.prepareSecondFactor({ strategy: "email_code" });
+              setVerificationFlow("sign-in-second");
+              setVerification({
+                email,
+                title: "Confirm it's you",
+                description: `We sent a confirmation code to ${email}.`,
+              });
+              return;
+            }
+          }
+
+          setErrorMessage(
+            `Additional verification is required to finish signing in (${result.status}).`,
+          );
+          return;
+        }
+
+        if (emailCodeFactor) {
+          // Password is off for this instance — fall back to the emailed code
+          // rather than dead-ending the user on a form they cannot submit.
+          await signIn.prepareFirstFactor({
+            strategy: "email_code",
+            emailAddressId: (emailCodeFactor as { emailAddressId: string }).emailAddressId,
+          });
+          setVerificationFlow("sign-in");
+          setVerification({
+            email,
+            description: `Password sign-in is turned off for this workspace. We sent a sign-in code to ${email}.`,
+          });
           return;
         }
 
         setErrorMessage(
-          `Additional verification is required to finish signing in (${result.status}).`,
+          "No supported sign-in method is enabled for this workspace. Try a social provider.",
         );
       } catch (err) {
         setErrorMessage(describeError(err));
@@ -155,6 +209,7 @@ export default function LoginPage() {
         },
       });
       await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      setVerificationFlow("sign-up");
       setVerification({ email });
       setInfoMessage(null);
     } catch (err) {
@@ -165,10 +220,36 @@ export default function LoginPage() {
   };
 
   const handleVerificationSubmit = async (code: string) => {
-    if (!signUp || !setSignUpActive) return;
-
     setLoading(true);
     setErrorMessage(null);
+
+    // The same code field now serves two flows: confirming a new account, and
+    // completing a sign-in when email_code is the only enabled first factor.
+    if (verificationFlow === "sign-in" || verificationFlow === "sign-in-second") {
+      if (!signIn || !setSignInActive) return;
+      try {
+        // email_code serves as the first factor when password is disabled, and
+        // as the second factor when Clerk wants ownership confirmed after a
+        // correct password. Same code field, different Clerk call.
+        const result =
+          verificationFlow === "sign-in-second"
+            ? await signIn.attemptSecondFactor({ strategy: "email_code", code })
+            : await signIn.attemptFirstFactor({ strategy: "email_code", code });
+        if (result.status === "complete") {
+          await setSignInActive({ session: result.createdSessionId });
+          router.push(destination);
+          return;
+        }
+        setErrorMessage(`Could not complete sign in (${result.status}).`);
+      } catch (err) {
+        setErrorMessage(describeError(err));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (!signUp || !setSignUpActive) return;
 
     try {
       const result = await signUp.attemptEmailAddressVerification({ code });
@@ -188,6 +269,7 @@ export default function LoginPage() {
   };
 
   const handleVerificationCancel = () => {
+    setVerificationFlow("sign-up");
     setVerification(null);
     setErrorMessage(null);
     setInfoMessage(null);
@@ -195,6 +277,7 @@ export default function LoginPage() {
 
   const handleModeSwitch = (next: AuthMode) => {
     setMode(next);
+    setVerificationFlow("sign-up");
     setVerification(null);
     setErrorMessage(null);
     setInfoMessage(null);
