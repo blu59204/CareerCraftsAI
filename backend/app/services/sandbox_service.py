@@ -90,7 +90,9 @@ class OpenSandboxProvider:
 
     async def endpoint(self, sandbox_id: str) -> tuple[str, dict]:
         result = await self.request("GET", f"/sandboxes/{sandbox_id}/endpoints/9222")
-        endpoint = result["endpoint"]
+        endpoint = result.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint:
+            raise RuntimeError("Sandbox provider returned an invalid endpoint")
         if "://" not in endpoint:
             endpoint = urlparse(settings.OPEN_SANDBOX_URL).scheme + "://" + endpoint
         return endpoint.rstrip("/"), result.get("headers") or {}
@@ -180,8 +182,9 @@ async def acquire_session(user_id: str, run_id: str) -> BrowserSession:
     except BaseException:
         async with AsyncSessionLocal() as db:
             saved = await db.get(BrowserSession, session.id)
-            saved.status = "closing" if sandbox_id else "failed"
-            await db.commit()
+            if saved is not None:
+                saved.status = "closing" if sandbox_id else "failed"
+                await db.commit()
         raise
 
 
@@ -221,7 +224,7 @@ async def reap_sessions() -> None:
     if not settings.OPEN_SANDBOX_URL:
         return
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(select(BrowserSession).join(AgentRun).where(
+        rows = (await db.execute(select(BrowserSession).join(AgentRun, AgentRun.id == BrowserSession.run_id).where(
             BrowserSession.status.not_in(["closed", "failed"]),
             (BrowserSession.expires_at <= datetime.now(timezone.utc)) |
             (BrowserSession.status == "closing") |

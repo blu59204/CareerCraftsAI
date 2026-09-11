@@ -1,0 +1,78 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Dependencies (reinstalled inside the image)
+node_modules
+**/node_modules
+.venv
+**/.venv
+.venv_win
+**/.venv_win
+.venv_win_test
+**/.venv_win_test
+
+# Quarantined scratch/junk files
+_scratch
+_archive
+
+# Logs
+*.log
+**/*.log
+
+# Secrets and environment files
+.env*
+**/.env*
+!.env.example
+*.secret
+deploy/secrets
+
+# Python bytecode and caches
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+**/.pytest_cache
+.ruff_cache
+**/.ruff_cache
+.hypothesis
+**/.hypothesis
+.mypy_cache
+**/.mypy_cache
+
+# Build output and caches
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
+*.tsbuildinfo
+frontend/.next
+frontend/out
+dist
+build
+
+# Agent/editor tooling
+.claude
+.codex
+.commandcode
+.agents
+.ruflo
+.verdent
+.jules
+.kiro
+.opencode
+.vscode
+
+# Browser automation and test artifacts
+.browser_data
+**/.browser_data
+.playwright-cli
+.playwright-mcp
+output
+**/output
+*.png
+
+# OS cruft
+.DS_Store
+Thumbs.db

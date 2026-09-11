@@ -408,3 +408,55 @@ async def test_submit_click_timeout_is_unknown_outcome(monkeypatch):
     assert result["status"] == "failed"
     assert result["result"]["outcome"] == "unknown"
     assert result["result"]["job_url"] == "https://jobs.example.com/apply"
+
+
+@pytest.mark.asyncio
+async def test_continue_action_rejects_malformed_search_confirmation():
+    from unittest.mock import MagicMock
+
+    from app.services.workflow_service import continue_action
+
+    run = MagicMock()
+    run.user_id = uuid.uuid4()
+    run.id = uuid.uuid4()
+    with pytest.raises(ValueError, match="interpretation"):
+        await continue_action(run, {"type": "search_confirmation"})
+
+
+@pytest.mark.asyncio
+async def test_auto_apply_approval_missing_parent_fails_closed(monkeypatch):
+    from unittest.mock import MagicMock
+
+    import app.services.workflow_service as workflow_service
+
+    run = MagicMock()
+    run.id = uuid.uuid4()
+    run.user_id = uuid.uuid4()
+
+    class _MissingParentDB:
+        async def get(self, *args, **kwargs):
+            return None
+
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(_MissingParentDB()))
+    with pytest.raises(ValueError, match="Parent run"):
+        await workflow_service.continue_action(run, {"type": "auto_apply_approval", "actions_pending": []})
+
+
+@pytest.mark.asyncio
+async def test_sandbox_endpoint_rejects_invalid_provider_payload(monkeypatch):
+    from app.core.config import settings
+    from app.services.sandbox_service import OpenSandboxProvider
+
+    monkeypatch.setattr(settings, "OPEN_SANDBOX_URL", "http://sandbox.test")
+    monkeypatch.setattr(settings, "OPEN_SANDBOX_API_KEY", "private-key")
+
+    def handler(request):
+        return httpx.Response(200, json={"endpoint": ""})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = OpenSandboxProvider(client)
+        with pytest.raises(RuntimeError, match="invalid endpoint"):
+            await provider.endpoint("sandbox-1")

@@ -229,7 +229,9 @@ async def continue_action(run: AgentRun, pending: dict) -> dict:
         return {"status": "completed", "result": {**pending, "reviewed": True}}
     if action == "search_confirmation":
         from app.agents.orchestrator import orchestrator
-        params = pending["interpretation"]
+        params = pending.get("interpretation")
+        if not isinstance(params, dict):
+            raise ValueError("Search confirmation is missing its interpretation")
         return await orchestrator.ainvoke({
             "user_id": str(run.user_id), "run_id": str(run.id), "task_type": "job_search",
             "status": "running", "messages": [], "context": {
@@ -251,6 +253,8 @@ async def continue_action(run: AgentRun, pending: dict) -> dict:
         children = []
         async with AsyncSessionLocal() as db:
             parent = await db.get(AgentRun, run.id, with_for_update=True)
+            if parent is None:
+                raise ValueError("Parent run is no longer available")
             # Child creation and the parent checkpoint are one transaction.
             existing = (parent.output or {}).get("child_run_ids")
             if existing:

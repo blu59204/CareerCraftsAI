@@ -24,11 +24,23 @@ def _ensure_bucket(supabase: Client) -> None:
             logger.debug("Supabase bucket create skipped for %s: %s", BUCKET, exc)
 
 
+def _safe_extension(filename: str) -> str:
+    """Restrict the storage suffix to a short alphanumeric token.
+
+    The original filename is attacker-controlled. Carrying it into the storage
+    key would allow path separators or traversal sequences in the object key,
+    so only a conservative extension is preserved; everything else is dropped.
+    """
+    raw = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    cleaned = "".join(ch for ch in raw.lower() if ch.isascii() and ch.isalnum())
+    return cleaned[:10] or "bin"
+
+
 def upload_file(user_id: str, filename: str, content: bytes, content_type: str) -> str:
     """Upload file to Supabase Storage. Returns storage path."""
     supabase = get_supabase()
     _ensure_bucket(supabase)
-    ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
+    ext = _safe_extension(filename)
     path = f"{user_id}/{uuid.uuid4()}.{ext}"
     try:
         supabase.storage.from_(BUCKET).upload(path, content, {"content-type": content_type})

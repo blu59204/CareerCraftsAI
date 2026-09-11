@@ -76,3 +76,6 @@ _tmp_*.png
 *.secret
 deploy/secrets/
 *.tsbuildinfo
+
+# Quarantined scratch/junk files pending deletion by the user
+_scratch/

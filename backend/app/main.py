@@ -178,7 +178,14 @@ async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-# Middleware order: CORS → JWT → request ID
+# Starlette builds the stack so the LAST-registered middleware is OUTERMOST.
+# CORS must therefore be registered last: a 401 returned by _jwt_middleware has
+# to travel back out through CORSMiddleware to pick up Access-Control-Allow-Origin,
+# otherwise the browser reports an opaque CORS failure and the frontend can't tell
+# an expired token from a dead network.
+# Execution order: CORS → request ID → JWT → route.
+app.middleware("http")(_jwt_middleware)
+app.middleware("http")(_request_id_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -186,8 +193,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
-app.middleware("http")(_jwt_middleware)
-app.middleware("http")(_request_id_middleware)
 
 
 # Routers

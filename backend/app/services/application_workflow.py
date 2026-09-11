@@ -122,6 +122,8 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
             next_type = "browser_review" if ready else "browser_input"
             async with AsyncSessionLocal() as db:
                 saved = await db.get(BrowserSession, session.id)
+                if saved is None:
+                    raise RuntimeError("Browser session expired; prepare a new application for review")
                 saved.status = "review" if ready else "input"
                 saved.review = snapshot
                 await db.commit()
