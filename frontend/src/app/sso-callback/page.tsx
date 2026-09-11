@@ -1,36 +1,39 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useClerk } from "@clerk/nextjs";
 
-function SSOCallbackContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+/**
+ * OAuth landing page for `signIn.authenticateWithRedirect({ redirectUrl: "/sso-callback" })`.
+ *
+ * Uses the headless `handleRedirectCallback()` from `useClerk()` rather than
+ * Clerk's `<AuthenticateWithRedirectCallback />` component, so nothing
+ * Clerk-branded is ever mounted.
+ */
+export default function SSOCallbackPage() {
+  const { handleRedirectCallback } = useClerk();
   const [error, setError] = useState<string | null>(null);
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    const handleCallback = async () => {
-      const code = searchParams.get("code");
-      const errorParam = searchParams.get("error");
+    if (startedRef.current) return;
+    startedRef.current = true;
 
-      if (errorParam) {
-        setError(decodeURIComponent(errorParam));
-        return;
-      }
-
-      if (!code) {
-        setError("No authorization code received");
-        return;
-      }
-
-      // Backend already handled the OAuth flow and created the user
-      // Just redirect to dashboard
-      router.push("/dashboard");
-    };
-
-    handleCallback();
-  }, [searchParams, router]);
+    handleRedirectCallback({
+      signInFallbackRedirectUrl: "/dashboard",
+      signUpFallbackRedirectUrl: "/dashboard",
+      // A brand-new OAuth identity is transferred into a sign-up attempt here.
+      continueSignUpUrl: "/login?mode=sign-up",
+    }).catch((err: unknown) => {
+      const clerkErrors = (err as { errors?: { longMessage?: string; message?: string }[] })?.errors;
+      const first = clerkErrors?.[0];
+      setError(
+        first?.longMessage ||
+          first?.message ||
+          (err instanceof Error ? err.message : "Authentication failed"),
+      );
+    });
+  }, [handleRedirectCallback]);
 
   if (error) {
     return (
@@ -50,25 +53,10 @@ function SSOCallbackContent() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background">
-      <div className="space-y-3 text-center">
-        <div className="mx-auto h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 text-center">
+      <div className="space-y-2">
         <p className="text-sm font-medium text-foreground">Completing sign in...</p>
       </div>
     </main>
-  );
-}
-
-export default function SSOCallbackPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="flex min-h-screen items-center justify-center bg-background">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </main>
-      }
-    >
-      <SSOCallbackContent />
-    </Suspense>
   );
 }

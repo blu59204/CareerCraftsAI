@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import { apiClient } from "@/lib/api";
 
 interface UserProfile {
@@ -17,6 +17,8 @@ interface GuardError {
 export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { signOut } = useClerk();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<GuardError | null>(null);
 
@@ -24,14 +26,22 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     async function checkAccess() {
+      if (!isLoaded) return;
+
       setReady(false);
       setError(null);
 
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
+      // No Clerk session at all → genuinely logged out → go to login.
+      if (!isSignedIn) {
+        const next = `${window.location.pathname}${window.location.search}`;
+        router.replace(`/login?redirect_url=${encodeURIComponent(next)}`);
+        return;
+      }
 
-      // No Supabase session at all → genuinely logged out → go to login.
-      if (!session?.access_token) {
+      const token = await getToken();
+      if (cancelled) return;
+
+      if (!token) {
         const next = `${window.location.pathname}${window.location.search}`;
         router.replace(`/login?redirect_url=${encodeURIComponent(next)}`);
         return;
@@ -39,7 +49,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
 
       try {
         const { data } = await apiClient.get<UserProfile>("/users/me", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
+          headers: { Authorization: `Bearer ${token}` },
         });
         if (cancelled) return;
 
@@ -76,11 +86,11 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, router]);
+  }, [pathname, router, isLoaded, isSignedIn, getToken]);
 
   async function handleLoginAgain() {
     try {
-      await createClient().auth.signOut();
+      await signOut();
     } catch {
       // ignore — redirect regardless
     }

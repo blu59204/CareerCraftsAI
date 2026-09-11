@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import { createClient } from "@/lib/supabase";
 
 const UserMenu = dynamic(
   () => import("@/components/auth/UserMenu").then((m) => ({ default: m.UserMenu })),
@@ -19,20 +18,8 @@ const NAV = [
 ];
 
 export function MarketingNavbar() {
-  const [signedIn, setSignedIn] = useState(false);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSignedIn(!!session);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSignedIn(!!session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+  const { isSignedIn } = useAuth();
+  const signedIn = !!isSignedIn;
 
   return (
     <header className="fixed left-0 right-0 top-4 z-40 px-4">

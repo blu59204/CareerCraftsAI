@@ -388,11 +388,14 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               )}
 
               {isSignUp && (
+                // Clerk mounts its Smart CAPTCHA widget into this node when bot
+                // protection is enabled. The id/data-* names are what clerk-js
+                // looks for; no Clerk-branded UI is rendered here.
                 <div
                   key={captchaKey}
-                  id="auth-captcha"
-                  data-theme="auto"
-                  data-size="flexible"
+                  id="clerk-captcha"
+                  data-cl-theme="auto"
+                  data-cl-size="flexible"
                   className="animate-element animate-delay-500"
                 />
               )}

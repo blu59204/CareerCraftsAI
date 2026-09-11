@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogOut, Settings, User as UserIcon } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { useClerk, useUser } from "@clerk/nextjs";
 import { apiClient } from "@/lib/api";
 
 interface UserProfile {
@@ -15,71 +15,41 @@ interface UserProfile {
 
 export function UserMenu() {
   const router = useRouter();
+  const { isLoaded, isSignedIn, user } = useUser();
+  const { signOut } = useClerk();
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loaded, setLoaded] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadProfile() {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (cancelled) return;
-      if (!user) {
-        setProfile(null);
-        setLoaded(true);
-        return;
-      }
-
-      const metadata = user.user_metadata ?? {};
-      const fallbackProfile: UserProfile = {
-        email: user.email ?? "",
-        full_name:
-          typeof metadata.full_name === "string"
-            ? metadata.full_name
-            : typeof metadata.name === "string"
-              ? metadata.name
-              : null,
-        avatar_url:
-          typeof metadata.avatar_url === "string"
-            ? metadata.avatar_url
-            : typeof metadata.picture === "string"
-              ? metadata.picture
-              : null,
-      };
-
-      try {
-        const { data } = await apiClient.get<UserProfile>("/users/me");
-        if (!cancelled) setProfile(data);
-      } catch {
-        if (!cancelled) setProfile(fallbackProfile);
-      } finally {
-        if (!cancelled) setLoaded(true);
-      }
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      setProfile(null);
+      return;
     }
 
-    loadProfile();
-
-    const supabase = createClient();
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) {
-        setProfile(null);
-        setLoaded(true);
-      }
-    });
+    // Backend profile is authoritative; the Clerk user is the fallback while it
+    // loads (or when the backend is unreachable).
+    apiClient
+      .get<UserProfile>("/users/me")
+      .then(({ data }) => {
+        if (!cancelled) setProfile(data);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProfile({
+          email: user?.primaryEmailAddress?.emailAddress ?? "",
+          full_name: user?.fullName ?? null,
+          avatar_url: user?.imageUrl ?? null,
+        });
+      });
 
     return () => {
       cancelled = true;
-      subscription.unsubscribe();
     };
-  }, []);
+  }, [isLoaded, isSignedIn, user]);
 
   useEffect(() => {
     if (!open) return;
@@ -92,9 +62,9 @@ export function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const email = profile?.email ?? null;
-  const displayName = profile?.full_name || email;
-  const avatarUrl = profile?.avatar_url ?? null;
+  const email = profile?.email || user?.primaryEmailAddress?.emailAddress || null;
+  const displayName = profile?.full_name || user?.fullName || email;
+  const avatarUrl = profile?.avatar_url ?? user?.imageUrl ?? null;
   const initials = (displayName ?? "?")
     .split(" ")
     .map((part) => part[0])
@@ -104,13 +74,12 @@ export function UserMenu() {
 
   const handleSignOut = async () => {
     setOpen(false);
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await signOut();
     router.push("/");
     router.refresh();
   };
 
-  if (!loaded || !email) return null;
+  if (!isLoaded || !isSignedIn || !email) return null;
 
   return (
     <div ref={menuRef} className="relative">
