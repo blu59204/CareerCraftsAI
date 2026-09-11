@@ -6,6 +6,11 @@ services:
     env_file: /opt/careercraft-secrets/backend.env
     command: uvicorn app.main:app --host 127.0.0.1 --port 18100
     init: true
+    # Uploaded resumes/documents. Supabase Storage is unreachable from this VM
+    # for the same reason the database was, so files live on local disk.
+    # Shared with agent-worker, which reads documents during agent runs.
+    volumes:
+      - docstore:/data/documents
     mem_limit: 1500m
     cpus: 0.5
     restart: unless-stopped
@@ -15,6 +20,8 @@ services:
     env_file: /opt/careercraft-secrets/backend.env
     command: python -m app.workflow_worker
     init: true
+    volumes:
+      - docstore:/data/documents
     mem_limit: 2g
     cpus: 0.75
     stop_grace_period: 360s
@@ -33,14 +40,22 @@ services:
         NEXT_PUBLIC_API_URL: /api/v1
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        # Next.js inlines NEXT_PUBLIC_* at build time, so the publishable key
+        # has to be an ARG as well as runtime env or the client bundle ships
+        # without it and Clerk fails to initialise in the browser.
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
         BACKEND_URL: http://127.0.0.1:18100
     network_mode: host
+    # CLERK_SECRET_KEY is server-side only; it comes from the 0600 secrets file
+    # rather than a build arg, which would bake it into an image layer.
+    env_file: /opt/careercraft-secrets/backend.env
     environment:
       PORT: 18101
       HOSTNAME: 127.0.0.1
       BACKEND_URL: http://127.0.0.1:18100
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
     mem_limit: 768m
     cpus: 0.5
     restart: unless-stopped
@@ -96,3 +111,4 @@ volumes:
   redis_data:
   sandbox_metadata:
   pgdata:
+  docstore:

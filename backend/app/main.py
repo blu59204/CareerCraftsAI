@@ -55,6 +55,13 @@ def _check_env_vars() -> None:
         logger.critical("Missing required env vars: %s", ", ".join(missing))
         sys.exit(1)
     logger.info("All %d required env vars present", len(_REQUIRED_VARS))
+    # Clerk verifies every request. Warn loudly (but don't exit) so a misconfigured
+    # deploy is obvious from the logs instead of only via blanket 401s.
+    if not settings.CLERK_JWKS_URL and not settings.CLERK_ISSUER:
+        logger.critical(
+            "Clerk auth is not configured — set CLERK_ISSUER (or CLERK_JWKS_URL); "
+            "every authenticated request will return 401 until you do"
+        )
 
 
 def _build_cors_origins(raw: str, env: str) -> list[str]:

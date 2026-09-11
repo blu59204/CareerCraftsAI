@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     NEXT_PUBLIC_SUPABASE_ANON_KEY: str = ""
     REDIS_URL: str
 
+    # ── Clerk Auth (primary identity provider) ─────────────────────────
+    # Clerk signs session tokens with RS256. Either point CLERK_JWKS_URL at the
+    # instance JWKS endpoint directly, or set CLERK_ISSUER and let the JWKS URL
+    # be derived as "{issuer}/.well-known/jwks.json".
+    #   CLERK_ISSUER   e.g. https://clean-mudfish-42.clerk.accounts.dev
+    #   CLERK_JWKS_URL e.g. https://clean-mudfish-42.clerk.accounts.dev/.well-known/jwks.json
+    # CLERK_SECRET_KEY is only needed for Backend API calls (user lookups), not
+    # for token verification.
+    CLERK_JWKS_URL: str = ""
+    CLERK_ISSUER: str = ""
+    CLERK_SECRET_KEY: str = ""
+    # Clerk session tokens carry no fixed `aud` by default. Set this only if the
+    # instance is configured to emit one — when empty, audience is not checked.
+    CLERK_AUDIENCE: str = ""
+
     # ── App environment ────────────────────────────────────────────────
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"
@@ -127,6 +142,14 @@ class Settings(BaseSettings):
 
     # ── Supabase Storage ───────────────────────────────────────────────
     SUPABASE_STORAGE_BUCKET: str = "documents"
+
+    # ── Document storage ───────────────────────────────────────────────
+    # Uploaded resumes/documents live on local disk. Supabase Storage is
+    # unreachable from the deployment VM for the same reason the managed
+    # database was (its hosts resolve IPv6-only and the VM has no IPv6).
+    # In Docker this is a named volume shared by backend and agent-worker;
+    # back it up, because unlike the old bucket nothing else holds a copy.
+    DOCUMENT_STORAGE_DIR: str = "/data/documents"
 
     @model_validator(mode="after")
     def _inject_redis_password(self) -> "Settings":
