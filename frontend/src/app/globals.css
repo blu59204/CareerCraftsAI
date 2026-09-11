@@ -26,25 +26,36 @@
   }
 
   .dark {
-    --background: 240 10% 3%;
-    --foreground: 210 40% 98%;
-    --card: 240 9% 6%;
-    --card-foreground: 210 40% 98%;
-    --muted: 240 6% 10%;
-    --muted-foreground: 215 20% 65%;
-    --border: 240 6% 13%;
-    --input: 240 6% 13%;
-    --primary: 258 80% 60%;
+    /* Dark mode previously drifted to a different brand entirely: neutrals sat
+       on a cool 240/210 blue axis while light mode is a warm 60, and primary
+       jumped from green (146) to purple (258) with a purple accent at 265.
+       The product read as two unrelated brands depending on theme — and
+       purple-on-near-black is the single most recognisable generative-UI
+       signature. Both axes now match light mode: warm 60 neutrals, one green
+       brand hue, lifted only as far as contrast on a dark surface requires. */
+    --background: 60 6% 5%;
+    --foreground: 60 10% 96%;
+    --card: 60 6% 8%;
+    --card-foreground: 60 10% 96%;
+    --muted: 60 5% 12%;
+    --muted-foreground: 60 6% 64%;
+    --border: 60 5% 16%;
+    --input: 60 5% 16%;
+    /* 40% lightness keeps white foreground text near 6:1 against the fill;
+       light mode's 26% would be too dark to read as a button on 5% black. */
+    --primary: 146 55% 40%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 6% 10%;
-    --secondary-foreground: 210 40% 98%;
-    --accent: 265 83% 65%;
-    --accent-foreground: 0 0% 100%;
-    /* brightened for legibility as text-* on the near-black cockpit bg */
-    --success: 152 68% 55%;
-    --warning: 40 95% 62%;
-    --danger: 4 84% 66%;
-    --ring: 258 80% 60%;
+    --secondary: 60 5% 12%;
+    --secondary-foreground: 60 10% 96%;
+    /* Accent is the inverted-surface chip, mirroring light mode where it is
+       near-black on a near-white page. */
+    --accent: 60 10% 92%;
+    --accent-foreground: 60 15% 6%;
+    /* Status colours stay brightened for legibility as text-* on the dark bg. */
+    --success: 152 62% 52%;
+    --warning: 40 92% 60%;
+    --danger: 4 78% 63%;
+    --ring: 146 55% 40%;
   }
 }
 

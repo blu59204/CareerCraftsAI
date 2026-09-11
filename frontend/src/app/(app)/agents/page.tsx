@@ -29,20 +29,39 @@ import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 import { useAgentStore } from "@/store/agentStore";
 
+// Each agent previously carried its own hue — cyan, violet, fuchsia, indigo,
+// rose, lime and more across thirteen cards. Thirteen unrelated hues read as
+// decoration rather than meaning, and the purple/fuchsia/indigo gradients are
+// the most recognisable generative-UI tell there is.
+//
+// These four tints are near-neighbours of the brand green (146) plus one warm
+// complement, so the grid reads as one system, and the colour now encodes what
+// the agent *does* — shared tint means shared job.
+const ACCENT = {
+  // Moves an application forward.
+  pipeline: "from-[hsl(146_55%_45%/0.22)] to-[hsl(146_55%_45%/0.04)]",
+  // Produces something you will read and edit.
+  document: "from-[hsl(40_70%_50%/0.20)] to-[hsl(40_70%_50%/0.04)]",
+  // Talks to a human.
+  outreach: "from-[hsl(175_50%_42%/0.20)] to-[hsl(175_50%_42%/0.04)]",
+  // Gathers information you act on later.
+  intel: "from-[hsl(60_8%_45%/0.18)] to-[hsl(60_8%_45%/0.04)]",
+} as const;
+
 const AGENTS = [
-  { key: "auto_apply", label: "Auto Apply", icon: Bot, accent: "from-cyan-500/20 to-violet-500/5", note: "Isolated browser + two reviews" },
-  { key: "resume_optimize", label: "Resume", icon: FileText, accent: "from-cyan-500/20 to-blue-500/5", note: "Tailored resume draft" },
-  { key: "job_search", label: "Job Search", icon: Search, accent: "from-emerald-500/20 to-cyan-500/5", note: "Fresh matching roles" },
-  { key: "nl_job_search", label: "NL Search", icon: Search, accent: "from-teal-500/20 to-emerald-500/5", note: "Plain-English query parser" },
-  { key: "linkedin_optimize", label: "LinkedIn", icon: BrandLinkedin, accent: "from-sky-500/20 to-indigo-500/5", note: "Profile rewrite" },
-  { key: "linkedin_outreach", label: "Outreach", icon: Users, accent: "from-blue-500/20 to-cyan-500/5", note: "Recruiter drafts" },
-  { key: "email", label: "Email", icon: Mail, accent: "from-amber-500/20 to-orange-500/5", note: "Reviewable draft" },
-  { key: "email_monitor", label: "Monitor", icon: MonitorCheck, accent: "from-lime-500/20 to-emerald-500/5", note: "Inbox status scan" },
-  { key: "interview_prep", label: "Interview Prep", icon: Sparkles, accent: "from-fuchsia-500/20 to-violet-500/5", note: "Question set" },
-  { key: "interview_coach", label: "Coach", icon: MessageSquare, accent: "from-rose-500/20 to-pink-500/5", note: "Mock interview session" },
-  { key: "cover_letter", label: "Cover Letter", icon: FileText, accent: "from-purple-500/20 to-fuchsia-500/5", note: "Role-specific letter" },
-  { key: "salary_intelligence", label: "Salary", icon: DollarSign, accent: "from-green-500/20 to-lime-500/5", note: "Market benchmark" },
-  { key: "company_research", label: "Company", icon: Building2, accent: "from-indigo-500/20 to-blue-500/5", note: "Interview intel brief" },
+  { key: "auto_apply", label: "Auto Apply", icon: Bot, accent: ACCENT.pipeline, note: "Isolated browser + two reviews" },
+  { key: "resume_optimize", label: "Resume", icon: FileText, accent: ACCENT.document, note: "Tailored resume draft" },
+  { key: "job_search", label: "Job Search", icon: Search, accent: ACCENT.pipeline, note: "Fresh matching roles" },
+  { key: "nl_job_search", label: "NL Search", icon: Search, accent: ACCENT.pipeline, note: "Plain-English query parser" },
+  { key: "linkedin_optimize", label: "LinkedIn", icon: BrandLinkedin, accent: ACCENT.document, note: "Profile rewrite" },
+  { key: "linkedin_outreach", label: "Outreach", icon: Users, accent: ACCENT.outreach, note: "Recruiter drafts" },
+  { key: "email", label: "Email", icon: Mail, accent: ACCENT.outreach, note: "Reviewable draft" },
+  { key: "email_monitor", label: "Monitor", icon: MonitorCheck, accent: ACCENT.outreach, note: "Inbox status scan" },
+  { key: "interview_prep", label: "Interview Prep", icon: Sparkles, accent: ACCENT.document, note: "Question set" },
+  { key: "interview_coach", label: "Coach", icon: MessageSquare, accent: ACCENT.outreach, note: "Mock interview session" },
+  { key: "cover_letter", label: "Cover Letter", icon: FileText, accent: ACCENT.document, note: "Role-specific letter" },
+  { key: "salary_intelligence", label: "Salary", icon: DollarSign, accent: ACCENT.intel, note: "Market benchmark" },
+  { key: "company_research", label: "Company", icon: Building2, accent: ACCENT.intel, note: "Interview intel brief" },
 ];
 
 const DEFAULT_CONTEXT: Record<string, Record<string, unknown>> = {

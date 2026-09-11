@@ -46,7 +46,7 @@ const config: Config = {
         "3xl": "calc(var(--radius) + 0.5rem)",
       },
       fontFamily: {
-        sans: ["var(--font-dm-sans)", "var(--font-inter)", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["var(--font-dm-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
         chrome: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "SF Pro Display", "Segoe UI", "var(--font-dm-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
         display: ["var(--font-instrument-serif)", "Iowan Old Style", "Georgia", "serif"],
         hero: ["var(--font-playfair)", "Iowan Old Style", "Georgia", "serif"],
