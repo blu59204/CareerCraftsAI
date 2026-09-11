@@ -49,13 +49,20 @@ def main():
 d=json.load(sys.stdin)
 p=pathlib.Path('/opt/careercraft-secrets')
 p.mkdir(mode=0o700,exist_ok=False)
-def put(name,content):
+# redis:8-alpine drops privileges to uid 999/gid 1000, and compose bind-mounts
+# redis.conf read-only, so the image entrypoint cannot chown/chmod it itself.
+# Left root-owned, redis exits with "Fatal error, can't open config file"
+# and the scheduler crash-loops behind it. Mode stays 0600 and only the owner
+# changes, so requirepass remains unreadable to every other user on the host.
+REDIS_OWNER=(999,1000)
+def put(name,content,owner=None):
  f=p/name; f.write_text(content); f.chmod(0o600)
+ if owner: os.chown(f,owner[0],owner[1])
 def env(v): return ''.join(k+'='+json.dumps(str(value))+'\\n' for k,value in v.items())
 put('backend.env',env(d['backend']))
 put('public.env',env(d['public']))
 put('sandbox.env',env({'OPENSANDBOX_SERVER_API_KEY':d['sandbox']}))
-put('redis.conf','bind 127.0.0.1\\nport 18179\\nrequirepass '+d['redis']+'\\nappendonly yes\\ndir /data\\nmaxmemory 256mb\\nmaxmemory-policy noeviction\\n')
+put('redis.conf','bind 127.0.0.1\\nport 18179\\nrequirepass '+d['redis']+'\\nappendonly yes\\ndir /data\\nmaxmemory 256mb\\nmaxmemory-policy noeviction\\n',REDIS_OWNER)
 put('ngrok.yml','version: 3\\nagent:\\n  authtoken: '+d['ngrok']+'\\n  web_addr: 127.0.0.1:14041\\n  log: stdout\\n  log_format: json\\nendpoints:\\n  - name: careercraft\\n    upstream:\\n      url: http://127.0.0.1:18180\\n')
 print('Dedicated CareerCraft secrets installed; values suppressed')
 """
