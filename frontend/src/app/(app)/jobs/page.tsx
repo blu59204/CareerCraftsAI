@@ -830,7 +830,7 @@ export default function JobsPage() {
     const interval = window.setInterval(async () => {
       try {
         const { data } = await apiClient.get("/agents/runs?limit=20");
-        const run = (data as Array<{
+        const run = ((Array.isArray(data) ? data : data.runs ?? []) as Array<{
           id: string;
           status: "completed" | "failed" | "running" | "awaiting_approval";
           output?: Record<string, unknown> | null;

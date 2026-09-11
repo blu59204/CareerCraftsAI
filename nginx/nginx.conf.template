@@ -8,30 +8,24 @@ http {
   limit_req_zone $binary_remote_addr zone=api:10m rate=60r/m;
   limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
 
-  upstream frontend { server careercraft-frontend:3000; }
-  upstream backend  { server careercraft-backend:8000; }
+  upstream frontend { server careercraftai-frontend:3000; }
+  upstream backend  { server careercraftai-backend:8000; }
 
+  # Local-only HTTP server. Production adds an HTTPS block above this
+  # that returns 301 to https://$host$request_uri and listens on 443 with
+  # real certs from /etc/letsencrypt. For local testing we skip the
+  # redirect so http://localhost works without certs.
   server {
-    listen 80;
+    listen 80 default_server;
     server_name _;
-    return 301 https://$host$request_uri;
-  }
 
-  server {
-    listen 443 ssl;
-    server_name ${DOMAIN};
-
-    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-    ssl_session_cache   shared:SSL:10m;
-
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    # Security headers
     add_header X-Frame-Options DENY always;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co;" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
 
     # Block internal endpoints from public access
     location /internal/ {

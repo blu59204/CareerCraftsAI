@@ -10,10 +10,14 @@ Groups:
 
 import base64
 import time
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
@@ -25,22 +29,45 @@ from app.core.security import decrypt_api_key, encrypt_api_key
 from app.core.supabase_auth import verify_supabase_jwt
 from app.models.schemas import ModelSettingsCreate, UserCreate
 
+# Clerk signs session tokens with RS256 against a published JWKS. Generate a
+# throwaway keypair once and stub the JWKS client with its public half, so the
+# auth tests exercise the real jwt.decode path instead of a mock.
+_SIGNING_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_OTHER_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+_CLERK_SUB = "user_2abcDEF3456ghiJKL7890mnoPQ"
+
+
+def _public_pem(private_key) -> bytes:
+    return private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+@contextmanager
+def _jwks_serving(private_key=_SIGNING_KEY):
+    """Patch the lazily-built JWKS client to hand back ``private_key``'s public half."""
+    signing_key = MagicMock()
+    signing_key.key = private_key.public_key()
+    client = MagicMock()
+    client.get_signing_key_from_jwt.return_value = signing_key
+    with patch("app.core.supabase_auth._jwks_client", client):
+        yield client
+
 
 def _make_jwt(
-    sub: str = "00000000-0000-0000-0000-000000000abc",
-    aud: str = "authenticated",
-    exp_offset: int = 3600,
-    secret: str | None = None,
-    algorithm: str = "HS256",
+    sub: str | None = _CLERK_SUB,
+    exp_offset: int | None = 3600,
+    key=_SIGNING_KEY,
+    algorithm: str = "RS256",
+    **extra,
 ) -> str:
-    """Build a signed JWT with controllable claims for testing."""
-    payload = {
-        "sub": sub,
-        "aud": aud,
-        "exp": int(time.time()) + exp_offset,
-        "iat": int(time.time()),
-    }
-    key = secret if secret is not None else settings.SUPABASE_JWT_SECRET
+    """Build a signed Clerk-shaped JWT with controllable claims for testing."""
+    payload: dict = {"iat": int(time.time()), **extra}
+    if sub is not None:
+        payload["sub"] = sub
+    if exp_offset is not None:
+        payload["exp"] = int(time.time()) + exp_offset
     return jwt.encode(payload, key, algorithm=algorithm)
 
 
@@ -100,29 +127,29 @@ class TestInputValidation:
         )
         assert obj.api_key == " "
 
-    def test_supabase_uid_too_short_rejected(self):
-        """UserCreate.supabase_uid has min_length=36; 35 chars must fail."""
+    def test_supabase_uid_empty_rejected(self):
+        """UserCreate.supabase_uid has min_length=1; an empty subject must fail."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="user@example.com",
-                supabase_uid="a" * 35,
+                supabase_uid="",
             )
 
     def test_supabase_uid_too_long_rejected(self):
-        """UserCreate.supabase_uid has max_length=36; 37 chars must fail."""
+        """UserCreate.supabase_uid has max_length=255; 256 chars must fail."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="user@example.com",
-                supabase_uid="a" * 37,
+                supabase_uid="a" * 256,
             )
 
-    def test_supabase_uid_exactly_36_chars_accepted(self):
-        """Boundary value: 36-char uid is valid."""
+    def test_clerk_text_subject_accepted(self):
+        """Clerk subjects are text ids (user_2abc...), not 36-char UUIDs."""
         obj = UserCreate(
             email="user@example.com",
-            supabase_uid="00000000-0000-0000-0000-000000000abc",
+            supabase_uid="user_2abcDEF3456ghiJKL7890mnoPQ",
         )
-        assert len(obj.supabase_uid) == 36
+        assert obj.supabase_uid.startswith("user_")
 
     def test_email_format_validated(self):
         """UserCreate.email uses EmailStr; a non-email string must raise."""
@@ -168,36 +195,43 @@ class TestInputValidation:
 class TestJWTEdgeCases:
     """verify_supabase_jwt must raise HTTPException(401) for every bad token."""
 
-    def test_valid_token_is_accepted(self):
-        """Baseline: a well-formed token with correct audience must pass."""
-        token = _make_jwt()
-        payload = verify_supabase_jwt(token)
-        assert payload["sub"] == "00000000-0000-0000-0000-000000000abc"
+    def test_valid_token_is_accepted(self, monkeypatch):
+        """Baseline: a Clerk RS256 token from the configured issuer must pass."""
+        monkeypatch.setattr(settings, "CLERK_ISSUER", "https://real.clerk.accounts.dev")
+        token = _make_jwt(
+            iss="https://real.clerk.accounts.dev", email="user@example.com"
+        )
+        with _jwks_serving():
+            payload = verify_supabase_jwt(token)
+        assert payload["sub"] == _CLERK_SUB
+        assert payload["iss"] == "https://real.clerk.accounts.dev"
+        assert payload["email"] == "user@example.com"
 
     def test_expired_token_returns_401(self):
         """Token with exp in the past must be rejected."""
         from fastapi import HTTPException
 
         expired_token = _make_jwt(exp_offset=-3600)
-        with pytest.raises(HTTPException) as exc_info:
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(expired_token)
         assert exc_info.value.status_code == 401
 
-    def test_wrong_audience_returns_401(self):
-        """Token with aud != 'authenticated' must be rejected."""
+    def test_wrong_issuer_returns_401(self, monkeypatch):
+        """Clerk tokens carry no fixed `aud`, so issuer is the binding check."""
         from fastapi import HTTPException
 
-        token = _make_jwt(aud="wrong-audience")
-        with pytest.raises(HTTPException) as exc_info:
+        monkeypatch.setattr(settings, "CLERK_ISSUER", "https://real.clerk.accounts.dev")
+        token = _make_jwt(iss="https://attacker.clerk.accounts.dev")
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(token)
         assert exc_info.value.status_code == 401
 
-    def test_wrong_secret_returns_401(self):
-        """Token signed with a different secret must be rejected."""
+    def test_wrong_signing_key_returns_401(self):
+        """Token signed by a key that is not in the JWKS must be rejected."""
         from fastapi import HTTPException
 
-        token = _make_jwt(secret="a-completely-different-secret-key!")
-        with pytest.raises(HTTPException) as exc_info:
+        token = _make_jwt(key=_OTHER_KEY)
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(token)
         assert exc_info.value.status_code == 401
 
@@ -205,7 +239,7 @@ class TestJWTEdgeCases:
         """Garbage string (not a JWT) must be rejected with 401, not 500."""
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException) as exc_info:
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt("not.a.jwt")
         assert exc_info.value.status_code == 401
 
@@ -213,27 +247,32 @@ class TestJWTEdgeCases:
         """Empty string must not crash the verifier."""
         from fastapi import HTTPException
 
-        with pytest.raises(HTTPException) as exc_info:
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt("")
         assert exc_info.value.status_code == 401
 
-    def test_rs256_token_against_hs256_verifier_returns_401(self):
-        """A token claiming RS256 algorithm must be rejected (alg-mismatch attack)."""
+    def test_hs256_token_against_rs256_verifier_returns_401(self):
+        """RS256→HS256 confusion: an HS256 token signed with the public key must fail."""
         from fastapi import HTTPException
 
-        # jwt.encode with RS256 requires an RSA key; instead forge a header manually
-        # to test the algorithm enforcement path in PyJWT.
-        header = base64.urlsafe_b64encode(
-            b'{"alg":"RS256","typ":"JWT"}'
-        ).rstrip(b"=").decode()
-        payload_b64 = base64.urlsafe_b64encode(
-            b'{"sub":"uid","aud":"authenticated","exp":9999999999}'
-        ).rstrip(b"=").decode()
-        fake_sig = base64.urlsafe_b64encode(b"fakesig").rstrip(b"=").decode()
-        forged_token = f"{header}.{payload_b64}.{fake_sig}"
+        # PyJWT refuses to *encode* HS256 with a PEM, so assemble the attack
+        # token by hand: HMAC the signing input with the RSA public key bytes.
+        import hashlib
+        import hmac
 
-        with pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(forged_token)
+        def _b64(raw: bytes) -> str:
+            return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+        header = _b64(b'{"alg":"HS256","typ":"JWT"}')
+        body = _b64(b'{"sub":"' + _CLERK_SUB.encode() + b'","exp":9999999999}')
+        signing_input = f"{header}.{body}".encode()
+        sig = hmac.new(
+            _public_pem(_SIGNING_KEY), signing_input, hashlib.sha256
+        ).digest()
+        forged = f"{header}.{body}.{_b64(sig)}"
+
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
+            verify_supabase_jwt(forged)
         assert exc_info.value.status_code == 401
 
     def test_none_algorithm_token_returns_401(self):
@@ -245,11 +284,11 @@ class TestJWTEdgeCases:
             b'{"alg":"none","typ":"JWT"}'
         ).rstrip(b"=").decode()
         body = base64.urlsafe_b64encode(
-            b'{"sub":"uid","aud":"authenticated","exp":9999999999}'
+            b'{"sub":"uid","exp":9999999999}'
         ).rstrip(b"=").decode()
         unsigned_token = f"{header}.{body}."
 
-        with pytest.raises(HTTPException) as exc_info:
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(unsigned_token)
         assert exc_info.value.status_code == 401
 
@@ -257,12 +296,8 @@ class TestJWTEdgeCases:
         """Token without 'sub' claim must be rejected (require=['exp','sub'])."""
         from fastapi import HTTPException
 
-        payload = {
-            "aud": "authenticated",
-            "exp": int(time.time()) + 3600,
-        }
-        token = jwt.encode(payload, settings.SUPABASE_JWT_SECRET, algorithm="HS256")
-        with pytest.raises(HTTPException) as exc_info:
+        token = _make_jwt(sub=None)
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(token)
         assert exc_info.value.status_code == 401
 
@@ -270,13 +305,20 @@ class TestJWTEdgeCases:
         """Token without 'exp' claim must be rejected (require=['exp','sub'])."""
         from fastapi import HTTPException
 
-        payload = {
-            "sub": "00000000-0000-0000-0000-000000000abc",
-            "aud": "authenticated",
-        }
-        token = jwt.encode(payload, settings.SUPABASE_JWT_SECRET, algorithm="HS256")
-        with pytest.raises(HTTPException) as exc_info:
+        token = _make_jwt(exp_offset=None)
+        with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
             verify_supabase_jwt(token)
+        assert exc_info.value.status_code == 401
+
+    def test_unconfigured_clerk_jwks_returns_401(self, monkeypatch):
+        """With no CLERK_JWKS_URL/CLERK_ISSUER the verifier must 401, not 500."""
+        from fastapi import HTTPException
+
+        monkeypatch.setattr(settings, "CLERK_JWKS_URL", "")
+        monkeypatch.setattr(settings, "CLERK_ISSUER", "")
+        monkeypatch.setattr("app.core.supabase_auth._jwks_client", None)
+        with pytest.raises(HTTPException) as exc_info:
+            verify_supabase_jwt(_make_jwt())
         assert exc_info.value.status_code == 401
 
 
@@ -291,7 +333,7 @@ class TestConcurrency:
     not the DB unique constraint (which requires a real DB)."""
 
     def test_empty_supabase_uid_rejected(self):
-        """supabase_uid='' is shorter than min_length=36 — must fail validation."""
+        """supabase_uid='' is shorter than min_length=1 — must fail validation."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="a@example.com",
@@ -311,7 +353,7 @@ class TestConcurrency:
     def test_all_valid_providers_construct_model_settings(self):
         """Every Literal provider value must be constructable — ensures enum list
         is not accidentally out of sync with the schema."""
-        for provider in ("anthropic", "openai", "google", "ollama", "nvidia_nim"):
+        for provider in ("anthropic", "openai", "google", "ollama", "nvidia_nim", "openrouter", "opencode"):
             obj = ModelSettingsCreate(
                 provider=provider,
                 api_key="sk-test-key",

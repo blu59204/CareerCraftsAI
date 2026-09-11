@@ -1,29 +1,36 @@
 """
-auto_apply_service.py — Platform-specific job application handlers.
+auto_apply_service.py — Platform-agnostic job application handlers.
 
-Each platform has its own apply flow:
-- LinkedIn: Easy Apply (already in browser_control_service)
-- Naukri: Fill form + upload resume
-- Instahyre: One-click apply + optional message
-- Indeed: Multi-step form
-- Foundit: Upload resume + fill fields
+Every portal (LinkedIn, Naukri, Indeed, Workday, Greenhouse, Lever, any ATS)
+goes through the same universal HITL-safe apply path:
 
-All handlers use browser-use for automation with human-like delays.
+  1. Build user profile context from DB + RAG
+  2. Use form_filler_service to navigate, fill, and STOP before final submit
+  3. Emit a 'checkpoint' SSE event so the orchestrator sets
+     state["status"] = "awaiting_approval"
+  4. Actual submission only happens after explicit user approval via
+     /api/v1/agents/{run_id}/approve
+
+NEVER submit without user approval — this is enforced at the form_filler
+level (submit=False) AND by the task prompt wording, giving two independent
+guardrails against accidental submission.
 """
 import asyncio
 import logging
 import secrets
 from dataclasses import dataclass
 from typing import Literal
+from urllib.parse import urlparse
 
 from langchain_core.language_models import BaseChatModel
 
-from app.services.browser_control_service import run_browser_task
+from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
+from app.core.event_bus import emit
 
 logger = logging.getLogger(__name__)
 _RANDOM = secrets.SystemRandom()
 
-ApplyStatus = Literal["applied", "draft_saved", "failed", "requires_manual"]
+ApplyStatus = Literal["draft_saved", "requires_manual", "failed"]
 GENERIC_APPLY_FAILURE = "Application automation failed"
 
 
@@ -35,142 +42,156 @@ class ApplyResult:
     message: str = ""
 
 
-async def _human_delay():
+async def _human_delay() -> None:
     """Random delay to avoid detection (2-6s)."""
     await asyncio.sleep(_RANDOM.uniform(2.0, 6.0))
 
 
-async def apply_linkedin(
-    llm: BaseChatModel, user_id: str, job_url: str, resume_path: str | None = None
-) -> ApplyResult:
-    """Apply via LinkedIn Easy Apply."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click the 'Easy Apply' button. "
-        f"Fill in any required fields with reasonable defaults. "
-        f"{'Upload resume from ' + resume_path + '. ' if resume_path else ''}"
-        f"Click through all steps (Next, Review, Submit). "
-        f"Confirm the application was submitted. If it requires external redirect, report 'REQUIRES_MANUAL'."
-    )
-    await _human_delay()
+def _detect_portal(job_url: str) -> str:
+    """Detect portal name from URL domain for task-hint purposes."""
     try:
-        result = await run_browser_task(llm, task, user_id, max_steps=20)
-        if "REQUIRES_MANUAL" in (result or ""):
-            return ApplyResult("linkedin", job_url, "requires_manual", result)
-        return ApplyResult("linkedin", job_url, "applied", result or "Submitted")
+        host = urlparse(job_url).netloc.lower().lstrip("www.")
+    except Exception:
+        return "unknown"
+    portal_map = {
+        "linkedin.com": "LinkedIn",
+        "naukri.com": "Naukri",
+        "indeed.com": "Indeed",
+        "glassdoor.com": "Glassdoor",
+        "instahyre.com": "Instahyre",
+        "foundit.in": "Foundit",
+        "cutshort.io": "Cutshort",
+        "hirect.in": "Hirect",
+        "shine.com": "Shine",
+        "internshala.com": "Internshala",
+        "iimjobs.com": "iimjobs",
+        "freshersworld.com": "Freshersworld",
+        "myworkdayjobs.com": "Workday",
+        "greenhouse.io": "Greenhouse",
+        "lever.co": "Lever",
+        "ashbyhq.com": "Ashby",
+        "smartrecruiters.com": "SmartRecruiters",
+        "bamboohr.com": "BambooHR",
+        "remoteok.com": "RemoteOK",
+        "remotive.com": "Remotive",
+        "wellfound.com": "Wellfound",
+        "angel.co": "AngelList",
+        "ziprecruiter.com": "ZipRecruiter",
+        "monster.com": "Monster",
+        "dice.com": "Dice",
+    }
+    for domain, name in portal_map.items():
+        if domain in host:
+            return name
+    return host.split(".")[0].title() if host else "Unknown"
+
+
+async def apply_to_any_portal(
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    run_id: str | None = None,
+    resume_path: str | None = None,
+    cover_letter: str = "",
+    job_description: str = "",
+    past_learnings: list[str] | None = None,
+) -> ApplyResult:
+    """Universal HITL-safe apply — works on any job portal or ATS.
+
+    past_learnings — forwarded from the harness context["_memory"]["learnings"].
+    Injected into the form filler task prompt so the browser agent adapts based
+    on what has worked and failed for this user previously (e.g.
+    "portal:greenhouse:auto_fill_works", "portal:workday:requires_manual").
+    """
+    from app.services.form_filler_service import fill_and_submit_form
+
+    portal = _detect_portal(job_url)
+    await _human_delay()
+
+    try:
+        result = await fill_and_submit_form(
+            llm=llm,
+            user_id=user_id,
+            job_url=job_url,
+            resume_path=resume_path,
+            cover_letter=cover_letter,
+            job_description=job_description,
+            submit=False,  # HITL gate — never submit automatically
+            past_learnings=past_learnings,
+        )
     except Exception as exc:
-        logger.warning("LinkedIn apply failed for user %s: %s", user_id, exc)
-        return ApplyResult("linkedin", job_url, "failed", GENERIC_APPLY_FAILURE)
+        logger.warning("apply_to_any_portal failed for user %s url %s: %s", user_id, job_url, exc)
+        return ApplyResult(portal.lower(), job_url, "failed", GENERIC_APPLY_FAILURE)
+
+    status_raw = (result or {}).get("status", "failed")
+    message = (result or {}).get("message", "")
+
+    if status_raw in ("requires_manual", "requires_account_creation"):
+        return ApplyResult(portal.lower(), job_url, "requires_manual", message)
+
+    if status_raw == "failed":
+        return ApplyResult(portal.lower(), job_url, "failed", message)
+
+    # status == "ready_for_review" — emit HITL checkpoint
+    if run_id:
+        emit(run_id, "checkpoint", {
+            "type": "apply_review",
+            "portal": portal,
+            "job_url": job_url,
+            "message": f"Application form filled on {portal}. Review and approve to submit.",
+            "form_summary": message[:500],
+        })
+
+    return ApplyResult(portal.lower(), job_url, "draft_saved", message)
+
+
+# ── Per-portal helpers (backward-compatible thin wrappers) ──────────────────
+# All delegate to apply_to_any_portal so every portal enforces HITL.
+
+
+async def apply_linkedin(
+    llm: BaseChatModel, user_id: str, job_url: str,
+    resume_path: str | None = None, run_id: str | None = None,
+) -> ApplyResult:
+    return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_naukri(
-    llm: BaseChatModel, user_id: str, job_url: str, resume_path: str | None = None
+    llm: BaseChatModel, user_id: str, job_url: str,
+    resume_path: str | None = None, run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply on Naukri.com — fill form fields and upload resume."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click the 'Apply' or 'Apply on company site' button. "
-        f"If there's an application form, fill in all required fields. "
-        f"{'Upload resume from ' + resume_path + '. ' if resume_path else 'Use the already uploaded resume. '}"
-        f"Submit the application. "
-        f"If it redirects to an external site, report 'REQUIRES_MANUAL'. "
-        f"Confirm submission."
-    )
-    await _human_delay()
-    try:
-        result = await run_browser_task(llm, task, user_id, max_steps=20)
-        if "REQUIRES_MANUAL" in (result or ""):
-            return ApplyResult("naukri", job_url, "requires_manual", result)
-        return ApplyResult("naukri", job_url, "applied", result or "Submitted")
-    except Exception as exc:
-        logger.warning("Naukri apply failed for user %s: %s", user_id, exc)
-        return ApplyResult("naukri", job_url, "failed", GENERIC_APPLY_FAILURE)
+    return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_instahyre(
-    llm: BaseChatModel, user_id: str, job_url: str, message: str = ""
+    llm: BaseChatModel, user_id: str, job_url: str,
+    message: str = "", run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply on Instahyre — one-click apply with optional message."""
-    msg_part = f"Type this message in the message box: '{message[:500]}'. " if message else ""
-    task = (
-        f"Go to {job_url}. "
-        f"Click the 'Apply' or 'I'm Interested' button. "
-        f"{msg_part}"
-        f"Submit. Confirm the application was sent."
-    )
-    await _human_delay()
-    try:
-        result = await run_browser_task(llm, task, user_id, max_steps=12)
-        return ApplyResult("instahyre", job_url, "applied", result or "Submitted")
-    except Exception as exc:
-        logger.warning("Instahyre apply failed for user %s: %s", user_id, exc)
-        return ApplyResult("instahyre", job_url, "failed", GENERIC_APPLY_FAILURE)
+    return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id)
 
 
 async def apply_indeed(
-    llm: BaseChatModel, user_id: str, job_url: str, resume_path: str | None = None
+    llm: BaseChatModel, user_id: str, job_url: str,
+    resume_path: str | None = None, run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply on Indeed — multi-step form."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click 'Apply now' or 'Apply on company site'. "
-        f"If it's Indeed's own form, fill all required fields. "
-        f"{'Upload resume from ' + resume_path + '. ' if resume_path else ''}"
-        f"Click through all steps and submit. "
-        f"If redirected externally, report 'REQUIRES_MANUAL'. "
-        f"Confirm submission."
-    )
-    await _human_delay()
-    try:
-        result = await run_browser_task(llm, task, user_id, max_steps=20)
-        if "REQUIRES_MANUAL" in (result or ""):
-            return ApplyResult("indeed", job_url, "requires_manual", result)
-        return ApplyResult("indeed", job_url, "applied", result or "Submitted")
-    except Exception as exc:
-        logger.warning("Indeed apply failed for user %s: %s", user_id, exc)
-        return ApplyResult("indeed", job_url, "failed", GENERIC_APPLY_FAILURE)
+    return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_foundit(
-    llm: BaseChatModel, user_id: str, job_url: str, resume_path: str | None = None
+    llm: BaseChatModel, user_id: str, job_url: str,
+    resume_path: str | None = None, run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply on Foundit (Monster India)."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click the 'Apply' button. "
-        f"Fill in any required fields. "
-        f"{'Upload resume from ' + resume_path + '. ' if resume_path else ''}"
-        f"Submit the application. Confirm it was sent."
-    )
-    await _human_delay()
-    try:
-        result = await run_browser_task(llm, task, user_id, max_steps=15)
-        return ApplyResult("foundit", job_url, "applied", result or "Submitted")
-    except Exception as exc:
-        logger.warning("Foundit apply failed for user %s: %s", user_id, exc)
-        return ApplyResult("foundit", job_url, "failed", GENERIC_APPLY_FAILURE)
+    return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_cutshort(
-    llm: BaseChatModel, user_id: str, job_url: str
+    llm: BaseChatModel, user_id: str, job_url: str,
+    run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply on Cutshort — typically one-click."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click 'Apply' or 'I'm interested'. "
-        f"If there's a form, fill required fields. "
-        f"Submit. Confirm application sent."
-    )
-    await _human_delay()
-    try:
-        result = await run_browser_task(llm, task, user_id, max_steps=12)
-        return ApplyResult("cutshort", job_url, "applied", result or "Submitted")
-    except Exception as exc:
-        logger.warning("Cutshort apply failed for user %s: %s", user_id, exc)
-        return ApplyResult("cutshort", job_url, "failed", GENERIC_APPLY_FAILURE)
+    return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id)
 
 
-# Platform handler registry
+# ── Platform registry — kept for backward compat with auto_apply_pipeline ───
 PLATFORM_HANDLERS = {
     "linkedin": apply_linkedin,
     "naukri": apply_naukri,
@@ -188,30 +209,15 @@ async def apply_to_external_form(
     resume_path: str | None = None,
     cover_letter: str = "",
     job_description: str = "",
+    run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply to any job that has its own application form (Workday, Greenhouse, Lever, etc.).
-
-    This is the universal fallback — it uses the form_filler_service to intelligently
-    fill any form using the user's profile data.
-    """
-    from app.services.form_filler_service import fill_and_submit_form
-
-    await _human_delay()
-    result = await fill_and_submit_form(
-        llm=llm,
-        user_id=user_id,
-        job_url=job_url,
+    """Alias kept for backward compatibility — delegates to apply_to_any_portal."""
+    return await apply_to_any_portal(
+        llm, user_id, job_url,
+        run_id=run_id,
         resume_path=resume_path,
         cover_letter=cover_letter,
         job_description=job_description,
-    )
-
-    status_map = {"applied": "applied", "requires_manual": "requires_manual", "failed": "failed"}
-    return ApplyResult(
-        platform="external",
-        job_url=job_url,
-        status=status_map.get(result["status"], "failed"),
-        message=result.get("message", ""),
     )
 
 
@@ -224,45 +230,19 @@ async def apply_to_job(
     message: str = "",
     cover_letter: str = "",
     job_description: str = "",
+    run_id: str | None = None,
 ) -> ApplyResult:
-    """Apply to a job on any supported platform.
+    """Apply to a job on any portal — routes everything through the universal HITL path.
 
-    Routes to the correct platform-specific handler. If the platform is unknown
-    or the job redirects to an external form, uses the universal form filler.
-
-    Args:
-        llm: LLM for browser agent
-        user_id: User ID for persistent session
-        platform: Platform key (linkedin, naukri, etc.)
-        job_url: Direct URL to the job posting
-        resume_path: Optional path to tailored resume file
-        message: Optional cover message (for platforms that support it)
-        cover_letter: Full cover letter text for form fields
-        job_description: JD text for "why this role" fields
-
-    Returns:
-        ApplyResult with status
+    The platform hint is used only for logging/SSE labelling; the actual
+    apply logic works from the URL regardless of whether the platform is
+    named in PLATFORM_HANDLERS or not.  Unknown portals (any ATS URL,
+    company career page, job board not listed) work without any changes.
     """
-    handler = PLATFORM_HANDLERS.get(platform)
-
-    # If no specific handler, use universal form filler
-    if not handler:
-        return await apply_to_external_form(
-            llm, user_id, job_url, resume_path, cover_letter, job_description
-        )
-
-    # Try platform-specific handler first
-    if platform == "instahyre":
-        result = await handler(llm, user_id, job_url, message)
-    elif platform == "cutshort":
-        result = await handler(llm, user_id, job_url)
-    else:
-        result = await handler(llm, user_id, job_url, resume_path)
-
-    # If platform handler reports REQUIRES_MANUAL (external redirect), use form filler
-    if result.status == "requires_manual" and "redirect" in result.message.lower():
-        return await apply_to_external_form(
-            llm, user_id, job_url, resume_path, cover_letter, job_description
-        )
-
-    return result
+    return await apply_to_any_portal(
+        llm, user_id, job_url,
+        run_id=run_id,
+        resume_path=resume_path,
+        cover_letter=cover_letter,
+        job_description=job_description,
+    )

@@ -3,7 +3,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, Suspense, useState } from "react";
 import { Toaster } from "sonner";
-import { GoogleOAuthSync } from "@/components/auth/GoogleOAuthSync";
 
 const ReactQueryDevtools =
   process.env.NODE_ENV === "development"
@@ -40,7 +39,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <GoogleOAuthSync />
       {children}
       <Toaster position="top-right" richColors closeButton />
       <Suspense>

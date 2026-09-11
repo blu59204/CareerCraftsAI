@@ -29,7 +29,7 @@ const STATUS_LABEL: Record<Status, string> = {
 // Services we cannot probe from the public status page are honestly marked
 // "not monitored" rather than reported as operational.
 const STATIC_SERVICES: { name: string; status: Status }[] = [
-  { name: "Authentication (Supabase)", status: "unknown" },
+  { name: "Authentication", status: "unknown" },
   { name: "Agent Orchestrator", status: "unknown" },
   { name: "Job Search (browser-use)", status: "unknown" },
   { name: "Email Agent (Gmail MCP)", status: "unknown" },

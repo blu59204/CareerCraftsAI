@@ -212,8 +212,7 @@ class AgentHarness:
         error_msg: str | None = None
 
         try:
-            loop = asyncio.get_running_loop()
-            result_state = await loop.run_in_executor(None, orchestrator.invoke, state)
+            result_state = await orchestrator.ainvoke(state)
             success = result_state["status"] in {"completed", "awaiting_approval"}
             error_msg = result_state.get("error")
         except Exception as exc:
@@ -308,6 +307,7 @@ class AgentHarness:
             "error": error_msg,
             "strategy_used": strategy,
             "duration_ms": duration_ms,
+            "tokens_used": result_state.get("tokens_used") if result_state else None,
         }
 
     # ------------------------------------------------------------------
@@ -424,6 +424,52 @@ class AgentHarness:
             if output.get("delivered"):
                 new_learnings.append(
                     {"learning": "deliverable_email", "success_rate": 1.0, "sample_count": 1}
+                )
+
+        if agent_type == "auto_apply":
+            # Track per-portal outcomes so future runs know which portals work.
+            # Structure in output["applications"]: list of {platform, job_url, status, ...}
+            applications = output.get("applications") or []
+            portal_outcomes: dict[str, list[str]] = {}
+            for app in applications:
+                portal = (app.get("platform") or "unknown").lower()
+                status = app.get("status") or "unknown"
+                portal_outcomes.setdefault(portal, []).append(status)
+
+            for portal, statuses in portal_outcomes.items():
+                total = len(statuses)
+                success_count = sum(1 for s in statuses if s in ("draft_saved", "applied"))
+                manual_count = sum(1 for s in statuses if s == "requires_manual")
+                fail_count = sum(1 for s in statuses if s == "failed")
+
+                # Save portal-specific learning so the harness biases strategy selection.
+                # Key format: "portal:<name>:<outcome>" — parsed by _select_strategy.
+                if manual_count == total and total >= 1:
+                    # Portal consistently requires manual — don't waste browser sessions
+                    new_learnings.append({
+                        "learning": f"portal:{portal}:requires_manual",
+                        "success_rate": 0.0,
+                        "sample_count": total,
+                    })
+                elif success_count > 0:
+                    rate = success_count / total
+                    new_learnings.append({
+                        "learning": f"portal:{portal}:auto_fill_works",
+                        "success_rate": rate,
+                        "sample_count": total,
+                    })
+
+            # Save summary for UI / dashboard
+            if applications:
+                await self._memory.set_preference(
+                    user_id,
+                    "last_auto_apply_portals",
+                    json.dumps(list(portal_outcomes.keys())[:10]),
+                )
+                await self._memory.set_preference(
+                    user_id,
+                    "last_auto_apply_count",
+                    str(len(applications)),
                 )
 
         if new_learnings:

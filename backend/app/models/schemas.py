@@ -8,7 +8,9 @@ from pydantic import BaseModel, EmailStr, Field
 class UserCreate(BaseModel):
     email: EmailStr
     full_name: str | None = None
-    supabase_uid: str = Field(min_length=36, max_length=36)
+    # Auth subject (`sub`). Clerk emits a text id like "user_2abc..." (~32 chars),
+    # so this is no longer a fixed-width UUID — only non-empty and bounded.
+    supabase_uid: str = Field(min_length=1, max_length=255)
 
 
 class UserResponse(BaseModel):
@@ -44,6 +46,10 @@ class UserPreferencesSchema(BaseModel):
     preferred_locations: list[str] = []
     current_title: str | None = Field(None, max_length=200)
     bio: str | None = Field(None, max_length=2000)
+    # When True, autonomous job search and apply use a visible Chromium
+    # streamed to the UI.  When False (default), the headless job-board
+    # API waterfall runs.  Always overridable per-request.
+    prefer_live_browser: bool = False
 
 
 class UserPreferencesResponse(UserPreferencesSchema):
@@ -54,7 +60,7 @@ class UserPreferencesResponse(UserPreferencesSchema):
 
 
 class ModelSettingsCreate(BaseModel):
-    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim"]
+    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim", "openrouter", "opencode"]
     api_key: str = Field(min_length=1, max_length=4096)
     model_name: str
     ollama_url: str | None = None

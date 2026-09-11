@@ -13,7 +13,7 @@ import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { connectGoogleForGmail } from "@/lib/google-oauth";
-import { createClient } from "@/lib/supabase";
+import { useClerk, useUser } from "@clerk/nextjs";
 
 type Tab = "account" | "security" | "notifications";
 
@@ -68,14 +68,14 @@ function getInitials(fullName: string | null | undefined): string {
 export default function AccountSettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  const supabase = createClient();
+  const { user: authUser } = useUser();
+  const { signOut } = useClerk();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [agentAlerts, setAgentAlerts] = useState(true);
   const [followUpReminders, setFollowUpReminders] = useState(true);
   const [weeklyDigest, setWeeklyDigest] = useState(false);
   const [twoFactor, setTwoFactor] = useState(false);
-  const [supabaseUser, setSupabaseUser] = useState<any>(null);
 
   const [name, setName] = useState("");
   const [headline, setHeadline] = useState("");
@@ -106,23 +106,19 @@ export default function AccountSettingsPage() {
     }
   }, [user]);
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setSupabaseUser(user);
-    });
-  }, [supabase]);
-
-  const hasLinkedIn = supabaseUser?.app_metadata?.provider === "linkedin_oidc" ||
-                      supabaseUser?.identities?.some((id: any) => id.provider === "linkedin_oidc");
-  const hasGithub = supabaseUser?.app_metadata?.provider === "github" ||
-                    supabaseUser?.identities?.some((id: any) => id.provider === "github");
+  // Linked social identities live on the auth user as external accounts.
+  const externalAccounts = authUser?.externalAccounts ?? [];
+  const hasProvider = (provider: string) =>
+    externalAccounts.some((account) => account.provider === provider);
+  const hasLinkedIn = hasProvider("linkedin_oidc") || hasProvider("linkedin");
+  const hasGithub = hasProvider("github");
 
   const handleManageAuth = () => {
-    toast.info("OAuth connections are managed through Supabase Auth. Visit /login to connect additional providers.");
+    toast.info("Sign in with the provider from the login page to link it to this account.");
   };
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOut();
     router.push("/");
   };
 
@@ -228,7 +224,7 @@ export default function AccountSettingsPage() {
                 <label className="mb-1.5 block text-sm font-medium">
                   Email
                   <span className="ml-2 rounded-full bg-success/15 px-2 py-0.5 text-xs font-normal text-success">
-                    Connected via Supabase
+                    Verified
                   </span>
                 </label>
                 <input
@@ -448,12 +444,12 @@ export default function AccountSettingsPage() {
             <div className="mb-6 text-sm font-medium">Change password</div>
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Passwords and connected login methods are managed by Supabase Auth.
+                Passwords and connected login methods are managed by your identity provider.
               </p>
               <LiquidGlassButton
                 tone="primary"
                 size="sm"
-                onClick={() => toast.info("Password management is handled through Supabase. Use the password reset flow on the login page.")}
+                onClick={() => toast.info("Use the password reset flow on the login page to change your password.")}
               >
                 Manage password
               </LiquidGlassButton>
@@ -469,7 +465,7 @@ export default function AccountSettingsPage() {
                   Currently: {twoFactor ? "enabled" : "disabled"}
                 </div>
               </div>
-              <Toggle enabled={twoFactor} onToggle={() => toast.info("Two-factor authentication is managed through Supabase Auth settings.")} />
+              <Toggle enabled={twoFactor} onToggle={() => toast.info("Two-factor authentication is managed by your identity provider.")} />
             </div>
           </motion.div>
 

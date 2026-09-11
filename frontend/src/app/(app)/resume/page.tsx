@@ -540,10 +540,10 @@ export default function ResumePage() {
   // Query: agent runs for history tab
   // -------------------------------------------------------------------------
   const { data: agentRuns, isLoading: runsLoading } = useQuery<AgentRun[]>({
-    queryKey: ["agent-runs"],
+    queryKey: ["agent-runs", "resume"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=20");
-      return (data as AgentRun[]).filter((r) => r.agent_type === "resume");
+      return ((Array.isArray(data) ? data : data.runs ?? []) as AgentRun[]).filter((r) => ["resume", "resume_optimize"].includes(r.agent_type));
     },
     enabled: tab === "history",
   });

@@ -23,8 +23,46 @@ class JobListing:
     salary: str | None = None
 
 
-# JobSpy-supported platforms
-JOBSPY_PLATFORMS = ["linkedin", "indeed", "glassdoor", "google", "zip_recruiter"]
+# JobSpy-supported platforms (wellfound/bayt/naukri added 2026-06-05)
+JOBSPY_PLATFORMS = ["linkedin", "indeed", "glassdoor", "google", "zip_recruiter", "wellfound", "bayt", "naukri"]
+
+
+# Map common location strings to JobSpy's `country_indeed` enum (ISO 3166-1
+# alpha-2, lowercased).  Default is "usa" because Indeed defaults to US; for
+# India-based users the upstream caller passes `country="India"` explicitly.
+_COUNTRY_MAP = {
+    "usa": "usa", "us": "usa", "united states": "usa", "new york": "usa",
+    "san francisco": "usa", "seattle": "usa", "austin": "usa", "boston": "usa",
+    "india": "india", "in": "india", "bangalore": "india", "bengaluru": "india",
+    "mumbai": "india", "delhi": "india", "hyderabad": "india", "pune": "india",
+    "chennai": "india", "kolkata": "india", "gurgaon": "india", "gurugram": "india",
+    "noida": "india", "ahmedabad": "india", "jaipur": "india",
+    "uk": "uk", "united kingdom": "uk", "london": "uk", "manchester": "uk",
+    "germany": "germany", "berlin": "germany", "munich": "germany",
+    "france": "france", "paris": "france",
+    "canada": "canada", "toronto": "canada", "vancouver": "canada",
+    "australia": "australia", "sydney": "australia", "melbourne": "australia",
+    "singapore": "singapore", "dubai": "uae", "uae": "uae",
+}
+
+
+def _country_from_location(location: str | None) -> str:
+    """Map a free-form location string to JobSpy's `country_indeed` enum.
+
+    Uses word-boundary matching so that "Berlin" doesn't match "in" in the
+    India key (substring collision).
+    """
+    import re
+
+    if not location:
+        return "usa"
+    needle = location.lower().strip()
+    # Sort keys by length desc so longer keys ("united kingdom") match before
+    # shorter ones ("uk"); "in" must come last or use word boundaries.
+    for key in sorted(_COUNTRY_MAP.keys(), key=len, reverse=True):
+        if re.search(rf"\b{re.escape(key)}\b", needle):
+            return _COUNTRY_MAP[key]
+    return "usa"
 
 # Indian platforms requiring browser-use
 INDIAN_BROWSER_PLATFORMS = [
@@ -121,10 +159,12 @@ async def scrape_all_platforms(
     Returns:
         Combined job listings from all sources.
     """
-    # JobSpy results (sync, run in executor)
+    # JobSpy results (sync, run in executor).  Derive country from the
+    # caller's location (handles India / US / UK / Remote without hard-coding).
     loop = asyncio.get_running_loop()
+    country_indeed = _country_from_location(location)
     jobspy_jobs = await loop.run_in_executor(
-        None, scrape_jobs, search_term, location, results_wanted, hours_old, None, "India"
+        None, scrape_jobs, search_term, location, results_wanted, hours_old, None, country_indeed
     )
 
     # Indian platforms (async, browser-use)

@@ -106,20 +106,26 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
         ])
 
         raw = response.content.strip()
-        # Strip markdown fences robustly (handles trailing ```)
         if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.rstrip("`").strip()
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.strip().startswith("json"):
+                raw = raw.strip()[4:].strip()
+        raw = raw.strip()
         try:
             prep_data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            logger.warning("Interview prep LLM returned invalid JSON: %s", exc)
+        except (json.JSONDecodeError, IndexError) as exc:
+            logger.warning("Interview prep LLM returned invalid JSON: %s. Using fallback.", exc)
             return {
                 **state,
-                "status": "failed",
-                "error": "Agent failed",
+                "status": "completed",
+                "result": _fallback_prep(
+                    target_role, company,
+                    f"LLM response could not be parsed as JSON: {str(exc)[:200]}"
+                ),
+                "messages": state["messages"] + [
+                    AIMessage(content=f"Interview prep ready for {target_role} at {company}.")
+                ],
             }
 
         return {

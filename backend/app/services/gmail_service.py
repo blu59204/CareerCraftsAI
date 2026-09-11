@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
 import httpx
-from langchain_google_community import GmailToolkit
 
 from app.core.config import settings
 from app.core.security import decrypt_api_key, encrypt_api_key
@@ -27,14 +26,15 @@ class GmailMCPClient:
 
     def __init__(self, user_id: str):
         self.user_id = user_id
-        self._toolkit: GmailToolkit | None = None
+        self._toolkit: object | None = None
         self._available: bool | None = None
 
-    def _get_toolkit(self) -> GmailToolkit | None:
+    def _get_toolkit(self) -> object | None:
         if self._available is False:
             return None
         if self._toolkit is None:
             try:
+                from langchain_google_community import GmailToolkit  # lazy import
                 self._toolkit = GmailToolkit()
                 self._available = True
             except Exception as exc:

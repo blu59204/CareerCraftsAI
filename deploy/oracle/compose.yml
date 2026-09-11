@@ -1,0 +1,117 @@
+name: careercraft-isolated
+services:
+  backend:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    command: uvicorn app.main:app --host 127.0.0.1 --port 18100
+    init: true
+    # Uploaded resumes/documents. Supabase Storage is unreachable from this VM
+    # for the same reason the database was, so files live on local disk.
+    # Shared with agent-worker, which reads documents during agent runs.
+    volumes:
+      - docstore:/data/documents
+    mem_limit: 1500m
+    cpus: 0.5
+    restart: unless-stopped
+  agent-worker:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    command: python -m app.workflow_worker
+    init: true
+    volumes:
+      - docstore:/data/documents
+    mem_limit: 2g
+    cpus: 0.75
+    stop_grace_period: 360s
+    restart: unless-stopped
+  scheduler:
+    build: ../../worker
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    mem_limit: 256m
+    cpus: 0.25
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ../../frontend
+      args:
+        NEXT_PUBLIC_API_URL: /api/v1
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        # Next.js inlines NEXT_PUBLIC_* at build time, so the publishable key
+        # has to be an ARG as well as runtime env or the client bundle ships
+        # without it and Clerk fails to initialise in the browser.
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        BACKEND_URL: http://127.0.0.1:18100
+    network_mode: host
+    environment:
+      PORT: 18101
+      HOSTNAME: 127.0.0.1
+      BACKEND_URL: http://127.0.0.1:18100
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      # Only the Clerk secret is passed, named explicitly. Using
+      # env_file: backend.env here injected DATABASE_URL, REDIS_URL and the
+      # Supabase service key into the frontend container — credentials it has
+      # no use for and should never hold — and the extra vars broke server-side
+      # rendering with a self-proxy to https://localhost:18101.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+    mem_limit: 768m
+    cpus: 0.5
+    restart: unless-stopped
+  postgres:
+    # Self-hosted database. Supabase's direct host (db.<ref>.supabase.co) is
+    # IPv6-only and this VM has no IPv6, so the managed database is simply
+    # unreachable from here; the pooler is the only IPv4 path and it rejects
+    # the tenant. Running Postgres locally removes that dependency entirely.
+    image: pgvector/pgvector:pg16
+    network_mode: host
+    # listen_addresses is pinned to loopback because network_mode: host means
+    # any other value would expose the database on the VM's public interface.
+    command: postgres -p 18132 -c listen_addresses=127.0.0.1
+    env_file: /opt/careercraft-secrets/postgres.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
+    mem_limit: 1g
+    cpus: 0.5
+    restart: unless-stopped
+  redis:
+    image: redis:8-alpine
+    network_mode: host
+    command: redis-server /etc/redis/careercraft.conf
+    volumes:
+      - /opt/careercraft-secrets/redis.conf:/etc/redis/careercraft.conf:ro
+      - redis_data:/data
+    mem_limit: 384m
+    restart: unless-stopped
+  gateway:
+    image: nginx:alpine
+    network_mode: host
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    mem_limit: 128m
+    restart: unless-stopped
+  sandbox-server:
+    build:
+      context: .
+      dockerfile: OpenSandbox.Dockerfile
+    network_mode: host
+    env_file: /opt/careercraft-secrets/sandbox.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./sandbox.toml:/etc/opensandbox.toml:ro
+      - sandbox_metadata:/root/.opensandbox
+    environment:
+      SANDBOX_CONFIG_PATH: /etc/opensandbox.toml
+    mem_limit: 512m
+    cpus: 0.25
+    restart: unless-stopped
+volumes:
+  redis_data:
+  sandbox_metadata:
+  pgdata:
+  docstore:

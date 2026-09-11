@@ -20,6 +20,7 @@ from langchain_core.messages import HumanMessage
 from app.agents.resume_agent import resume_agent_node
 from app.agents.state import AgentState
 from app.core.event_bus import emit
+from app.core.config import settings as app_settings
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
 from app.services.email_finder_service import find_recruiter_email as find_email_for_company
@@ -84,6 +85,7 @@ async def run_auto_apply_pipeline(
         Pipeline results with stats and per-job outcomes
     """
     start_ts = time.monotonic()
+    max_applications = max(1, min(int(max_applications), 5))
     results: dict[str, Any] = {
         "jobs_found": 0,
         "jobs_scored": 0,
@@ -158,11 +160,11 @@ async def run_auto_apply_pipeline(
 
     # Login to LinkedIn via browser-use if auto mode + credentials available
     linkedin_ready = False
-    if linkedin_email and linkedin_password and auto_mode == "auto":
+    if linkedin_email and linkedin_password and auto_mode == "auto" and not app_settings.OPEN_SANDBOX_URL:
         try:
             from app.services.browser_control_service import linkedin_login as browser_login
-            await browser_login(llm, user_id, linkedin_email, linkedin_password, live_browser=live_browser, run_id=run_id)
-            linkedin_ready = True
+            login_status = await browser_login(llm, user_id, linkedin_email, linkedin_password, live_browser=live_browser, run_id=run_id)
+            linkedin_ready = login_status == "Login completed"
         except Exception as exc:
             logger.warning("[AutoApply] LinkedIn browser login failed: %s", exc)
             results["errors"].append("LinkedIn browser login failed")
@@ -250,7 +252,7 @@ async def _apply_to_job(
         # ── Tailor resume ───────────────────────────────────────────
         state = AgentState(
             user_id=user_id,
-            run_id=str(uuid.uuid4()),
+            run_id=run_id or str(uuid.uuid4()),
             task_type="resume_optimize",
             messages=[HumanMessage(content=job.description[:3000])],
             context={"jd_text": job.description[:3000], "template": "modern"},
@@ -263,6 +265,12 @@ async def _apply_to_job(
             None, resume_agent_node, state
         )
         result["resume_tailored"] = resume_result["status"] in ("completed", "awaiting_approval")
+        resume_draft = resume_result.get("pending_action") or resume_result.get("result") or {}
+        result["resume_draft"] = resume_draft
+        resume_sha256 = None
+        if resume_draft.get("pdf_document_id"):
+            from app.services.application_workflow import load_resume
+            _, resume_sha256 = await load_resume(uuid.UUID(user_id), resume_draft["pdf_document_id"])
 
         # ── Generate cold email ─────────────────────────────────────
         email_content = None
@@ -293,12 +301,15 @@ async def _apply_to_job(
 
                 # Autonomous browser application — the agent fills + submits the
                 # real job form on approval (HITL gate preserved).
-                if job.job_url:
+                if job.job_url and resume_draft.get("pdf_document_id"):
                     checkpoint_data["actions_pending"].append({
                         "action": "apply_browser",
                         "job_url": job.job_url,
                         "company": job.company,
                         "role": job.title,
+                        "pdf_document_id": resume_draft["pdf_document_id"],
+                        "resume_sha256": resume_sha256,
+                        "resume_markdown": resume_draft.get("resume_markdown", ""),
                     })
                     result["apply_browser_queued"] = True
 
@@ -318,11 +329,6 @@ async def _apply_to_job(
                     contacts = await proxycurl.find_contacts(job.company, "recruiter")
                     if contacts and contacts[0].get("linkedin_url"):
                         note = _generate_linkedin_note(llm, job.company, job.title, user_profile)
-                        checkpoint_data["actions_pending"].append({
-                            "action": "send_linkedin_connection",
-                            "profile_url": contacts[0]["linkedin_url"],
-                            "note": note,
-                        })
                         result["linkedin_draft"] = {
                             "profile_url": contacts[0]["linkedin_url"],
                             "note": note,
@@ -349,6 +355,16 @@ async def _apply_to_job(
                 "email_body": email_content["body"] if email_content else None,
                 "resume_ready": result.get("resume_tailored", False),
             }
+
+        # Drafts mode also allows document review followed by sandbox preparation.
+        if not result.get("approval_actions") and job.job_url and resume_draft.get("pdf_document_id"):
+            result["approval_actions"] = [{
+                "action": "apply_browser", "job_url": job.job_url,
+                "company": job.company, "role": job.title,
+                "pdf_document_id": resume_draft["pdf_document_id"],
+                "resume_sha256": resume_sha256,
+                "resume_markdown": resume_draft.get("resume_markdown", ""),
+            }]
 
     except Exception as exc:
         result["error"] = "Auto-apply preparation failed"

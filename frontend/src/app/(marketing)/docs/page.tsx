@@ -13,7 +13,7 @@ const SECTIONS = [
   },
   {
     title: "Integrations",
-    items: ["Supabase Auth setup", "Google OAuth (Gmail)", "LinkedIn OIDC", "OpenAI & Anthropic keys"],
+    items: ["Authentication setup", "Google OAuth (Gmail)", "LinkedIn OIDC", "OpenAI & Anthropic keys"],
   },
   {
     title: "Self-hosting",

@@ -1,15 +1,17 @@
-version: "3.9"
-
 services:
   frontend:
     build: ./frontend
     env_file: ./frontend/.env.local
+    environment:
+      BACKEND_URL: http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://0.0.0.0:3000',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>process.exit(r.statusCode===200&&d.length>100?0:1))}).on('error',()=>process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -18,16 +20,26 @@ services:
   backend:
     build: ./backend
     env_file: ./backend/.env
+    ports:
+      - "8000:8000"
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # Browser Use (Chromium/Playwright) resource limits.
+    # Each Chromium session uses ~200-500 MB RAM; cap total to prevent OOM.
+    # shm_size is required — without it Chromium crashes with SIGBUS on /dev/shm.
+    # Tune mem_limit based on VPS RAM: 4 GB VPS → 2.5g, 8 GB VPS → 5g.
+    mem_limit: 2500m
+    shm_size: "256m"
+    volumes:
+      - browser_debug:/tmp/browser_debug
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
-      timeout: 5s
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\" || exit 1"]
+      interval: 20s
+      timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 60s
 
   worker:
     build: ./worker
@@ -39,10 +51,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  agent-worker:
+    build: ./backend
+    command: python -m app.workflow_worker
+    env_file: ./backend/.env
+    init: true
+    stop_grace_period: 360s
+    mem_limit: 2g
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:8-alpine
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -76,3 +100,7 @@ services:
 
 volumes:
   redis_data:
+  # Browser Use debug screenshots — mounted into the backend container at
+  # /tmp/browser_debug. Enable with BROWSER_DEBUG_SCREENSHOTS=true in .env.
+  # Inspect failures with: docker compose exec backend ls /tmp/browser_debug/
+  browser_debug:

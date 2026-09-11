@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import {
@@ -29,22 +29,43 @@ import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 import { useAgentStore } from "@/store/agentStore";
 
+// Each agent previously carried its own hue — cyan, violet, fuchsia, indigo,
+// rose, lime and more across thirteen cards. Thirteen unrelated hues read as
+// decoration rather than meaning, and the purple/fuchsia/indigo gradients are
+// the most recognisable generative-UI tell there is.
+//
+// These four tints are near-neighbours of the brand green (146) plus one warm
+// complement, so the grid reads as one system, and the colour now encodes what
+// the agent *does* — shared tint means shared job.
+const ACCENT = {
+  // Moves an application forward.
+  pipeline: "from-[hsl(146_55%_45%/0.22)] to-[hsl(146_55%_45%/0.04)]",
+  // Produces something you will read and edit.
+  document: "from-[hsl(40_70%_50%/0.20)] to-[hsl(40_70%_50%/0.04)]",
+  // Talks to a human.
+  outreach: "from-[hsl(175_50%_42%/0.20)] to-[hsl(175_50%_42%/0.04)]",
+  // Gathers information you act on later.
+  intel: "from-[hsl(60_8%_45%/0.18)] to-[hsl(60_8%_45%/0.04)]",
+} as const;
+
 const AGENTS = [
-  { key: "resume_optimize", label: "Resume", icon: FileText, accent: "from-cyan-500/20 to-blue-500/5", note: "Tailored resume draft" },
-  { key: "job_search", label: "Job Search", icon: Search, accent: "from-emerald-500/20 to-cyan-500/5", note: "Fresh matching roles" },
-  { key: "nl_job_search", label: "NL Search", icon: Search, accent: "from-teal-500/20 to-emerald-500/5", note: "Plain-English query parser" },
-  { key: "linkedin_optimize", label: "LinkedIn", icon: BrandLinkedin, accent: "from-sky-500/20 to-indigo-500/5", note: "Profile rewrite" },
-  { key: "linkedin_outreach", label: "Outreach", icon: Users, accent: "from-blue-500/20 to-cyan-500/5", note: "Recruiter drafts" },
-  { key: "email", label: "Email", icon: Mail, accent: "from-amber-500/20 to-orange-500/5", note: "Reviewable draft" },
-  { key: "email_monitor", label: "Monitor", icon: MonitorCheck, accent: "from-lime-500/20 to-emerald-500/5", note: "Inbox status scan" },
-  { key: "interview_prep", label: "Interview Prep", icon: Sparkles, accent: "from-fuchsia-500/20 to-violet-500/5", note: "Question set" },
-  { key: "interview_coach", label: "Coach", icon: MessageSquare, accent: "from-rose-500/20 to-pink-500/5", note: "Mock interview session" },
-  { key: "cover_letter", label: "Cover Letter", icon: FileText, accent: "from-purple-500/20 to-fuchsia-500/5", note: "Role-specific letter" },
-  { key: "salary_intelligence", label: "Salary", icon: DollarSign, accent: "from-green-500/20 to-lime-500/5", note: "Market benchmark" },
-  { key: "company_research", label: "Company", icon: Building2, accent: "from-indigo-500/20 to-blue-500/5", note: "Interview intel brief" },
+  { key: "auto_apply", label: "Auto Apply", icon: Bot, accent: ACCENT.pipeline, note: "Isolated browser + two reviews" },
+  { key: "resume_optimize", label: "Resume", icon: FileText, accent: ACCENT.document, note: "Tailored resume draft" },
+  { key: "job_search", label: "Job Search", icon: Search, accent: ACCENT.pipeline, note: "Fresh matching roles" },
+  { key: "nl_job_search", label: "NL Search", icon: Search, accent: ACCENT.pipeline, note: "Plain-English query parser" },
+  { key: "linkedin_optimize", label: "LinkedIn", icon: BrandLinkedin, accent: ACCENT.document, note: "Profile rewrite" },
+  { key: "linkedin_outreach", label: "Outreach", icon: Users, accent: ACCENT.outreach, note: "Recruiter drafts" },
+  { key: "email", label: "Email", icon: Mail, accent: ACCENT.outreach, note: "Reviewable draft" },
+  { key: "email_monitor", label: "Monitor", icon: MonitorCheck, accent: ACCENT.outreach, note: "Inbox status scan" },
+  { key: "interview_prep", label: "Interview Prep", icon: Sparkles, accent: ACCENT.document, note: "Question set" },
+  { key: "interview_coach", label: "Coach", icon: MessageSquare, accent: ACCENT.outreach, note: "Mock interview session" },
+  { key: "cover_letter", label: "Cover Letter", icon: FileText, accent: ACCENT.document, note: "Role-specific letter" },
+  { key: "salary_intelligence", label: "Salary", icon: DollarSign, accent: ACCENT.intel, note: "Market benchmark" },
+  { key: "company_research", label: "Company", icon: Building2, accent: ACCENT.intel, note: "Interview intel brief" },
 ];
 
 const DEFAULT_CONTEXT: Record<string, Record<string, unknown>> = {
+  auto_apply: { search_query: "software engineer", location: "Remote", max_applications: 1 },
   resume_optimize: { jd_text: "Software Engineer role focused on product delivery, reliability, and measurable impact." },
   job_search: { search_query: "software engineer", location: "Remote", max_results: 10 },
   nl_job_search: { query: "remote senior backend role at a product company using Python or TypeScript" },
@@ -87,6 +108,8 @@ function relativeTime(iso: string | null | undefined): string {
 }
 
 function runMessage(run: AgentRun): string {
+  if (run.status === "queued") return "Queued for a worker";
+  if (run.status === "awaiting_approval") return "Waiting for approval";
   if (run.status === "running") return "In progress...";
   if (run.status === "failed") return run.output?.error ?? "Failed";
   if (run.duration_ms !== null) return `Completed in ${(run.duration_ms / 1000).toFixed(1)}s`;
@@ -104,34 +127,43 @@ function runStatus(run?: AgentRun) {
 export default function AgentsPage() {
   const [active, setActive] = useState("resume_optimize");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [contextText, setContextText] = useState(JSON.stringify(DEFAULT_CONTEXT.resume_optimize, null, 2));
   const qc = useQueryClient();
   const initRun = useAgentStore((s) => s.initRun);
   const storeActiveRunId = useAgentStore((s) => s.activeRunId);
   const setActiveRun = useAgentStore((s) => s.setActiveRun);
   // Persisted run survives navigation + reload, so the panel reappears on return.
   const displayRunId = activeRunId ?? storeActiveRunId;
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("run");
+    if (requested && /^[0-9a-f-]{36}$/i.test(requested)) setActiveRun(requested);
+  }, [setActiveRun]);
 
   const runMutation = useMutation({
-    mutationFn: () =>
-      apiClient.post<{ run_id: string }>("/agents/run", {
+    mutationFn: async () => {
+      const context = JSON.parse(contextText);
+      if (!context || Array.isArray(context) || typeof context !== "object") throw new Error("Context must be a JSON object");
+      return apiClient.post<{ run_id: string }>("/agents/run", {
         task_type: active,
-        context: DEFAULT_CONTEXT[active] ?? {},
-      }),
+        context,
+      });
+    },
     onSuccess: (res) => {
       toast.success(`${AGENTS.find((a) => a.key === active)?.label} Agent started`);
       initRun(res.data.run_id);
       setActiveRunId(res.data.run_id);
       setTimeout(() => qc.invalidateQueries({ queryKey: ["agent-runs"] }), 3000);
     },
-    onError: () => toast.error("Agent unavailable — backend not connected"),
+    onError: () => toast.error("Could not queue the agent. Check your context, model settings, and active-run limit."),
   });
 
   const { data: runs = [], isLoading: runsLoading } = useQuery<AgentRun[]>({
     queryKey: ["agent-runs"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=10");
-      return data;
+      return Array.isArray(data) ? data : data.runs ?? [];
     },
+    refetchInterval: 5000,
   });
 
   const { data: ragDocs = [] } = useQuery<RagDocument[]>({
@@ -187,7 +219,7 @@ export default function AgentsPage() {
             return (
               <button
                 key={a.key}
-                onClick={() => setActive(a.key)}
+                onClick={() => { setActive(a.key); setContextText(JSON.stringify(DEFAULT_CONTEXT[a.key] ?? {}, null, 2)); }}
                 className={`group min-h-[76px] rounded-xl border px-3 py-3 text-left transition ${
                   isActive
                     ? "border-primary/35 bg-primary/10 text-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]"
@@ -233,6 +265,12 @@ export default function AgentsPage() {
             </LiquidGlassButton>
           </div>
 
+          <label className="mt-4 block text-sm font-medium">
+            Task context (JSON)
+            <textarea value={contextText} onChange={event => setContextText(event.target.value)}
+              className="mt-2 min-h-28 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs"
+              spellCheck={false} />
+          </label>
           <div className="mt-5 min-h-[240px] rounded-xl border border-border bg-background/45 p-4">
           {/* BUG 12: mount AgentStatusStream when a run is active */}
           {displayRunId ? (
@@ -240,8 +278,6 @@ export default function AgentsPage() {
               runId={displayRunId}
               onApprove={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
-                setActiveRunId(null);
-                setActiveRun(null);
               }}
               onCancel={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
@@ -294,8 +330,8 @@ export default function AgentsPage() {
               </div>
             ) : (
               filteredRuns.map((run) => (
+                <button key={run.id} className="w-full text-left" onClick={() => { setActiveRunId(run.id); setActiveRun(run.id); }}>
                 <AgentStatusCard
-                  key={run.id}
                   agentName={`${run.agent_type.charAt(0).toUpperCase() + run.agent_type.slice(1).replace(/_/g, " ")} Agent`}
                   status={
                     run.status === "completed"
@@ -309,6 +345,7 @@ export default function AgentsPage() {
                   latestMessage={runMessage(run)}
                   startedAt={relativeTime(run.started_at)}
                 />
+                </button>
               ))
             )}
           </div>
@@ -316,11 +353,10 @@ export default function AgentsPage() {
 
         {/* BUG 7: wire approval callbacks with actual run_id — only show if NOT the same as activeRunId to avoid duplicates */}
         {awaitingRun && awaitingRun.id !== displayRunId && (
-          <AgentStatusStream
-            runId={awaitingRun.id}
-            onApprove={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}
-            onCancel={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}
-          />
+          <button className="w-full rounded-xl border border-border p-3 text-sm text-primary"
+            onClick={() => { setActiveRunId(awaitingRun.id); setActiveRun(awaitingRun.id); }}>
+            Open pending review · {awaitingRun.agent_type}
+          </button>
         )}
       </motion.aside>
     </motion.div>

@@ -1,13 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { motion } from "motion/react";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { BlurText } from "@/components/immersive/BlurText";
 import { FilmGrain } from "@/components/immersive/FilmGrain";
 import { ArrowUpRight, CheckCircle2, Mail, Radar, Sparkles } from "lucide-react";
-import { createClient } from "@/lib/supabase";
 
 const PROOF = ["Resume AI", "Real jobs", "Google X-ray", "Gmail", "LinkedIn", "BYOK Models", "Human approval"];
 const LIGHT_HERO_VIDEO = "/media/hero/light-bg.mp4";
@@ -15,21 +14,9 @@ const DARK_HERO_VIDEO = "/media/hero/dark-bg.mp4";
 
 export function HeroA() {
   const { theme } = useTheme();
-  const [signedIn, setSignedIn] = useState(false);
+  const { isSignedIn } = useAuth();
+  const signedIn = !!isSignedIn;
   const heroVideo = theme === "dark" ? DARK_HERO_VIDEO : LIGHT_HERO_VIDEO;
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSignedIn(!!session);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSignedIn(!!session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
 
   return (
     <section className="relative isolate min-h-screen overflow-hidden bg-black pt-16 text-white">

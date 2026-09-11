@@ -15,6 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from app.api import internal
 from app.api.v1 import (
     agents,
+    browser,
     company,
     cover_letter,
     email,
@@ -54,6 +55,13 @@ def _check_env_vars() -> None:
         logger.critical("Missing required env vars: %s", ", ".join(missing))
         sys.exit(1)
     logger.info("All %d required env vars present", len(_REQUIRED_VARS))
+    # Clerk verifies every request. Warn loudly (but don't exit) so a misconfigured
+    # deploy is obvious from the logs instead of only via blanket 401s.
+    if not settings.CLERK_JWKS_URL and not settings.CLERK_ISSUER:
+        logger.critical(
+            "Clerk auth is not configured — set CLERK_ISSUER (or CLERK_JWKS_URL); "
+            "every authenticated request will return 401 until you do"
+        )
 
 
 def _build_cors_origins(raw: str, env: str) -> list[str]:
@@ -177,7 +185,14 @@ async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-# Middleware order: CORS → JWT → request ID
+# Starlette builds the stack so the LAST-registered middleware is OUTERMOST.
+# CORS must therefore be registered last: a 401 returned by _jwt_middleware has
+# to travel back out through CORSMiddleware to pick up Access-Control-Allow-Origin,
+# otherwise the browser reports an opaque CORS failure and the frontend can't tell
+# an expired token from a dead network.
+# Execution order: CORS → request ID → JWT → route.
+app.middleware("http")(_jwt_middleware)
+app.middleware("http")(_request_id_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -185,8 +200,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
-app.middleware("http")(_jwt_middleware)
-app.middleware("http")(_request_id_middleware)
 
 
 # Routers
@@ -197,6 +210,7 @@ app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(leads.router, prefix="/api/v1")
 app.include_router(email.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(browser.router, prefix="/api/v1")
 app.include_router(interview_prep.router, prefix="/api/v1")
 app.include_router(cover_letter.router, prefix="/api/v1")
 app.include_router(interview.router, prefix="/api/v1")

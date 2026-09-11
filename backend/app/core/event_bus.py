@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import time
+from contextvars import ContextVar
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -15,6 +16,7 @@ from redis.exceptions import RedisError
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+suppress_terminal_events: ContextVar[bool] = ContextVar("suppress_terminal_events", default=False)
 
 # Redis channel per TASK 4 spec
 #   agent:{run_id}:events  -> SSE subscriber listens here
@@ -120,6 +122,8 @@ def publish(run_id: str, event_type: str, payload: Any) -> None:
 
 # Backwards-compatible function name used across codebase
 def emit(run_id: str, event_type: str, data: str | dict) -> None:
+    if suppress_terminal_events.get() and event_type in {"complete", "checkpoint", "error"}:
+        return  # Durable worker publishes only after its database transaction commits.
     publish(run_id, event_type, data)
 
 

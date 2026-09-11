@@ -2,7 +2,11 @@ import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage
+
+try:
+    from langchain_core.messages import AIMessage
+except ImportError:
+    AIMessage = None
 
 # Bootstrap env vars before any `from app...` import so Settings() succeeds.
 # Individual tests still monkeypatch via test_config.py.
@@ -16,25 +20,26 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 os.environ.setdefault("FRONTEND_URL", "http://localhost:3000")
 
 
-class _MutableFakeLLM:
-    """Mutable LLM stand-in: supports ``mock_llm.responses = [...]`` after construction."""
+if AIMessage is not None:
 
-    def __init__(self, responses: list[str] | None = None):
-        self.responses: list[str] = responses or ["mocked LLM response"]
-        self._call_count = 0
+    class _MutableFakeLLM:
+        """Mutable LLM stand-in: supports ``mock_llm.responses = [...]`` after construction."""
 
-    def invoke(self, messages) -> AIMessage:
-        if self._call_count < len(self.responses):
-            content = self.responses[self._call_count]
-        else:
-            content = self.responses[-1] if self.responses else ""
-        self._call_count += 1
-        return AIMessage(content=content)
+        def __init__(self, responses: list[str] | None = None):
+            self.responses: list[str] = responses or ["mocked LLM response"]
+            self._call_count = 0
 
+        def invoke(self, messages) -> AIMessage:
+            if self._call_count < len(self.responses):
+                content = self.responses[self._call_count]
+            else:
+                content = self.responses[-1] if self.responses else ""
+            self._call_count += 1
+            return AIMessage(content=content)
 
-@pytest.fixture
-def mock_llm():
-    return _MutableFakeLLM()
+    @pytest.fixture
+    def mock_llm():
+        return _MutableFakeLLM()
 
 
 @pytest.fixture

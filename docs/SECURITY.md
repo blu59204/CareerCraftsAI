@@ -1,0 +1,275 @@
+# Security
+
+This document covers CareerCraft AI's security architecture, threat model, known CVEs, and audit process.
+
+---
+
+## Threat Model
+
+| Asset | Threat | Control |
+|---|---|---|
+| User API keys (Anthropic, OpenAI, etc.) | Read from DB | AES-256-GCM encryption at rest |
+| User resume data | Unauthorized access | RLS: `user_id = auth.uid()` enforced in DB |
+| Job application actions | CSRF / replay | JWT on every request; HITL gate for irreversible actions |
+| Email sending (Gmail) | Sending without consent | Server-side HITL gate; `/approve` endpoint required |
+| Browser automation | Cross-user contamination | Playwright isolated browser context per user |
+| Admin endpoints | Public access | Nginx blocks `/internal/*` at edge |
+| Rate limiting | Credential stuffing / scraping | slowapi (60 req/min/user), Nginx (10 req/min for auth) |
+
+---
+
+## Authentication
+
+### Supabase JWT Verification
+
+All protected backend routes verify the Supabase access token locally in `supabase_auth.py`:
+
+```python
+# Verification: no round-trip to Supabase on each request
+payload = jwt.decode(
+    token,
+    SUPABASE_JWT_SECRET,
+    algorithms=["HS256"],
+    audience="authenticated"
+)
+user_id = payload["sub"]
+```
+
+The `SUPABASE_JWT_SECRET` comes from Supabase dashboard → Settings → API. It must be kept secret — exposure allows forging tokens.
+
+### Frontend Session Management
+
+- `@supabase/ssr` manages cookie-based sessions
+- `middleware.ts` calls `supabase.auth.getUser()` on every request and refreshes expired tokens
+- Unauthenticated requests to `(app)/*` routes are redirected to `/login`
+- Access tokens are short-lived (1 hour); refresh tokens are rotated on use
+
+### OAuth Scopes
+
+Google OAuth requests only the minimum necessary scopes:
+- `email`, `profile` — for account creation
+- `gmail.send`, `gmail.readonly` — for Email Agent
+- `drive.readonly` — for importing resume from Google Drive (optional)
+
+---
+
+## API Key Encryption
+
+User AI provider API keys (Anthropic, OpenAI, etc.) are encrypted with AES-256-GCM before database storage.
+
+**Key derivation** (`security.py`):
+```python
+# Each key gets a unique salt
+salt = os.urandom(16)
+# PBKDF2 derives an encryption key from APP_SECRET_KEY + salt
+encryption_key = PBKDF2HMAC(
+    algorithm=hashes.SHA256(),
+    length=32,
+    salt=salt,
+    iterations=100_000,
+).derive(APP_SECRET_KEY.encode())
+# AES-256-GCM encryption (includes integrity check)
+ciphertext, nonce, tag = aes_256_gcm_encrypt(key, plaintext)
+```
+
+Stored columns: `api_key_enc` (ciphertext + nonce + tag), `api_key_salt` (per-key salt).
+
+**Decryption happens only once per request**, in `llm_gateway.py`, immediately before the LLM call. The plaintext key is never stored in Redis, logs, or DB.
+
+---
+
+## Row-Level Security
+
+Every user data table has RLS enabled. Policies enforce that users can only SELECT/INSERT/UPDATE/DELETE their own rows:
+
+```sql
+-- Example: applications table
+ALTER TABLE public.applications ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "users see own applications"
+  ON public.applications
+  FOR ALL
+  USING (
+    user_id = (SELECT id FROM public.users WHERE supabase_uid = auth.uid())
+  );
+```
+
+This means even a bug in application code that constructs a wrong query cannot return another user's data — the database enforces isolation.
+
+**Tables with RLS:** `users`, `user_model_settings`, `user_preferences`, `documents`, `resume_personas`, `applications`, `agent_runs`, `cover_letter_versions`, `interview_sessions`, `salary_reports`, `leads`, `linkedin_outreach_queue`, `ats_scores`
+
+**Tables without RLS:** `company_intel` (shared public data, no PII)
+
+---
+
+## Rate Limiting
+
+Two layers:
+
+**Nginx (per IP):**
+```nginx
+limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
+# Applied to: /auth/*, /api/v1/users/model-settings
+```
+
+**slowapi (per authenticated user):**
+```python
+@limiter.limit("60/minute")  # default
+@limiter.limit("10/minute")  # agent runs
+@limiter.limit("5/minute")   # document uploads
+```
+
+Rate limit headers on every response: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+
+---
+
+## Human-in-the-Loop Gate
+
+No agent can send an email or submit a job application without user approval. This is enforced server-side:
+
+1. Agent emits `pending_action` in state and pauses
+2. Backend stores the pending action in Redis with the `run_id` key
+3. SSE `checkpoint` event reaches the frontend
+4. Frontend renders `ApprovalModal` with full action preview
+5. **Only** `POST /api/v1/agents/{run_id}/approve {approved: true}` resumes the action
+6. Any other code path (background jobs, direct service calls) cannot bypass this
+
+The `/approve` endpoint verifies:
+- JWT belongs to the user who owns the run
+- Run is in `pending_approval` state
+- Action type matches what was stored server-side (prevents parameter tampering)
+
+---
+
+## Internal Endpoints
+
+The BullMQ worker calls `localhost:8000/internal/*` directly (Docker internal network). These routes are never exposed publicly:
+
+```nginx
+location /internal/ {
+    return 404;
+}
+```
+
+Internal routes bypass JWT auth (they use a shared `INTERNAL_SECRET` header) and are only accessible from the `worker` container on the Docker network.
+
+---
+
+## Browser Automation Security
+
+Playwright creates an isolated browser context per user:
+- Cookies and sessions are not shared between users
+- Each automation run uses a fresh browser profile
+- Human-like delays (randomized 0.5–2s between actions) to avoid bot detection
+- LinkedIn and Naukri automation may violate their ToS — users acknowledge this in onboarding
+
+---
+
+## Input Validation
+
+All API inputs are validated by Pydantic models before reaching business logic. SQLAlchemy uses parameterized queries — no raw SQL with user input.
+
+Security tests verify:
+- SQL injection attempts return 422 (Pydantic rejects them before DB)
+- XSS payloads in text fields are stored as plain text (no HTML rendering server-side)
+- Oversized uploads are rejected by file size limits in `rag.py`
+
+---
+
+## Known CVEs and Patches
+
+| CVE | Component | Status |
+|---|---|---|
+| CVE-2025-68664 | LangChain serialization | Fixed — `langchain-core>=1.4.0` in `constraints.txt` |
+| CVE-2025-67644 | LangGraph SQLite injection | Blocked — `langchain-core<1.3.0` excluded in `constraints.txt` |
+| langchain-community removal | Vector store dependency | Replaced with `langchain-postgres==0.0.17` |
+
+`constraints.txt` pins upper bounds for all packages with active CVEs. Always run `pip install -r requirements.txt -c constraints.txt` to respect these bounds.
+
+---
+
+## Security Testing
+
+### Automated (CI)
+
+```bash
+# SAST — static analysis, blocks on HIGH severity
+cd backend && bandit -r app/ -f txt
+
+# Dependency CVE scan
+pip-audit
+npm audit
+```
+
+### Test suite
+
+```bash
+# 6 security-specific tests
+cd backend && pytest tests/security -v
+```
+
+Security tests cover:
+- `test_sql_injection.py` — SQL injection attempts rejected
+- `test_xss.py` — XSS payloads stored safely
+- `test_auth_required.py` — all protected endpoints return 401 without JWT
+- `test_rls.py` — users cannot access other users' data
+- `test_api_key_encryption.py` — stored keys are ciphertext, not plaintext
+- `test_rate_limiting.py` — 429 returned after limit exceeded
+
+---
+
+## Security Headers (Nginx)
+
+```nginx
+add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+add_header X-Frame-Options DENY always;
+add_header X-Content-Type-Options nosniff always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Content-Security-Policy "
+  default-src 'self';
+  script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: https:;
+  connect-src 'self' https://*.supabase.co wss://*.supabase.co;
+" always;
+```
+
+TLS configuration:
+```nginx
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:...;
+ssl_prefer_server_ciphers off;
+```
+
+---
+
+## Reporting a Security Issue
+
+Do not open a public GitHub issue for security vulnerabilities.
+
+Email: security@[yourdomain.com]
+
+Include:
+- Description of the vulnerability
+- Steps to reproduce
+- Impact assessment
+- Suggested fix (if any)
+
+We aim to respond within 48 hours and release a patch within 7 days for critical issues.
+
+---
+
+## Security Checklist (Production)
+
+- [ ] `APP_SECRET_KEY` is 32+ random bytes (`openssl rand -hex 32`)
+- [ ] `SUPABASE_JWT_SECRET` matches Supabase dashboard value
+- [ ] `APP_ENV=production` (disables `/docs`, debug logging)
+- [ ] Supabase Auth redirect URLs locked to production domain only
+- [ ] RLS enabled on all user-data tables (verify in Supabase dashboard)
+- [ ] All CVE-pinned packages installed via `constraints.txt`
+- [ ] Bandit SAST shows no HIGH findings (`bandit -r app/ -l HIGH`)
+- [ ] `npm audit --audit-level=high` shows no high/critical issues
+- [ ] Internal routes blocked at Nginx (test: `curl https://yourdomain.com/internal/` → 404)
+- [ ] SSL certificate valid and auto-renewing (`certbot renew --dry-run`)
+- [ ] Redis not exposed publicly (port 6379 not in VPS firewall rules)

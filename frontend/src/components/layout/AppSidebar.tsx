@@ -14,19 +14,27 @@ import {
   Search,
   MessageSquare,
   Users,
+  Building2,
+  DollarSign,
+  Video,
+  PenLine,
 } from "lucide-react";
 import { BrandLinkedin } from "@/components/icons/BrandIcons";
 
 const ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/resume", icon: FileText, label: "Resume" },
+  { href: "/cover-letter", icon: PenLine, label: "Cover Letter" },
   { href: "/jobs", icon: Search, label: "Jobs" },
   { href: "/applications", icon: Briefcase, label: "Applications" },
   { href: "/agents", icon: Bot, label: "Agents" },
   { href: "/email", icon: Mail, label: "Email" },
   { href: "/linkedin", icon: BrandLinkedin, label: "LinkedIn" },
   { href: "/leads", icon: Users, label: "Leads" },
+  { href: "/interview", icon: Video, label: "Interview" },
   { href: "/interview-prep", icon: MessageSquare, label: "Interview Prep" },
+  { href: "/company", icon: Building2, label: "Company" },
+  { href: "/salary", icon: DollarSign, label: "Salary" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
