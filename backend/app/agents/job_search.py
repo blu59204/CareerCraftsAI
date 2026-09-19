@@ -1999,9 +1999,12 @@ def job_search_agent_node(state: AgentState) -> AgentState:
                     "messages": state.get("messages", []) + [AIMessage(content="No jobs found.")]}
 
         # ── LLM scoring in bounded batches ──
-        # Score at most max_results jobs so serial LLM calls stay inside the
-        # worker's 120s budget; total_found still reports the full fanout.
-        to_score = jobs[:max_results]
+        # Score every deduped candidate from every source, THEN rank, THEN
+        # truncate to max_results. Truncating first (jobs[:max_results])
+        # would silently drop every job from sources queried after the
+        # first max_results slots were already filled — a great match
+        # further down the source list could never even be considered.
+        to_score = jobs
         by_id = {j["job_id"]: j for j in to_score}
         scored: dict[str, dict] = {}
         batches = [to_score[i:i + SCORE_BATCH_SIZE] for i in range(0, len(to_score), SCORE_BATCH_SIZE)]
@@ -2032,6 +2035,8 @@ def job_search_agent_node(state: AgentState) -> AgentState:
                 matches.append({**job, "match_score": s.get("score", 0), "reasons": s.get("reasons", []),
                                 "red_flags": s.get("red_flags", []), "missing_skills": s.get("missing_skills", [])})
         matches.sort(key=lambda j: j["match_score"], reverse=True)
+        # Truncate AFTER ranking so a late-source job can still win a slot.
+        matches = matches[:max_results]
         top_pick_id = matches[0]["job_id"] if matches else None
 
         try:

@@ -29,6 +29,40 @@ from app.services.gmail_service import GmailMCPClient
 
 logger = logging.getLogger(__name__)
 
+
+async def _get_or_create_job_application(user_id: str, job: JobListing) -> str:
+    """Get-or-create the JobApplication row for this job, keyed by
+    (user_id, job_url) — same idempotent-on-url pattern already used when
+    search results are persisted (see job_search.py::_persist_saved_jobs and
+    api/internal.py). An apply_browser action needs a job_application_id so
+    workflow_service's auto_apply_approval branch can reserve an
+    ApplicationAttempt before ever queuing a browser submit.
+    """
+    from sqlalchemy import select as _select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.db import JobApplication
+
+    async with AsyncSessionLocal() as db:
+        existing = (await db.execute(
+            _select(JobApplication).where(
+                JobApplication.user_id == uuid.UUID(user_id),
+                JobApplication.job_url == job.job_url,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            return str(existing.id)
+        row = JobApplication(
+            user_id=uuid.UUID(user_id), company=job.company, role=job.title,
+            location=job.location, job_url=job.job_url,
+            jd_text=(job.description or "")[:4000], status="saved",
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return str(row.id)
+
+
 COLD_EMAIL_PROMPT = """Write a short, personalized cold email to a recruiter about a job opening.
 
 Recruiter: {recruiter_name} ({recruiter_email})
@@ -302,9 +336,11 @@ async def _apply_to_job(
                 # Autonomous browser application — the agent fills + submits the
                 # real job form on approval (HITL gate preserved).
                 if job.job_url and resume_draft.get("pdf_document_id"):
+                    job_application_id = await _get_or_create_job_application(user_id, job)
                     checkpoint_data["actions_pending"].append({
                         "action": "apply_browser",
                         "job_url": job.job_url,
+                        "job_application_id": job_application_id,
                         "company": job.company,
                         "role": job.title,
                         "pdf_document_id": resume_draft["pdf_document_id"],
@@ -358,8 +394,10 @@ async def _apply_to_job(
 
         # Drafts mode also allows document review followed by sandbox preparation.
         if not result.get("approval_actions") and job.job_url and resume_draft.get("pdf_document_id"):
+            job_application_id = await _get_or_create_job_application(user_id, job)
             result["approval_actions"] = [{
                 "action": "apply_browser", "job_url": job.job_url,
+                "job_application_id": job_application_id,
                 "company": job.company, "role": job.title,
                 "pdf_document_id": resume_draft["pdf_document_id"],
                 "resume_sha256": resume_sha256,

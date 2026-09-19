@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,11 @@ from sqlalchemy import func, or_, select
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.event_bus import publish, suppress_terminal_events
-from app.models.db import AgentRun, User, WorkflowTask
+from app.models.db import AgentRun, ApplicationAttempt, User, WorkflowTask
+
+# ApplicationAttempt states that block starting a new attempt for the same
+# (user, job_application) — see docs on Task 2 idempotent submission.
+ACTIVE_SUBMISSION_STATES = {"submitting", "submitted", "verified"}
 
 DRAFT_TYPES = {
     "resume_ready", "cover_letter_review", "linkedin_edits", "interview_prep",
@@ -25,7 +30,7 @@ DRAFT_TYPES = {
 }
 ACTION_TYPES = DRAFT_TYPES | {
     "send_email", "search_confirmation", "auto_apply_approval", "browser_prepare",
-    "browser_input", "browser_review",
+    "browser_input", "browser_review", "application_answers_required",
 }
 
 
@@ -56,6 +61,15 @@ def validate_approval(pending: dict, edits: dict) -> dict:
         for item in pending.get("actions_pending", [])
     ):
         raise ValueError("This batch contains an unsupported action; review it separately")
+    if action == "application_answers_required":
+        if set(edits) - {"answers"}:
+            raise ValueError("Only answers may be provided for this action")
+        answers = edits.get("answers")
+        if not isinstance(answers, dict) or not answers:
+            raise ValueError("Provide an answer for each requested field")
+        result = copy.deepcopy(pending)
+        result["answers"] = answers
+        return result
     if set(edits) - {"body"}:
         raise ValueError("Only draft text may be edited; targets and artifacts are immutable")
     if edits and action not in {"send_email", "resume_ready", "cover_letter_review"}:
@@ -120,6 +134,16 @@ async def recover_expired_tasks() -> None:
                 run.status = "failed"
                 run.output = {"error": task.error, "outcome": "unknown"}
                 run.completed_at = datetime.now(timezone.utc)
+                # A worker that dies mid-submit leaves the attempt claimed
+                # ("submitting") with no in-process except block able to
+                # record it — reconcile here so it is never silently retried.
+                from app.models.db import ApplicationAttempt
+                attempt = (await db.execute(select(ApplicationAttempt).where(
+                    ApplicationAttempt.run_id == run.id, ApplicationAttempt.state == "submitting",
+                ))).scalars().first()
+                if attempt:
+                    attempt.state = "outcome_unknown"
+                    attempt.last_error = task.error
         await db.commit()
 
 
@@ -223,6 +247,67 @@ async def execute_agent(run: AgentRun, context: dict | None = None) -> dict:
     )
 
 
+async def send_approved_email(
+    user_id: uuid.UUID, run_id: uuid.UUID, recipient: str, subject: str, body: str,
+) -> dict:
+    """The single path for sending an approved email — atomic claim before
+    ever calling Gmail, so two concurrent approvals of the same run cause
+    exactly one Gmail call. Both workflow_service.continue_action's
+    send_email branch and /email/approve/{run_id} call this; neither calls
+    GmailMCPClient directly.
+    """
+    from app.models.db import OutboundMessage
+
+    # One outbound_messages row per approved run — the idempotency_key is
+    # the compare-and-swap key a concurrent duplicate approval collides on.
+    idempotency_key = f"agent_run:{run_id}"
+    body_hash = hashlib.sha256(body.encode()).hexdigest()
+
+    async with AsyncSessionLocal() as db:
+        existing = (await db.execute(
+            select(OutboundMessage).where(OutboundMessage.idempotency_key == idempotency_key).with_for_update()
+        )).scalar_one_or_none()
+        if existing and existing.state in {"sending", "sent"}:
+            return {"sent": existing.state == "sent", "duplicate_suppressed": True,
+                    "provider_message_id": existing.provider_message_id}
+        if existing:
+            message = existing
+            message.state = "sending"
+        else:
+            message = OutboundMessage(
+                user_id=user_id, run_id=run_id, channel="email", recipient=recipient,
+                subject=subject, body_hash=body_hash, idempotency_key=idempotency_key,
+                state="sending",
+            )
+            db.add(message)
+        await db.flush()
+        message_id = message.id
+        await db.commit()
+
+    try:
+        from app.services.gmail_service import GmailMCPClient
+        result = await asyncio.to_thread(
+            GmailMCPClient(str(user_id)).send_message, to=recipient, subject=subject, body=body,
+        )
+        provider_message_id = result.get("id") if isinstance(result, dict) else str(result)
+    except Exception:
+        async with AsyncSessionLocal() as db:
+            msg = await db.get(OutboundMessage, message_id, with_for_update=True)
+            if msg and msg.state == "sending":
+                msg.state = "outcome_unknown"
+            await db.commit()
+        raise
+
+    async with AsyncSessionLocal() as db:
+        msg = await db.get(OutboundMessage, message_id, with_for_update=True)
+        if msg:
+            msg.state = "sent"
+            msg.provider_message_id = provider_message_id
+            msg.sent_at = datetime.now(timezone.utc)
+        await db.commit()
+    return {"sent": True, "provider_message_id": provider_message_id}
+
+
 async def continue_action(run: AgentRun, pending: dict) -> dict:
     action = pending.get("type")
     if action in DRAFT_TYPES:
@@ -240,17 +325,34 @@ async def continue_action(run: AgentRun, pending: dict) -> dict:
             },
         })
     if action == "send_email":
-        from app.services.gmail_service import GmailMCPClient
         recipient = pending.get("recipient") or pending.get("to")
         if not recipient or not pending.get("subject") or not pending.get("body"):
             raise ValueError("Missing email fields")
-        receipt = await asyncio.to_thread(
-            GmailMCPClient(str(run.user_id)).send_message,
-            to=recipient, subject=pending["subject"], body=pending["body"],
-        )
-        return {"status": "completed", "result": {"sent": True, "receipt": receipt}}
+        result = await send_approved_email(run.user_id, run.id, recipient, pending["subject"], pending["body"])
+        return {"status": "completed", "result": result}
+    if action == "application_answers_required":
+        from app.applications import profile_service
+        from app.services.application_workflow import run_application_stage
+
+        answers = pending.get("answers") or {}
+        fields_by_id = {f.get("field_id"): f for f in pending.get("fields", [])}
+        async with AsyncSessionLocal() as db:
+            for field_id, value in answers.items():
+                meta = fields_by_id.get(field_id, {})
+                question_key = meta.get("question_key") or field_id
+                await profile_service.save_approved_answer(
+                    db, run.user_id, question_key, meta.get("label", question_key), value,
+                )
+            await db.commit()
+        # Re-attempt preparation now that the answers are saved — the
+        # resolver will find them this time, or surface whatever is still
+        # missing as a fresh checkpoint.
+        resumed = {k: v for k, v in pending.items() if k not in {"answers", "fields", "type", "message"}}
+        resumed["type"] = "browser_input"
+        return await run_application_stage(run, resumed)
     if action == "auto_apply_approval":
         children = []
+        skipped = []
         async with AsyncSessionLocal() as db:
             parent = await db.get(AgentRun, run.id, with_for_update=True)
             if parent is None:
@@ -263,19 +365,68 @@ async def continue_action(run: AgentRun, pending: dict) -> dict:
                 kind = item.get("action")
                 if kind not in {"apply_browser", "send_email"}:
                     continue
+                # apply_browser reserves an ApplicationAttempt before a child
+                # task is ever created, mirroring jobs.py's
+                # prepare_application_apply — same idempotent-submission
+                # ledger, just entered from the batch approval path instead
+                # of the single Jobs-page "Apply" endpoint.
+                attempt = None
+                if kind == "apply_browser":
+                    job_application_id = item.get("job_application_id")
+                    if not job_application_id:
+                        skipped.append({
+                            "action": kind, "job_url": item.get("job_url"),
+                            "reason": "Missing job_application_id; cannot reserve a submission attempt",
+                        })
+                        continue
+                    attempt = (await db.execute(
+                        select(ApplicationAttempt).where(
+                            ApplicationAttempt.user_id == run.user_id,
+                            ApplicationAttempt.job_application_id == uuid.UUID(str(job_application_id)),
+                        )
+                    )).scalar_one_or_none()
+                    if attempt and attempt.state in ACTIVE_SUBMISSION_STATES:
+                        skipped.append({
+                            "action": kind, "job_application_id": str(job_application_id),
+                            "reason": f"An application attempt is already {attempt.state}",
+                        })
+                        continue
                 child = AgentRun(id=uuid.uuid4(), user_id=run.user_id,
                                  agent_type="auto_apply" if kind == "apply_browser" else "email",
                                  status="queued", input={"parent_run_id": str(run.id)})
                 db.add(child)
                 await db.flush()
-                add_task(db, child, "continue", {
+                task_payload = {
                     **item, "type": "browser_prepare" if kind == "apply_browser" else "send_email",
-                })
+                }
+                if kind == "apply_browser":
+                    if attempt:
+                        # Reuse the row the unique constraint forces us to have.
+                        attempt.state = "preparing"
+                        attempt.run_id = child.id
+                        attempt.submission_token = None
+                        attempt.external_application_id = None
+                        attempt.confirmation_url = None
+                        attempt.confirmation_text = None
+                        attempt.approved_snapshot_hash = None
+                        attempt.last_error = None
+                        attempt.submitted_at = None
+                        attempt.verified_at = None
+                    else:
+                        attempt = ApplicationAttempt(
+                            user_id=run.user_id, job_application_id=uuid.UUID(str(job_application_id)),
+                            run_id=child.id, state="preparing",
+                        )
+                        db.add(attempt)
+                    await db.flush()
+                    task_payload["attempt_id"] = str(attempt.id)
+                add_task(db, child, "continue", task_payload)
                 children.append(str(child.id))
-            parent.output = {**(parent.output or {}), "child_run_ids": children}
+            parent.output = {**(parent.output or {}), "child_run_ids": children, "skipped_actions": skipped}
             await db.commit()
         return {"status": "completed", "result": {
-            "child_run_ids": children, "message": "Approved actions queued; each browser form requires final review",
+            "child_run_ids": children, "skipped_actions": skipped,
+            "message": "Approved actions queued; each browser form requires final review",
         }}
     if action in {"browser_prepare", "browser_input", "browser_review"}:
         from app.services.application_workflow import run_application_stage

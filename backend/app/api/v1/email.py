@@ -15,7 +15,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
-from app.services.gmail_service import GmailMCPClient, GmailSendError
+from app.services.gmail_service import GmailSendError
 
 router = APIRouter(prefix="/email", tags=["email"])
 logger = logging.getLogger(__name__)
@@ -165,11 +165,13 @@ async def approve_and_send(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Locked so a second concurrent approval of the same run sees the
+    # status flip below before it can read a stale "awaiting_approval".
     result = await db.execute(
         select(AgentRun).where(
             AgentRun.id == uuid.UUID(run_id),
             AgentRun.user_id == current_user.id,
-        )
+        ).with_for_update()
     )
     run = result.scalar_one_or_none()
     if not run:
@@ -190,17 +192,34 @@ async def approve_and_send(
             detail="Pending email is missing recipient, subject, or body",
         )
 
+    # Claim the run before sending — a concurrent second approval's
+    # row-locked read now sees "running", not "awaiting_approval", and
+    # 400s above instead of reaching send_approved_email at all. That
+    # function's own outbound_messages claim is the second, independent
+    # guard against the same email going out twice.
+    run.status = "running"
+    await db.commit()
+
+    from app.services.workflow_service import send_approved_email
+
     try:
-        gmail = GmailMCPClient(str(current_user.id))
-        gmail.send_message(to=recipient, subject=subject, body=body)
+        result = await send_approved_email(current_user.id, run.id, recipient, subject, body)
     except GmailSendError as exc:
         # Actionable Gmail reason (scopes, API disabled, revoked token) — safe to show.
         logger.warning("Email approval send failed for run %s: %s", run_id, exc)
+        run.status = "failed"
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("Email approval send failed for run %s: %s", run_id, exc)
+        run.status = "failed"
+        run.completed_at = datetime.now(timezone.utc)
+        await db.commit()
         raise HTTPException(status_code=502, detail="Email send failed") from exc
 
-    run.status = "completed"
+    run.status = "completed" if result.get("sent") else "failed"
     run.completed_at = datetime.now(timezone.utc)
-    return {"status": "sent", "recipient": recipient}
+    run.output = {**pending, **result}
+    await db.commit()
+    return {"status": "sent" if result.get("sent") else "unknown", "recipient": recipient}

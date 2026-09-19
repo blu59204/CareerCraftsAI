@@ -33,18 +33,34 @@ function CharCount({ current, max }: { current: number; max: number }) {
   );
 }
 
+interface RequiredField {
+  field_id: string;
+  question_key?: string | null;
+  label: string;
+  required: boolean;
+  options?: string[];
+}
+
 export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editedText, setEditedText] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const actionType = (action.type as string) || "unknown";
 
   const decide = async (approved: boolean) => {
     setLoading(true);
     try {
+      const edits = !approved
+        ? undefined
+        : actionType === "application_answers_required"
+          ? { answers }
+          : editedText
+            ? { body: editedText }
+            : undefined;
       await apiClient.post(`/agents/${runId}/approve`, {
         approved,
-        edits: approved && editedText ? { body: editedText } : undefined,
+        edits,
       });
       if (approved) {
         useAgentStore.getState().clearCheckpoint(runId);
@@ -130,28 +146,41 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
           )}
 
           {/* Resume preview */}
-          {actionType === "resume_ready" && (
+          {actionType === "resume_ready" && (() => {
+            const ats = (action.ats_breakdown ??
+              (typeof action.ats_score === "object" ? action.ats_score : null)) as
+              {
+                composite_score?: number;
+                keyword_score?: number;
+                readability_score?: number;
+                format_score?: number;
+                missing_keywords?: string[];
+              } | null;
+            return (
             <div className="space-y-3">
-              {action.ats_score ? (
+              {/* ats_score is the composite int; ats_breakdown carries the
+                  sub-scores. Older runs stored only the int, so fall back to
+                  treating ats_score as an object if that is what arrived. */}
+              {ats ? (
                 <div className="flex items-center gap-3 rounded-xl border border-border bg-background/70 p-3">
                   <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
                     <span className="text-lg font-bold text-primary">
-                      {(action.ats_score as Record<string, number>).composite_score ?? "—"}
+                      {ats.composite_score ?? "—"}
                     </span>
                   </div>
                   <div className="text-sm">
                     <p className="font-medium">ATS Score</p>
                     <p className="text-muted-foreground">
-                      Keyword: {(action.ats_score as Record<string, number>).keyword_score ?? "—"} |
-                      Readability: {(action.ats_score as Record<string, number>).readability_score ?? "—"} |
-                      Format: {(action.ats_score as Record<string, number>).format_score ?? "—"}
+                      Keyword: {ats.keyword_score ?? "—"} |
+                      Readability: {ats.readability_score ?? "—"} |
+                      Format: {ats.format_score ?? "—"}
                     </p>
                   </div>
                 </div>
               ) : null}
-              {action.ats_score && (action.ats_score as Record<string, unknown>).missing_keywords ? (
+              {ats && ats.missing_keywords ? (
                 <div className="flex flex-wrap gap-1">
-                  {((action.ats_score as Record<string, unknown>).missing_keywords as string[])?.slice(0, 8).map((kw: string) => (
+                  {ats.missing_keywords?.slice(0, 8).map((kw: string) => (
                     <Badge key={kw} variant="outline" className="text-xs">
                       + {kw}
                     </Badge>
@@ -191,7 +220,8 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* LinkedIn edits */}
           {actionType === "linkedin_edits" && (
@@ -207,33 +237,33 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
             </div>
           )}
 
-          {/* Submit application */}
-          {actionType === "submit_application" && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-[80px_1fr] gap-1 text-sm">
-                <span className="font-medium text-muted-foreground">Role:</span>
-                <span className="text-foreground">{String(action.role ?? "—")}</span>
-                <span className="font-medium text-muted-foreground">Company:</span>
-                <span className="text-foreground">{String(action.company ?? "—")}</span>
-              </div>
-              {action.job_url ? (
-                <a
-                  href={String(action.job_url)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block break-all text-sm text-primary underline"
-                >
-                  {String(action.job_url)}
-                </a>
-              ) : null}
-              {action.message ? (
-                <p className="text-sm text-muted-foreground">{String(action.message)}</p>
-              ) : null}
-              {action.browser_result ? (
-                <div className="max-h-40 overflow-y-auto rounded-xl border border-border bg-background/70 p-3 text-sm whitespace-pre-wrap font-mono">
-                  {String(action.browser_result)}
+          {/* Missing answers required before preparation can continue */}
+          {actionType === "application_answers_required" && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{String(action.message ?? "Answer these questions once — approved answers are reused on later applications.")}</p>
+              {((action.fields as RequiredField[]) ?? []).map((field) => (
+                <div key={field.field_id} className="space-y-1">
+                  <label className="text-sm font-medium">{field.label}</label>
+                  {field.options && field.options.length > 0 ? (
+                    <select
+                      className="w-full rounded-lg border border-border bg-background/70 p-2 text-sm"
+                      value={answers[field.field_id] ?? ""}
+                      onChange={(e) => setAnswers({ ...answers, [field.field_id]: e.target.value })}
+                    >
+                      <option value="" disabled>Select an answer</option>
+                      {field.options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="w-full rounded-lg border border-border bg-background/70 p-2 text-sm"
+                      value={answers[field.field_id] ?? ""}
+                      onChange={(e) => setAnswers({ ...answers, [field.field_id]: e.target.value })}
+                    />
+                  )}
                 </div>
-              ) : null}
+              ))}
             </div>
           )}
 
@@ -296,7 +326,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
             <p className="text-sm">{String(action.message ?? "Review your application")}</p>
             <BrowserWorkspace runId={runId} />
           </>}
-          {!["send_email", "resume_ready", "linkedin_edits", "submit_application", "cover_letter_review", "search_confirmation", "browser_input", "browser_review"].includes(actionType) && (
+          {!["send_email", "resume_ready", "linkedin_edits", "cover_letter_review", "search_confirmation", "browser_input", "browser_review", "application_answers_required"].includes(actionType) && (
             <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/70 p-4">
               <pre className="text-xs font-mono whitespace-pre-wrap text-foreground">
                 {JSON.stringify(action, null, 2)}
@@ -319,7 +349,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
             disabled={loading}
             className="flex-[2]"
           >
-            {loading ? "Processing..." : actionType === "browser_input" ? "Continue preparation" : actionType === "browser_review" ? "Approve final submission" : "Approve & Execute"}
+            {loading ? "Processing..." : actionType === "browser_input" ? "Continue preparation" : actionType === "browser_review" ? "Approve final submission" : actionType === "application_answers_required" ? "Save answers & continue" : "Approve & Execute"}
           </Button>
         </div>
       </DialogContent>

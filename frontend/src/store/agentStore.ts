@@ -16,7 +16,7 @@ interface BrowserFrame {
 
 interface AgentRun {
   runId: string;
-  status: "queued" | "running" | "awaiting_approval" | "completed" | "failed";
+  status: "queued" | "running" | "awaiting_approval" | "completed" | "failed" | "needs_verification";
   events: AgentEvent[];
   pendingAction: Record<string, unknown> | null;
   result: Record<string, unknown> | null;
@@ -35,6 +35,11 @@ interface AgentStore {
   clearCheckpoint: (runId: string) => void;
   setComplete: (runId: string, result: Record<string, unknown>) => void;
   setError: (runId: string, message: string) => void;
+  // An external side effect (e.g. a submit click) may have gone through with
+  // no way to safely confirm it — this is deliberately not "failed": the
+  // system must never auto-retry it, and the copy must tell the user to
+  // check the portal themselves rather than implying the agent is broken.
+  setNeedsVerification: (runId: string, message: string) => void;
   setRunStatus: (runId: string, status: AgentRun["status"]) => void;
   clearRun: (runId: string) => void;
 }
@@ -153,6 +158,20 @@ export const useAgentStore = create<AgentStore>((set) => ({
         [runId]: {
           ...s.runs[runId],
           status: "failed",
+          error: message,
+        },
+      },
+    }));
+  },
+
+  setNeedsVerification: (runId, message) => {
+    persistActiveRun(null);
+    set((s) => ({
+      runs: {
+        ...s.runs,
+        [runId]: {
+          ...s.runs[runId],
+          status: "needs_verification",
           error: message,
         },
       },

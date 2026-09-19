@@ -16,6 +16,7 @@ from app.api import internal
 from app.api.v1 import (
     agents,
     browser,
+    candidate_profile,
     company,
     cover_letter,
     email,
@@ -217,6 +218,7 @@ app.include_router(interview.router, prefix="/api/v1")
 app.include_router(salary.router, prefix="/api/v1")
 app.include_router(company.router, prefix="/api/v1")
 app.include_router(linkedin.router, prefix="/api/v1")
+app.include_router(candidate_profile.router, prefix="/api/v1")
 app.include_router(memory_router)
 app.include_router(internal.router)
 
@@ -243,6 +245,11 @@ async def health():
     except Exception:
         pgvector_ok = False
     all_ok = bool(db_ok and redis_ok and pgvector_ok)
+    # Reported separately and never folded into all_ok: Temporal is
+    # feature-flagged (TEMPORAL_ENABLED) and optional infrastructure — an
+    # outage or a disabled flag must never make the whole API unavailable.
+    from app.core.temporal_client import check_temporal_health
+    temporal = await check_temporal_health()
     return JSONResponse(
         status_code=200 if all_ok else 503,
         content={
@@ -251,5 +258,6 @@ async def health():
             "db": "ok" if db_ok else "error",
             "redis": "ok" if redis_ok else "error",
             "pgvector": "ok" if pgvector_ok else "error",
+            "temporal": temporal,
         },
     )

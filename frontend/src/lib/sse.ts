@@ -5,7 +5,7 @@ import { useAgentStore } from "@/store/agentStore";
 import { apiClient, API_BASE_URL } from "@/lib/api";
 
 export function useAgentStream(runId: string | null) {
-  const { addEvent, setRunStatus, setCheckpoint, setComplete, setError } = useAgentStore();
+  const { addEvent, setRunStatus, setCheckpoint, setComplete, setError, setNeedsVerification } = useAgentStore();
   const abortRef = useRef<AbortController | null>(null);
   const retryRef = useRef(0);
 
@@ -27,6 +27,9 @@ export function useAgentStream(runId: string | null) {
         if (disposed) return;
         if (data.status === "awaiting_approval") setCheckpoint(id, data.output || {});
         else if (data.status === "completed") setComplete(id, data.output || {});
+        else if (data.status === "failed" && data.output?.outcome === "unknown") {
+          setNeedsVerification(id, data.output?.message || "Check the job portal before retrying — this outcome could not be confirmed.");
+        }
         else if (data.status === "failed") setError(id, data.output?.error || data.output?.message || "Agent failed");
         else if (data.status === "queued" || data.status === "running") setRunStatus(id, data.status);
       } catch { /* transient transport failure is not a failed agent */ }

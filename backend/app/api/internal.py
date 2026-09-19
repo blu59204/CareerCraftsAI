@@ -132,24 +132,35 @@ class FollowupTrigger(BaseModel):
 async def run_followup(
     payload: FollowupTrigger,
 ):
+    """Execute a due follow-up job fired by BullMQ (see followup_agent.py for
+    the separate scheduling side). This never sends email directly:
 
-    from app.agents.followup_agent import schedule_followups
-    from app.core.database import AsyncSessionLocal
-    from app.models.db import JobApplication, User
+    1. If the recruiter already replied, cancel the remaining schedule.
+    2. Otherwise draft a follow-up message and land it as an AgentRun
+       awaiting_approval — the same checkpoint ledger every other agent
+       uses. A human must approve via /agents/{run_id}/approve or
+       /email/approve/{run_id}, both of which route the actual send
+       through workflow_service.send_approved_email — never a second,
+       ad-hoc Gmail call from here.
+    """
     from sqlalchemy import select
+
+    from app.agents.followup_agent import build_followup_draft
+    from app.core.database import AsyncSessionLocal
+    from app.models.db import AgentRun, JobApplication
 
     async with AsyncSessionLocal() as db:
         res = await db.execute(
             select(JobApplication).where(
                 JobApplication.id == uuid.UUID(payload.application_id)
-            )
+            ).with_for_update()
         )
         application = res.scalar_one_or_none()
         if not application:
             logger.warning("Follow-up: application %s not found", payload.application_id)
             return {"status": "not_found", "application_id": payload.application_id}
 
-        # Auto-cancel: check if recruiter already replied before sending follow-up
+        # Auto-cancel: check if recruiter already replied before drafting.
         if await _has_recruiter_replied(
             db, payload.user_id, application.company,
             application.role, application.applied_at,
@@ -167,14 +178,56 @@ async def run_followup(
                 "application_id": payload.application_id,
             }
 
-    await schedule_followups(payload.user_id, payload.application_id, application.applied_at)
+        from app.services.email_finder_service import find_recruiter_email
+
+        try:
+            recruiter = await find_recruiter_email(application.company)
+        except Exception as exc:
+            logger.warning(
+                "Recruiter email lookup failed for %s: %s", application.company, exc
+            )
+            recruiter = None
+        recipient = (recruiter or {}).get("email") or ""
+
+        draft = await asyncio.get_running_loop().run_in_executor(
+            None,
+            build_followup_draft,
+            payload.user_id,
+            application.company,
+            application.role,
+            application.applied_at,
+            payload.day,
+        )
+
+        run = AgentRun(
+            id=uuid.uuid4(),
+            user_id=uuid.UUID(payload.user_id),
+            agent_type="followup",
+            status="awaiting_approval",
+            input={"application_id": payload.application_id, "day": payload.day},
+            output={
+                "type": "send_email",
+                "recipient": recipient,
+                "subject": draft["subject"],
+                "body": draft["body"],
+                "application_id": payload.application_id,
+                "day": payload.day,
+            },
+        )
+        db.add(run)
+        await db.commit()
+
+    emit(str(run.id), "checkpoint", run.output)
     logger.info(
-        "Follow-up day-%d triggered for application %s user %s",
-        payload.day,
-        payload.application_id,
-        payload.user_id,
+        "Follow-up day-%d drafted for application %s user %s — awaiting approval (run %s)",
+        payload.day, payload.application_id, payload.user_id, run.id,
     )
-    return {"status": "scheduled", "day": payload.day, "application_id": payload.application_id}
+    return {
+        "status": "awaiting_approval",
+        "run_id": str(run.id),
+        "day": payload.day,
+        "application_id": payload.application_id,
+    }
 
 
 async def _has_recruiter_replied(
@@ -185,57 +238,59 @@ async def _has_recruiter_replied(
     Searches Gmail for threads mentioning the company or role since applied_at.
     If any thread has a reply from someone who is NOT the user → recruiter replied.
     """
-    from app.services.gmail_service import GmailMCPClient
+    from sqlalchemy import select
+
     from app.models.db import User
+    from app.services.gmail_service import GmailMCPClient
 
     user_res = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
     user = user_res.scalar_one_or_none()
-    if not user:
+    if not user or not user.email:
         return False
 
     user_email = user.email
-    if not user_email:
-        return False
-
     gmail = GmailMCPClient(user_id)
-    since_str = applied_at.strftime("%Y/%m/%d") if applied_at else None
+    since_clause = (
+        f"after:{applied_at.strftime('%Y/%m/%d')}" if applied_at else f"newer_than:{window_days}d"
+    )
 
     queries = []
     if company:
-        domain = company.lower().replace(" ", "")
-        queries.append(f"{company} newer_than:{window_days}d")
+        queries.append(f"{company} {since_clause}")
     if role:
-        queries.append(f'"{role}" newer_than:{window_days}d')
+        queries.append(f'"{role}" {since_clause}')
 
     for query in queries:
         try:
             threads = gmail.search_threads(query, max_results=5)
-            if not isinstance(threads, list):
-                continue
-            for thread in threads:
-                thread_id = thread.get("threadId") or thread.get("id")
-                if not thread_id:
-                    continue
-                try:
-                    details = gmail.get_thread(thread_id)
-                except Exception:
-                    continue
-                messages = details.get("messages", details.get("Messages", []))
-                for msg in reversed(messages):
-                    headers = msg.get("payload", {}).get("headers", [])
-                    from_addr = ""
-                    for h in headers:
-                        if h.get("name", "").lower() == "from":
-                            from_addr = h.get("value", "").lower()
-                            break
-                    if from_addr and user_email.lower() not in from_addr:
-                        logger.info(
-                            "Found recruiter reply in thread %s from %s for user %s",
-                            thread_id, from_addr, user_id,
-                        )
-                        return True
         except Exception as exc:
-            logger.debug("Gmail recruiter-reply check failed for query '%s': %s", query, exc)
+            logger.debug("Gmail recruiter-reply search failed for query '%s': %s", query, exc)
+            continue
+        if not isinstance(threads, list):
+            continue
+        for thread in threads:
+            thread_id = thread.get("threadId") or thread.get("id")
+            if not thread_id:
+                continue
+            try:
+                details = gmail.get_thread(thread_id)
+            except Exception as exc:
+                logger.debug("Gmail thread fetch failed for %s: %s", thread_id, exc)
+                continue
+            messages = details.get("messages", details.get("Messages", []))
+            for msg in reversed(messages):
+                headers = msg.get("payload", {}).get("headers", [])
+                from_addr = ""
+                for h in headers:
+                    if h.get("name", "").lower() == "from":
+                        from_addr = h.get("value", "").lower()
+                        break
+                if from_addr and user_email.lower() not in from_addr:
+                    logger.info(
+                        "Found recruiter reply in thread %s from %s for user %s",
+                        thread_id, from_addr, user_id,
+                    )
+                    return True
 
     return False
 
@@ -402,7 +457,7 @@ async def check_application_status(payload: StatusCheckTrigger):
     from sqlalchemy import select, update
     from app.core.database import AsyncSessionLocal
     from app.core.model_router import get_llm
-    from app.models.db import JobApplication
+    from app.models.db import AgentRun, JobApplication
     from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
 
     updated_count = 0
@@ -427,20 +482,36 @@ async def check_application_status(payload: StatusCheckTrigger):
         if not applications:
             return {"status": "ok", "updated_count": 0, "message": "No active applications"}
 
-        # Group by platform for efficient checking
-        platform_apps: dict[str, list] = {}
+        # Group by (user_id, platform) — never group applications from
+        # different users together, or the browser task for the group would
+        # run under one user's model/account while touching another user's
+        # applications.
+        grouped_apps: dict[tuple[str, str], list] = {}
         for app in applications:
             platform = _detect_platform(app.job_url or "")
-            platform_apps.setdefault(platform, []).append(app)
+            grouped_apps.setdefault((str(app.user_id), platform), []).append(app)
 
-        # Check each platform's notification page
-        for platform, apps in platform_apps.items():
+        # Check each user's platform notification page under that user's own
+        # account/model only.
+        for (user_id, platform), apps in grouped_apps.items():
             try:
-                user_id = str(apps[0].user_id)
                 llm = await get_llm(user_id, db)
 
+                # The sandbox browser path requires an owned durable run to
+                # create/reuse a session (see acquire_session in
+                # application_workflow.py) — create one scoped to this user.
+                run_id = str(uuid.uuid4())
+                db.add(AgentRun(
+                    id=uuid.UUID(run_id),
+                    user_id=uuid.UUID(user_id),
+                    agent_type="status_check",
+                    status="running",
+                    input={"platform": platform, "application_ids": [str(a.id) for a in apps]},
+                ))
+                await db.commit()
+
                 task = _build_status_check_task(platform, apps)
-                result_text = await run_browser_task(llm, task, user_id, max_steps=15)
+                result_text = await run_browser_task(llm, task, user_id, max_steps=15, run_id=run_id)
 
                 # Parse status updates from browser agent response
                 updates = _parse_status_updates(result_text, apps)
@@ -451,10 +522,15 @@ async def check_application_status(payload: StatusCheckTrigger):
                         .values(status=new_status)
                     )
                     updated_count += 1
+                await db.execute(
+                    update(AgentRun).where(AgentRun.id == uuid.UUID(run_id))
+                    .values(status="completed", completed_at=datetime.now(timezone.utc))
+                )
+                await db.commit()
             except Exception as exc:
-                logger.warning("Status check failed for platform %s: %s", platform, exc)
-
-        await db.commit()
+                logger.warning(
+                    "Status check failed for user %s platform %s: %s", user_id, platform, exc,
+                )
 
     logger.info("Status check complete: %d applications updated", updated_count)
     return {"status": "ok", "updated_count": updated_count}
@@ -523,7 +599,7 @@ def _parse_status_updates(result_text: str, apps: list) -> dict:
             for segment in line.split("|"):
                 if ":" in segment:
                     key, val = segment.split(":", 1)
-                    parts[key.strip()] = val.strip().lower()
+                    parts[key.strip().lower()] = val.strip().lower()
 
             company = parts.get("company", "")
             status = parts.get("status", "no_update")

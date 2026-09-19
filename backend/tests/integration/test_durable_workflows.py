@@ -9,7 +9,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select, text
@@ -187,6 +187,103 @@ async def test_live_browser_form_snapshot_and_single_submit(database, monkeypatc
         assert await page.evaluate("window.submits") == 1
 
 
+# --- Task 2: idempotent external actions (application submission + email) ---
+
+
+async def new_application_attempt(factory, state="awaiting_approval"):
+    from app.models.db import ApplicationAttempt, JobApplication, User
+    async with factory() as db:
+        user = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.test")
+        db.add(user)
+        await db.flush()
+        app_row = JobApplication(id=uuid.uuid4(), user_id=user.id, company="Acme",
+                                 role="Backend Engineer", job_url="https://jobs.example.test/apply")
+        db.add(app_row)
+        await db.flush()
+        attempt = ApplicationAttempt(id=uuid.uuid4(), user_id=user.id,
+                                     job_application_id=app_row.id, state=state)
+        db.add(attempt)
+        await db.commit()
+        return user, app_row, attempt
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_application_approvals_cause_one_submit(database, monkeypatch):
+    """Required test #1: real Postgres row lock, not a mock — two concurrent
+    claims for the same attempt must not both win the compare-and-swap."""
+    from app.services import application_workflow
+    monkeypatch.setattr(application_workflow, "AsyncSessionLocal", database)
+
+    _, _, attempt = await new_application_attempt(database, state="awaiting_approval")
+    results = await asyncio.gather(
+        application_workflow.claim_attempt_for_submit(str(attempt.id), "hash-1"),
+        application_workflow.claim_attempt_for_submit(str(attempt.id), "hash-1"),
+    )
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1
+
+    async with database() as db:
+        from app.models.db import ApplicationAttempt
+        saved = await db.get(ApplicationAttempt, attempt.id)
+        assert saved.state == "submitting"
+
+
+@pytest.mark.asyncio
+async def test_two_simultaneous_email_approvals_cause_one_gmail_call(database, monkeypatch):
+    """Required test #2: real Postgres row lock on outbound_messages."""
+    from app.services import workflow_service
+    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", database)
+
+    user, run = await new_run(database)
+    gmail_send = MagicMock(return_value={"id": "gmail-msg-1"})
+    monkeypatch.setattr("app.services.gmail_service.GmailMCPClient.send_message", gmail_send)
+
+    # Two concurrent approvals of the SAME run's pending email — the
+    # idempotency_key ("agent_run:{run_id}") is what they collide on.
+    await asyncio.gather(
+        workflow_service.send_approved_email(user.id, run.id, "hr@acme.test", "Following up", "body"),
+        workflow_service.send_approved_email(user.id, run.id, "hr@acme.test", "Following up", "body"),
+    )
+    assert gmail_send.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_same_user_cannot_start_second_attempt_for_same_job(database):
+    """Required test #6: the unique constraint is the backstop even if
+    application-level checks are ever bypassed."""
+    from sqlalchemy.exc import IntegrityError
+    from app.models.db import ApplicationAttempt
+
+    _, app_row, _ = await new_application_attempt(database)
+    async with database() as db:
+        with pytest.raises(IntegrityError):
+            db.add(ApplicationAttempt(id=uuid.uuid4(), user_id=app_row.user_id,
+                                      job_application_id=app_row.id, state="preparing"))
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_different_users_can_apply_to_same_job_independently(database):
+    """Required test #7."""
+    from app.models.db import ApplicationAttempt, JobApplication, User
+    async with database() as db:
+        user_a = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.test")
+        user_b = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.test")
+        db.add_all([user_a, user_b])
+        await db.flush()
+        app_a = JobApplication(id=uuid.uuid4(), user_id=user_a.id, company="Acme",
+                               role="Backend Engineer", job_url="https://jobs.example.test/apply")
+        app_b = JobApplication(id=uuid.uuid4(), user_id=user_b.id, company="Acme",
+                               role="Backend Engineer", job_url="https://jobs.example.test/apply")
+        db.add_all([app_a, app_b])
+        await db.flush()
+        db.add_all([
+            ApplicationAttempt(id=uuid.uuid4(), user_id=user_a.id, job_application_id=app_a.id, state="preparing"),
+            ApplicationAttempt(id=uuid.uuid4(), user_id=user_b.id, job_application_id=app_b.id, state="preparing"),
+        ])
+        await db.commit()  # no IntegrityError — different users, independent rows
+
+
 @pytest.mark.asyncio
 async def test_browser_ownership_is_enforced(database):
     from app.api.v1.browser import owned_session
@@ -197,3 +294,68 @@ async def test_browser_ownership_is_enforced(database):
         with pytest.raises(HTTPException) as exc:
             await owned_session(db, stranger, run.id)
         assert exc.value.status_code == 404
+
+
+# --- Task 3 slice 3b: the one controlled ATS adapter end-to-end test ---
+
+
+@pytest.mark.asyncio
+async def test_ashby_adapter_fills_and_submits_real_fixture_form(monkeypatch):
+    """Required by the Task 3 spec: 'Greenhouse, Lever, and Ashby forms work
+    through fixtures and one controlled end-to-end test.' Drives the real
+    AshbyAdapter (not the generic inline path) against a served fixture over
+    a real Chromium instance via CDP — no network, no real ashbyhq.com URL,
+    no real submission. application_workflow.py does not yet dispatch to
+    adapters (see adapters/__init__.py's registration and the parallel
+    agent's report), so this calls the adapter's own methods directly, the
+    same sequence dispatch would eventually use.
+    """
+    from pathlib import Path
+
+    from playwright.async_api import async_playwright
+
+    from app.applications.adapters.ashby import ashby_adapter
+    from app.applications.models import ResolvedAnswer
+    from app.core.config import settings
+    from app.services.sandbox_service import OpenSandboxProvider
+
+    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.ashbyhq.com")
+    monkeypatch.setattr(OpenSandboxProvider, "endpoint", AsyncMock(return_value=("http://127.0.0.1:59222", {})))
+
+    html = (Path(__file__).parent.parent / "fixtures" / "ats" / "ashby_apply.html").read_text()
+    job_url = "https://jobs.ashbyhq.com/acme/apply"
+    async with async_playwright() as p:
+        ws, headers = await OpenSandboxProvider().cdp("test-browser")
+        browser = await p.chromium.connect_over_cdp(ws)
+        page = browser.contexts[0].pages[-1]
+        await page.route(job_url, lambda route: route.fulfill(body=html, content_type="text/html"))
+
+        assert await ashby_adapter.detect(job_url, page) is True
+
+        await ashby_adapter.open_application(page, job_url)
+        fields = await ashby_adapter.extract_fields(page)
+        field_ids = {f.field_id for f in fields}
+        assert {"full_name", "email", "source", "work_authorized"} <= field_ids
+
+        answers = [
+            ResolvedAnswer(field_id="full_name", value="Ada Lovelace", source="profile", confidence=0.99),
+            ResolvedAnswer(field_id="email", value="ada@example.test", source="profile", confidence=0.99),
+            ResolvedAnswer(field_id="source", value="LinkedIn", source="user", confidence=1.0),
+            ResolvedAnswer(field_id="work_authorized", value="No", source="user", confidence=1.0),
+        ]
+        await ashby_adapter.fill_fields(page, fields, answers)
+        await ashby_adapter.upload_documents(page, b"%PDF-test-resume")
+
+        refreshed = await ashby_adapter.extract_fields(page)
+        issues = await ashby_adapter.validate(page, refreshed)
+        assert issues == []
+
+        submit = await ashby_adapter.locate_submit(page)
+        assert submit is not None
+        assert await page.evaluate("window.submits || 0") == 0
+        await submit.click()
+
+        confirmed, text, _url = await ashby_adapter.verify_confirmation(page)
+        assert confirmed is True
+        assert "thank you" in text.lower()
+        assert await page.evaluate("window.submits") == 1

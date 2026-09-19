@@ -1,9 +1,32 @@
+# Local/single-VM Docker Compose stack. Runs backend, agent-worker, BullMQ
+# worker, frontend and nginx as separate containers on one host, all sharing
+# the default bridge network and Docker-managed named volumes (no external
+# Postgres/Supabase-Storage workaround needed here — see deploy/oracle/compose.yml
+# for the Oracle Cloud VM variant, which additionally self-hosts Postgres/Redis
+# config and runs everything with network_mode: host because outbound IPv6 to
+# Supabase is unavailable there).
 services:
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      # Next.js inlines NEXT_PUBLIC_* into the client bundle at BUILD time.
+      # env_file only applies at runtime, so without these args the browser
+      # ships with an empty Clerk publishable key and auth never initialises.
+      args:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        BACKEND_URL: http://backend:8000
     env_file: ./frontend/.env.local
     environment:
       BACKEND_URL: http://backend:8000
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      # Docker sets HOSTNAME to the container id, and Next.js standalone's
+      # server.js reads that same variable to pick its bind address -- so it
+      # binds the eth0 IP only. nginx still reaches it, but the healthcheck
+      # (which dials 0.0.0.0:3000) gets ECONNREFUSED and the container is
+      # marked unhealthy, blocking any depends_on: service_healthy.
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
     depends_on:
       backend:
         condition: service_healthy
@@ -34,6 +57,13 @@ services:
     shm_size: "256m"
     volumes:
       - browser_debug:/tmp/browser_debug
+      # Uploaded resumes/documents (storage_service.py, DOCUMENT_STORAGE_DIR,
+      # default /data/documents). Must be shared with agent-worker below --
+      # without it, a document this container writes is invisible to the
+      # workflow_worker process reading it back (application_workflow.py's
+      # load_resume), since each container otherwise gets its own ephemeral
+      # filesystem at that path.
+      - docstore:/data/documents
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\" || exit 1"]
       interval: 20s
@@ -58,6 +88,9 @@ services:
     init: true
     stop_grace_period: 360s
     mem_limit: 2g
+    volumes:
+      # Shared with backend -- see the docstore comment on that service.
+      - docstore:/data/documents
     depends_on:
       redis:
         condition: service_healthy
@@ -76,6 +109,65 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  # ── Temporal (feature-flagged, opt-in) ──────────────────────────
+  # Self-hosted dev server only — not a production topology. Everything
+  # below is disabled unless TEMPORAL_ENABLED=true in backend/.env AND you
+  # explicitly request this profile: `docker compose --profile temporal up`.
+  # A production deployment would point TEMPORAL_ADDRESS at Temporal Cloud
+  # instead of running any of this (see backend/app/core/temporal_client.py's
+  # TLS config for that path) and drop these three services entirely.
+  temporal-postgres:
+    image: postgres:16-alpine
+    profiles: ["temporal"]
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/auto-setup:1.24
+    profiles: ["temporal"]
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-postgres
+    ports:
+      - "127.0.0.1:7233:7233"
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  temporal-worker:
+    build: ./backend
+    profiles: ["temporal"]
+    command: python -m app.temporal_worker
+    env_file: ./backend/.env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    init: true
+    stop_grace_period: 60s
+    mem_limit: 1g
+    volumes:
+      # Shared with backend/agent-worker — see the docstore comment below.
+      - docstore:/data/documents
+    depends_on:
+      temporal:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   nginx:
     image: nginx:alpine
@@ -104,3 +196,10 @@ volumes:
   # /tmp/browser_debug. Enable with BROWSER_DEBUG_SCREENSHOTS=true in .env.
   # Inspect failures with: docker compose exec backend ls /tmp/browser_debug/
   browser_debug:
+  # Uploaded resumes/cover letters (storage_service.py). Shared between
+  # backend and agent-worker so a document either container writes is visible
+  # to the other. Matches deploy/oracle/compose.yml's docstore volume.
+  docstore:
+  # Temporal's own event-history store — separate from the app's Supabase
+  # Postgres. Only created when the "temporal" profile is used.
+  temporal_postgres_data:

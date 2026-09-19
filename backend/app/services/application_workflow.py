@@ -13,6 +13,9 @@ import uuid
 
 from sqlalchemy import select
 
+from app.applications.answer_resolver import resolve_fields
+from app.applications.question_normalizer import normalize_question
+from app.applications.validator import is_empty
 from app.core.database import AsyncSessionLocal
 from app.models.db import AgentRun, BrowserSession, JobApplication, UserDocument
 from app.services.sandbox_service import (
@@ -90,7 +93,79 @@ async def fill_known_fields(page, user_id: str) -> None:
             await field.fill(value)
 
 
+async def claim_attempt_for_submit(attempt_id: str, approved_snapshot_hash: str | None):
+    """Atomic awaiting_approval -> submitting transition.
+
+    Returns the claimed ApplicationAttempt, or None if the attempt is not
+    (or no longer) in awaiting_approval — meaning a concurrent caller already
+    claimed it, or it is in some other state. Callers MUST NOT click Submit
+    unless this returns a row: this is the single compare-and-swap guard
+    that makes the external submit click at-most-once regardless of how
+    many callers reach this point concurrently.
+    """
+    from app.models.db import ApplicationAttempt
+
+    async with AsyncSessionLocal() as db:
+        attempt = await db.get(ApplicationAttempt, uuid.UUID(attempt_id), with_for_update=True)
+        if attempt is None or attempt.state != "awaiting_approval":
+            return None
+        attempt.state = "submitting"
+        attempt.submission_token = str(uuid.uuid4())
+        attempt.approved_snapshot_hash = approved_snapshot_hash
+        await db.commit()
+        return attempt
+
+
+async def mark_attempt_awaiting_approval(attempt_id: str) -> None:
+    from app.models.db import ApplicationAttempt
+
+    async with AsyncSessionLocal() as db:
+        attempt = await db.get(ApplicationAttempt, uuid.UUID(attempt_id), with_for_update=True)
+        if attempt is None or attempt.state in {"submitting", "submitted", "verified"}:
+            return
+        attempt.state = "awaiting_approval"
+        await db.commit()
+
+
+async def mark_attempt_outcome_unknown(attempt_id: str, error: str) -> None:
+    """A crash/timeout after the submit click: never automatically retried."""
+    from app.models.db import ApplicationAttempt
+
+    async with AsyncSessionLocal() as db:
+        attempt = await db.get(ApplicationAttempt, uuid.UUID(attempt_id), with_for_update=True)
+        if attempt is None or attempt.state != "submitting":
+            return
+        attempt.state = "outcome_unknown"
+        attempt.last_error = error[:2000]
+        await db.commit()
+
+
+async def mark_attempt_verified(
+    attempt_id: str, confirmation_text: str, confirmation_url: str,
+) -> None:
+    from datetime import datetime, timezone
+
+    from app.models.db import ApplicationAttempt
+
+    async with AsyncSessionLocal() as db:
+        attempt = await db.get(ApplicationAttempt, uuid.UUID(attempt_id), with_for_update=True)
+        if attempt is None:
+            return
+        now = datetime.now(timezone.utc)
+        attempt.state = "verified"
+        attempt.confirmation_text = confirmation_text[:12000]
+        attempt.confirmation_url = confirmation_url
+        attempt.submitted_at = now
+        attempt.verified_at = now
+        await db.commit()
+
+
 async def run_application_stage(run: AgentRun, pending: dict) -> dict:
+    # Local import: app.applications.adapters.generic imports SUBMIT_NAME/
+    # CONFIRMATION back from this module, so a module-level import here would
+    # be circular (this module wouldn't have finished defining them yet).
+    from app.applications.adapters import detect_adapter
+
     kind = pending["type"]
     validate_browser_url(pending["job_url"])
     session = await acquire_session(str(run.user_id), str(run.id))
@@ -98,7 +173,19 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
         if kind == "browser_prepare":
             await page.goto(pending["job_url"], wait_until="domcontentloaded", timeout=30000)
             await fill_known_fields(page, str(run.user_id))
+        # Detected once the page has (or already had) a chance to load, so
+        # DOM-based fallback detection (e.g. an embedded Greenhouse widget on
+        # a company's own domain) has real markup to inspect. GenericAdapter
+        # always matches last, so `adapter` is never None.
+        adapter = await detect_adapter(pending["job_url"], page)
         if kind in {"browser_prepare", "browser_input"}:
+            # fill_known_fields does plain label->profile-field text fills
+            # (name/email/phone/linkedin) *before* any field schema exists.
+            # ATSAdapter.fill_fields instead needs an already-extracted
+            # list[ApplicationField] + resolve_fields() answers, which are
+            # only available further down this same branch — there is no
+            # equivalent single adapter call for this earlier, schema-less
+            # step, so it stays inline unchanged.
             await fill_known_fields(page, str(run.user_id))
             document_id = pending.get("pdf_document_id")
             if not document_id:
@@ -111,15 +198,51 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
                 await upload.set_input_files({"name": "resume.pdf", "mimeType": "application/pdf", "buffer": content})
                 pending = {**pending, "resume_sha256": digest, "resume_uploaded": True}
             snapshot = await review_snapshot(page)
-            submit = page.get_by_role("button", name=SUBMIT_NAME)
-            missing = any(f["required"] and not f["value"] and not f["checked"] for f in snapshot["fields"])
+
+            # Task 3: extract every field (including radio groups and
+            # selects — review_snapshot's own fields list is only used for
+            # the submit-time fingerprint, not for answer resolution) and
+            # resolve each against saved answers / structured profile data.
+            # Delegated to the matched ATSAdapter — for every adapter today
+            # this is the same FIELD_SNAPSHOT_JS/extract_fields pair that
+            # used to be called inline here, but adapter-specific extraction
+            # (e.g. Greenhouse/Lever fieldset grouping) now takes over for
+            # free when one of those ATSes is detected.
+            schema = await adapter.extract_fields(page)
+            async with AsyncSessionLocal() as db:
+                resolved = await resolve_fields(db, run.user_id, schema)
+                await db.commit()
+            resolved_by_id = {r.field_id: r for r in resolved}
+            missing_required = [
+                f for f in schema
+                if f.required and f.visible and not f.disabled and is_empty(f)
+                and resolved_by_id[f.field_id].source == "unresolved"
+            ]
+
+            # adapter.locate_submit() replaces the old inline
+            # count()==1/visible/enabled checks against SUBMIT_NAME — same
+            # check today, but lets a future adapter use its own button
+            # text/selector instead.
+            submit = await adapter.locate_submit(page)
+            # adapter.validate() replaces the old per-input `value` check,
+            # which let an unchecked required checkbox/radio pass because
+            # its raw HTML value attribute was non-empty — validate_fields
+            # (called by every adapter today) checks the normalized semantic
+            # value instead.
+            missing = bool(await adapter.validate(page, schema))
             ready = (
-                await submit.count() == 1 and await submit.is_visible()
-                and await submit.is_enabled() and not missing and pending.get("resume_uploaded", False)
+                submit is not None and not missing and pending.get("resume_uploaded", False)
                 and not await page.locator('input[type="password"]:visible').count()
             )
             await save_account_state(session, context)
-            next_type = "browser_review" if ready else "browser_input"
+            if ready:
+                next_type = "browser_review"
+            elif missing_required:
+                next_type = "application_answers_required"
+            else:
+                next_type = "browser_input"
+            if ready and pending.get("attempt_id"):
+                await mark_attempt_awaiting_approval(pending["attempt_id"])
             async with AsyncSessionLocal() as db:
                 saved = await db.get(BrowserSession, session.id)
                 if saved is None:
@@ -127,6 +250,21 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
                 saved.status = "review" if ready else "input"
                 saved.review = snapshot
                 await db.commit()
+
+            if next_type == "application_answers_required":
+                return checkpoint(
+                    pending, next_type,
+                    "Answer these questions once — approved answers are reused on later applications.",
+                    session_id=str(session.id),
+                    fields=[
+                        {
+                            "field_id": f.field_id,
+                            "question_key": f.normalized_key or normalize_question(f.label),
+                            "label": f.label, "required": f.required, "options": f.options,
+                        }
+                        for f in missing_required
+                    ],
+                )
             return checkpoint(
                 pending, next_type,
                 "Review the completed form and approve its final submission." if ready else
@@ -135,6 +273,11 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
             )
 
         # This stage is created only by the locked, authenticated approval endpoint.
+        # review_snapshot() (and its fingerprint) stay inline rather than
+        # moving onto the ATSAdapter Protocol: GenericAdapter.extract_fields
+        # doesn't produce a fingerprint, and adding one would mean changing
+        # the Protocol (and every adapter implementing it) for a value only
+        # this module needs — not worth the ripple for a parallel-owned file.
         expected = pending.get("form", {}).get("fingerprint")
         snapshot = await review_snapshot(page)
         if not expected or snapshot["fingerprint"] != expected:
@@ -142,15 +285,41 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
         _, digest = await load_resume(run.user_id, pending["pdf_document_id"])
         if digest != pending.get("resume_sha256"):
             raise ValueError("Resume changed after approval")
-        submit = page.get_by_role("button", name=SUBMIT_NAME)
-        if await submit.count() != 1 or not await submit.is_enabled():
+        # adapter.locate_submit() replaces the old inline SUBMIT_NAME lookup.
+        submit = await adapter.locate_submit(page)
+        if submit is None:
             return checkpoint(pending, "browser_input", "The submit control changed. Review the form again.", form=snapshot)
         # Never retry this click: timeout/disconnection afterward is an unknown outcome.
+        #
+        # Kept on the inline CONFIRMATION regex rather than
+        # adapter.verify_confirmation(): that method is inconsistent across
+        # the four adapters today — Greenhouse/Lever's wait up to 15s
+        # internally, Ashby/Generic's check immediately with no wait — so
+        # calling it here would either add an unwanted ~15s stall to every
+        # normal (not-yet-submitted) Greenhouse/Lever approval, or drop the
+        # wait Ashby/Generic never had. Fixing that inconsistency means
+        # editing the adapter files, which are out of this file's scope.
         if await page.get_by_text(CONFIRMATION).count():
             return {"status": "failed", "result": {"outcome": "unknown", "message": "An existing confirmation was found; inspect the portal before applying again"}}
+
+        # Atomic awaiting_approval -> submitting compare-and-swap. If another
+        # concurrent caller already claimed this attempt (or it is no longer
+        # awaiting approval for any other reason), do not touch the browser —
+        # this is what makes the external click at-most-once.
+        attempt_id = pending.get("attempt_id")
+        if attempt_id:
+            attempt = await claim_attempt_for_submit(attempt_id, expected)
+            if attempt is None:
+                return {"status": "completed", "result": {
+                    "outcome": "duplicate_suppressed",
+                    "message": "This application is already being submitted or was already submitted.",
+                }}
+
         try:
             await submit.click(timeout=15000, no_wait_after=True)
         except Exception:
+            if attempt_id:
+                await mark_attempt_outcome_unknown(attempt_id, "Submit click failed or timed out")
             return {"status": "failed", "result": {
                 "outcome": "unknown", "job_url": pending["job_url"],
                 "message": "Submission may have been triggered but could not be confirmed. Check the portal before retrying.",
@@ -162,11 +331,15 @@ async def run_application_stage(run: AgentRun, pending: dict) -> dict:
             if not match:
                 raise ValueError("No confirmation found")
         except Exception:
+            if attempt_id:
+                await mark_attempt_outcome_unknown(attempt_id, "Confirmation could not be verified after submit")
             return {"status": "failed", "result": {
                 "outcome": "unknown", "job_url": pending["job_url"],
                 "message": "Submission was attempted but could not be confirmed. Check the portal before retrying.",
             }}
         await save_account_state(session, context)
+        if attempt_id:
+            await mark_attempt_verified(attempt_id, match.group(0), page.url)
         from datetime import datetime, timezone
         async with AsyncSessionLocal() as db:
             existing = (await db.execute(select(JobApplication).where(

@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, func
+from sqlalchemy import or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
@@ -274,6 +274,14 @@ async def approve_or_cancel(
         raise HTTPException(status_code=400, detail=f"Run is {run.status}, not awaiting_approval")
 
     if not payload.approved:
+        if (run.input or {}).get("engine") == "temporal":
+            workflow_id = (run.input or {}).get("workflow_id")
+            if workflow_id:
+                from app.core.temporal_client import get_temporal_client
+                from app.workflows.auto_apply import AutoApplyWorkflow
+                client = await get_temporal_client()
+                handle = client.get_workflow_handle_for(AutoApplyWorkflow.run, workflow_id=workflow_id)
+                await handle.signal(AutoApplyWorkflow.cancel)
         run.status = "failed"
         run.output = {"error": "Action cancelled by user"}
         run.completed_at = datetime.now(timezone.utc)
@@ -289,12 +297,21 @@ async def approve_or_cancel(
     if not redis_action_type:
         redis_action_type = payload.action_type or ""
 
-    from app.services.workflow_service import add_task, validate_approval
+    from app.services.workflow_service import validate_approval
     try:
         continuation = validate_approval(pending, payload.edits or {})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    add_task(db, run, "continue", continuation)
+
+    # A run started via prepare_application_apply's TEMPORAL_ENABLED branch
+    # carries this marker (set by the reserve_application_attempt activity)
+    # — its approval must go through the workflow's signals, never a BullMQ
+    # continuation task, since no WorkflowTask row drives it.
+    if (run.input or {}).get("engine") == "temporal":
+        await _signal_temporal_approval(run, redis_action_type, continuation)
+    else:
+        from app.services.workflow_service import add_task
+        add_task(db, run, "continue", continuation)
     run.status = "queued"
     run.completed_at = None
     await db.commit()
@@ -302,9 +319,29 @@ async def approve_or_cancel(
     return {"status": "queued", "action_type": redis_action_type}
 
 
+async def _signal_temporal_approval(run: AgentRun, action_type: str, continuation: dict) -> None:
+    from app.core.temporal_client import get_temporal_client
+    from app.workflows.auto_apply import AutoApplyWorkflow
+
+    workflow_id = (run.input or {}).get("workflow_id")
+    if not workflow_id:
+        raise HTTPException(status_code=500, detail="Temporal-backed run is missing its workflow_id")
+
+    client = await get_temporal_client()
+    handle = client.get_workflow_handle_for(AutoApplyWorkflow.run, workflow_id=workflow_id)
+    if action_type == "application_answers_required":
+        await handle.signal(AutoApplyWorkflow.provide_answers, continuation.get("answers") or {})
+    else:
+        # browser_review (final submit) and browser_input (resume
+        # preparation) share one generic approval signal — see
+        # auto_apply.py's workflow loop for why.
+        await handle.signal(AutoApplyWorkflow.approve)
+
+
 @router.get("/runs")
 async def list_runs(
     status: str | None = None,
+    application_id: str | None = None,
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -313,6 +350,20 @@ async def list_runs(
     q = select(AgentRun).where(AgentRun.user_id == current_user.id)
     if status:
         q = q.where(AgentRun.status == status)
+    if application_id:
+        try:
+            uuid.UUID(application_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid application_id")
+        # Runs are linked to an application through their stored input context.
+        # Agents disagree on the key name, so match both spellings; without this
+        # the caller silently gets every run the user has ever made.
+        q = q.where(
+            or_(
+                AgentRun.input["application_id"].astext == application_id,
+                AgentRun.input["job_application_id"].astext == application_id,
+            )
+        )
     q = q.order_by(AgentRun.started_at.desc()).offset(offset).limit(min(limit, 100))
     result = await db.execute(q)
     runs = result.scalars().all()

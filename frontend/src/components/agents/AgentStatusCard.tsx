@@ -1,10 +1,12 @@
 "use client";
 
 import { motion } from "motion/react";
-import { CheckCircle2, Clock3, Loader2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, Clock3, Loader2, SearchCheck, TriangleAlert } from "lucide-react";
 import { cardHover } from "@/lib/motion-variants";
 
-export type AgentRunStatus = "queued" | "running" | "succeeded" | "completed" | "failed" | "awaiting_approval";
+export type AgentRunStatus =
+  | "queued" | "running" | "succeeded" | "completed" | "failed"
+  | "awaiting_approval" | "needs_verification";
 
 const STATUS_STYLES: Record<AgentRunStatus, string> = {
   queued: "border-muted bg-muted/20 text-muted-foreground",
@@ -13,6 +15,10 @@ const STATUS_STYLES: Record<AgentRunStatus, string> = {
   completed: "border-success/30 bg-success/10 text-success",
   failed: "border-danger/30 bg-danger/10 text-danger",
   awaiting_approval: "border-warning/30 bg-warning/10 text-warning",
+  // Distinct from "failed": an external action (e.g. a submit click) may
+  // have gone through with no way to confirm it — never auto-retried, so
+  // the color/copy must read as "go check", not "broken".
+  needs_verification: "border-warning/30 bg-warning/10 text-warning",
 };
 
 const STATUS_ICONS: Record<AgentRunStatus, typeof Clock3> = {
@@ -22,7 +28,9 @@ const STATUS_ICONS: Record<AgentRunStatus, typeof Clock3> = {
   completed: CheckCircle2,
   failed: TriangleAlert,
   awaiting_approval: Clock3,
+  needs_verification: SearchCheck,
 };
+
 
 type Props = {
   agentName: string;

@@ -1,3 +1,9 @@
+# Oracle Cloud "always free" VM deployment. network_mode: host throughout
+# because the VM has no IPv6 route and Supabase's direct DB host + Storage are
+# IPv6-only there, so this self-hosts Postgres and local-disk document storage
+# instead (see the per-service comments below). Not the topology the root
+# docker-compose.yml documents/scripts assume -- see the comment at the top of
+# that file for the normal multi-VM/local Docker Compose stack.
 name: careercraft-isolated
 services:
   backend:

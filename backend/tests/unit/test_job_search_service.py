@@ -85,7 +85,11 @@ def test_search_returns_empty_complete_with_warnings_and_no_llm_call():
     assert result["result"]["warnings"]
 
 
-def test_45_postings_score_capped_at_max_results():
+def test_45_postings_all_scored_then_ranked_before_truncation():
+    """Every deduped candidate must be scored before truncation to
+    max_results, so a strong match from a source queried later (job j40,
+    only reachable in the 3rd scoring batch) can still win a slot — even
+    though 40 >= max_results=25."""
     from app.agents import job_search as js
 
     jobs = [_job(i) for i in range(45)]
@@ -93,8 +97,19 @@ def test_45_postings_score_capped_at_max_results():
 
     def fake_score(llm, system, human, schema):
         calls.append(human)
-        start = len(calls) * 20 - 20
-        return _scored_output(jobs[start:start + 20])
+        start = len(calls) * js.SCORE_BATCH_SIZE - js.SCORE_BATCH_SIZE
+        batch = jobs[start:start + js.SCORE_BATCH_SIZE]
+        return JobSearchOutput(
+            matches=[
+                JobMatch(
+                    job_id=j["job_id"],
+                    score=99 if j["job_id"] == "j40" else 50,
+                    reasons=["fit"], red_flags=[], missing_skills=[],
+                )
+                for j in batch
+            ],
+            top_pick_id=batch[0]["job_id"] if batch else None,
+        )
 
     patches = _node_patches(search_all_platforms=(jobs, []))
     with patches[0], patches[1], patches[2], patches[3], patches[4]:
@@ -102,13 +117,14 @@ def test_45_postings_score_capped_at_max_results():
             with patch.object(js, "_persist_saved_jobs", return_value=25):
                 result = js.job_search_agent_node(make_state(max_results=25))
 
-    # Scoring is capped at max_results so serial LLM calls fit the run budget.
-    assert len(calls) == 2
+    # All 45 candidates get scored (3 batches of <=20), not just the first 25.
+    assert len(calls) == 3
     assert result["status"] == "completed"
+    # Truncation to max_results happens AFTER ranking, not before.
     assert len(result["result"]["matches"]) == 25
     assert result["result"]["total_found"] == 45
-    assert {m["job_id"] for m in result["result"]["matches"]} == {f"j{i}" for i in range(25)}
-    assert result["result"]["top_pick_id"] == "j0"
+    assert result["result"]["top_pick_id"] == "j40"
+    assert "j40" in {m["job_id"] for m in result["result"]["matches"]}
 
 
 def test_missing_titles_returns_error_shape():
@@ -144,6 +160,54 @@ def test_one_platform_failure_still_returns_others():
     assert any("open_apis failed" in w for w in warnings)
 
 
+def test_search_all_platforms_fans_out_over_every_location():
+    """A multi-location request must hit every location, not just the first."""
+    import asyncio
+    from app.services import job_search_service as svc
+
+    seen_locations: list[str] = []
+
+    def fake_adapter(query, location, max_results):
+        seen_locations.append(location)
+        return [{**_job(len(seen_locations)), "location": location}]
+
+    async def go():
+        with patch.dict(svc._ADAPTERS, {"open_apis": fake_adapter}, clear=True):
+            return await svc.search_all_platforms(
+                {"titles": ["Backend"], "locations": ["Bengaluru", "Remote"], "max_results": 10},
+                ["open_apis"],
+            )
+
+    jobs, warnings = asyncio.run(go())
+    assert sorted(seen_locations) == ["Bengaluru", "Remote"]
+    assert {j["location"] for j in jobs} == {"Bengaluru", "Remote"}
+
+
+def test_search_all_platforms_applies_remote_filter():
+    """query['remote'] must filter out non-matching jobs post-fetch, even
+    though no adapter accepts a remote/work-mode parameter."""
+    import asyncio
+    from app.services import job_search_service as svc
+
+    def fake_adapter(query, location, max_results):
+        return [
+            {**_job(1), "location": "Remote", "url": "https://x/1"},
+            {**_job(2), "location": "Bengaluru, India", "url": "https://x/2"},
+        ]
+
+    async def go():
+        query = {
+            "titles": ["Backend"], "locations": ["Remote"],
+            "max_results": 10, "remote": "remote",
+        }
+        with patch.dict(svc._ADAPTERS, {"open_apis": fake_adapter}, clear=True):
+            return await svc.search_all_platforms(query, ["open_apis"])
+
+    jobs, warnings = asyncio.run(go())
+    assert len(jobs) == 1
+    assert jobs[0]["location"] == "Remote"
+
+
 def test_make_job_search_id_is_deterministic():
     from app.services.queue_service import make_job_search_id
 
@@ -171,17 +235,32 @@ def _override_auth(monkeypatch):
     model_row = MagicMock()
     db = MagicMock()
     db.add = MagicMock()
+    calls = {"n": 0}
 
     async def _flush():
         return None
 
+    async def _commit():
+        return None
+
     async def _exec(*a, **k):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            # Query 1: get_current_user's own user-by-subject lookup.
+            # Query 2: search_jobs()'s active-model-settings check.
+            # Both must resolve truthy for the route to reach the handler body.
+            return MagicMock(
+                scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=model_row))),
+                scalar_one_or_none=MagicMock(return_value=model_row),
+            )
+        # Later queries (the duplicate-job-search lookup): no existing run.
         return MagicMock(
-            scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=model_row))),
-            scalar_one_or_none=MagicMock(return_value=model_row),
+            scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))),
+            scalar_one_or_none=MagicMock(return_value=None),
         )
 
     db.flush = MagicMock(side_effect=lambda: _flush())
+    db.commit = MagicMock(side_effect=lambda: _commit())
     db.execute = MagicMock(side_effect=lambda *a, **k: _exec(*a, **k))
 
     async def _fake_db():

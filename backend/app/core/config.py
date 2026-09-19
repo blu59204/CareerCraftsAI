@@ -118,6 +118,26 @@ class Settings(BaseSettings):
     WORKFLOW_DISPATCH_INTERVAL_S: int = Field(default=3, ge=1, le=60)
     WORKFLOW_TASK_TIMEOUT_S: int = Field(default=300, ge=30, le=1800)
 
+    # ── Temporal (feature-flagged durable workflows) ────────────────────
+    # Disabled by default: BullMQ + the WorkflowTask/AgentRun ledger above
+    # remain the execution path for every user until this is explicitly
+    # turned on and proven. Never remove that path while this exists.
+    TEMPORAL_ENABLED: bool = False
+    TEMPORAL_ADDRESS: str = "localhost:7233"
+    TEMPORAL_NAMESPACE: str = "default"
+    TEMPORAL_TASK_QUEUE: str = "careercraft-auto-apply"
+    # TLS/mTLS — required for Temporal Cloud, optional for a self-hosted dev
+    # server. Leave all three empty to connect in plaintext (local dev only).
+    TEMPORAL_TLS_CERT_PATH: str = ""
+    TEMPORAL_TLS_KEY_PATH: str = ""
+    TEMPORAL_TLS_CA_PATH: str = ""
+    TEMPORAL_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
+    # Preparation activities (navigate, extract, fill) retry with bounded
+    # backoff; the final submit activity never does (max_attempts=1 is set
+    # directly on that activity's retry policy, not here).
+    TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S: int = Field(default=120, ge=10, le=1800)
+    TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S: int = Field(default=30, ge=5, le=300)
+
     # OpenSandbox runs on dedicated infrastructure, never in the API process.
     OPEN_SANDBOX_URL: str = ""
     OPEN_SANDBOX_API_KEY: str = ""

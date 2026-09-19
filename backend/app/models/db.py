@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -175,6 +175,140 @@ class BrowserAccountState(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     state_enc: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ApplicationAttempt(Base):
+    """Idempotency ledger for the durable submit click.
+
+    One row per (user, job_application) — enforced by a unique constraint,
+    not a new row per retry. State advances forward through the same row so
+    a concurrent or repeated submit attempt can be detected and suppressed.
+    """
+    __tablename__ = "application_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    job_application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("job_applications.id", ondelete="CASCADE")
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"))
+
+    # Set only when this attempt is driven by the (feature-flagged) Temporal
+    # path instead of the default BullMQ/WorkflowTask path — both NULL means
+    # BullMQ. workflow_id is the stable "auto-apply/{user_id}/{job_application_id}"
+    # id; temporal_run_id is Temporal's own per-execution run id (changes on
+    # Continue-As-New/retry-as-new-workflow, unlike workflow_id).
+    workflow_id: Mapped[str | None] = mapped_column(String, unique=True)
+    temporal_run_id: Mapped[str | None] = mapped_column(String)
+
+    state: Mapped[str] = mapped_column(String(30), default="preparing")
+
+    submission_token: Mapped[str | None] = mapped_column(String, unique=True)
+    external_application_id: Mapped[str | None] = mapped_column(String)
+    confirmation_url: Mapped[str | None] = mapped_column(String)
+    confirmation_text: Mapped[str | None] = mapped_column(Text)
+    approved_snapshot_hash: Mapped[str | None] = mapped_column(String)
+
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "job_application_id", name="application_attempts_one_per_job"),
+    )
+
+
+class OutboundMessage(Base):
+    """Idempotency ledger for approved outbound sends (email today)."""
+    __tablename__ = "outbound_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"))
+    channel: Mapped[str] = mapped_column(String(20), default="email")
+    recipient: Mapped[str] = mapped_column(String, nullable=False)
+    subject: Mapped[str | None] = mapped_column(String)
+    body_hash: Mapped[str] = mapped_column(String, nullable=False)
+
+    state: Mapped[str] = mapped_column(String(30), default="draft")
+
+    provider_message_id: Mapped[str | None] = mapped_column(String)
+    idempotency_key: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CandidateProfile(Base):
+    """Structured, explicitly-approved application data.
+
+    Never populated by LLM inference — sponsorship, authorization, salary,
+    and notice period come only from the user. See answer_resolver.py.
+    """
+    __tablename__ = "candidate_profiles"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+    first_name: Mapped[str | None] = mapped_column(String)
+    last_name: Mapped[str | None] = mapped_column(String)
+    email: Mapped[str | None] = mapped_column(String)
+    phone: Mapped[str | None] = mapped_column(String)
+
+    city: Mapped[str | None] = mapped_column(String)
+    state: Mapped[str | None] = mapped_column(String)
+    country: Mapped[str | None] = mapped_column(String)
+    postal_code: Mapped[str | None] = mapped_column(String)
+
+    current_company: Mapped[str | None] = mapped_column(String)
+    current_title: Mapped[str | None] = mapped_column(String)
+    years_experience: Mapped[float | None] = mapped_column(Numeric)
+    notice_period_days: Mapped[int | None] = mapped_column(Integer)
+
+    linkedin_url: Mapped[str | None] = mapped_column(String)
+    github_url: Mapped[str | None] = mapped_column(String)
+    portfolio_url: Mapped[str | None] = mapped_column(String)
+
+    current_salary: Mapped[float | None] = mapped_column(Numeric)
+    expected_salary: Mapped[float | None] = mapped_column(Numeric)
+    currency: Mapped[str | None] = mapped_column(String(10))
+
+    work_authorization: Mapped[str | None] = mapped_column(String)
+    requires_sponsorship: Mapped[bool | None] = mapped_column(Boolean)
+    willing_to_relocate: Mapped[bool | None] = mapped_column(Boolean)
+    remote_preference: Mapped[str | None] = mapped_column(String)
+
+    default_resume_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("user_documents.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CandidateAnswer(Base):
+    """A reusable, user-approved answer to a normalized application question.
+
+    One row per (user, question_key) — later applications reuse it instead
+    of asking again or generating a fresh answer.
+    """
+    __tablename__ = "candidate_answers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    question_key: Mapped[str] = mapped_column(String, nullable=False)
+    normalized_question: Mapped[str | None] = mapped_column(Text)
+    answer_type: Mapped[str] = mapped_column(String(20), default="text")
+    answer: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    source: Mapped[str] = mapped_column(String(20), default="user")
+    confidence: Mapped[float] = mapped_column(Numeric, default=1.0)
+    evidence: Mapped[dict | None] = mapped_column(JSONB)
+    approved_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "question_key", name="candidate_answers_one_per_question"),
+    )
 
 
 class InterviewSession(Base):

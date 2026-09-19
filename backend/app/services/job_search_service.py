@@ -108,7 +108,7 @@ async def search_all_platforms(
     platforms: list[str] | None = None,
     timeout_s: int = 90,
 ) -> tuple[list[dict], list[str]]:
-    """Fan out across job platforms concurrently.
+    """Fan out across job platforms (and locations) concurrently.
 
     Args:
         query: {titles: list[str], locations: list[str], remote: str,
@@ -123,19 +123,24 @@ async def search_all_platforms(
         warnings — this function never raises for source errors.
     """
     titles = query.get("titles") or []
-    locations = query.get("locations") or []
+    locations = query.get("locations") or (
+        [str(query["location"])] if query.get("location") else []
+    ) or ["Remote"]
     max_results = int(query.get("max_results", 10))
+    remote = str(query.get("remote") or "").strip().lower()
     q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
-    location = locations[0] if locations else str(query.get("location", "Remote"))
 
     names = platforms or DEFAULT_PLATFORMS
     warnings: list[str] = []
-
-    async def run_one(name: str) -> list[dict]:
-        adapter = _ADAPTERS.get(name)
-        if adapter is None:
+    valid_names = []
+    for name in names:
+        if name in _ADAPTERS:
+            valid_names.append(name)
+        else:
             warnings.append(f"unknown platform skipped: {name}")
-            return []
+
+    async def run_one(name: str, location: str) -> list[dict]:
+        adapter = _ADAPTERS[name]
         try:
             raw = await asyncio.wait_for(
                 asyncio.to_thread(adapter, q, location, max_results),
@@ -143,7 +148,7 @@ async def search_all_platforms(
             )
             return [_normalize(job, name) for job in (raw or [])]
         except Exception as exc:
-            logger.warning("Platform %s failed: %s", name, exc)
+            logger.warning("Platform %s (%s) failed: %s", name, location, exc)
             warnings.append(f"{name} failed: {type(exc).__name__}")
             return []
 
@@ -151,7 +156,27 @@ async def search_all_platforms(
     # PLATFORM_TIMEOUT_SEC and run_one never raises, so gather always
     # resolves with partial results. (An outer wait_for would cancel
     # completed sources and discard their jobs.)
-    per_source = await asyncio.gather(*(run_one(n) for n in names))
+    # Fan out over every requested location, not just the first — a
+    # multi-location search previously silently dropped all but one city.
+    per_source = await asyncio.gather(
+        *(run_one(name, location) for name in valid_names for location in locations)
+    )
 
     jobs = _dedupe([job for group in per_source for job in group])
-    return jobs[: max_results * len(names)], warnings
+    if remote in ("remote", "hybrid", "onsite"):
+        # Post-fetch predicate: none of the adapters accept a remote/work-mode
+        # parameter, so filter on each job's normalized location + remote
+        # fields directly rather than dropping the request's remote field.
+        def _mode_matches(job: dict) -> bool:
+            haystack = f"{job.get('location', '')} {job.get('remote', '')}".lower()
+            is_remote = "remote" in haystack
+            is_hybrid = "hybrid" in haystack
+            if remote == "remote":
+                return is_remote
+            if remote == "hybrid":
+                return is_hybrid
+            return not is_remote and not is_hybrid  # onsite
+
+        jobs = [j for j in jobs if _mode_matches(j)]
+    cap = max_results * max(len(valid_names), 1) * len(locations)
+    return jobs[:cap], warnings

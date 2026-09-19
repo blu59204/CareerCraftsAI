@@ -47,6 +47,11 @@ tiktoken>=0.7.0
 redis>=5.0.0
 bullmq>=2.25.0
 
+# Durable workflows (feature-flagged via TEMPORAL_ENABLED — see app/core/config.py;
+# BullMQ above stays the default execution path until Auto Apply has run
+# stably on Temporal, per docs/superpowers/specs Temporal migration plan)
+temporalio>=1.33.0
+
 # HTTP
 httpx>=0.27.0
 

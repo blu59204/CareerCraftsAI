@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, deploy/scalable-sandbox-workflows]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, deploy/scalable-sandbox-workflows]
 
 jobs:
   backend-lint-test:
@@ -40,6 +40,44 @@ jobs:
           SUPABASE_SERVICE_KEY: "x"
           SUPABASE_JWT_SECRET: "test-jwt-secret-not-real"
           REDIS_URL: "redis://localhost:6379"
+
+  backend-workflow-integration-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt -c constraints.txt
+        working-directory: backend
+
+      - name: Start disposable Postgres/Redis/browser containers
+        run: docker compose -p careercraft-workflow-tests -f docker-compose.test.yml up -d postgres redis browser
+
+      - name: Wait for Postgres to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec careercraft-workflow-tests-postgres-1 pg_isready -U workflow_test; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Postgres did not become ready in time" >&2
+          exit 1
+
+      - name: Durable workflow integration tests
+        working-directory: backend
+        run: python -m pytest tests/integration/test_durable_workflows.py -v --timeout=90
+        env:
+          RUN_WORKFLOW_INTEGRATION: "1"
+
+      - name: Tear down disposable containers
+        if: always()
+        run: docker compose -p careercraft-workflow-tests -f docker-compose.test.yml down
 
   frontend-lint-typecheck:
     runs-on: ubuntu-latest
