@@ -43,6 +43,11 @@ services:
   backend:
     build: ./backend
     env_file: ./backend/.env
+    environment:
+      # Containers must use the Temporal service DNS name. Set
+      # TEMPORAL_ADDRESS_DOCKER to a Temporal Cloud address when this Compose
+      # topology is used with a managed Temporal deployment.
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS_DOCKER:-temporal:7233}
     ports:
       - "8000:8000"
     depends_on:
@@ -151,15 +156,11 @@ services:
 
   temporal-worker:
     build: ./backend
-    command:
-      - /bin/sh
-      - -ec
-      - >-
-        if [ "$${TEMPORAL_ENABLED:-false}" = "true" ]; then
-          exec python -m app.temporal_worker;
-        fi;
-        exec tail -f /dev/null
+    profiles: ["temporal-worker"]
+    command: python -m app.temporal_worker
     env_file: ./backend/.env
+    environment:
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS_DOCKER:-temporal:7233}
     init: true
     stop_grace_period: 60s
     mem_limit: 1g
@@ -169,7 +170,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    # Permit retries while a local Temporal service starts, but surface a
+    # persistent cloud/configuration failure instead of idling forever.
+    restart: on-failure:5
 
   nginx:
     image: nginx:alpine

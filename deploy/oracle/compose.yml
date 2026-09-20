@@ -36,21 +36,15 @@ services:
     build: ../../backend
     network_mode: host
     env_file: /opt/careercraft-secrets/backend.env
-    command:
-      - /bin/sh
-      - -ec
-      - >-
-        if [ "$${TEMPORAL_ENABLED:-false}" = "true" ]; then
-          exec python -m app.temporal_worker;
-        fi;
-        exec tail -f /dev/null
+    profiles: ["temporal-worker"]
+    command: python -m app.temporal_worker
     init: true
     volumes:
       - docstore:/data/documents
     mem_limit: 1g
     cpus: 0.5
     stop_grace_period: 60s
-    restart: unless-stopped
+    restart: on-failure:5
   scheduler:
     build: ../../worker
     network_mode: host

@@ -516,14 +516,23 @@ POST /jobs/applications/{id}/prepare-apply
 
 **Retry and idempotency policy:** preparation activities retry with bounded exponential backoff (`_PREP_RETRY_POLICY`, max 5 attempts). The one activity call that can reach the actual Submit click uses `maximum_attempts=1` (`_SUBMIT_RETRY_POLICY`) — an ambiguous outcome becomes workflow state `needs_verification`, never an automatic retry. `reserve_application_attempt`'s `run_id` is generated once via `workflow.uuid4()` (deterministic, replay-safe) and passed as activity input rather than generated inside the activity, so an at-least-once retry reuses the same `AgentRun` row instead of orphaning a new one.
 
-**Deployment topology:** local dev runs a self-hosted Temporal server via the `temporal` Docker Compose profile (`docker compose --profile temporal up`) — `temporalio/auto-setup` + its own dedicated Postgres (`temporal-postgres`, never the app's Supabase DB) + `temporal-worker` running `python -m app.temporal_worker`. Production would point `TEMPORAL_ADDRESS` at Temporal Cloud with mTLS (`TEMPORAL_TLS_*` settings) instead of running any self-hosted Temporal service.
+**Deployment topology:** local development can opt into a self-hosted Temporal
+server with the `temporal` profile. The worker is an independent
+`temporal-worker` profile, so production can run it against Temporal Cloud
+without starting local Temporal or its Postgres. Host-run development uses
+`TEMPORAL_ADDRESS=localhost:7233`; containers use
+`TEMPORAL_ADDRESS_DOCKER=temporal:7233` by default. Set the latter to the
+managed Temporal address when Compose runs against Temporal Cloud, with the
+`TEMPORAL_TLS_*` settings for mTLS.
 
 **Local development:**
 ```bash
 cd backend && pip install -r requirements.txt   # installs temporalio
 # In backend/.env: TEMPORAL_ENABLED=true, TEMPORAL_ADDRESS=localhost:7233
-docker compose --profile temporal up -d temporal-postgres temporal
-python -m app.temporal_worker   # separate terminal, or add to docker compose
+# Compose containers use TEMPORAL_ADDRESS_DOCKER=temporal:7233.
+docker compose --profile temporal --profile temporal-worker up -d
+# Or run the worker on the host after starting the `temporal` profile:
+python -m app.temporal_worker
 uvicorn app.main:app --reload --port 8000
 ```
 `/health` reports `temporal: {enabled, connected}` separately from the overall status — a Temporal outage or `TEMPORAL_ENABLED=false` never makes the API unavailable.
