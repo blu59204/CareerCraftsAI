@@ -33,6 +33,10 @@ services:
       DB: postgres12
       DB_PORT: "19232"
       POSTGRES_SEEDS: 127.0.0.1
+      # Under network_mode: host, auto-setup's entrypoint otherwise resolves
+      # the box's own hostname to bind on -- which on Ubuntu is 127.0.1.1
+      # (the /etc/hosts loopback alias), not reachable even locally. Force it.
+      BIND_ON_IP: 0.0.0.0
     depends_on:
       - temporal-postgres
     mem_limit: 1g
