@@ -1,9 +1,9 @@
-"""Fail CI only for Ruff diagnostics on Python lines changed by this revision.
+"""Fail CI when Ruff finds diagnostics on newly changed Python lines.
 
-The repository has a documented pre-existing Ruff backlog. This gate keeps the
-backlog visible in the quality job while preventing new violations from being
-merged before the backlog is paid down. It intentionally matches changed lines
-instead of ignoring Ruff rules or excluding directories.
+The repository has a documented legacy Ruff backlog. This script intentionally
+keeps that backlog visible in the regular Ruff job while rejecting diagnostics
+introduced by the current Git range. It never treats an unknown comparison
+base as an empty change set.
 """
 
 from __future__ import annotations
@@ -15,14 +15,18 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+ZERO_SHA = "0" * 40
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    """Run Git or Ruff from the repository root without shell expansion."""
+    # Arguments are passed as a fixed list and never through a shell.
+    return subprocess.run(  # nosec B603
         args,
         cwd=ROOT,
         check=False,
@@ -31,64 +35,123 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def base_revision() -> str:
-    configured = os.environ.get("CI_LINT_BASE_SHA", "").strip()
-    if configured and configured != "0000000000000000000000000000000000000000":
-        return configured
-
-    result = run("git", "rev-parse", "HEAD^")
+def _verify_commit(revision: str, label: str) -> str:
+    result = run("git", "rev-parse", "--verify", f"{revision}^{{commit}}")
     if result.returncode:
-        raise RuntimeError("CI_LINT_BASE_SHA is required when HEAD has no parent")
+        raise RuntimeError(
+            f"Unable to resolve {label} '{revision}'. Fetch the comparison base."
+        )
     return result.stdout.strip()
 
 
-def changed_python_lines(base: str) -> dict[Path, set[int]]:
-    result = run("git", "diff", "--unified=0", f"{base}...HEAD", "--", "*.py")
+def base_revision() -> str:
+    """Resolve a real base commit, or the empty tree for an initial push."""
+    configured = os.environ.get("CI_LINT_BASE_SHA", "").strip()
+    if configured == ZERO_SHA:
+        return EMPTY_TREE_SHA
+    if configured:
+        return _verify_commit(configured, "CI_LINT_BASE_SHA")
+
+    result = run("git", "rev-parse", "--verify", "HEAD^")
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or "Could not read Git diff")
+        raise RuntimeError(
+            "CI_LINT_BASE_SHA is unavailable and HEAD has no parent; "
+            "provide a base SHA or use the all-zero initial-push SHA."
+        )
+    return result.stdout.strip()
+
+
+def _diff_command(base: str) -> tuple[str, ...]:
+    if base == EMPTY_TREE_SHA:
+        return ("git", "diff", "--unified=0", EMPTY_TREE_SHA, "HEAD", "--", "*.py")
+    return ("git", "diff", "--unified=0", f"{base}...HEAD", "--", "*.py")
+
+
+def changed_python_lines(base: str) -> dict[Path, set[int]]:
+    """Return added or replaced line numbers keyed by their repository path."""
+    result = run(*_diff_command(base))
+    if result.returncode:
+        raise RuntimeError(
+            result.stderr.strip() or "Could not read the Python Git diff"
+        )
 
     lines: dict[Path, set[int]] = defaultdict(set)
     current: Path | None = None
     for line in result.stdout.splitlines():
         if line.startswith("+++ b/"):
-            current = ROOT / line.removeprefix("+++ b/")
+            current = (ROOT / line.removeprefix("+++ b/")).resolve()
+            continue
+        if line.startswith("+++"):
+            current = None
             continue
         match = HUNK.match(line)
-        if match and current is not None:
-            start = int(match.group(1))
-            count = int(match.group(2) or "1")
-            lines[current.resolve()].update(range(start, start + count))
-    return lines
+        if match is None or current is None:
+            continue
+        start = int(match.group(1))
+        count = int(match.group(2) or "1")
+        lines[current].update(range(start, start + count))
+    return dict(lines)
+
+
+def changed_diagnostics(
+    diagnostics: list[dict[str, Any]], changed: dict[Path, set[int]]
+) -> list[dict[str, Any]]:
+    """Select Ruff diagnostics whose location is on a changed line."""
+    changed_by_path = {path.resolve(): lines for path, lines in changed.items()}
+    failures: list[dict[str, Any]] = []
+    for diagnostic in diagnostics:
+        filename = diagnostic.get("filename")
+        location = diagnostic.get("location") or {}
+        row = location.get("row")
+        if not isinstance(filename, str) or not isinstance(row, int):
+            continue
+        path = Path(filename)
+        resolved = path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+        if row in changed_by_path.get(resolved, set()):
+            failures.append(diagnostic)
+    return failures
+
+
+def ruff_diagnostics() -> list[dict[str, Any]]:
+    """Get machine-readable diagnostics without relying on Ruff's exit code."""
+    result = run(sys.executable, "-m", "ruff", "check", ".", "--output-format=json")
+    if result.returncode not in {0, 1}:
+        raise RuntimeError(result.stderr.strip() or "Ruff could not run")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Ruff did not produce valid JSON: {exc}") from exc
+    if not isinstance(payload, list):
+        raise RuntimeError("Ruff JSON output was not a diagnostic list")
+    return payload
+
+
+def _format_diagnostic(diagnostic: dict[str, Any]) -> str:
+    location = diagnostic.get("location") or {}
+    return "{filename}:{row}:{column}: {code} {message}".format(
+        filename=diagnostic.get("filename", "<unknown>"),
+        row=location.get("row", "?"),
+        column=location.get("column", "?"),
+        code=diagnostic.get("code", "RUFF"),
+        message=diagnostic.get("message", "Ruff diagnostic"),
+    )
 
 
 def main() -> int:
-    changed = changed_python_lines(base_revision())
-    if not changed:
-        print("No changed Python lines to lint.")
-        return 0
-
-    result = run(sys.executable, "-m", "ruff", "check", "--output-format=json", ".")
     try:
-        diagnostics = json.loads(result.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Ruff did not return JSON: {result.stdout}\n{result.stderr}") from exc
+        changed = changed_python_lines(base_revision())
+        failures = changed_diagnostics(ruff_diagnostics(), changed)
+    except RuntimeError as exc:
+        print(f"error: changed-code Ruff gate failed: {exc}", file=sys.stderr)
+        return 2
 
-    introduced = [
-        diagnostic
-        for diagnostic in diagnostics
-        if Path(diagnostic["filename"]).resolve() in changed
-        and diagnostic["location"]["row"] in changed[Path(diagnostic["filename"]).resolve()]
-    ]
-    if not introduced:
-        print("No Ruff diagnostics on changed Python lines.")
+    if not failures:
+        print("Changed-code Ruff gate passed.")
         return 0
 
-    for diagnostic in introduced:
-        location = diagnostic["location"]
-        print(
-            f"{diagnostic['filename']}:{location['row']}:{location['column']}: "
-            f"{diagnostic['code']} {diagnostic['message']}"
-        )
+    print("Ruff diagnostics on changed Python lines:", file=sys.stderr)
+    for diagnostic in failures:
+        print(_format_diagnostic(diagnostic), file=sys.stderr)
     return 1
 
 
