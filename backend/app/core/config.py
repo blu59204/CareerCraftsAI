@@ -145,6 +145,17 @@ class Settings(BaseSettings):
     TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S: int = Field(default=30, ge=5, le=300)
     TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S: int = Field(default=5, ge=1, le=60)
 
+    # Nango keeps provider OAuth tokens outside the application database. The
+    # secret and webhook signing key are server-only; the public key is only
+    # available to the frontend when Nango's SDK requires it.
+    NANGO_ENABLED: bool = False
+    NANGO_BASE_URL: str = "https://api.nango.dev"
+    NANGO_SECRET_KEY: str = ""
+    NANGO_PUBLIC_KEY: str = ""
+    NANGO_WEBHOOK_SECRET: str = ""
+    NANGO_REQUEST_TIMEOUT_S: int = Field(default=15, ge=1, le=60)
+    NANGO_DIRECT_GOOGLE_FALLBACK_ENABLED: bool = True
+
     # OpenSandbox runs on dedicated infrastructure, never in the API process.
     OPEN_SANDBOX_URL: str = ""
     OPEN_SANDBOX_API_KEY: str = ""
@@ -237,6 +248,21 @@ class Settings(BaseSettings):
 
         if problems:
             raise ValueError("Invalid Temporal configuration: " + "; ".join(problems))
+
+    def validate_nango_configuration(self) -> None:
+        """Reject an enabled gateway without its backend-only credentials."""
+        if not self.NANGO_ENABLED:
+            return
+
+        problems: list[str] = []
+        if not self.NANGO_SECRET_KEY.strip():
+            problems.append("NANGO_SECRET_KEY must be set when NANGO_ENABLED=true")
+        if not self.NANGO_WEBHOOK_SECRET.strip():
+            problems.append("NANGO_WEBHOOK_SECRET must be set when NANGO_ENABLED=true")
+        if not self.NANGO_BASE_URL.startswith(("https://", "http://")):
+            problems.append("NANGO_BASE_URL must be an http(s) URL")
+        if problems:
+            raise ValueError("Invalid Nango configuration: " + "; ".join(problems))
 
     @property
     def REDIS_URL_SAFE(self) -> str:
