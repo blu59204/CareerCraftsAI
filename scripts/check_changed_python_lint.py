@@ -64,7 +64,10 @@ def base_revision() -> str:
 def _diff_command(base: str) -> tuple[str, ...]:
     if base == EMPTY_TREE_SHA:
         return ("git", "diff", "--unified=0", EMPTY_TREE_SHA, "HEAD", "--", "*.py")
-    return ("git", "diff", "--unified=0", f"{base}...HEAD", "--", "*.py")
+    # `github.event.before` is the prior pushed commit, and the PR base is an
+    # explicit commit. A direct range needs only that fetched object; `...`
+    # additionally requires a merge base and failed in shallow CI checkouts.
+    return ("git", "diff", "--unified=0", f"{base}..HEAD", "--", "*.py")
 
 
 def changed_python_lines(base: str) -> dict[Path, set[int]]:
@@ -122,7 +125,7 @@ def ruff_diagnostics() -> list[dict[str, Any]]:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"Ruff did not produce valid JSON: {exc}") from exc
     if not isinstance(payload, list):
-        raise RuntimeError("Ruff JSON output was not a diagnostic list")
+        raise TypeError("Ruff JSON output was not a diagnostic list")
     return payload
 
 

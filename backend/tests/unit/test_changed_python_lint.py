@@ -107,6 +107,19 @@ deleted file mode 100644
     assert lint_gate.changed_python_lines("base") == {}
 
 
+def test_push_or_pull_request_base_uses_a_direct_git_diff(lint_gate) -> None:
+    """A fetched base commit must not require a merge-base lookup in CI."""
+
+    assert lint_gate._diff_command("base-sha") == (
+        "git",
+        "diff",
+        "--unified=0",
+        "base-sha..HEAD",
+        "--",
+        "*.py",
+    )
+
+
 def test_missing_base_sha_falls_back_to_parent_for_a_non_initial_push(
     lint_gate, monkeypatch
 ) -> None:
