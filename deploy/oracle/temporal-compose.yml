@@ -37,6 +37,11 @@ services:
       # the box's own hostname to bind on -- which on Ubuntu is 127.0.1.1
       # (the /etc/hosts loopback alias), not reachable even locally. Force it.
       BIND_ON_IP: 0.0.0.0
+      # Required by Ringpop membership whenever bindOnIP is 0.0.0.0/[::] --
+      # it can't self-derive a single advertised address in that case. This
+      # is the address the oraclevm worker (and this box's own services)
+      # actually reach the server at.
+      TEMPORAL_BROADCAST_ADDRESS: "130.210.52.152"
     depends_on:
       - temporal-postgres
     mem_limit: 1g
