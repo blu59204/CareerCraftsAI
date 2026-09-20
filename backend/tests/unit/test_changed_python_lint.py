@@ -139,6 +139,21 @@ def test_initial_push_uses_the_empty_tree(lint_gate, monkeypatch) -> None:
     assert lint_gate.base_revision() == lint_gate.EMPTY_TREE_SHA
 
 
+def test_git_commands_decode_utf8_output(lint_gate, monkeypatch) -> None:
+    captured = {}
+
+    def fake_run(*args, **kwargs):
+        captured.update(kwargs)
+        return _completed(*args)
+
+    monkeypatch.setattr(lint_gate.subprocess, "run", fake_run)
+
+    lint_gate.run("git", "diff", "HEAD")
+
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
+
+
 def test_unresolvable_base_sha_fails_clearly(lint_gate, monkeypatch) -> None:
     monkeypatch.setenv("CI_LINT_BASE_SHA", "missing-base")
     monkeypatch.setattr(lint_gate, "run", lambda *args: _completed(*args, returncode=1))
