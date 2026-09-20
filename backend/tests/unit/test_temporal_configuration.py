@@ -45,3 +45,15 @@ def test_temporal_validation_allows_disabled_runtime(monkeypatch: pytest.MonkeyP
     settings = Settings(_env_file=None)
 
     assert settings.validate_temporal_configuration() is None
+
+
+def test_temporal_validation_requires_heartbeat_interval_below_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required_environment(monkeypatch)
+    monkeypatch.setenv("TEMPORAL_ENABLED", "true")
+    monkeypatch.setenv("TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S", "10")
+    monkeypatch.setenv("TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S", "5")
+
+    with pytest.raises(ValueError, match="TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S"):
+        Settings(_env_file=None).validate_temporal_configuration()

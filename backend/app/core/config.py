@@ -143,6 +143,7 @@ class Settings(BaseSettings):
     # directly on that activity's retry policy, not here).
     TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S: int = Field(default=120, ge=10, le=1800)
     TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S: int = Field(default=30, ge=5, le=300)
+    TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S: int = Field(default=5, ge=1, le=60)
 
     # OpenSandbox runs on dedicated infrastructure, never in the API process.
     OPEN_SANDBOX_URL: str = ""
@@ -178,7 +179,7 @@ class Settings(BaseSettings):
     DOCUMENT_STORAGE_DIR: str = "/data/documents"
 
     @model_validator(mode="after")
-    def _inject_redis_password(self) -> "Settings":
+    def _inject_redis_password(self) -> Settings:
         if (
             self.REDIS_PASSWORD
             and self.REDIS_URL.startswith("redis://")
@@ -225,6 +226,13 @@ class Settings(BaseSettings):
             problems.append(
                 "TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S must be lower than "
                 "TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S"
+            )
+        if self.TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S * 2 >= (
+            self.TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S
+        ):
+            problems.append(
+                "TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S must be less than half of "
+                "TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S"
             )
 
         if problems:

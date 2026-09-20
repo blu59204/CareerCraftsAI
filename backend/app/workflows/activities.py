@@ -15,13 +15,110 @@ standard `logging` module (never print raw secrets/cookies).
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import contextvars
 import logging
+import threading
+import time
 import uuid as _uuid
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 
 from temporalio import activity
 
 logger = logging.getLogger(__name__)
+
+
+class _BrowserHeartbeat:
+    """Send activity heartbeats from a dedicated thread during browser I/O.
+
+    Playwright normally yields to the event loop, but a browser driver or an
+    SDK callback can still block it. A separate thread keeps the Temporal
+    heartbeat safely below its timeout in either case. The copied activity
+    context makes ``activity.heartbeat`` and ``activity.is_cancelled`` valid
+    from that thread.
+    """
+
+    def __init__(self, stage: str, interval_seconds: float) -> None:
+        self._stage = stage
+        self._interval_seconds = interval_seconds
+        self._started_at = time.monotonic()
+        self._stop = threading.Event()
+        self._cancel_requested = threading.Event()
+        self._context = contextvars.copy_context()
+        self._thread = threading.Thread(
+            target=self._run_in_activity_context,
+            name="temporal-browser-heartbeat",
+            daemon=True,
+        )
+
+    @property
+    def cancellation_requested(self) -> bool:
+        return self._cancel_requested.is_set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=self._interval_seconds + 1)
+
+    def _run_in_activity_context(self) -> None:
+        self._context.run(self._run)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            cancellation_requested = activity.is_cancelled()
+            activity.heartbeat(
+                {
+                    "stage": self._stage,
+                    "elapsed_seconds": round(time.monotonic() - self._started_at, 3),
+                    "cancellation_requested": cancellation_requested,
+                }
+            )
+            if cancellation_requested:
+                self._cancel_requested.set()
+                return
+            self._stop.wait(self._interval_seconds)
+
+
+async def run_with_browser_heartbeats[T](
+    operation: Awaitable[T],
+    *,
+    stage: str,
+    heartbeat_interval_seconds: float = 5.0,
+) -> T:
+    """Run one browser operation with progress heartbeats and cancellation.
+
+    The operation is cancelled as soon as Temporal reports cancellation. The
+    browser stage owns its Playwright context, so cancelling it lets the
+    context manager close the browser before the activity exits.
+    """
+    if heartbeat_interval_seconds <= 0:
+        raise ValueError("heartbeat_interval_seconds must be positive")
+
+    heartbeat = _BrowserHeartbeat(stage, heartbeat_interval_seconds)
+    task = asyncio.ensure_future(operation)
+    heartbeat.start()
+    try:
+        while not task.done():
+            await asyncio.sleep(min(heartbeat_interval_seconds / 2, 0.25))
+            if heartbeat.cancellation_requested:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+                raise asyncio.CancelledError("Temporal cancelled browser activity")
+        return await task
+    finally:
+        heartbeat.stop()
+
+
+def _browser_heartbeat_interval_seconds() -> float:
+    """Read the production heartbeat interval outside workflow code."""
+    from app.core.config import settings
+
+    return float(settings.TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S)
 
 
 @activity.defn
@@ -184,8 +281,11 @@ async def run_application_stage_activity(params: dict) -> dict:
         if run is None:
             raise ValueError(f"AgentRun {run_id} not found")
 
-    activity.heartbeat("starting application stage")
-    result = await run_application_stage(run, pending)
+    result = await run_with_browser_heartbeats(
+        run_application_stage(run, pending),
+        stage=str(pending.get("type", "browser_stage")),
+        heartbeat_interval_seconds=_browser_heartbeat_interval_seconds(),
+    )
     return await _record_stage_result(run_id, result)
 
 
@@ -226,8 +326,11 @@ async def apply_answers_and_resume_activity(params: dict) -> dict:
     excluded_keys = {"answers", "fields", "type", "message"}
     resumed_pending = {k: v for k, v in params["pending"].items() if k not in excluded_keys}
     resumed_pending["type"] = "browser_input"
-    activity.heartbeat("resuming preparation with saved answers")
-    result = await run_application_stage(run, resumed_pending)
+    result = await run_with_browser_heartbeats(
+        run_application_stage(run, resumed_pending),
+        stage=str(resumed_pending.get("type", "browser_stage")),
+        heartbeat_interval_seconds=_browser_heartbeat_interval_seconds(),
+    )
     return await _record_stage_result(run_id, result)
 
 
