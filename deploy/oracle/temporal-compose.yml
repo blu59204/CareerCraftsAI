@@ -39,9 +39,14 @@ services:
       BIND_ON_IP: 0.0.0.0
       # Required by Ringpop membership whenever bindOnIP is 0.0.0.0/[::] --
       # it can't self-derive a single advertised address in that case. This
-      # is the address the oraclevm worker (and this box's own services)
-      # actually reach the server at.
-      TEMPORAL_BROADCAST_ADDRESS: "130.210.52.152"
+      # must be an address that actually exists on a local interface (Oracle's
+      # public IP is NAT'd, not assigned to any NIC -- using it here caused
+      # the server's own internal health check to fail forever with "Frontend
+      # is not healthy yet", confirmed via `ip -4 addr show`). External
+      # clients (the oraclevm worker) still just dial the public IP:7233
+      # directly; NAT translation is transparent below the app layer, so this
+      # only affects internal self-identification, not external reachability.
+      TEMPORAL_BROADCAST_ADDRESS: "10.0.0.182"
     depends_on:
       - temporal-postgres
     mem_limit: 1g
