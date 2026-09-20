@@ -12,6 +12,35 @@ from check_changed_python_lint import EMPTY_TREE_SHA, ROOT, base_revision, run
 LEGACY_FORMAT_BASELINE = {Path("backend/app/agents/job_search.py")}
 
 
+def check_black(files: list[Path]) -> int:
+    """Check changed files with the configuration that owns each subtree."""
+    groups = (
+        (
+            [path for path in files if path.parts[0] == "backend"],
+            ["--config", "backend/pyproject.toml"],
+        ),
+        ([path for path in files if path.parts[0] != "backend"], []),
+    )
+    for paths, options in groups:
+        if not paths:
+            continue
+        result = run(
+            sys.executable,
+            "-m",
+            "black",
+            "--check",
+            *options,
+            *map(str, paths),
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        if result.returncode:
+            return result.returncode
+    return 0
+
+
 def changed_python_files(base: str) -> list[Path]:
     range_args = (
         (EMPTY_TREE_SHA, "HEAD") if base == EMPTY_TREE_SHA else (f"{base}..HEAD",)
@@ -46,13 +75,8 @@ def main() -> int:
         print("Changed-code Black gate passed (no non-baseline Python files).")
         return 0
 
-    result = run(sys.executable, "-m", "black", "--check", *map(str, files))
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    if result.returncode:
-        return result.returncode
+    if result := check_black(files):
+        return result
     print("Changed-code Black gate passed.")
     return 0
 
