@@ -24,7 +24,9 @@ class MockIntegrationGateway(IntegrationGateway):
         definition = provider_definition(provider)
         validate_return_path(return_path)
         expiry = datetime.now(UTC) + timedelta(minutes=30)
-        return ConnectSession(provider, f"test-session-{user_id}-{definition.key}", None, expiry)
+        return ConnectSession(
+            provider, f"test-session-{user_id}-{definition.key}", None, expiry
+        )
 
     async def get_connection(
         self, *, user_id: UUID, provider: str
@@ -32,9 +34,13 @@ class MockIntegrationGateway(IntegrationGateway):
         provider_definition(provider)
         return self.connections.get((user_id, provider))
 
-    async def list_connections(self, *, user_id: UUID) -> list[IntegrationConnectionResult]:
+    async def list_connections(
+        self, *, user_id: UUID
+    ) -> list[IntegrationConnectionResult]:
         return [
-            connection for (owner, _), connection in self.connections.items() if owner == user_id
+            connection
+            for (owner, _), connection in self.connections.items()
+            if owner == user_id
         ]
 
     async def revoke_connection(self, *, user_id: UUID, provider: str) -> None:

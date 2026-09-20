@@ -6,6 +6,7 @@ test_prepare_application_apply_* tests (unchanged — TEMPORAL_ENABLED
 defaults to False, so those tests already prove the BullMQ fallback path
 keeps working untouched).
 """
+
 import uuid
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,8 +25,13 @@ async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypa
 
     fake_client = MagicMock()
     fake_client.start_workflow = AsyncMock(return_value=MagicMock())
-    monkeypatch.setattr("app.core.temporal_client.get_temporal_client", AsyncMock(return_value=fake_client))
-    monkeypatch.setattr(jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-123"))
+    monkeypatch.setattr(
+        "app.core.temporal_client.get_temporal_client",
+        AsyncMock(return_value=fake_client),
+    )
+    monkeypatch.setattr(
+        jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-123")
+    )
 
     result = await jobs_module._start_temporal_auto_apply(user_id, application_id)
 
@@ -37,12 +43,17 @@ async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypa
         seconds=jobs_module.settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S
     )
     assert result == {
-        "run_id": "run-123", "workflow_id": expected_id, "engine": "temporal", "status": "queued",
+        "run_id": "run-123",
+        "workflow_id": expected_id,
+        "engine": "temporal",
+        "status": "queued",
     }
 
 
 @pytest.mark.asyncio
-async def test_start_temporal_auto_apply_reuses_existing_workflow_on_repeated_start(monkeypatch):
+async def test_start_temporal_auto_apply_reuses_existing_workflow_on_repeated_start(
+    monkeypatch,
+):
     """Required behavior: repeated start requests return the existing run
     instead of creating an orphan — Temporal itself enforces this via the
     stable workflow id; this test proves the API layer handles that
@@ -53,11 +64,19 @@ async def test_start_temporal_auto_apply_reuses_existing_workflow_on_repeated_st
     application_id = uuid.uuid4()
 
     fake_client = MagicMock()
-    fake_client.start_workflow = AsyncMock(side_effect=WorkflowAlreadyStartedError(
-        workflow_id="wf-1", workflow_type="AutoApplyWorkflow",
-    ))
-    monkeypatch.setattr("app.core.temporal_client.get_temporal_client", AsyncMock(return_value=fake_client))
-    monkeypatch.setattr(jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-existing"))
+    fake_client.start_workflow = AsyncMock(
+        side_effect=WorkflowAlreadyStartedError(
+            workflow_id="wf-1",
+            workflow_type="AutoApplyWorkflow",
+        )
+    )
+    monkeypatch.setattr(
+        "app.core.temporal_client.get_temporal_client",
+        AsyncMock(return_value=fake_client),
+    )
+    monkeypatch.setattr(
+        jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-existing")
+    )
 
     result = await jobs_module._start_temporal_auto_apply(user_id, application_id)
 
@@ -72,7 +91,10 @@ async def test_approve_signals_temporal_workflow_for_browser_review():
     from app.workflows.auto_apply import AutoApplyWorkflow
 
     run = AgentRun(
-        id=uuid.uuid4(), user_id=uuid.uuid4(), agent_type="apply_prepare", status="awaiting_approval",
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        agent_type="apply_prepare",
+        status="awaiting_approval",
         input={"engine": "temporal", "workflow_id": "auto-apply/u1/j1"},
     )
     fake_handle = MagicMock()
@@ -81,10 +103,16 @@ async def test_approve_signals_temporal_workflow_for_browser_review():
     fake_client.get_workflow_handle_for = MagicMock(return_value=fake_handle)
 
     import app.api.v1.agents as agents_module
-    with patch("app.core.temporal_client.get_temporal_client", AsyncMock(return_value=fake_client)):
+
+    with patch(
+        "app.core.temporal_client.get_temporal_client",
+        AsyncMock(return_value=fake_client),
+    ):
         await agents_module._signal_temporal_approval(run, "browser_review", {})
 
-    fake_client.get_workflow_handle_for.assert_called_once_with(AutoApplyWorkflow.run, workflow_id="auto-apply/u1/j1")
+    fake_client.get_workflow_handle_for.assert_called_once_with(
+        AutoApplyWorkflow.run, workflow_id="auto-apply/u1/j1"
+    )
     fake_handle.signal.assert_awaited_once_with(AutoApplyWorkflow.approve)
 
 
@@ -95,7 +123,10 @@ async def test_approve_signals_answers_for_application_answers_required():
     from app.workflows.auto_apply import AutoApplyWorkflow
 
     run = AgentRun(
-        id=uuid.uuid4(), user_id=uuid.uuid4(), agent_type="apply_prepare", status="awaiting_approval",
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        agent_type="apply_prepare",
+        status="awaiting_approval",
         input={"engine": "temporal", "workflow_id": "auto-apply/u1/j1"},
     )
     fake_handle = MagicMock()
@@ -104,12 +135,20 @@ async def test_approve_signals_answers_for_application_answers_required():
     fake_client.get_workflow_handle_for = MagicMock(return_value=fake_handle)
 
     import app.api.v1.agents as agents_module
-    with patch("app.core.temporal_client.get_temporal_client", AsyncMock(return_value=fake_client)):
+
+    with patch(
+        "app.core.temporal_client.get_temporal_client",
+        AsyncMock(return_value=fake_client),
+    ):
         await agents_module._signal_temporal_approval(
-            run, "application_answers_required", {"answers": {"sponsor": "No"}},
+            run,
+            "application_answers_required",
+            {"answers": {"sponsor": "No"}},
         )
 
-    fake_handle.signal.assert_awaited_once_with(AutoApplyWorkflow.provide_answers, {"sponsor": "No"})
+    fake_handle.signal.assert_awaited_once_with(
+        AutoApplyWorkflow.provide_answers, {"sponsor": "No"}
+    )
 
 
 @pytest.mark.asyncio
@@ -120,7 +159,10 @@ async def test_approve_rejects_temporal_run_missing_workflow_id():
     from app.models.db import AgentRun
 
     run = AgentRun(
-        id=uuid.uuid4(), user_id=uuid.uuid4(), agent_type="apply_prepare", status="awaiting_approval",
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        agent_type="apply_prepare",
+        status="awaiting_approval",
         input={"engine": "temporal"},
     )
     with pytest.raises(HTTPException) as exc_info:

@@ -6,12 +6,16 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_browser_heartbeat_runs_until_a_long_running_stage_finishes(monkeypatch) -> None:
+async def test_browser_heartbeat_runs_until_a_long_running_stage_finishes(
+    monkeypatch,
+) -> None:
     """Browser work must refresh Temporal's heartbeat while it is in flight."""
     from app.workflows import activities
 
     heartbeats: list[dict] = []
-    monkeypatch.setattr(activities.activity, "heartbeat", lambda detail: heartbeats.append(detail))
+    monkeypatch.setattr(
+        activities.activity, "heartbeat", lambda detail: heartbeats.append(detail)
+    )
     monkeypatch.setattr(activities.activity, "is_cancelled", lambda: False)
 
     result = await activities.run_with_browser_heartbeats(
@@ -35,7 +39,9 @@ async def test_browser_heartbeat_cancels_stage_when_temporal_requests_cancellati
 
     heartbeats: list[dict] = []
     checks = iter([False, True])
-    monkeypatch.setattr(activities.activity, "heartbeat", lambda detail: heartbeats.append(detail))
+    monkeypatch.setattr(
+        activities.activity, "heartbeat", lambda detail: heartbeats.append(detail)
+    )
     monkeypatch.setattr(activities.activity, "is_cancelled", lambda: next(checks, True))
 
     with pytest.raises(asyncio.CancelledError):

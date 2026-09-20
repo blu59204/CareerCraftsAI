@@ -21,7 +21,12 @@ def test_return_path_rejects_open_redirects() -> None:
         validate_return_path("/settings/integrations?provider=gmail")
         == "/settings/integrations?provider=gmail"
     )
-    for value in ("https://attacker.example", "//attacker.example", "/\\attacker", "login"):
+    for value in (
+        "https://attacker.example",
+        "//attacker.example",
+        "/\\attacker",
+        "login",
+    ):
         with pytest.raises(InvalidReturnPath):
             validate_return_path(value)
 
@@ -36,7 +41,9 @@ def test_provider_config_keys_are_deployment_configured() -> None:
 def test_webhook_hmac_and_hash_are_raw_body_based() -> None:
     body = b'{"type":"auth"}'
     signature = hmac.new(b"webhook-key", body, hashlib.sha256).hexdigest()
-    assert verify_nango_webhook(body=body, signature=signature, signing_key="webhook-key")
+    assert verify_nango_webhook(
+        body=body, signature=signature, signing_key="webhook-key"
+    )
     assert not verify_nango_webhook(
         body=body + b" ", signature=signature, signing_key="webhook-key"
     )
@@ -49,7 +56,9 @@ async def test_nango_connect_session_uses_backend_bearer_auth_only() -> None:
         assert request.url.path == "/connect/sessions"
         assert request.headers["Authorization"] == "Bearer server-secret"
         assert b'"allowed_integrations":["career-gmail"]' in request.content
-        assert b'"end_user_id":"00000000-0000-0000-0000-000000000001"' in request.content
+        assert (
+            b'"end_user_id":"00000000-0000-0000-0000-000000000001"' in request.content
+        )
         return httpx.Response(
             201,
             json={
@@ -122,4 +131,6 @@ async def test_nango_action_does_not_retry_external_mutation() -> None:
 async def test_mock_gateway_enforces_connection_ownership() -> None:
     gateway = MockIntegrationGateway()
     with pytest.raises(ConnectionNotFoundError):
-        await gateway.execute_action(user_id=USER_ID, provider="gmail", action="x", input_data={})
+        await gateway.execute_action(
+            user_id=USER_ID, provider="gmail", action="x", input_data={}
+        )

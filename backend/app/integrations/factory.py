@@ -59,7 +59,9 @@ def build_integration_gateway(config: Settings = settings) -> IntegrationGateway
     )
 
 
-async def get_integration_gateway(request: Request) -> AsyncIterator[IntegrationGateway]:
+async def get_integration_gateway(
+    request: Request,
+) -> AsyncIterator[IntegrationGateway]:
     """Reuse an app-lifespan gateway when configured, otherwise close per request."""
     gateway = getattr(request.app.state, "integration_gateway", None)
     if gateway is not None:

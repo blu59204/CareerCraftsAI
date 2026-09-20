@@ -6,6 +6,7 @@ Mirrors app/workflow_worker.py's structure (the BullMQ worker) so both
 worker processes are operable the same way; this one hosts Temporal
 workflows/activities instead of polling a BullMQ queue.
 """
+
 import asyncio
 import logging
 import signal
@@ -61,8 +62,10 @@ async def main() -> None:
 
     logger.info(
         "Temporal worker starting: address=%s namespace=%s task_queue=%s concurrency=%d",
-        settings.TEMPORAL_ADDRESS, settings.TEMPORAL_NAMESPACE,
-        settings.TEMPORAL_TASK_QUEUE, settings.TEMPORAL_WORKER_CONCURRENCY,
+        settings.TEMPORAL_ADDRESS,
+        settings.TEMPORAL_NAMESPACE,
+        settings.TEMPORAL_TASK_QUEUE,
+        settings.TEMPORAL_WORKER_CONCURRENCY,
     )
     async with worker:
         try:

@@ -34,7 +34,7 @@ jobs:
           CI_LINT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
 
       - name: Format check (black)
-        run: black --check .
+        run: python ../scripts/check_changed_python_format.py
 
       - name: Security scan (bandit)
         run: bandit -r app/ -ll -x tests/

@@ -82,6 +82,7 @@ def _build_cors_origins(raw: str, env: str) -> list[str]:
 _cors_raw = settings.CORS_ORIGINS or settings.ALLOWED_ORIGINS or settings.FRONTEND_URL
 _allowed_origins = _build_cors_origins(_cors_raw, settings.APP_ENV)
 
+
 # ── Request ID middleware (uuid4) ────────────────────────────────
 async def _request_id_middleware(request: Request, call_next):
     rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
@@ -148,16 +149,20 @@ async def _lifespan(_app: FastAPI):
 
     try:
         from app.core.database import engine
+
         async with engine.begin() as conn:
             from sqlalchemy import text
-            result = await conn.execute(text(
-                "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-            ))
+
+            result = await conn.execute(
+                text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+            )
             row = result.fetchone()  # CursorResult.fetchone() is synchronous
             if row:
                 logger.info("pgvector installed: version %s", row[0])
             else:
-                logger.warning("pgvector extension not installed — run CREATE EXTENSION vector")
+                logger.warning(
+                    "pgvector extension not installed — run CREATE EXTENSION vector"
+                )
     except Exception as exc:
         logger.warning("pgvector check failed: %s", exc)
 
@@ -166,6 +171,7 @@ async def _lifespan(_app: FastAPI):
     # Warm up the SSE publisher thread at startup so the first emit() never drops
     try:
         from app.core.event_bus import _ensure_publisher
+
         _ensure_publisher()
         logger.info("SSE publisher thread ready")
     except Exception as exc:
@@ -177,8 +183,10 @@ async def _lifespan(_app: FastAPI):
     if close_integration_gateway is not None:
         await close_integration_gateway()
     from app.core.redis_client import close_redis
+
     await close_redis()
     from app.core.database import engine
+
     await engine.dispose()
 
 
@@ -198,7 +206,9 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.exception_handler(Exception)
 async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.error("Unhandled %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    logger.error(
+        "Unhandled %s %s: %s", request.method, request.url.path, exc, exc_info=True
+    )
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -240,6 +250,7 @@ app.include_router(memory_router)
 app.include_router(internal.router)
 
 from app.core.llm_gateway import router as llm_gw
+
 app.include_router(llm_gw)
 
 
@@ -250,14 +261,18 @@ async def health():
 
     from app.core.database import check_db_connection
     from app.core.redis_client import check_redis_connection
+
     db_ok = await check_db_connection()
     redis_ok = await check_redis_connection()
     pgvector_ok = False
     try:
         from app.core.database import engine
         from sqlalchemy import text
+
         async with engine.begin() as conn:
-            result = await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
+            result = await conn.execute(
+                text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            )
             pgvector_ok = result.fetchone() is not None
     except Exception:
         pgvector_ok = False
@@ -266,6 +281,7 @@ async def health():
     # feature-flagged (TEMPORAL_ENABLED) and optional infrastructure — an
     # outage or a disabled flag must never make the whole API unavailable.
     from app.core.temporal_client import check_temporal_health
+
     temporal = await check_temporal_health()
     return JSONResponse(
         status_code=200 if all_ok else 503,

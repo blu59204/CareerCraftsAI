@@ -100,6 +100,7 @@ class NLSearchRequest(BaseModel):
     @classmethod
     def sanitize_query(cls, v: str) -> str:
         import re
+
         v = v.replace("\x00", "")
         v = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", v)
         return v[:500]
@@ -116,9 +117,7 @@ def _matches_location_filter(app: JobApplication, location_filter: str | None) -
     if not location_filter:
         return True
     filters = {
-        item.strip().lower()
-        for item in location_filter.split(",")
-        if item.strip()
+        item.strip().lower() for item in location_filter.split(",") if item.strip()
     }
     if not filters:
         return True
@@ -142,11 +141,7 @@ def _matches_location_filter(app: JobApplication, location_filter: str | None) -
 
 
 def _split_pref_values(value: str | None) -> list[str]:
-    return [
-        item.strip().lower()
-        for item in (value or "").split(",")
-        if item.strip()
-    ]
+    return [item.strip().lower() for item in (value or "").split(",") if item.strip()]
 
 
 ROLE_HINTS = (
@@ -197,7 +192,9 @@ def _latest_resume_query(user_id: uuid.UUID):
             UserDocument.user_id == user_id,
             UserDocument.doc_type == "resume",
         )
-        .order_by(UserDocument.is_primary.desc(), UserDocument.embedded_at.desc().nulls_last())
+        .order_by(
+            UserDocument.is_primary.desc(), UserDocument.embedded_at.desc().nulls_last()
+        )
         .limit(1)
     )
 
@@ -215,11 +212,17 @@ def _infer_years_experience(resume_text: str | None) -> int | None:
     text = (resume_text or "").lower()
     explicit = [
         int(match.group(1))
-        for match in re.finditer(r"(\d{1,2})\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:professional\s+)?experience", text)
+        for match in re.finditer(
+            r"(\d{1,2})\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:professional\s+)?experience",
+            text,
+        )
     ]
     if explicit:
         return max(explicit)
-    if any(word in text for word in ("fresher", "new graduate", "recent graduate", "student")):
+    if any(
+        word in text
+        for word in ("fresher", "new graduate", "recent graduate", "student")
+    ):
         return 0
     date_years = [int(y) for y in re.findall(r"\b(20\d{2}|19\d{2})\b", text)]
     current_year = datetime.now(timezone.utc).year
@@ -333,7 +336,9 @@ async def _resolve_search_context(
 
     role_source = "custom"
     role = payload.search_query.strip()
-    payload_roles = [str(r).strip() for r in (payload.target_roles or []) if str(r).strip()]
+    payload_roles = [
+        str(r).strip() for r in (payload.target_roles or []) if str(r).strip()
+    ]
     if not role and payload_roles:
         role = payload_roles[0]
         role_source = "manual.target_roles"
@@ -358,8 +363,11 @@ async def _resolve_search_context(
     years_experience = (
         payload.years_experience
         if payload.years_experience is not None
-        else prefs.years_experience if prefs and prefs.years_experience is not None
-        else inferred_years
+        else (
+            prefs.years_experience
+            if prefs and prefs.years_experience is not None
+            else inferred_years
+        )
     )
     experience_level = (
         payload.experience_level
@@ -371,22 +379,36 @@ async def _resolve_search_context(
     requested_location = payload.location.strip()
     location = requested_location or "Remote"
     work_modes = _split_pref_values(payload.work_mode)
-    preferred_locations = [str(loc).strip() for loc in (payload.preferred_locations or []) if str(loc).strip()]
+    preferred_locations = [
+        str(loc).strip()
+        for loc in (payload.preferred_locations or [])
+        if str(loc).strip()
+    ]
     if prefs or preferred_locations:
         if not preferred_locations and prefs:
-            preferred_locations = [str(loc).strip() for loc in (prefs.preferred_locations or []) if str(loc).strip()]
+            preferred_locations = [
+                str(loc).strip()
+                for loc in (prefs.preferred_locations or [])
+                if str(loc).strip()
+            ]
         if not work_modes and prefs:
             work_modes = _split_pref_values(prefs.work_mode)
         primary_work_mode = work_modes[0] if work_modes else ""
         if primary_work_mode == "remote":
             location = "Remote"
-        elif primary_work_mode in {"hybrid", "onsite"} and requested_location in {"", "Any", "Remote"} and preferred_locations:
+        elif (
+            primary_work_mode in {"hybrid", "onsite"}
+            and requested_location in {"", "Any", "Remote"}
+            and preferred_locations
+        ):
             location = preferred_locations[0]
     work_mode = ",".join(work_modes)
 
     source = {
         "role_source": role_source,
-        "location_source": "preferences" if prefs and location != requested_location else "custom",
+        "location_source": (
+            "preferences" if prefs and location != requested_location else "custom"
+        ),
         "work_mode": work_mode or None,
         "experience_level": experience_level,
         "years_experience": years_experience,
@@ -414,11 +436,19 @@ async def get_job_search_profile(
     resume_roles = _derive_roles_from_resume(resume_text)
     skills = _extract_skills_from_resume(resume_text)
     inferred_years = _infer_years_experience(resume_text)
-    saved_years = prefs.years_experience if prefs and prefs.years_experience is not None else None
+    saved_years = (
+        prefs.years_experience if prefs and prefs.years_experience is not None else None
+    )
     years = saved_years if saved_years is not None else inferred_years
-    level = (prefs.experience_level if prefs else None) or _experience_level_from_years(years)
+    level = (prefs.experience_level if prefs else None) or _experience_level_from_years(
+        years
+    )
 
-    saved_roles = [str(role).strip() for role in (prefs.target_roles or []) if str(role).strip()] if prefs else []
+    saved_roles = (
+        [str(role).strip() for role in (prefs.target_roles or []) if str(role).strip()]
+        if prefs
+        else []
+    )
     role = (
         saved_roles[0]
         if saved_roles
@@ -430,8 +460,20 @@ async def get_job_search_profile(
     work_mode = (prefs.work_mode if prefs else None) or "remote"
     work_modes = _split_pref_values(work_mode)
     primary_work_mode = work_modes[0] if work_modes else "remote"
-    locations = [str(loc).strip() for loc in (prefs.preferred_locations or []) if str(loc).strip()] if prefs else []
-    location = "Remote" if primary_work_mode == "remote" else (locations[0] if locations else "Any")
+    locations = (
+        [
+            str(loc).strip()
+            for loc in (prefs.preferred_locations or [])
+            if str(loc).strip()
+        ]
+        if prefs
+        else []
+    )
+    location = (
+        "Remote"
+        if primary_work_mode == "remote"
+        else (locations[0] if locations else "Any")
+    )
 
     missing_fields: list[str] = []
     if not resume:
@@ -451,7 +493,9 @@ async def get_job_search_profile(
     if skills:
         notes.append(f"Top skills found: {', '.join(skills[:5])}.")
     if inferred_years is not None and saved_years is None:
-        notes.append(f"Inferred {inferred_years} year(s) from resume; confirm if wrong.")
+        notes.append(
+            f"Inferred {inferred_years} year(s) from resume; confirm if wrong."
+        )
     elif saved_years is not None:
         notes.append(f"Using saved {saved_years} year(s) experience.")
 
@@ -475,7 +519,11 @@ async def get_job_search_profile(
         role_suggestions=list(
             dict.fromkeys(
                 saved_roles
-                + ([prefs.current_title.strip()] if prefs and prefs.current_title else [])
+                + (
+                    [prefs.current_title.strip()]
+                    if prefs and prefs.current_title
+                    else []
+                )
                 + resume_roles
             )
         )[:6],
@@ -533,14 +581,22 @@ async def list_search_dorks(
             ("{location}", location),
         ):
             raw_dork = raw_dork.replace(needle, repl)
-        out.append({
-            "name": d.get("name", ""),
-            "dork": raw_dork,
-            "use_for": d.get("use_for", ""),
-            "engine": d.get("engine", "google_cse"),
-            "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(raw_dork)}",
-        })
-    return {"q": q, "location": location, "region": region, "count": len(out), "dorks": out}
+        out.append(
+            {
+                "name": d.get("name", ""),
+                "dork": raw_dork,
+                "use_for": d.get("use_for", ""),
+                "engine": d.get("engine", "google_cse"),
+                "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(raw_dork)}",
+            }
+        )
+    return {
+        "q": q,
+        "location": location,
+        "region": region,
+        "count": len(out),
+        "dorks": out,
+    }
 
 
 @router.get("/search/companies")
@@ -553,28 +609,41 @@ async def list_company_careers(
 
     pages = list(COMPANY_CAREER_PAGES)
     indian_keywords = (
-        "tcs", "infosys", "wipro", "hcl", "tech mahindra", "cognizant",
-        "capgemini", "accenture", "ltimindtree", "mindtree", "mphasis",
+        "tcs",
+        "infosys",
+        "wipro",
+        "hcl",
+        "tech mahindra",
+        "cognizant",
+        "capgemini",
+        "accenture",
+        "ltimindtree",
+        "mindtree",
+        "mphasis",
     )
     if region.lower() == "india":
         pages = [
-            c for c in pages
+            c
+            for c in pages
             if any(kw in c.get("name", "").lower() for kw in indian_keywords)
         ] or pages
     elif region.lower() == "global":
         pages = [
-            c for c in pages
+            c
+            for c in pages
             if not any(kw in c.get("name", "").lower() for kw in indian_keywords)
         ]
 
     out: list[dict] = []
     for c in pages:
-        out.append({
-            "name": c.get("name", ""),
-            "url": c.get("url", ""),
-            "apply_via": c.get("apply_via", "browser_use"),
-            "notes": c.get("notes", ""),
-        })
+        out.append(
+            {
+                "name": c.get("name", ""),
+                "url": c.get("url", ""),
+                "apply_via": c.get("apply_via", "browser_use"),
+                "notes": c.get("notes", ""),
+            }
+        )
     return {"region": region, "count": len(out), "companies": out}
 
 
@@ -592,7 +661,11 @@ async def list_search_presets(
     ``{q}`` and ``{loc}`` substituted.  Some presets have fully-baked
     URLs (e.g. Naukri's direct search) — those pass through unchanged.
     """
-    from app.services.search_presets import SEARCH_PRESETS, build_url, presets_for_region
+    from app.services.search_presets import (
+        SEARCH_PRESETS,
+        build_url,
+        presets_for_region,
+    )
 
     if region.lower() in ("india", "global", "remote"):
         presets = presets_for_region(region)
@@ -605,20 +678,29 @@ async def list_search_presets(
             url = build_url(preset, q=q, loc=location, location=location)
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).warning(
                 "Failed to build URL for preset %s: %s", preset.get("name", "?"), exc
             )
             url = preset.get("url", "")
-        out.append({
-            "name": preset.get("name", ""),
-            "url": url,
-            "method": preset.get("method", "fetch"),
-            "region": preset.get("region", "global"),
-            "date_filter": preset.get("date_filter", ""),
-            "exp_filter": preset.get("exp_filter", ""),
-            "notes": preset.get("notes", ""),
-        })
-    return {"q": q, "location": location, "region": region, "count": len(out), "presets": out}
+        out.append(
+            {
+                "name": preset.get("name", ""),
+                "url": url,
+                "method": preset.get("method", "fetch"),
+                "region": preset.get("region", "global"),
+                "date_filter": preset.get("date_filter", ""),
+                "exp_filter": preset.get("exp_filter", ""),
+                "notes": preset.get("notes", ""),
+            }
+        )
+    return {
+        "q": q,
+        "location": location,
+        "region": region,
+        "count": len(out),
+        "presets": out,
+    }
 
 
 @router.post("/search/natural")
@@ -659,7 +741,9 @@ async def natural_language_search(
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {NL_SEARCH_TIMEOUT_SECONDS}s"}
         await db.flush()
-        raise HTTPException(status_code=504, detail="Natural language search timed out") from None
+        raise HTTPException(
+            status_code=504, detail="Natural language search timed out"
+        ) from None
     apply_harness_result(agent_run, harness_result)
     await db.flush()
     return {"run_id": run_id, "status": agent_run.status}
@@ -702,23 +786,34 @@ async def search_jobs(
     # Otherwise the agent silently returns zero jobs (BYOK apps fail with
     # "Agent failed" + no detail). 409 signals "you must finish setup first".
     from app.models.db import UserModelSettings
-    model_row = (await db.execute(
-        select(UserModelSettings).where(
-            UserModelSettings.user_id == current_user.id,
-            UserModelSettings.is_active == True,  # noqa: E712
+
+    model_row = (
+        (
+            await db.execute(
+                select(UserModelSettings).where(
+                    UserModelSettings.user_id == current_user.id,
+                    UserModelSettings.is_active == True,  # noqa: E712
+                )
+            )
         )
-    )).scalars().first()
+        .scalars()
+        .first()
+    )
     if not model_row:
         raise HTTPException(
             status_code=409,
             detail="No active model configured. Pick a provider under Settings → AI Model before running job search.",
         )
 
-    search_query, location, work_mode, search_source = await _resolve_search_context(db, current_user, payload)
+    search_query, location, work_mode, search_source = await _resolve_search_context(
+        db, current_user, payload
+    )
     live_browser = await _resolve_live_browser(db, current_user, payload.live_browser)
 
     titles = [t.strip() for t in (payload.titles or []) if t.strip()]
-    structured_locations = [loc.strip() for loc in (payload.locations or []) if loc.strip()]
+    structured_locations = [
+        loc.strip() for loc in (payload.locations or []) if loc.strip()
+    ]
     if titles:
         search_query = " ".join(titles)
     if structured_locations:
@@ -808,8 +903,11 @@ async def search_jobs(
         agent_run.status = "failed"
         agent_run.output = {"error": "Job search service unavailable"}
         await db.commit()
-        raise HTTPException(status_code=503, detail="Job search service unavailable") from exc
+        raise HTTPException(
+            status_code=503, detail="Job search service unavailable"
+        ) from exc
     return JobSearchResponse(run_id=run_id, queue_job_id=queue_job_id, queued=queued)
+
 
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
@@ -845,7 +943,9 @@ async def list_applications(
     return apps[:limit] if limit else apps
 
 
-@router.patch("/applications/{application_id}/status", response_model=ApplicationResponse)
+@router.patch(
+    "/applications/{application_id}/status", response_model=ApplicationResponse
+)
 async def update_application_status(
     application_id: uuid.UUID,
     body: StatusUpdateBody,
@@ -881,7 +981,9 @@ async def update_application_status(
     return app
 
 
-async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dict:
+async def _start_temporal_auto_apply(
+    user_id: uuid.UUID, application_id: uuid.UUID
+) -> dict:
     """TEMPORAL_ENABLED path for prepare-apply. Ownership/job-url/resume
     checks already happened in the caller — this only starts (or reuses)
     the durable workflow. The workflow's own reserve_application_attempt
@@ -893,14 +995,20 @@ async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UU
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from app.core.temporal_client import get_temporal_client
-    from app.workflows.auto_apply import AutoApplyIntent, AutoApplyWorkflow, auto_apply_workflow_id
+    from app.workflows.auto_apply import (
+        AutoApplyIntent,
+        AutoApplyWorkflow,
+        auto_apply_workflow_id,
+    )
 
     workflow_id = auto_apply_workflow_id(str(user_id), str(application_id))
     client = await get_temporal_client()
     try:
         await client.start_workflow(
             AutoApplyWorkflow.run,
-            AutoApplyIntent(user_id=str(user_id), job_application_id=str(application_id)),
+            AutoApplyIntent(
+                user_id=str(user_id), job_application_id=str(application_id)
+            ),
             id=workflow_id,
             task_queue=settings.TEMPORAL_TASK_QUEUE,
             execution_timeout=timedelta(
@@ -918,23 +1026,33 @@ async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UU
     # than blocking indefinitely — a client that polls again a moment later
     # still gets a consistent response either way.
     run_id = await _await_temporal_run_id(user_id, application_id)
-    return {"run_id": run_id, "workflow_id": workflow_id, "engine": "temporal", "status": status}
+    return {
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "engine": "temporal",
+        "status": status,
+    }
 
 
 async def _await_temporal_run_id(
-    user_id: uuid.UUID, application_id: uuid.UUID, attempts: int = 10, delay_s: float = 0.3,
+    user_id: uuid.UUID,
+    application_id: uuid.UUID,
+    attempts: int = 10,
+    delay_s: float = 0.3,
 ) -> str | None:
     from app.core.database import AsyncSessionLocal
     from app.models.db import ApplicationAttempt
 
     for _ in range(attempts):
         async with AsyncSessionLocal() as db:
-            attempt = (await db.execute(
-                select(ApplicationAttempt).where(
-                    ApplicationAttempt.user_id == user_id,
-                    ApplicationAttempt.job_application_id == application_id,
+            attempt = (
+                await db.execute(
+                    select(ApplicationAttempt).where(
+                        ApplicationAttempt.user_id == user_id,
+                        ApplicationAttempt.job_application_id == application_id,
+                    )
                 )
-            )).scalar_one_or_none()
+            ).scalar_one_or_none()
             if attempt and attempt.run_id:
                 return str(attempt.run_id)
         await asyncio.sleep(delay_s)
@@ -961,10 +1079,12 @@ async def prepare_application_apply(
     # prepare-apply call for the same application serializes behind this one
     # instead of racing it to create a second ApplicationAttempt.
     result = await db.execute(
-        select(JobApplication).where(
+        select(JobApplication)
+        .where(
             JobApplication.id == application_id,
             JobApplication.user_id == current_user.id,
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     app = result.scalar_one_or_none()
     if not app:
@@ -986,12 +1106,14 @@ async def prepare_application_apply(
     from app.services.application_workflow import load_resume
     from app.services.workflow_service import ACTIVE_SUBMISSION_STATES, add_task
 
-    existing = (await db.execute(
-        select(ApplicationAttempt).where(
-            ApplicationAttempt.user_id == current_user.id,
-            ApplicationAttempt.job_application_id == application_id,
+    existing = (
+        await db.execute(
+            select(ApplicationAttempt).where(
+                ApplicationAttempt.user_id == current_user.id,
+                ApplicationAttempt.job_application_id == application_id,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if existing and existing.state in ACTIVE_SUBMISSION_STATES:
         raise HTTPException(
             status_code=409,
@@ -1038,15 +1160,20 @@ async def prepare_application_apply(
         db.add(attempt)
 
     await db.flush()
-    add_task(db, agent_run, "continue", {
-        "type": "browser_prepare",
-        "attempt_id": str(attempt.id),
-        "job_url": app.job_url,
-        "company": app.company,
-        "role": app.role,
-        "pdf_document_id": str(app.resume_id),
-        "resume_sha256": resume_sha256,
-    })
+    add_task(
+        db,
+        agent_run,
+        "continue",
+        {
+            "type": "browser_prepare",
+            "attempt_id": str(attempt.id),
+            "job_url": app.job_url,
+            "company": app.company,
+            "role": app.role,
+            "pdf_document_id": str(app.resume_id),
+            "resume_sha256": resume_sha256,
+        },
+    )
     await db.commit()
 
     return {"run_id": str(run_id), "status": "queued"}

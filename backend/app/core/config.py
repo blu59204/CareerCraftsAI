@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     # steps. Set BROWSER_USE_OLLAMA_URL to your Ollama instance; leave empty
     # to fall back to the user's configured BYOK model.
     BROWSER_USE_OLLAMA_MODEL: str = "llama3.2"
-    BROWSER_USE_OLLAMA_URL: str = ""   # e.g. "http://localhost:11434"
+    BROWSER_USE_OLLAMA_URL: str = ""  # e.g. "http://localhost:11434"
     # Session limits — cap concurrent Chromium sessions to avoid OOM.
     # Rule of thumb: floor(VPS_RAM_GB * 1.5); e.g. 4GB VPS → 6, 2GB VPS → 3.
     BROWSER_USE_MAX_CONCURRENT_SESSIONS: int = 4
@@ -80,13 +80,13 @@ class Settings(BaseSettings):
     )
     # Human-like delay ranges per action type (milliseconds).
     # Lowering these increases detection risk; raising them slows runs.
-    BROWSER_DELAY_NAVIGATE_MIN_MS: int = 1500   # page navigation
+    BROWSER_DELAY_NAVIGATE_MIN_MS: int = 1500  # page navigation
     BROWSER_DELAY_NAVIGATE_MAX_MS: int = 3500
-    BROWSER_DELAY_FILL_MIN_MS: int = 300         # form field fill
+    BROWSER_DELAY_FILL_MIN_MS: int = 300  # form field fill
     BROWSER_DELAY_FILL_MAX_MS: int = 800
-    BROWSER_DELAY_CLICK_MIN_MS: int = 200        # button / link click
+    BROWSER_DELAY_CLICK_MIN_MS: int = 200  # button / link click
     BROWSER_DELAY_CLICK_MAX_MS: int = 600
-    BROWSER_DELAY_EXTRACT_MIN_MS: int = 500      # wait after page load for extraction
+    BROWSER_DELAY_EXTRACT_MIN_MS: int = 500  # wait after page load for extraction
     BROWSER_DELAY_EXTRACT_MAX_MS: int = 1500
 
     # ── External API keys (all optional) ───────────────────────────────
@@ -271,6 +271,7 @@ class Settings(BaseSettings):
     @property
     def REDIS_URL_SAFE(self) -> str:
         import re
+
         url = self.REDIS_URL
         return re.sub(r"://.*@", "://***@", url)
 

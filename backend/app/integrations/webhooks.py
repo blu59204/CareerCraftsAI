@@ -4,7 +4,9 @@ import hashlib
 import hmac
 
 
-def verify_nango_webhook(*, body: bytes, signature: str | None, signing_key: str) -> bool:
+def verify_nango_webhook(
+    *, body: bytes, signature: str | None, signing_key: str
+) -> bool:
     if not signature or not signing_key:
         return False
     expected = hmac.new(signing_key.encode("utf-8"), body, hashlib.sha256).hexdigest()

@@ -24,7 +24,9 @@ def test_temporal_validation_rejects_partial_mtls_configuration(
     monkeypatch.setenv("TEMPORAL_TLS_CERT_PATH", str(tmp_path / "client.pem"))
     monkeypatch.delenv("TEMPORAL_TLS_KEY_PATH", raising=False)
 
-    with pytest.raises(ValueError, match="both TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH"):
+    with pytest.raises(
+        ValueError, match="both TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH"
+    ):
         Settings(_env_file=None).validate_temporal_configuration()
 
 
@@ -40,7 +42,9 @@ def test_temporal_validation_rejects_unsafe_heartbeat_timeout(
         Settings(_env_file=None).validate_temporal_configuration()
 
 
-def test_temporal_validation_allows_disabled_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_temporal_validation_allows_disabled_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _set_required_environment(monkeypatch)
     settings = Settings(_env_file=None)
 
