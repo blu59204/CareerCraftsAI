@@ -557,6 +557,7 @@ Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 | Deployment Guide | `docs/DEPLOYMENT.md` | VPS, Docker, CI/CD, SSL |
 | Development Guide | `docs/DEVELOPMENT.md` | Local setup, testing, conventions |
 | Security | `docs/SECURITY.md` | Auth, encryption, CVEs, auditing |
+| Nango integrations | `docs/NANGO_INTEGRATION.md` | Connect sessions, webhook setup, migration and rollback |
 | Contributing | `docs/CONTRIBUTING.md` | PR process, code standards |
 | Configuration | `docs/CONFIGURATION.md` | All environment variables |
 

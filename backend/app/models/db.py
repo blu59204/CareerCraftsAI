@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -238,6 +249,48 @@ class OutboundMessage(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class IntegrationConnection(Base):
+    """Provider-neutral connection reference; OAuth credentials remain in Nango."""
+
+    __tablename__ = "integration_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider_config_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    external_connection_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
+    provider_metadata_enc: Mapped[str | None] = mapped_column(Text)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_integration_connections_user_provider"),
+        CheckConstraint(
+            "status IN ('pending', 'connected', 'disconnected', 'error', 'revoked')",
+            name="integration_connections_status_check",
+        ),
+    )
+
+
+class IntegrationWebhookEvent(Base):
+    """Hash-only Nango webhook replay ledger; payloads are deliberately not retained."""
+
+    __tablename__ = "integration_webhook_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    event_type: Mapped[str | None] = mapped_column(String(40))
+    external_connection_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="received")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class CandidateProfile(Base):

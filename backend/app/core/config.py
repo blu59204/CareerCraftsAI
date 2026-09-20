@@ -153,6 +153,10 @@ class Settings(BaseSettings):
     NANGO_SECRET_KEY: str = ""
     NANGO_PUBLIC_KEY: str = ""
     NANGO_WEBHOOK_SECRET: str = ""
+    # JSON mapping from product provider to this environment's Nango
+    # integration unique key, e.g. {"gmail": "google-mail-production"}.
+    # These identifiers are deployment configuration, not Nango catalog names.
+    NANGO_PROVIDER_CONFIG_KEYS: dict[str, str] = {}
     NANGO_REQUEST_TIMEOUT_S: int = Field(default=15, ge=1, le=60)
     NANGO_DIRECT_GOOGLE_FALLBACK_ENABLED: bool = True
 

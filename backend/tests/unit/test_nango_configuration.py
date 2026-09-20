@@ -37,3 +37,14 @@ def test_nango_enabled_accepts_server_only_credentials(monkeypatch: pytest.Monke
     monkeypatch.setenv("NANGO_WEBHOOK_SECRET", "test-webhook-key")
 
     Settings(_env_file=None).validate_nango_configuration()
+
+
+def test_nango_provider_keys_parse_as_deployment_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required_environment(monkeypatch)
+    monkeypatch.setenv("NANGO_PROVIDER_CONFIG_KEYS", '{"gmail":"google-mail-prod"}')
+
+    settings = Settings(_env_file=None)
+
+    assert settings.NANGO_PROVIDER_CONFIG_KEYS == {"gmail": "google-mail-prod"}

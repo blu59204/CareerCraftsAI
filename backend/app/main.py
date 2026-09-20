@@ -22,6 +22,7 @@ from app.api.v1 import (
     email,
     interview,
     interview_prep,
+    integrations,
     jobs,
     leads,
     linkedin,
@@ -91,7 +92,14 @@ async def _request_id_middleware(request: Request, call_next):
 
 
 # ── JWT middleware (skip public paths) ───────────────────────────
-_PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/internal"}
+_PUBLIC_PATHS = {
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/internal",
+    "/api/v1/integrations/webhooks/nango",
+}
 
 from app.core.supabase_auth import verify_token
 
@@ -124,6 +132,9 @@ async def _jwt_middleware(request: Request, call_next):
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     _check_env_vars()
+    from app.integrations.factory import build_integration_gateway
+
+    _app.state.integration_gateway = build_integration_gateway()
 
     from app.core.database import check_db_connection
     from app.core.redis_client import check_redis_connection
@@ -162,6 +173,9 @@ async def _lifespan(_app: FastAPI):
 
     yield
     logger.info("Shutting down")
+    close_integration_gateway = getattr(_app.state.integration_gateway, "aclose", None)
+    if close_integration_gateway is not None:
+        await close_integration_gateway()
     from app.core.redis_client import close_redis
     await close_redis()
     from app.core.database import engine
@@ -221,6 +235,7 @@ app.include_router(salary.router, prefix="/api/v1")
 app.include_router(company.router, prefix="/api/v1")
 app.include_router(linkedin.router, prefix="/api/v1")
 app.include_router(candidate_profile.router, prefix="/api/v1")
+app.include_router(integrations.router, prefix="/api/v1")
 app.include_router(memory_router)
 app.include_router(internal.router)
 
