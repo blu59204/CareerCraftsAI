@@ -171,9 +171,7 @@ async def reserve_application_attempt(params: dict) -> dict:
         if app_row.status == "applied":
             raise ValueError("Already applied to this job")
         if not app_row.resume_id:
-            raise ValueError(
-                "Attach an approved resume to this application before applying"
-            )
+            raise ValueError("Attach an approved resume to this application before applying")
 
         existing = (
             await db.execute(
@@ -189,11 +187,7 @@ async def reserve_application_attempt(params: dict) -> dict:
         # attempt is fine; a different workflow/caller colliding with an
         # active submission is not.
         owned_by_other_workflow = existing and existing.workflow_id != workflow_id
-        if (
-            existing
-            and existing.state in ACTIVE_SUBMISSION_STATES
-            and owned_by_other_workflow
-        ):
+        if existing and existing.state in ACTIVE_SUBMISSION_STATES and owned_by_other_workflow:
             raise ValueError(f"An application attempt is already {existing.state}")
 
         _, resume_sha256 = await load_resume(user_id, str(app_row.resume_id))
@@ -264,9 +258,7 @@ async def _record_stage_result(run_id: str, result: dict) -> dict:
     from app.models.db import AgentRun
 
     status = result.get("status", "failed")
-    normalized = (
-        status if status in {"completed", "awaiting_approval", "failed"} else "failed"
-    )
+    normalized = status if status in {"completed", "awaiting_approval", "failed"} else "failed"
     is_awaiting = normalized == "awaiting_approval"
     output = result.get("pending_action") if is_awaiting else result.get("result")
 
@@ -274,9 +266,7 @@ async def _record_stage_result(run_id: str, result: dict) -> dict:
         run = await db.get(AgentRun, _uuid.UUID(run_id), with_for_update=True)
         if run is not None:
             run.status = normalized
-            default_error = {
-                "error": result.get("error", "Application stage produced no result")
-            }
+            default_error = {"error": result.get("error", "Application stage produced no result")}
             run.output = output or default_error
             run.completed_at = None if is_awaiting else datetime.now(UTC)
             await db.commit()
@@ -365,9 +355,7 @@ async def apply_answers_and_resume_activity(params: dict) -> dict:
             raise ValueError(f"AgentRun {run_id} not found")
 
     excluded_keys = {"answers", "fields", "type", "message"}
-    resumed_pending = {
-        k: v for k, v in params["pending"].items() if k not in excluded_keys
-    }
+    resumed_pending = {k: v for k, v in params["pending"].items() if k not in excluded_keys}
     resumed_pending["type"] = "browser_input"
     result = await run_with_browser_heartbeats(
         run_application_stage(run, resumed_pending),
@@ -390,11 +378,7 @@ async def schedule_followup_activity(params: dict) -> None:
     job_application_id = _uuid.UUID(params["job_application_id"])
     async with AsyncSessionLocal() as db:
         app_row = (
-            await db.execute(
-                select(JobApplication).where(JobApplication.id == job_application_id)
-            )
+            await db.execute(select(JobApplication).where(JobApplication.id == job_application_id))
         ).scalar_one_or_none()
         applied_at = app_row.applied_at if app_row else None
-    await schedule_followups(
-        user_id, str(job_application_id), applied_at or datetime.now(UTC)
-    )
+    await schedule_followups(user_id, str(job_application_id), applied_at or datetime.now(UTC))

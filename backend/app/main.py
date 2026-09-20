@@ -160,9 +160,7 @@ async def _lifespan(_app: FastAPI):
             if row:
                 logger.info("pgvector installed: version %s", row[0])
             else:
-                logger.warning(
-                    "pgvector extension not installed — run CREATE EXTENSION vector"
-                )
+                logger.warning("pgvector extension not installed — run CREATE EXTENSION vector")
     except Exception as exc:
         logger.warning("pgvector check failed: %s", exc)
 
@@ -206,9 +204,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.exception_handler(Exception)
 async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.error(
-        "Unhandled %s %s: %s", request.method, request.url.path, exc, exc_info=True
-    )
+    logger.error("Unhandled %s %s: %s", request.method, request.url.path, exc, exc_info=True)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -270,9 +266,7 @@ async def health():
         from sqlalchemy import text
 
         async with engine.begin() as conn:
-            result = await conn.execute(
-                text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
-            )
+            result = await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
             pgvector_ok = result.fetchone() is not None
     except Exception:
         pgvector_ok = False

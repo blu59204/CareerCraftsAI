@@ -10,9 +10,7 @@ import pytest
 
 
 def _load_lint_gate():
-    path = (
-        Path(__file__).resolve().parents[3] / "scripts" / "check_changed_python_lint.py"
-    )
+    path = Path(__file__).resolve().parents[3] / "scripts" / "check_changed_python_lint.py"
     spec = importlib.util.spec_from_file_location("changed_python_lint", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -26,9 +24,7 @@ def lint_gate():
 
 
 def _completed(*args: str, output: str = "", returncode: int = 0):
-    return subprocess.CompletedProcess(
-        args, returncode, stdout=output, stderr="base missing"
-    )
+    return subprocess.CompletedProcess(args, returncode, stdout=output, stderr="base missing")
 
 
 def test_changed_python_file_without_ruff_diagnostics_passes(lint_gate) -> None:

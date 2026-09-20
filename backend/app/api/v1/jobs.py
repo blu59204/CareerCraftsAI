@@ -116,9 +116,7 @@ def is_example_job_url(job_url: str | None) -> bool:
 def _matches_location_filter(app: JobApplication, location_filter: str | None) -> bool:
     if not location_filter:
         return True
-    filters = {
-        item.strip().lower() for item in location_filter.split(",") if item.strip()
-    }
+    filters = {item.strip().lower() for item in location_filter.split(",") if item.strip()}
     if not filters:
         return True
     location = (app.location or "").lower()
@@ -192,9 +190,7 @@ def _latest_resume_query(user_id: uuid.UUID):
             UserDocument.user_id == user_id,
             UserDocument.doc_type == "resume",
         )
-        .order_by(
-            UserDocument.is_primary.desc(), UserDocument.embedded_at.desc().nulls_last()
-        )
+        .order_by(UserDocument.is_primary.desc(), UserDocument.embedded_at.desc().nulls_last())
         .limit(1)
     )
 
@@ -219,10 +215,7 @@ def _infer_years_experience(resume_text: str | None) -> int | None:
     ]
     if explicit:
         return max(explicit)
-    if any(
-        word in text
-        for word in ("fresher", "new graduate", "recent graduate", "student")
-    ):
+    if any(word in text for word in ("fresher", "new graduate", "recent graduate", "student")):
         return 0
     date_years = [int(y) for y in re.findall(r"\b(20\d{2}|19\d{2})\b", text)]
     current_year = datetime.now(timezone.utc).year
@@ -336,9 +329,7 @@ async def _resolve_search_context(
 
     role_source = "custom"
     role = payload.search_query.strip()
-    payload_roles = [
-        str(r).strip() for r in (payload.target_roles or []) if str(r).strip()
-    ]
+    payload_roles = [str(r).strip() for r in (payload.target_roles or []) if str(r).strip()]
     if not role and payload_roles:
         role = payload_roles[0]
         role_source = "manual.target_roles"
@@ -380,16 +371,12 @@ async def _resolve_search_context(
     location = requested_location or "Remote"
     work_modes = _split_pref_values(payload.work_mode)
     preferred_locations = [
-        str(loc).strip()
-        for loc in (payload.preferred_locations or [])
-        if str(loc).strip()
+        str(loc).strip() for loc in (payload.preferred_locations or []) if str(loc).strip()
     ]
     if prefs or preferred_locations:
         if not preferred_locations and prefs:
             preferred_locations = [
-                str(loc).strip()
-                for loc in (prefs.preferred_locations or [])
-                if str(loc).strip()
+                str(loc).strip() for loc in (prefs.preferred_locations or []) if str(loc).strip()
             ]
         if not work_modes and prefs:
             work_modes = _split_pref_values(prefs.work_mode)
@@ -436,13 +423,9 @@ async def get_job_search_profile(
     resume_roles = _derive_roles_from_resume(resume_text)
     skills = _extract_skills_from_resume(resume_text)
     inferred_years = _infer_years_experience(resume_text)
-    saved_years = (
-        prefs.years_experience if prefs and prefs.years_experience is not None else None
-    )
+    saved_years = prefs.years_experience if prefs and prefs.years_experience is not None else None
     years = saved_years if saved_years is not None else inferred_years
-    level = (prefs.experience_level if prefs else None) or _experience_level_from_years(
-        years
-    )
+    level = (prefs.experience_level if prefs else None) or _experience_level_from_years(years)
 
     saved_roles = (
         [str(role).strip() for role in (prefs.target_roles or []) if str(role).strip()]
@@ -461,19 +444,11 @@ async def get_job_search_profile(
     work_modes = _split_pref_values(work_mode)
     primary_work_mode = work_modes[0] if work_modes else "remote"
     locations = (
-        [
-            str(loc).strip()
-            for loc in (prefs.preferred_locations or [])
-            if str(loc).strip()
-        ]
+        [str(loc).strip() for loc in (prefs.preferred_locations or []) if str(loc).strip()]
         if prefs
         else []
     )
-    location = (
-        "Remote"
-        if primary_work_mode == "remote"
-        else (locations[0] if locations else "Any")
-    )
+    location = "Remote" if primary_work_mode == "remote" else (locations[0] if locations else "Any")
 
     missing_fields: list[str] = []
     if not resume:
@@ -493,9 +468,7 @@ async def get_job_search_profile(
     if skills:
         notes.append(f"Top skills found: {', '.join(skills[:5])}.")
     if inferred_years is not None and saved_years is None:
-        notes.append(
-            f"Inferred {inferred_years} year(s) from resume; confirm if wrong."
-        )
+        notes.append(f"Inferred {inferred_years} year(s) from resume; confirm if wrong.")
     elif saved_years is not None:
         notes.append(f"Using saved {saved_years} year(s) experience.")
 
@@ -519,11 +492,7 @@ async def get_job_search_profile(
         role_suggestions=list(
             dict.fromkeys(
                 saved_roles
-                + (
-                    [prefs.current_title.strip()]
-                    if prefs and prefs.current_title
-                    else []
-                )
+                + ([prefs.current_title.strip()] if prefs and prefs.current_title else [])
                 + resume_roles
             )
         )[:6],
@@ -623,15 +592,11 @@ async def list_company_careers(
     )
     if region.lower() == "india":
         pages = [
-            c
-            for c in pages
-            if any(kw in c.get("name", "").lower() for kw in indian_keywords)
+            c for c in pages if any(kw in c.get("name", "").lower() for kw in indian_keywords)
         ] or pages
     elif region.lower() == "global":
         pages = [
-            c
-            for c in pages
-            if not any(kw in c.get("name", "").lower() for kw in indian_keywords)
+            c for c in pages if not any(kw in c.get("name", "").lower() for kw in indian_keywords)
         ]
 
     out: list[dict] = []
@@ -741,9 +706,7 @@ async def natural_language_search(
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {NL_SEARCH_TIMEOUT_SECONDS}s"}
         await db.flush()
-        raise HTTPException(
-            status_code=504, detail="Natural language search timed out"
-        ) from None
+        raise HTTPException(status_code=504, detail="Natural language search timed out") from None
     apply_harness_result(agent_run, harness_result)
     await db.flush()
     return {"run_id": run_id, "status": agent_run.status}
@@ -811,9 +774,7 @@ async def search_jobs(
     live_browser = await _resolve_live_browser(db, current_user, payload.live_browser)
 
     titles = [t.strip() for t in (payload.titles or []) if t.strip()]
-    structured_locations = [
-        loc.strip() for loc in (payload.locations or []) if loc.strip()
-    ]
+    structured_locations = [loc.strip() for loc in (payload.locations or []) if loc.strip()]
     if titles:
         search_query = " ".join(titles)
     if structured_locations:
@@ -903,9 +864,7 @@ async def search_jobs(
         agent_run.status = "failed"
         agent_run.output = {"error": "Job search service unavailable"}
         await db.commit()
-        raise HTTPException(
-            status_code=503, detail="Job search service unavailable"
-        ) from exc
+        raise HTTPException(status_code=503, detail="Job search service unavailable") from exc
     return JobSearchResponse(run_id=run_id, queue_job_id=queue_job_id, queued=queued)
 
 
@@ -918,9 +877,7 @@ async def list_applications(
     current_user: User = Depends(get_current_user),
 ):
     if status and status not in VALID_STATUSES:
-        raise HTTPException(
-            status_code=400, detail=f"status must be one of: {VALID_STATUSES}"
-        )
+        raise HTTPException(status_code=400, detail=f"status must be one of: {VALID_STATUSES}")
 
     query = select(JobApplication).where(JobApplication.user_id == current_user.id)
     if status:
@@ -935,17 +892,14 @@ async def list_applications(
     apps = [
         app
         for app in result.scalars().all()
-        if not is_example_job_url(app.job_url)
-        and _matches_location_filter(app, location)
+        if not is_example_job_url(app.job_url) and _matches_location_filter(app, location)
     ]
     # `limit` is applied after the example-URL/location filters so callers get
     # the number of real rows they asked for. Previously it was silently ignored.
     return apps[:limit] if limit else apps
 
 
-@router.patch(
-    "/applications/{application_id}/status", response_model=ApplicationResponse
-)
+@router.patch("/applications/{application_id}/status", response_model=ApplicationResponse)
 async def update_application_status(
     application_id: uuid.UUID,
     body: StatusUpdateBody,
@@ -953,9 +907,7 @@ async def update_application_status(
     current_user: User = Depends(get_current_user),
 ):
     if body.status not in VALID_STATUSES:
-        raise HTTPException(
-            status_code=400, detail=f"status must be one of: {VALID_STATUSES}"
-        )
+        raise HTTPException(status_code=400, detail=f"status must be one of: {VALID_STATUSES}")
 
     result = await db.execute(
         select(JobApplication).where(
@@ -981,9 +933,7 @@ async def update_application_status(
     return app
 
 
-async def _start_temporal_auto_apply(
-    user_id: uuid.UUID, application_id: uuid.UUID
-) -> dict:
+async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dict:
     """TEMPORAL_ENABLED path for prepare-apply. Ownership/job-url/resume
     checks already happened in the caller — this only starts (or reuses)
     the durable workflow. The workflow's own reserve_application_attempt
@@ -1006,14 +956,10 @@ async def _start_temporal_auto_apply(
     try:
         await client.start_workflow(
             AutoApplyWorkflow.run,
-            AutoApplyIntent(
-                user_id=str(user_id), job_application_id=str(application_id)
-            ),
+            AutoApplyIntent(user_id=str(user_id), job_application_id=str(application_id)),
             id=workflow_id,
             task_queue=settings.TEMPORAL_TASK_QUEUE,
-            execution_timeout=timedelta(
-                seconds=settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S
-            ),
+            execution_timeout=timedelta(seconds=settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S),
         )
         status = "queued"
     except WorkflowAlreadyStartedError:

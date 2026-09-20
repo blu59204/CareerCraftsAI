@@ -29,9 +29,7 @@ async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypa
         "app.core.temporal_client.get_temporal_client",
         AsyncMock(return_value=fake_client),
     )
-    monkeypatch.setattr(
-        jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-123")
-    )
+    monkeypatch.setattr(jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-123"))
 
     result = await jobs_module._start_temporal_auto_apply(user_id, application_id)
 

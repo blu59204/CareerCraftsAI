@@ -67,9 +67,7 @@ def _connection_response(connection: IntegrationConnection) -> ConnectionRespons
 
 def _api_error(exc: Exception) -> HTTPException:
     if isinstance(exc, IntegrationDisabledError):
-        return HTTPException(
-            status_code=503, detail="Integrations are currently disabled"
-        )
+        return HTTPException(status_code=503, detail="Integrations are currently disabled")
     return HTTPException(status_code=503, detail="Integration provider is unavailable")
 
 
@@ -147,14 +145,10 @@ async def read_connection(
     try:
         provider_definition(provider)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404, detail="Integration provider was not found"
-        ) from exc
+        raise HTTPException(status_code=404, detail="Integration provider was not found") from exc
     connection = await get_connection(db, user_id=current_user.id, provider=provider)
     if connection is None:
-        raise HTTPException(
-            status_code=404, detail="Integration connection was not found"
-        )
+        raise HTTPException(status_code=404, detail="Integration connection was not found")
     return _connection_response(connection)
 
 
@@ -173,9 +167,7 @@ async def revoke_connection(
         await mark_revoked(db, user_id=current_user.id, provider=provider)
         await db.commit()
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404, detail="Integration provider was not found"
-        ) from exc
+        raise HTTPException(status_code=404, detail="Integration provider was not found") from exc
     except (IntegrationDisabledError, ProviderUnavailableError) as exc:
         await db.rollback()
         raise _api_error(exc) from exc
@@ -183,13 +175,9 @@ async def revoke_connection(
 
 
 @router.post("/webhooks/nango", include_in_schema=False)
-async def nango_webhook(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> dict[str, str]:
+async def nango_webhook(request: Request, db: AsyncSession = Depends(get_db)) -> dict[str, str]:
     if not settings.NANGO_ENABLED:
-        raise HTTPException(
-            status_code=503, detail="Integrations are currently disabled"
-        )
+        raise HTTPException(status_code=503, detail="Integrations are currently disabled")
     body = await request.body()
     if not verify_nango_webhook(
         body=body,
@@ -200,23 +188,15 @@ async def nango_webhook(
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=400, detail="Invalid integration webhook payload"
-        ) from exc
+        raise HTTPException(status_code=400, detail="Invalid integration webhook payload") from exc
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=400, detail="Invalid integration webhook payload"
-        )
+        raise HTTPException(status_code=400, detail="Invalid integration webhook payload")
     event = await reserve_webhook_event(
         db,
         event_hash=webhook_event_hash(body),
-        event_type=(
-            payload.get("type") if isinstance(payload.get("type"), str) else None
-        ),
+        event_type=(payload.get("type") if isinstance(payload.get("type"), str) else None),
         connection_id=(
-            payload.get("connectionId")
-            if isinstance(payload.get("connectionId"), str)
-            else None
+            payload.get("connectionId") if isinstance(payload.get("connectionId"), str) else None
         ),
     )
     if event is None:
@@ -225,11 +205,7 @@ async def nango_webhook(
         provider_config_keys = nango_provider_config_keys()
     except ValueError as exc:
         await db.rollback()
-        raise HTTPException(
-            status_code=503, detail="Integration configuration is invalid"
-        ) from exc
-    event.status = await apply_auth_webhook(
-        db, payload, provider_config_keys=provider_config_keys
-    )
+        raise HTTPException(status_code=503, detail="Integration configuration is invalid") from exc
+    event.status = await apply_auth_webhook(db, payload, provider_config_keys=provider_config_keys)
     await db.commit()
     return {"status": event.status}
