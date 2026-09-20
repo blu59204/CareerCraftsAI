@@ -6,7 +6,11 @@ from uuid import UUID
 from app.integrations.exceptions import ConnectionNotFoundError
 from app.integrations.gateway import IntegrationGateway
 from app.integrations.providers import provider_definition
-from app.integrations.schemas import ConnectSession, IntegrationConnectionResult
+from app.integrations.schemas import (
+    ConnectSession,
+    IntegrationConnectionResult,
+    IntegrationProxyResponse,
+)
 from app.integrations.validation import validate_return_path
 
 
@@ -24,9 +28,7 @@ class MockIntegrationGateway(IntegrationGateway):
         definition = provider_definition(provider)
         validate_return_path(return_path)
         expiry = datetime.now(UTC) + timedelta(minutes=30)
-        return ConnectSession(
-            provider, f"test-session-{user_id}-{definition.key}", None, expiry
-        )
+        return ConnectSession(provider, f"test-session-{user_id}-{definition.key}", None, expiry)
 
     async def get_connection(
         self, *, user_id: UUID, provider: str
@@ -34,13 +36,9 @@ class MockIntegrationGateway(IntegrationGateway):
         provider_definition(provider)
         return self.connections.get((user_id, provider))
 
-    async def list_connections(
-        self, *, user_id: UUID
-    ) -> list[IntegrationConnectionResult]:
+    async def list_connections(self, *, user_id: UUID) -> list[IntegrationConnectionResult]:
         return [
-            connection
-            for (owner, _), connection in self.connections.items()
-            if owner == user_id
+            connection for (owner, _), connection in self.connections.items() if owner == user_id
         ]
 
     async def revoke_connection(self, *, user_id: UUID, provider: str) -> None:
@@ -60,3 +58,22 @@ class MockIntegrationGateway(IntegrationGateway):
             raise ConnectionNotFoundError("No connection exists for this provider")
         self.actions.append((user_id, provider, action, input_data, idempotency_key))
         return {"success": True}
+
+    async def proxy_request(
+        self,
+        *,
+        user_id: UUID,
+        provider: str,
+        method: str,
+        path: str,
+        headers: dict[str, str] | None = None,
+        json_data: dict | None = None,
+        content: bytes | None = None,
+    ) -> IntegrationProxyResponse:
+        del headers, content
+        if await self.get_connection(user_id=user_id, provider=provider) is None:
+            raise ConnectionNotFoundError("No connection exists for provider")
+        return IntegrationProxyResponse(
+            status_code=200,
+            data={"method": method, "path": path, "json": json_data},
+        )

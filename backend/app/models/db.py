@@ -34,9 +34,6 @@ class User(Base):
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
     linkedin_email_enc: Mapped[str | None] = mapped_column(Text)
     linkedin_password_enc: Mapped[str | None] = mapped_column(Text)
-    google_access_token_enc: Mapped[str | None] = mapped_column(Text)
-    google_refresh_token_enc: Mapped[str | None] = mapped_column(Text)
-    google_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     auto_mode: Mapped[str] = mapped_column(String, default="drafts")  # 'auto' or 'drafts'
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -45,7 +42,9 @@ class User(Base):
     applications: Mapped[list["JobApplication"]] = relationship(back_populates="user")
     leads: Mapped[list["Lead"]] = relationship(back_populates="user")
     agent_runs: Mapped[list["AgentRun"]] = relationship(back_populates="user")
-    preferences: Mapped["UserPreferences | None"] = relationship(back_populates="user", uselist=False)
+    preferences: Mapped["UserPreferences | None"] = relationship(
+        back_populates="user", uselist=False
+    )
 
 
 class UserModelSettings(Base):
@@ -153,15 +152,22 @@ class CoverLetterVersion(Base):
 
 class WorkflowTask(Base):
     """Transactional outbox and execution ledger; never exposed through the Data API."""
+
     __tablename__ = "workflow_tasks"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     kind: Mapped[str] = mapped_column(String(30))
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -171,8 +177,12 @@ class BrowserSession(Base):
     __tablename__ = "browser_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), unique=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), unique=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     sandbox_id: Mapped[str | None] = mapped_column(String)
     status: Mapped[str] = mapped_column(String(30), default="provisioning")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
@@ -183,9 +193,13 @@ class BrowserSession(Base):
 class BrowserAccountState(Base):
     __tablename__ = "browser_account_states"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     state_enc: Mapped[str] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class ApplicationAttempt(Base):
@@ -195,14 +209,19 @@ class ApplicationAttempt(Base):
     not a new row per retry. State advances forward through the same row so
     a concurrent or repeated submit attempt can be detected and suppressed.
     """
+
     __tablename__ = "application_attempts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     job_application_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("job_applications.id", ondelete="CASCADE")
     )
-    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"))
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL")
+    )
 
     # Set only when this attempt is driven by the (feature-flagged) Temporal
     # path instead of the default BullMQ/WorkflowTask path — both NULL means
@@ -232,11 +251,16 @@ class ApplicationAttempt(Base):
 
 class OutboundMessage(Base):
     """Idempotency ledger for approved outbound sends (email today)."""
+
     __tablename__ = "outbound_messages"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="SET NULL"))
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="SET NULL")
+    )
     channel: Mapped[str] = mapped_column(String(20), default="email")
     recipient: Mapped[str] = mapped_column(String, nullable=False)
     subject: Mapped[str | None] = mapped_column(String)
@@ -257,7 +281,9 @@ class IntegrationConnection(Base):
     __tablename__ = "integration_connections"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     provider_config_key: Mapped[str] = mapped_column(String(100), nullable=False)
     external_connection_id: Mapped[str | None] = mapped_column(String(255), unique=True)
@@ -299,9 +325,12 @@ class CandidateProfile(Base):
     Never populated by LLM inference — sponsorship, authorization, salary,
     and notice period come only from the user. See answer_resolver.py.
     """
+
     __tablename__ = "candidate_profiles"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
 
     first_name: Mapped[str | None] = mapped_column(String)
     last_name: Mapped[str | None] = mapped_column(String)
@@ -333,7 +362,9 @@ class CandidateProfile(Base):
 
     default_resume_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("user_documents.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class CandidateAnswer(Base):
@@ -342,10 +373,13 @@ class CandidateAnswer(Base):
     One row per (user, question_key) — later applications reuse it instead
     of asking again or generating a fresh answer.
     """
+
     __tablename__ = "candidate_answers"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     question_key: Mapped[str] = mapped_column(String, nullable=False)
     normalized_question: Mapped[str | None] = mapped_column(Text)
     answer_type: Mapped[str] = mapped_column(String(20), default="text")
@@ -357,7 +391,9 @@ class CandidateAnswer(Base):
     approved_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     __table_args__ = (
         UniqueConstraint("user_id", "question_key", name="candidate_answers_one_per_question"),
@@ -418,7 +454,9 @@ class CompanyIntelModel(Base):
     tech_stack: Mapped[list] = mapped_column(JSONB, default=list)
     glassdoor_sentiment: Mapped[str | None] = mapped_column(String(10))
     partial_data: Mapped[dict | None] = mapped_column(JSONB)
-    researched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    researched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class ResumePersona(Base):
@@ -481,7 +519,9 @@ class UserPreferences(Base):
     __tablename__ = "user_preferences"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True
+    )
     experience_level: Mapped[str | None] = mapped_column(String)
     years_experience: Mapped[int | None] = mapped_column(Integer)
     job_type: Mapped[str | None] = mapped_column(String)
@@ -495,8 +535,12 @@ class UserPreferences(Base):
     # When True, autonomous job search + apply will open a visible Chromium
     # window streamed to the UI over SSE.  When False (default), the headless
     # Remotive/Arbeitnow/Jobicy/JobSpy waterfall is used.  Set per-user.
-    prefer_live_browser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    prefer_live_browser: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
     user: Mapped["User"] = relationship(back_populates="preferences")

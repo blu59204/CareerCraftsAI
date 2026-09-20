@@ -24,9 +24,7 @@ async def get_connection(
     return result.scalar_one_or_none()
 
 
-async def list_connections(
-    db: AsyncSession, *, user_id: UUID
-) -> list[IntegrationConnection]:
+async def list_connections(db: AsyncSession, *, user_id: UUID) -> list[IntegrationConnection]:
     """Return only local records belonging to the authenticated user."""
     result = await db.execute(
         select(IntegrationConnection)
@@ -69,9 +67,7 @@ async def sync_connection(
     connection.provider_config_key = result.provider_config_key
     connection.external_connection_id = result.external_connection_id
     connection.status = result.status
-    connection.connected_at = (
-        result.connected_at or connection.connected_at or datetime.now(UTC)
-    )
+    connection.connected_at = result.connected_at or connection.connected_at or datetime.now(UTC)
     connection.last_synced_at = datetime.now(UTC)
     if result.status == "connected":
         connection.disconnected_at = None
@@ -89,11 +85,7 @@ async def mark_revoked(db: AsyncSession, *, user_id: UUID, provider: str) -> Non
 
 
 async def reserve_webhook_event(
-    db: AsyncSession,
-    *,
-    event_hash: str,
-    event_type: str | None,
-    connection_id: str | None
+    db: AsyncSession, *, event_hash: str, event_type: str | None, connection_id: str | None
 ) -> IntegrationWebhookEvent | None:
     """Insert replay key atomically; duplicate Nango retries become no-ops."""
     event = IntegrationWebhookEvent(

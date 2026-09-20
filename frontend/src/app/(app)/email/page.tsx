@@ -8,7 +8,7 @@ import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
-import { connectGoogleForGmail } from "@/lib/google-oauth";
+import { connectGmail } from "@/lib/nango-connect";
 import { toast } from "sonner";
 import {
   Mail,
@@ -565,7 +565,7 @@ export default function EmailPage() {
             tone="primary"
             size="sm"
             onClick={async () => {
-              const { error } = await connectGoogleForGmail("/email");
+              const { error } = await connectGmail("/email");
               if (error) toast.error(error.message);
             }}
           >

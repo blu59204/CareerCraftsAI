@@ -20,3 +20,11 @@ class IntegrationConnectionResult:
     status: str
     connected_at: datetime | None = None
     last_synced_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class IntegrationProxyResponse:
+    """Provider-neutral result of a request through an integration."""
+
+    status_code: int
+    data: dict | list | str | None

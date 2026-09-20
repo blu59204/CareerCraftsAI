@@ -18,7 +18,7 @@ def main():
     frontend = dict(dotenv_values(root / "frontend" / ".env.local"))
     keys = {
         "APP_SECRET_KEY", "DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_KEY", "SUPABASE_JWT_SECRET",
-        "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "HUNTER_API_KEY", "EXA_API_KEY",
+        "HUNTER_API_KEY", "EXA_API_KEY",
         "PROXYCURL_API_KEY", "RESEND_API_KEY", "YOUTUBE_API_KEY", "TAVILY_API_KEY", "BRAVE_API_KEY",
     }
     values = {k: backend[k] for k in keys if backend.get(k)}

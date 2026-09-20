@@ -3,7 +3,11 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.integrations.schemas import ConnectSession, IntegrationConnectionResult
+from app.integrations.schemas import (
+    ConnectSession,
+    IntegrationConnectionResult,
+    IntegrationProxyResponse,
+)
 
 
 class IntegrationGateway(Protocol):
@@ -17,9 +21,7 @@ class IntegrationGateway(Protocol):
         self, *, user_id: UUID, provider: str
     ) -> IntegrationConnectionResult | None: ...
 
-    async def list_connections(
-        self, *, user_id: UUID
-    ) -> list[IntegrationConnectionResult]: ...
+    async def list_connections(self, *, user_id: UUID) -> list[IntegrationConnectionResult]: ...
 
     async def revoke_connection(self, *, user_id: UUID, provider: str) -> None: ...
 
@@ -32,3 +34,15 @@ class IntegrationGateway(Protocol):
         input_data: dict,
         idempotency_key: str | None = None,
     ) -> dict: ...
+
+    async def proxy_request(
+        self,
+        *,
+        user_id: UUID,
+        provider: str,
+        method: str,
+        path: str,
+        headers: dict[str, str] | None = None,
+        json_data: dict | None = None,
+        content: bytes | None = None,
+    ) -> IntegrationProxyResponse: ...

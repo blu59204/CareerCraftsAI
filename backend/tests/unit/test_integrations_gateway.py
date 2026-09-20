@@ -41,9 +41,7 @@ def test_provider_config_keys_are_deployment_configured() -> None:
 def test_webhook_hmac_and_hash_are_raw_body_based() -> None:
     body = b'{"type":"auth"}'
     signature = hmac.new(b"webhook-key", body, hashlib.sha256).hexdigest()
-    assert verify_nango_webhook(
-        body=body, signature=signature, signing_key="webhook-key"
-    )
+    assert verify_nango_webhook(body=body, signature=signature, signing_key="webhook-key")
     assert not verify_nango_webhook(
         body=body + b" ", signature=signature, signing_key="webhook-key"
     )
@@ -56,9 +54,7 @@ async def test_nango_connect_session_uses_backend_bearer_auth_only() -> None:
         assert request.url.path == "/connect/sessions"
         assert request.headers["Authorization"] == "Bearer server-secret"
         assert b'"allowed_integrations":["career-gmail"]' in request.content
-        assert (
-            b'"end_user_id":"00000000-0000-0000-0000-000000000001"' in request.content
-        )
+        assert b'"end_user_id":"00000000-0000-0000-0000-000000000001"' in request.content
         return httpx.Response(
             201,
             json={
@@ -131,6 +127,48 @@ async def test_nango_action_does_not_retry_external_mutation() -> None:
 async def test_mock_gateway_enforces_connection_ownership() -> None:
     gateway = MockIntegrationGateway()
     with pytest.raises(ConnectionNotFoundError):
-        await gateway.execute_action(
-            user_id=USER_ID, provider="gmail", action="x", input_data={}
-        )
+        await gateway.execute_action(user_id=USER_ID, provider="gmail", action="x", input_data={})
+
+
+@pytest.mark.asyncio
+async def test_proxy_uses_nango_connection_headers_without_retrying_mutation() -> None:
+    requests = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/connections":
+            return httpx.Response(
+                200,
+                json={
+                    "connections": [
+                        {
+                            "connection_id": "conn-1",
+                            "provider_config_key": "career-gmail",
+                        }
+                    ]
+                },
+            )
+        assert request.url.path == "/proxy/gmail/v1/users/me/messages/send"
+        assert request.headers["Connection-Id"] == "conn-1"
+        assert request.headers["Provider-Config-Key"] == "career-gmail"
+        return httpx.Response(200, json={"id": "message-1"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = NangoIntegrationGateway(
+        base_url="https://api.nango.dev",
+        secret_key="server-secret",
+        provider_config_keys=CONFIG_KEYS,
+        client=client,
+    )
+
+    result = await gateway.proxy_request(
+        user_id=USER_ID,
+        provider="gmail",
+        method="POST",
+        path="gmail/v1/users/me/messages/send",
+        json_data={"raw": "message"},
+    )
+
+    assert result.data == {"id": "message-1"}
+    assert len(requests) == 2
+    await client.aclose()

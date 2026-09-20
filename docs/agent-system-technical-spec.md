@@ -270,24 +270,19 @@ COMMON_FIELD_PATTERNS = {
 
 ### 5.1 Current State
 
-| Component | File | Status |
+| Component | Implementation | Status |
 |---|---|---|
-| OAuth token storage | `google_oauth_tokens` table (migration 0021), encrypted columns | ✅ |
-| OAuth service | `google_oauth_service.py` — `get_valid_google_access_token()`, auto-refresh | ✅ |
-| Gmail client | `gmail_service.py` — `GmailMCPClient` with `search_threads()`, `send_message()`, `get_thread()` | ✅ |
-| EmailAgent node | `email_agent.py` — `email_agent_node()` | ✅ |
-| EmailMonitorAgent | `email_monitor_agent.py` — `email_monitor_node()` + `run_email_monitor()` | ✅ |
+| Connection authorization | Nango Connect session and verified webhook | ? |
+| Token lifecycle | Nango-managed; no provider token is stored by CareerCraft | ? |
+| Gmail / Drive API calls | Nango credential proxy | ? |
+| Gmail client | `gmail_service.py` compatibility client using the provider-neutral gateway | ? |
 
-### 5.2 Gmail OAuth Flow
+### 5.2 Nango Connection Flow
 
-```
-1. User signs in with Google → Supabase Auth stores refresh token
-2. google_oauth_service.get_valid_google_access_token(user_id):
-   ├── Check DB for google_access_token_enc (encrypted)
-   ├── If not expired: decrypt and return
-   └── If expired: use google_refresh_token_enc → Google's token endpoint → store new access token → return
-3. GmailMCPClient(user_id) → uses access token for all Gmail API calls
-```
+1. An authenticated user requests a backend-created Nango Connect session.
+2. The browser opens the short-lived Nango Connect link.
+3. The signed Nango webhook records the connection state.
+4. `GmailMCPClient` and `drive_service` proxy provider calls through Nango.
 
 ### 5.3 EmailAgent Flow
 

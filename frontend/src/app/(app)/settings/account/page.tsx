@@ -12,7 +12,7 @@ import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
-import { connectGoogleForGmail } from "@/lib/google-oauth";
+import { connectGmail } from "@/lib/nango-connect";
 import { useClerk, useUser } from "@clerk/nextjs";
 
 type Tab = "account" | "security" | "notifications";
@@ -140,7 +140,7 @@ export default function AccountSettingsPage() {
   });
 
   const disconnectGoogleMutation = useMutation({
-    mutationFn: async () => apiClient.delete("/users/me/google-oauth"),
+    mutationFn: async () => apiClient.delete("/integrations/gmail"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["connected-accounts"] });
       toast.info("Google disconnected");
@@ -345,7 +345,7 @@ export default function AccountSettingsPage() {
                       tone="primary"
                       size="sm"
                       onClick={async () => {
-                        const { error } = await connectGoogleForGmail("/settings/account");
+                        const { error } = await connectGmail("/settings/account");
                         if (error) toast.error(error.message);
                       }}
                     >

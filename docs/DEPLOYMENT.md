@@ -167,7 +167,7 @@ In the Supabase dashboard (Authentication → Providers):
 1. **Google OAuth**
    - Enable Google provider
    - Add `https://yourdomain.com/auth/callback` as allowed redirect URL
-   - Required scopes: `email`, `profile`, `https://www.googleapis.com/auth/gmail.send`, `https://www.googleapis.com/auth/gmail.readonly`, `https://www.googleapis.com/auth/drive.readonly`
+   - Google sign-in scopes: `email`, `profile` (Gmail and Drive authorization is configured in Nango).
 
 2. **GitHub OAuth**
    - Enable GitHub provider
@@ -294,7 +294,7 @@ Before going live:
 - [ ] `APP_ENV=production` set (disables `/docs` and debug logging)
 - [ ] `APP_SECRET_KEY` is 32+ random bytes (generated with `openssl rand -hex 32`)
 - [ ] Supabase Auth redirect URLs include your production domain
-- [ ] Google OAuth scopes include `gmail.send`, `gmail.readonly`, `drive.readonly`
+- [ ] Nango Gmail/Drive provider keys and webhook secret are configured
 - [ ] Redis `appendonly yes` enabled (data persists across restarts)
 - [ ] HNSW index migration run after first document upload
 - [ ] SSL certificate auto-renewal configured: `certbot renew --dry-run`

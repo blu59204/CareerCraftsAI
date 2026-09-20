@@ -44,12 +44,11 @@ The `SUPABASE_JWT_SECRET` comes from Supabase dashboard → Settings → API. It
 - Unauthenticated requests to `(app)/*` routes are redirected to `/login`
 - Access tokens are short-lived (1 hour); refresh tokens are rotated on use
 
-### OAuth Scopes
+### Nango provider authorization
 
-Google OAuth requests only the minimum necessary scopes:
-- `email`, `profile` — for account creation
-- `gmail.send`, `gmail.readonly` — for Email Agent
-- `drive.readonly` — for importing resume from Google Drive (optional)
+Gmail and Drive authorization uses Nango Connect. Nango stores and refreshes
+provider credentials; CareerCraft verifies Nango webhooks and never stores or
+logs provider OAuth tokens.
 
 ---
 

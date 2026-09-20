@@ -537,7 +537,7 @@ Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 - [ ] Run HNSW index migration after first RAG ingestion (`0007_create_pgvector_indexes.sql`)
 - [ ] Set `APP_ENV=production` in `.env` (disables `/docs` endpoint)
 - [ ] Configure Supabase Auth providers (Google, LinkedIn, GitHub) and set allowed redirect URLs
-- [ ] Add Google OAuth scopes: `gmail.send`, `gmail.readonly`, `drive.readonly`
+- [ ] Configure Nango Gmail/Drive integration keys and the verified webhook URL
 - [ ] Verify Redis `appendonly yes` is persisting to Docker volume
 - [ ] Configure Supabase DB connection pool alerts
 - [ ] Add BullBoard (`@bull-board/express`) to worker for queue visibility

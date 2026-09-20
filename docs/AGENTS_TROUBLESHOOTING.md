@@ -14,19 +14,14 @@ Common failure modes and resolution steps for all 15 agents, Playwright browser 
 
 ---
 
-## Gmail OAuth & Email
+## Gmail and Drive via Nango
 
-| Symptom | Cause | Fix |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| `Gmail not connected` | User signed in with Google but without Gmail scopes | User must disconnect Google in Settings, then reconnect and approve `gmail.send` and `gmail.readonly` scopes |
-| `Token refresh failed` | Google OAuth client credentials missing or wrong | Verify `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` in Supabase Auth provider settings |
-| `Insufficient Permission` (403) | User approved Google sign-in but not Gmail scopes | Prompt user to re-authenticate with full Gmail permissions |
-| `Gmail API is not enabled` (403) | Gmail API not enabled in Google Cloud Console | Enable Gmail API for the project at `console.cloud.google.com/apis/library/gmail.googleapis.com` |
-| Email draft generated but not sent | HITL gate — this is expected behavior | Email send only happens after user approves the checkpoint event via the ApprovalModal in the frontend |
-| Hunter.io `found: False` | No email pattern found for company domain | Verify `HUNTER_API_KEY` is set. Try different name combinations. Fall back to domain search |
-| Hunter.io `402 Payment Required` | Free tier exhausted (500 requests/month) | Upgrade Hunter.io plan or add a different email finding API (e.g., FindEmails, Snov.io) |
-
----
+| `Gmail not connected` | No active Nango Gmail connection | Connect Gmail in Integrations and wait for the verified status. |
+| Connection fails | Missing provider config key or Nango credentials | Verify `NANGO_PROVIDER_CONFIG_KEYS`, `NANGO_SECRET_KEY`, and webhook setup. |
+| Gmail API error | Provider scope or Nango proxy error | Reconnect with the required Gmail scopes in Nango and inspect Nango logs. |
+| Email draft generated but not sent | HITL gate | Approve the email through the normal approval flow. |
 
 ## RAG (Retrieval Augmented Generation)
 

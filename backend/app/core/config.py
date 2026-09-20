@@ -101,8 +101,6 @@ class Settings(BaseSettings):
     RAPIDAPI_KEY: str | None = None
     ADZUNA_APP_ID: str | None = None
     ADZUNA_APP_KEY: str | None = None
-    GOOGLE_OAUTH_CLIENT_ID: str | None = None
-    GOOGLE_OAUTH_CLIENT_SECRET: str | None = None
 
     # ── Search providers ───────────────────────────────────────────────
     TAVILY_API_KEY: str | None = None
@@ -158,7 +156,6 @@ class Settings(BaseSettings):
     # These identifiers are deployment configuration, not Nango catalog names.
     NANGO_PROVIDER_CONFIG_KEYS: dict[str, str] = {}
     NANGO_REQUEST_TIMEOUT_S: int = Field(default=15, ge=1, le=60)
-    NANGO_DIRECT_GOOGLE_FALLBACK_ENABLED: bool = True
 
     # OpenSandbox runs on dedicated infrastructure, never in the API process.
     OPEN_SANDBOX_URL: str = ""

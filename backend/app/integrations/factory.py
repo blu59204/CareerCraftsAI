@@ -30,6 +30,9 @@ class DisabledIntegrationGateway(IntegrationGateway):
     async def execute_action(self, **_: object):
         raise IntegrationDisabledError("Integrations are disabled")
 
+    async def proxy_request(self, **_: object):
+        raise IntegrationDisabledError("Integrations are disabled")
+
 
 def nango_provider_config_keys(config: Settings = settings) -> dict[str, str]:
     raw = getattr(config, "NANGO_PROVIDER_CONFIG_KEYS", "")

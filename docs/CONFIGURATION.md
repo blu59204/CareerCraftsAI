@@ -173,20 +173,13 @@ Nginx reads environment from the host. Set in `nginx/nginx.conf`:
 
 ---
 
-## Google OAuth (for Gmail Agent)
+## Nango integrations (Gmail and Drive)
 
-Set in Supabase Auth dashboard, not in `.env`. The Google OAuth client credentials are configured in Supabase → Authentication → Providers → Google.
-
-Required Google Cloud OAuth scopes:
-```
-https://www.googleapis.com/auth/gmail.send
-https://www.googleapis.com/auth/gmail.readonly
-https://www.googleapis.com/auth/drive.readonly
-email
-profile
-```
-
-After a user signs in with Google and grants these scopes, the refresh token is stored in Supabase Auth and used by `GmailService` to call the Gmail API on the user's behalf.
+Gmail and Drive are authorized through Nango, not Supabase Auth. Configure
+`NANGO_ENABLED`, `NANGO_SECRET_KEY`, `NANGO_WEBHOOK_SECRET`, and the
+environment-specific `NANGO_PROVIDER_CONFIG_KEYS` mapping described in
+[`NANGO_INTEGRATION.md`](NANGO_INTEGRATION.md). Nango holds and refreshes
+provider credentials; CareerCraft does not store provider OAuth tokens.
 
 ---
 

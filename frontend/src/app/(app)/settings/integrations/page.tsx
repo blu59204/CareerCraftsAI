@@ -5,7 +5,7 @@ import { Check, Link2, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { apiErrorMessage, apiClient } from "@/lib/api";
+import { apiClient } from "@/lib/api";
 
 type Provider = "gmail" | "google_drive" | "google_calendar" | "outlook_mail" | "outlook_calendar";
 type ConnectionStatus = "pending" | "connected" | "disconnected" | "error" | "revoked";
@@ -53,7 +53,7 @@ export default function IntegrationsSettingsPage() {
       // Nango's hosted Connect page receives only the short-lived session link.
       window.location.assign(session.connect_link);
     },
-    onError: (error) => toast.error(apiErrorMessage(error, "Could not start the connection.")),
+    onError: () => toast.error("Could not start the connection."),
   });
 
   const disconnect = useMutation({
@@ -62,7 +62,7 @@ export default function IntegrationsSettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["integrations"] });
       toast.success("Integration disconnected");
     },
-    onError: (error) => toast.error(apiErrorMessage(error, "Could not disconnect the integration.")),
+    onError: () => toast.error("Could not disconnect the integration."),
   });
 
   const byProvider = new Map(connections.data?.map((connection) => [connection.provider, connection]));

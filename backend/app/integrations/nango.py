@@ -15,7 +15,11 @@ from app.integrations.exceptions import (
 )
 from app.integrations.gateway import IntegrationGateway
 from app.integrations.providers import provider_config_key
-from app.integrations.schemas import ConnectSession, IntegrationConnectionResult
+from app.integrations.schemas import (
+    ConnectSession,
+    IntegrationConnectionResult,
+    IntegrationProxyResponse,
+)
 from app.integrations.validation import validate_return_path
 
 
@@ -72,9 +76,7 @@ class NangoIntegrationGateway(IntegrationGateway):
                 return _connection_result(provider, connection)
         return None
 
-    async def list_connections(
-        self, *, user_id: UUID
-    ) -> list[IntegrationConnectionResult]:
+    async def list_connections(self, *, user_id: UUID) -> list[IntegrationConnectionResult]:
         connections = await self._list_raw_connections(user_id)
         result: list[IntegrationConnectionResult] = []
         for provider in (
@@ -86,11 +88,7 @@ class NangoIntegrationGateway(IntegrationGateway):
         ):
             config_key = self.provider_config_key(provider)
             matched = next(
-                (
-                    item
-                    for item in connections
-                    if item.get("provider_config_key") == config_key
-                ),
+                (item for item in connections if item.get("provider_config_key") == config_key),
                 None,
             )
             if matched is not None:
@@ -133,12 +131,53 @@ class NangoIntegrationGateway(IntegrationGateway):
                 json={"action_name": action, "input": input_data},
             )
         except ProviderUnavailableError as exc:
-            raise IntegrationActionError(
-                "Integration action could not be completed"
-            ) from exc
+            raise IntegrationActionError("Integration action could not be completed") from exc
         if not isinstance(data, dict):
             raise IntegrationActionError("Nango returned an invalid action response")
         return data
+
+    async def proxy_request(
+        self,
+        *,
+        user_id: UUID,
+        provider: str,
+        method: str,
+        path: str,
+        headers: dict[str, str] | None = None,
+        json_data: dict | None = None,
+        content: bytes | None = None,
+    ) -> IntegrationProxyResponse:
+        """Make one non-retried request through Nango's credential proxy."""
+        connection = await self.get_connection(user_id=user_id, provider=provider)
+        if connection is None:
+            raise ConnectionNotFoundError("No connection exists for provider")
+
+        request_headers = {
+            "Authorization": f"Bearer {self._secret_key}",
+            "Connection-Id": connection.external_connection_id,
+            "Provider-Config-Key": connection.provider_config_key,
+        }
+        request_headers.update(headers or {})
+        try:
+            response = await self._client.request(
+                method,
+                f"{self._base_url}/proxy/{path.lstrip('/')}",
+                headers=request_headers,
+                json=json_data,
+                content=content,
+            )
+        except httpx.RequestError as exc:
+            raise ProviderUnavailableError("Integration provider unavailable") from exc
+
+        if response.status_code >= 500 or response.status_code == 429:
+            raise ProviderUnavailableError("Integration provider unavailable")
+        if response.status_code >= 400:
+            raise IntegrationActionError("Integration provider rejected the request")
+        try:
+            data: dict | list | str | None = response.json()
+        except ValueError:
+            data = response.text or None
+        return IntegrationProxyResponse(status_code=response.status_code, data=data)
 
     async def _list_raw_connections(self, user_id: UUID) -> list[dict[str, Any]]:
         data = await self._request(
@@ -150,9 +189,7 @@ class NangoIntegrationGateway(IntegrationGateway):
         if not isinstance(connections, list) or not all(
             isinstance(item, dict) for item in connections
         ):
-            raise ProviderUnavailableError(
-                "Nango returned an invalid connections response"
-            )
+            raise ProviderUnavailableError("Nango returned an invalid connections response")
         return connections
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -171,17 +208,13 @@ class NangoIntegrationGateway(IntegrationGateway):
                 if attempt + 1 < attempts:
                     await asyncio.sleep(0.1)
                     continue
-                raise ProviderUnavailableError(
-                    "Integration provider is unavailable"
-                ) from exc
+                raise ProviderUnavailableError("Integration provider is unavailable") from exc
             if response.status_code == 404:
                 raise ConnectionNotFoundError("Connection was not found")
             if response.status_code == 429 or response.status_code >= 500:
                 raise ProviderUnavailableError("Integration provider is unavailable")
             if response.is_error:
-                raise ProviderUnavailableError(
-                    "Integration provider rejected the request"
-                )
+                raise ProviderUnavailableError("Integration provider rejected the request")
             try:
                 payload = response.json()
             except ValueError as exc:
@@ -189,9 +222,7 @@ class NangoIntegrationGateway(IntegrationGateway):
                     "Integration provider returned invalid JSON"
                 ) from exc
             if not isinstance(payload, dict):
-                raise ProviderUnavailableError(
-                    "Integration provider returned invalid JSON"
-                )
+                raise ProviderUnavailableError("Integration provider returned invalid JSON")
             return payload
         raise AssertionError("unreachable")
 
@@ -217,15 +248,11 @@ def _parse_datetime(value: str) -> datetime:
         raise ProviderUnavailableError("Nango returned an invalid timestamp") from exc
 
 
-def _connection_result(
-    provider: str, payload: dict[str, Any]
-) -> IntegrationConnectionResult:
+def _connection_result(provider: str, payload: dict[str, Any]) -> IntegrationConnectionResult:
     connection_id = _required_string(payload, "connection_id")
     config_key = _required_string(payload, "provider_config_key")
     errors = payload.get("errors", [])
     status = "error" if isinstance(errors, list) and errors else "connected"
     created = payload.get("created") or payload.get("created_at")
     connected_at = _parse_datetime(created) if isinstance(created, str) else None
-    return IntegrationConnectionResult(
-        provider, config_key, connection_id, status, connected_at
-    )
+    return IntegrationConnectionResult(provider, config_key, connection_id, status, connected_at)

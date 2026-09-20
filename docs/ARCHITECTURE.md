@@ -83,7 +83,7 @@ subgraph External["External Services"]
   Clerk["Clerk<br/>RS256 JWKS auth"]
   SupaAuth["Supabase Auth<br/>JWT + RLS"]
   LLMProv["BYOK Providers<br/>OpenAI, Anthropic,<br/>Google, Ollama,<br/>Nvidia NIM, DeepSeek,<br/>OpenRouter"]
-  Gmail["Gmail API +<br/>Google OAuth tokens"]
+  Gmail["Gmail + Drive API<br/>via Nango"]
   JobBoards["Job Boards<br/>LinkedIn, Indeed, Naukri,<br/>Shine, Adzuna, Remotive,<br/>Arbeitnow, Jobicy"]
   Enrich["Enrichment<br/>Hunter, ProxyCurl,<br/>Exa, Tavily/Brave/Serp,<br/>YouTube, Resend"]
   BrowserCloud["Browser Sandbox<br/>OpenSandbox / Playwright<br/>Chromium, human delays"]
@@ -461,7 +461,7 @@ FE->>BE: POST approve (HITL) to resume
 | ProxyCurl | LinkedInAgent — profile data | `PROXYCURL_API_KEY` |
 | Exa (+Tavily/Brave/Serp/Bing/Google CSE/DuckDuckGo/Mojeek/SearXNG) | CompanyResearch, Salary, InterviewPrep, job search waterfall | `EXA_API_KEY`, etc. |
 | Adzuna + RapidAPI | JobSearch waterfall | `ADZUNA_APP_ID/KEY`, `RAPIDAPI_KEY` |
-| Gmail API / Google OAuth | EmailAgent, EmailMonitor, Drive | `GOOGLE_OAUTH_CLIENT_ID/SECRET`, per-user tokens |
+| Nango (Gmail / Drive) | EmailAgent, EmailMonitor, Drive | Nango environment key + provider config keys |
 | Resend | transactional email | `RESEND_API_KEY` |
 | YouTube | InterviewPrep videos | `YOUTUBE_API_KEY` (optional) |
 | Playwright / BrowserUse / OpenSandbox / AgentQL / Firecrawl | AutoApply, JobSearch, FormFiller, BrowserControl | `OPEN_SANDBOX_*`, `AGENTQL_API_KEY`, `FIRECRAWL_API_KEY`; Ollama controller (`BROWSER_USE_OLLAMA_URL/MODEL`) |
@@ -559,7 +559,7 @@ uvicorn app.main:app --reload --port 8000
 - Agents: `backend/app/agents/*.py` (see §5 table)
 - API: `backend/app/api/v1/*.py`, `backend/app/api/internal.py`
 - Core: `backend/app/core/{config,database,redis_client,event_bus,supabase_auth,security,llm_gateway,model_router,rate_limit,agent_runs_repository}.py`
-- Services: `backend/app/services/{rag_service,queue_service,workflow_service,sse_service,llm_gateway,llm_proxy_service,job_search_service,job_platforms_service,indian_platforms_service,naukri_service,company_careers_service,gmail_service,resend_service,hunter_service,email_finder_service,proxycurl_service,exa_service,youtube_service,ats_service,pdf_service,persona_service,browser_control_service,form_filler_service,sandbox_service,storage_service,drive_service,google_oauth_service,application_workflow,auto_apply_service,linkedin_outreach_service,token_budget_service,model_catalog_service,search_presets}.py`
+- Services: `backend/app/services/{rag_service,queue_service,workflow_service,sse_service,llm_gateway,llm_proxy_service,job_search_service,job_platforms_service,indian_platforms_service,naukri_service,company_careers_service,gmail_service,resend_service,hunter_service,email_finder_service,proxycurl_service,exa_service,youtube_service,ats_service,pdf_service,persona_service,browser_control_service,form_filler_service,sandbox_service,storage_service,drive_service,integration_proxy_service,application_workflow,auto_apply_service,linkedin_outreach_service,token_budget_service,model_catalog_service,search_presets}.py`
 - Frontend: `frontend/src/lib/{api,sse,supabase-token}.ts`, `frontend/src/store/agentStore.ts`
 - Data: `backend/app/models/db.py`, `supabase/migrations/`
 - Infra: `docker-compose*.yml`, `Dockerfile*`, `nginx/*.template`, `deploy/`

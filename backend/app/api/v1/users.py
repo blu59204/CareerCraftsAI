@@ -1,6 +1,5 @@
-import logging
 import asyncio
-from datetime import datetime, timedelta, timezone
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -162,10 +161,9 @@ async def get_job_search_profile(
 
     # Fetch resume documents
     docs_result = await db.execute(
-        select(UserDocument).where(
-            UserDocument.user_id == current_user.id,
-            UserDocument.doc_type == "resume"
-        ).order_by(UserDocument.is_primary.desc(), UserDocument.embedded_at.desc())
+        select(UserDocument)
+        .where(UserDocument.user_id == current_user.id, UserDocument.doc_type == "resume")
+        .order_by(UserDocument.is_primary.desc(), UserDocument.embedded_at.desc())
     )
     resume_doc = docs_result.scalars().first()
 
@@ -315,6 +313,7 @@ async def activate_model(
     current_user: User = Depends(get_current_user),
 ):
     import uuid as _uuid
+
     # deactivate all
     all_res = await db.execute(
         select(UserModelSettings).where(UserModelSettings.user_id == current_user.id)
@@ -343,6 +342,7 @@ async def delete_model(
     current_user: User = Depends(get_current_user),
 ):
     import uuid as _uuid
+
     result = await db.execute(
         select(UserModelSettings).where(
             UserModelSettings.id == _uuid.UUID(model_id),
@@ -363,7 +363,9 @@ async def test_model(
     current_user: User = Depends(get_current_user),
 ):
     import uuid as _uuid
+
     from langchain_core.messages import HumanMessage
+
     from app.core.model_router import _build_llm
 
     result = await db.execute(
@@ -383,7 +385,7 @@ async def test_model(
             timeout=60,
         )
         return {"success": True, "response": resp.content.strip()[:200]}
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         logger.warning(
             "Model test timed out for user %s model %s", current_user.id, payload.model_id
         )
@@ -401,7 +403,6 @@ async def test_model(
         raise HTTPException(status_code=422, detail=f"Model test failed: {exc}"[:300]) from exc
 
 
-
 # ---------------------------------------------------------------------------
 # LinkedIn Credentials (encrypted) + Auto-mode toggle
 # ---------------------------------------------------------------------------
@@ -414,13 +415,6 @@ class LinkedInCredentialsRequest(BaseModel):
 
 class AutoModeRequest(BaseModel):
     mode: str  # 'auto' or 'drafts'
-
-
-class GoogleOAuthTokensRequest(BaseModel):
-    access_token: str
-    refresh_token: str | None = None
-    expires_at: int | None = None
-    expires_in: int | None = None
 
 
 class ConnectedAccountsResponse(BaseModel):
@@ -457,61 +451,22 @@ async def delete_linkedin_credentials(
     return {"status": "deleted"}
 
 
-@router.post("/me/google-oauth")
-@limiter.limit("10/minute")
-async def save_google_oauth_tokens(
-    request: Request,
-    payload: GoogleOAuthTokensRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Store Google provider tokens encrypted for Gmail agent send/read."""
-    current_user.google_access_token_enc = encrypt_api_key(
-        payload.access_token,
-        settings.APP_SECRET_KEY,
-    )
-    if payload.refresh_token:
-        current_user.google_refresh_token_enc = encrypt_api_key(
-            payload.refresh_token,
-            settings.APP_SECRET_KEY,
-        )
-
-    if payload.expires_at:
-        current_user.google_token_expires_at = datetime.fromtimestamp(
-            payload.expires_at,
-            tz=timezone.utc,
-        )
-    elif payload.expires_in:
-        current_user.google_token_expires_at = datetime.now(timezone.utc) + timedelta(
-            seconds=max(payload.expires_in - 60, 60),
-        )
-    else:
-        current_user.google_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-
-    await db.flush()
-    return {
-        "status": "connected",
-        "gmail_send": True,
-        "has_refresh_token": bool(current_user.google_refresh_token_enc),
-    }
-
-
 @router.get("/me/connected-accounts", response_model=ConnectedAccountsResponse)
-async def get_connected_accounts(current_user: User = Depends(get_current_user)):
-    google_connected = bool(current_user.google_access_token_enc or current_user.google_refresh_token_enc)
-    return {"google": google_connected, "gmail_send": google_connected}
-
-
-@router.delete("/me/google-oauth")
-async def delete_google_oauth_tokens(
+async def get_connected_accounts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    current_user.google_access_token_enc = None
-    current_user.google_refresh_token_enc = None
-    current_user.google_token_expires_at = None
-    await db.flush()
-    return {"status": "deleted"}
+    """Return the Nango-managed Gmail connection state."""
+    from app.models.db import IntegrationConnection
+
+    result = await db.execute(
+        select(IntegrationConnection.status).where(
+            IntegrationConnection.user_id == current_user.id,
+            IntegrationConnection.provider == "gmail",
+        )
+    )
+    gmail_connected = result.scalar_one_or_none() == "connected"
+    return ConnectedAccountsResponse(google=gmail_connected, gmail_send=gmail_connected)
 
 
 @router.patch("/me/auto-mode")
