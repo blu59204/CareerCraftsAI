@@ -36,8 +36,11 @@ services:
     depends_on:
       - nango-db
       - nango-redis
-    mem_limit: 900m
-    cpus: 0.5
+    # Emulated amd64 under QEMU on this ARM host needs real headroom to get
+    # through DB migrations/encryption on first boot -- at 0.5 CPU/900m the
+    # process was still starved mid-migration and crashed every time.
+    mem_limit: 1536m
+    cpus: 2.0
     restart: unless-stopped
 volumes:
   nango_pgdata:
