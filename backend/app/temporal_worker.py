@@ -34,6 +34,7 @@ async def main() -> None:
         )
         return
 
+    settings.validate_temporal_configuration()
     client = await get_temporal_client()
     worker = Worker(
         client,
