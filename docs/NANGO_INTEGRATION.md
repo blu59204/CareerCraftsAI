@@ -50,13 +50,18 @@ columns are retained in the database for a safe, non-destructive rollout but
 are no longer read or written by application code. Users with an old direct
 connection must reconnect through Nango.
 
-## Rollback
+## Disabling Nango
 
-Set `NANGO_ENABLED=false` and redeploy. Existing direct Google OAuth remains
-available behind the fallback flag. The database migration is additive; retain
-its connection records for audit and replay protection. If a database rollback
-is required before the feature is used, the commented safe downgrade statements
-in migration `0037` remove only the two Nango tables.
+There is no direct-OAuth fallback: Gmail and Drive route through Nango's proxy
+exclusively. Setting `NANGO_ENABLED=false` does not restore the old Google
+OAuth flow — it removes it entirely, since `google_oauth_service.py` and the
+encrypted Google token columns are no longer read or written by application
+code. Disabling Nango simply disables Gmail and Drive until it is re-enabled.
+
+The database migration is additive; retain its connection records for audit
+and replay protection. If a database rollback is required before the feature
+is used, the commented safe downgrade statements in migration `0037` remove
+only the two Nango tables.
 
 See the official [Nango Connect sessions documentation](https://docs.nango.dev/guides/platform/connect-sessions)
 and [webhook verification documentation](https://docs.nango.dev/guides/platform/webhooks)

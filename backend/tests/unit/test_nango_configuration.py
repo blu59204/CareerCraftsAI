@@ -18,6 +18,7 @@ def test_nango_disabled_does_not_require_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_required_environment(monkeypatch)
+    monkeypatch.setenv("NANGO_ENABLED", "false")
 
     Settings(_env_file=None).validate_nango_configuration()
 

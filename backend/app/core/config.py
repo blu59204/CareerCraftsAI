@@ -146,7 +146,10 @@ class Settings(BaseSettings):
     # Nango keeps provider OAuth tokens outside the application database. The
     # secret and webhook signing key are server-only; the public key is only
     # available to the frontend when Nango's SDK requires it.
-    NANGO_ENABLED: bool = False
+    # Gmail/Drive have no direct-OAuth fallback — this must stay enabled, and
+    # validate_nango_configuration() fails startup loudly if its secrets are
+    # missing rather than letting the app boot with those integrations dead.
+    NANGO_ENABLED: bool = True
     NANGO_BASE_URL: str = "https://api.nango.dev"
     NANGO_SECRET_KEY: str = ""
     NANGO_PUBLIC_KEY: str = ""
