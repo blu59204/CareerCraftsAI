@@ -805,8 +805,8 @@ def _search_themuse_jobs(client: httpx.Client, query: str, location: str, max_re
 def _search_authentic_jobs(client: httpx.Client, query: str, max_results: int) -> list[dict]:
     """Authentic Jobs — design / dev / creative, RSS-only but we treat as JSON-friendly."""
     try:
-        # Authentic Jobs is RSS — quick XML pass with stdlib.
-        import xml.etree.ElementTree as ET
+        # Authentic Jobs is RSS. Use hardened parsing for provider responses.
+        from defusedxml import ElementTree as ET
 
         r = client.get("https://authenticjobs.com/api/",
                        params={"api_key": "", "method": "aj.jobs.search",

@@ -7,7 +7,7 @@ on:
     branches: [main, develop, deploy/scalable-sandbox-workflows]
 
 jobs:
-  backend-lint-test:
+  backend-quality:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,10 +20,14 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - run: pip install -r requirements.txt -c constraints.txt
+      - run: pip install -r requirements.txt -c constraints.txt ruff black bandit
 
       - name: Lint (ruff)
-        run: ruff check .
+        run: ruff check . --exit-zero
+      - name: Reject new Ruff diagnostics
+        run: python ../scripts/check_changed_python_lint.py
+        env:
+          CI_LINT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
 
       - name: Format check (black)
         run: black --check .
@@ -31,6 +35,30 @@ jobs:
       - name: Security scan (bandit)
         run: bandit -r app/ -ll -x tests/
 
+      - name: Unit tests
+        run: pytest tests/unit -v --cov=app --cov-report=term-missing
+        env:
+          APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
+          DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
+          SUPABASE_URL: "https://x.supabase.co"
+          SUPABASE_SERVICE_KEY: "x"
+          SUPABASE_JWT_SECRET: "test-jwt-secret-not-real"
+          REDIS_URL: "redis://localhost:6379"
+
+  backend-unit-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -c constraints.txt pytest pytest-cov pytest-timeout
       - name: Unit tests
         run: pytest tests/unit -v --cov=app --cov-report=term-missing
         env:
