@@ -4,6 +4,13 @@
 # instead (see the per-service comments below). Not the topology the root
 # docker-compose.yml documents/scripts assume -- see the comment at the top of
 # that file for the normal multi-VM/local Docker Compose stack.
+#
+# Compose v2 resolves the default .env file relative to THIS file's directory
+# (deploy/oracle/), not the CWD you run `docker compose` from -- confirmed via
+# `docker compose config` silently defaulting every var to blank despite a
+# correct .env sitting at the repo root. Keep a real .env here (gitignored,
+# NEXT_PUBLIC_API_URL / NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY / CLERK_SECRET_KEY),
+# or pass `--env-file <path>` explicitly on every invocation.
 name: careercraft-isolated
 services:
   backend:
