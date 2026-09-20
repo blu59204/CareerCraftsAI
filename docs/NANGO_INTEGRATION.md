@@ -45,11 +45,12 @@ ledgers only; it never copies OAuth access or refresh tokens out of Nango.
 Supported provider IDs are `gmail`, `google_drive`, `google_calendar`,
 `outlook_mail`, and `outlook_calendar`. The APIs never return provider tokens.
 
-`NANGO_DIRECT_GOOGLE_FALLBACK_ENABLED=true` keeps the existing encrypted
-Google OAuth path available during migration. Keep it enabled until existing
-users have reconnected in Nango and production metrics show no fallback use.
-It can then be removed in a dedicated migration release; do not remove legacy
-credentials or force-disconnect users as part of enabling Nango.
+The existing encrypted Google OAuth implementation remains a legacy path while
+Nango is introduced. `NANGO_DIRECT_GOOGLE_FALLBACK_ENABLED` is reserved for
+the service-level migration switch; this change does not yet route Gmail or
+Drive operations through Nango, so do not enable it as an assumed automatic
+fallback. Do not remove legacy credentials or force-disconnect users while
+that migration remains incomplete.
 
 ## Rollback
 
