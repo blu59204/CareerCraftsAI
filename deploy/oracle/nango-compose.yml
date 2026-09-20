@@ -1,0 +1,44 @@
+# Self-hosted Nango, running alongside the main app stack (compose.yml) on the
+# same shared "for now" VM. network_mode: host + explicit ports in the 191xx
+# range keep this out of the main app's 181xx range and Chola's 8080-8085/4040.
+# nango-server is amd64-only (upstream pins linux/amd64) -- this host is ARM,
+# so `docker run --privileged --rm tonistiigi/binfmt --install all` must be run
+# once before `docker compose up` here, or the pull/run fails.
+name: nango-isolated
+services:
+  nango-db:
+    image: postgres:16.0-alpine
+    network_mode: host
+    # Loopback-only, like the app's own postgres in ../oracle/compose.yml --
+    # only nango-server on this same host needs to reach it.
+    command: postgres -p 19132 -c listen_addresses=127.0.0.1
+    env_file: /opt/careercraft-secrets/nango.env
+    volumes:
+      - nango_pgdata:/var/lib/postgresql/data
+    mem_limit: 384m
+    cpus: 0.25
+    restart: unless-stopped
+  nango-redis:
+    image: redis:7.2.4
+    network_mode: host
+    volumes:
+      - /opt/careercraft-secrets/nango-redis.conf:/etc/redis/nango.conf:ro
+      - nango_redis_data:/data
+    command: redis-server /etc/redis/nango.conf
+    mem_limit: 128m
+    cpus: 0.25
+    restart: unless-stopped
+  nango-server:
+    image: nangohq/nango-server:hosted
+    platform: linux/amd64
+    network_mode: host
+    env_file: /opt/careercraft-secrets/nango.env
+    depends_on:
+      - nango-db
+      - nango-redis
+    mem_limit: 900m
+    cpus: 0.5
+    restart: unless-stopped
+volumes:
+  nango_pgdata:
+  nango_redis_data:
