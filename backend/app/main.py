@@ -47,6 +47,7 @@ _REQUIRED_VARS = [
 
 
 def _check_env_vars() -> None:
+    settings.validate_temporal_configuration()
     missing = []
     for k in _REQUIRED_VARS:
         v = os.getenv(k)

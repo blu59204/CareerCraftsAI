@@ -7,6 +7,7 @@ defaults to False, so those tests already prove the BullMQ fallback path
 keeps working untouched).
 """
 import uuid
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,6 +33,9 @@ async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypa
     fake_client.start_workflow.assert_awaited_once()
     call_kwargs = fake_client.start_workflow.call_args.kwargs
     assert call_kwargs["id"] == expected_id
+    assert call_kwargs["execution_timeout"] == timedelta(
+        seconds=jobs_module.settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S
+    )
     assert result == {
         "run_id": "run-123", "workflow_id": expected_id, "engine": "temporal", "status": "queued",
     }

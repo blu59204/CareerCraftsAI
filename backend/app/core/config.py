@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -72,7 +75,9 @@ class Settings(BaseSettings):
     # Debug screenshots — save a PNG on every browser task failure.
     # Mount BROWSER_DEBUG_DIR as a Docker volume for persistence.
     BROWSER_DEBUG_SCREENSHOTS: bool = False
-    BROWSER_DEBUG_DIR: str = "/tmp/browser_debug"  # noqa: S108
+    BROWSER_DEBUG_DIR: str = Field(
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "browser_debug")
+    )
     # Human-like delay ranges per action type (milliseconds).
     # Lowering these increases detection risk; raising them slows runs.
     BROWSER_DELAY_NAVIGATE_MIN_MS: int = 1500   # page navigation
@@ -132,6 +137,7 @@ class Settings(BaseSettings):
     TEMPORAL_TLS_KEY_PATH: str = ""
     TEMPORAL_TLS_CA_PATH: str = ""
     TEMPORAL_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
+    TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S: int = Field(default=600, ge=60, le=86_400)
     # Preparation activities (navigate, extract, fill) retry with bounded
     # backoff; the final submit activity never does (max_attempts=1 is set
     # directly on that activity's retry policy, not here).
@@ -182,6 +188,47 @@ class Settings(BaseSettings):
                 "redis://", f"redis://:{self.REDIS_PASSWORD}@", 1
             )
         return self
+
+    def validate_temporal_configuration(self) -> None:
+        """Raise a clear startup error for invalid enabled Temporal settings."""
+        if not self.TEMPORAL_ENABLED:
+            return
+
+        problems: list[str] = []
+        for name, value in (
+            ("TEMPORAL_ADDRESS", self.TEMPORAL_ADDRESS),
+            ("TEMPORAL_NAMESPACE", self.TEMPORAL_NAMESPACE),
+            ("TEMPORAL_TASK_QUEUE", self.TEMPORAL_TASK_QUEUE),
+        ):
+            if not value.strip():
+                problems.append(f"{name} must be set when TEMPORAL_ENABLED=true")
+
+        has_cert = bool(self.TEMPORAL_TLS_CERT_PATH)
+        has_key = bool(self.TEMPORAL_TLS_KEY_PATH)
+        if has_cert != has_key:
+            problems.append(
+                "both TEMPORAL_TLS_CERT_PATH and TEMPORAL_TLS_KEY_PATH must be set together"
+            )
+        elif has_cert:
+            for name, raw_path in (
+                ("TEMPORAL_TLS_CERT_PATH", self.TEMPORAL_TLS_CERT_PATH),
+                ("TEMPORAL_TLS_KEY_PATH", self.TEMPORAL_TLS_KEY_PATH),
+                ("TEMPORAL_TLS_CA_PATH", self.TEMPORAL_TLS_CA_PATH),
+            ):
+                if raw_path and not Path(raw_path).is_file():
+                    problems.append(f"{name} does not point to a readable file")
+
+        if (
+            self.TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S
+            >= self.TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S
+        ):
+            problems.append(
+                "TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S must be lower than "
+                "TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S"
+            )
+
+        if problems:
+            raise ValueError("Invalid Temporal configuration: " + "; ".join(problems))
 
     @property
     def REDIS_URL_SAFE(self) -> str:

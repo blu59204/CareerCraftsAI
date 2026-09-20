@@ -903,6 +903,9 @@ async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UU
             AutoApplyIntent(user_id=str(user_id), job_application_id=str(application_id)),
             id=workflow_id,
             task_queue=settings.TEMPORAL_TASK_QUEUE,
+            execution_timeout=timedelta(
+                seconds=settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S
+            ),
         )
         status = "queued"
     except WorkflowAlreadyStartedError:
