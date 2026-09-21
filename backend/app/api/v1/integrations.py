@@ -11,6 +11,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import decrypt_api_key, encrypt_api_key
+from app.core.supabase_auth import ClerkIdentityError, get_verified_primary_email
 from app.integrations.exceptions import (
     ConnectionNotFoundError,
     IntegrationActionError,
@@ -84,28 +85,38 @@ def _account_email(connection: IntegrationConnection) -> str | None:
 
 
 async def _sync_gmail_account_email(
-    connection: IntegrationConnection, *, current_user: User, gateway: IntegrationGateway
+    connection: IntegrationConnection,
+    *,
+    db: AsyncSession,
+    current_user: User,
+    gateway: IntegrationGateway,
+    login_email: str | None,
 ) -> None:
-    if (
-        connection.provider != "gmail"
-        or connection.status != "connected"
-        or connection.provider_metadata_enc
-    ):
+    if connection.provider != "gmail" or connection.status != "connected":
         return
-    try:
-        profile = await gateway.proxy_request(
-            user_id=current_user.id,
-            provider="gmail",
-            method="GET",
-            path="gmail/v1/users/me/profile",
-        )
-    except (ConnectionNotFoundError, IntegrationActionError, ProviderUnavailableError):
-        return
-    email = profile.data.get("emailAddress") if isinstance(profile.data, dict) else None
-    if isinstance(email, str) and email:
-        connection.provider_metadata_enc = encrypt_api_key(
-            json.dumps({"account_email": email}), settings.APP_SECRET_KEY
-        )
+    email = _account_email(connection)
+    if not email:
+        try:
+            profile = await gateway.proxy_request(
+                user_id=current_user.id,
+                provider="gmail",
+                method="GET",
+                path="gmail/v1/users/me/profile",
+            )
+        except (ConnectionNotFoundError, IntegrationActionError, ProviderUnavailableError):
+            return
+        email = profile.data.get("emailAddress") if isinstance(profile.data, dict) else None
+        if isinstance(email, str) and email:
+            connection.provider_metadata_enc = encrypt_api_key(
+                json.dumps({"account_email": email}), settings.APP_SECRET_KEY
+            )
+
+    if isinstance(email, str) and login_email and email.casefold() != login_email.casefold():
+        try:
+            await gateway.revoke_connection(user_id=current_user.id, provider="gmail")
+        except ConnectionNotFoundError:
+            pass  # Nango has already removed the mismatched connection.
+        await mark_revoked(db, user_id=current_user.id, provider="gmail")
 
 
 def _api_error(exc: Exception) -> HTTPException:
@@ -161,15 +172,28 @@ async def list_connections(
 ) -> list[ConnectionResponse]:
     try:
         remote_connections = await gateway.list_connections(user_id=current_user.id)
+        login_email = None
+        if any(result.provider == "gmail" for result in remote_connections):
+            login_email = await get_verified_primary_email(current_user.supabase_uid)
         connections = [
             await sync_connection(db, user_id=current_user.id, result=result)
             for result in remote_connections
         ]
         for connection in connections:
-            await _sync_gmail_account_email(connection, current_user=current_user, gateway=gateway)
+            await _sync_gmail_account_email(
+                connection,
+                db=db,
+                current_user=current_user,
+                gateway=gateway,
+                login_email=login_email,
+            )
         await db.commit()
-    except (IntegrationDisabledError, ProviderUnavailableError) as exc:
+    except (ClerkIdentityError, IntegrationDisabledError, ProviderUnavailableError) as exc:
         await db.rollback()
+        if isinstance(exc, ClerkIdentityError):
+            raise HTTPException(
+                status_code=503, detail="Could not verify the sign-in email with Clerk"
+            ) from exc
         raise _api_error(exc) from exc
     # Nango may not list a newly-created Connect session until its signed
     # webhook arrives. Preserve its local pending state in the interim.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useUser } from "@clerk/nextjs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
@@ -40,6 +41,7 @@ function statusLabel(status: ConnectionStatus | undefined): string {
 
 export default function IntegrationsSettingsPage() {
   const queryClient = useQueryClient();
+  const { user: authUser } = useUser();
   const [connectingProvider, setConnectingProvider] = useState<Provider | null>(null);
   const [connectWindow, setConnectWindow] = useState<Window | null>(null);
   const connections = useQuery<Connection[]>({
@@ -47,10 +49,7 @@ export default function IntegrationsSettingsPage() {
     queryFn: async () => (await apiClient.get<Connection[]>("/integrations")).data,
     refetchInterval: connectingProvider ? 2_000 : false,
   });
-  const currentUser = useQuery<{ email: string }>({
-    queryKey: ["me"],
-    queryFn: async () => (await apiClient.get("/users/me")).data,
-  });
+  const loginEmail = authUser?.primaryEmailAddress?.emailAddress ?? null;
 
   const connect = useMutation({
     mutationFn: async ({ provider }: { provider: Provider; popup: Window }) => (
@@ -90,6 +89,19 @@ export default function IntegrationsSettingsPage() {
       toast.success("Integration connected");
       return;
     }
+    const pendingConnection = byProvider.get(connectingProvider);
+    if (
+      pendingConnection?.status === "revoked" &&
+      pendingConnection.account_email &&
+      loginEmail &&
+      pendingConnection.account_email.toLowerCase() !== loginEmail.toLowerCase()
+    ) {
+      connectWindow?.close();
+      setConnectingProvider(null);
+      setConnectWindow(null);
+      toast.error("Connect the Google account that matches your sign-in email.");
+      return;
+    }
     const timer = window.setInterval(() => {
       if (connectWindow?.closed) {
         setConnectingProvider(null);
@@ -98,7 +110,7 @@ export default function IntegrationsSettingsPage() {
       }
     }, 500);
     return () => window.clearInterval(timer);
-  }, [byProvider, connectWindow, connectingProvider, queryClient]);
+  }, [byProvider, connectWindow, connectingProvider, loginEmail, queryClient]);
 
   const startConnect = (provider: Provider) => {
     const popup = openNangoConnectWindow();
@@ -132,10 +144,9 @@ export default function IntegrationsSettingsPage() {
           const pending = connection?.status === "pending";
           const isBusy = connect.isPending || disconnect.isPending;
           const accountMismatch = Boolean(
-            connected &&
-              connection?.account_email &&
-              currentUser.data?.email &&
-              connection.account_email.toLowerCase() !== currentUser.data.email.toLowerCase(),
+            connection?.account_email &&
+              loginEmail &&
+              connection.account_email.toLowerCase() !== loginEmail.toLowerCase(),
           );
 
           return (
@@ -151,7 +162,7 @@ export default function IntegrationsSettingsPage() {
                 ) : null}
                 {accountMismatch ? (
                   <p role="alert" className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                    This account differs from your CareerCraft login ({currentUser.data?.email}).
+                    This Google account does not match your sign-in email ({loginEmail}) and has been disconnected. Connect the matching account.
                   </p>
                 ) : null}
               </div>

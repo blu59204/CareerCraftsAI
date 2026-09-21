@@ -1,6 +1,8 @@
 import hashlib
 import hmac
+from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import httpx
@@ -11,13 +13,77 @@ from app.integrations.exceptions import ConnectionNotFoundError, IntegrationActi
 from app.integrations.mock import MockIntegrationGateway
 from app.integrations.nango import NangoIntegrationGateway
 from app.integrations.providers import provider_config_key, provider_for_config_key
-from app.integrations.schemas import IntegrationProxyResponse
+from app.integrations.repository import sync_connection
+from app.integrations.schemas import IntegrationConnectionResult, IntegrationProxyResponse
 from app.integrations.validation import InvalidReturnPath, validate_return_path
 from app.integrations.webhooks import verify_nango_webhook, webhook_event_hash
 from app.models.db import IntegrationConnection
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 CONFIG_KEYS = {"gmail": "career-gmail"}
+
+
+@pytest.mark.asyncio
+async def test_sync_does_not_restore_a_deleted_connection_from_a_stale_nango_list() -> None:
+    disconnected_at = datetime.now(UTC)
+    connection = IntegrationConnection(
+        user_id=USER_ID,
+        provider="gmail",
+        provider_config_key="career-gmail",
+        external_connection_id="conn-1",
+        status="revoked",
+        disconnected_at=disconnected_at,
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: connection)),
+        flush=AsyncMock(),
+    )
+
+    result = await sync_connection(
+        db,
+        user_id=USER_ID,
+        result=IntegrationConnectionResult(
+            "gmail", "career-gmail", "conn-1", "connected", datetime.now(UTC)
+        ),
+    )
+
+    assert result.status == "revoked"
+    assert result.disconnected_at == disconnected_at
+
+
+@pytest.mark.asyncio
+async def test_mismatched_gmail_account_is_revoked_during_connection_sync() -> None:
+    connection = IntegrationConnection(
+        user_id=USER_ID,
+        provider="gmail",
+        provider_config_key="career-gmail",
+        external_connection_id="conn-1",
+        status="connected",
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: connection)),
+        flush=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        proxy_request=AsyncMock(
+            return_value=IntegrationProxyResponse(
+                status_code=200, data={"emailAddress": "other@example.com"}
+            )
+        ),
+        revoke_connection=AsyncMock(),
+    )
+
+    await _sync_gmail_account_email(
+        connection,
+        db=db,
+        current_user=SimpleNamespace(id=USER_ID),
+        gateway=gateway,
+        login_email="owner@example.com",
+    )
+
+    gateway.revoke_connection.assert_awaited_once_with(user_id=USER_ID, provider="gmail")
+    assert connection.status == "revoked"
+    assert _account_email(connection) == "other@example.com"
 
 
 def test_return_path_rejects_open_redirects() -> None:
@@ -72,8 +138,10 @@ async def test_gmail_account_email_is_encrypted_after_profile_lookup() -> None:
 
     await _sync_gmail_account_email(
         connection,
+        db=SimpleNamespace(),
         current_user=SimpleNamespace(id=USER_ID),
         gateway=Gateway(),
+        login_email=None,
     )
 
     assert calls == [

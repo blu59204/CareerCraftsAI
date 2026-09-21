@@ -62,7 +62,12 @@ export function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const email = profile?.email || user?.primaryEmailAddress?.emailAddress || null;
+  const profileEmail = profile?.email;
+  const clerkEmail = user?.primaryEmailAddress?.emailAddress;
+  const email =
+    profileEmail?.endsWith("@users.noreply.clerk")
+      ? clerkEmail || profileEmail
+      : profileEmail || clerkEmail || null;
   const displayName = profile?.full_name || user?.fullName || email;
   const avatarUrl = profile?.avatar_url ?? user?.imageUrl ?? null;
   const initials = (displayName ?? "?")

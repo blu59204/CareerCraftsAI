@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from urllib.parse import quote
 
+import httpx
 import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
@@ -39,6 +41,10 @@ logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 _CLOCK_SKEW_LEEWAY = 60
 _ALGORITHMS = ["RS256"]
+
+
+class ClerkIdentityError(Exception):
+    """Clerk could not confirm the user's verified primary email."""
 
 # Built lazily by _get_jwks_client(); tests patch this attribute directly.
 _jwks_client: jwt.PyJWKClient | None = None
@@ -101,15 +107,67 @@ def verify_token(token: str) -> dict[str, Any]:
         return payload
     except HTTPException:
         raise
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Token expired") from exc
     except jwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
 
 
 verify_auth_jwt = verify_token
+
+
+async def get_verified_primary_email(
+    subject: str, *, client: httpx.AsyncClient | None = None
+) -> str:
+    """Resolve the verified primary email for a Clerk user via the Backend API."""
+    if not settings.CLERK_SECRET_KEY:
+        raise ClerkIdentityError("Clerk Backend API is not configured")
+
+    owns_client = client is None
+    client = client or httpx.AsyncClient(timeout=5, trust_env=False)
+    try:
+        try:
+            response = await client.get(
+                f"https://api.clerk.com/v1/users/{quote(subject, safe='')}",
+                headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+            )
+        except httpx.RequestError as exc:
+            raise ClerkIdentityError("Clerk user lookup failed") from exc
+        if response.status_code != 200:
+            raise ClerkIdentityError("Clerk user lookup failed")
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ClerkIdentityError("Clerk user lookup returned invalid data") from exc
+        primary_id = data.get("primary_email_address_id") if isinstance(data, dict) else None
+        addresses = data.get("email_addresses") if isinstance(data, dict) else None
+        if not isinstance(primary_id, str) or not isinstance(addresses, list):
+            raise ClerkIdentityError("Clerk primary email is unavailable")
+
+        primary = next(
+            (
+                item
+                for item in addresses
+                if isinstance(item, dict) and item.get("id") == primary_id
+            ),
+            None,
+        )
+        email = primary.get("email_address") if primary else None
+        verification = primary.get("verification") if primary else None
+        if (
+            not isinstance(email, str)
+            or not email.strip()
+            or not isinstance(verification, dict)
+            or verification.get("status") != "verified"
+        ):
+            raise ClerkIdentityError("Clerk primary email is not verified")
+        return email.strip().casefold()
+    finally:
+        if owns_client:
+            await client.aclose()
 
 
 def subject_from_payload(payload: dict[str, Any]) -> str:

@@ -65,6 +65,13 @@ async def sync_connection(
             provider_config_key=result.provider_config_key,
         )
         db.add(connection)
+    elif (
+        connection.status == "revoked"
+        and connection.external_connection_id == result.external_connection_id
+    ):
+        # Nango's list can briefly return a connection after its delete succeeds.
+        # Keep the local tombstone so a refresh cannot show it as connected again.
+        return connection
     connection.provider_config_key = result.provider_config_key
     connection.external_connection_id = result.external_connection_id
     connection.status = result.status

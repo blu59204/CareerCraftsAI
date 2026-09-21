@@ -69,6 +69,8 @@ export default function AccountSettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
   const { user: authUser } = useUser();
+  const signInEmail = authUser?.primaryEmailAddress?.emailAddress ?? "";
+  const signInEmailVerified = authUser?.primaryEmailAddress?.verification?.status === "verified";
   const { signOut } = useClerk();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [emailNotifs, setEmailNotifs] = useState(true);
@@ -100,13 +102,15 @@ export default function AccountSettingsPage() {
 
   useEffect(() => {
     if (user) {
-      setName(user.full_name ?? "");
-      setEmail(user.email);
+      setName(user.full_name?.trim() || authUser?.fullName || "");
+      setEmail(
+        user.email.endsWith("@users.noreply.clerk") ? signInEmail || user.email : user.email,
+      );
       setHeadline(user.headline ?? "");
       setPhone(user.phone ?? "");
       setLinkedinUrl(user.linkedin_url ?? "");
     }
-  }, [user]);
+  }, [authUser?.fullName, signInEmail, user]);
 
   // Linked social identities live on the auth user as external accounts.
   const externalAccounts = authUser?.externalAccounts ?? [];
@@ -193,23 +197,28 @@ export default function AccountSettingsPage() {
             <div className="mb-6 text-sm font-medium">Profile</div>
             <div className="flex items-center gap-4 mb-6">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/20 text-lg font-semibold text-primary">
-                {isLoading ? "…" : getInitials(user?.full_name)}
+                {isLoading ? "…" : getInitials(user?.full_name || authUser?.fullName)}
               </div>
               <div>
                 <div className="font-medium">
                   {isLoading ? (
                     <span className="inline-block h-4 w-32 animate-pulse rounded bg-muted" />
                   ) : (
-                    user?.full_name ?? "—"
+                    user?.full_name || authUser?.fullName || "Add your name"
                   )}
                 </div>
                 <div className="text-sm text-muted-foreground">
                   {isLoading ? (
                     <span className="inline-block h-3 w-44 animate-pulse rounded bg-muted" />
                   ) : (
-                    user?.email ?? ""
+                    signInEmail || user?.email || ""
                   )}
                 </div>
+                {signInEmailVerified ? (
+                  <span className="mt-1 inline-flex rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-success">
+                    Verified sign-in email
+                  </span>
+                ) : null}
               </div>
             </div>
             <div className="space-y-4">
@@ -224,9 +233,7 @@ export default function AccountSettingsPage() {
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium">
-                  Contact email
-                </label>
+                <label className="mb-1.5 block text-sm font-medium">Contact email</label>
                 <input
                   type="email"
                   value={email}
