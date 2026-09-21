@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { getSupabaseAuthToken } from "@/lib/supabase-token";
+import { getClerkAuthToken } from "@/lib/clerk-token";
 import { useAgentStore } from "@/store/agentStore";
 import { apiClient, API_BASE_URL } from "@/lib/api";
 
@@ -45,7 +45,7 @@ export function useAgentStream(runId: string | null) {
       abortRef.current = controller;
 
       try {
-        const token = await getSupabaseAuthToken();
+        const token = await getClerkAuthToken();
         const apiUrl = API_BASE_URL;
         const res = await fetch(`${apiUrl}/agents/${id}/stream`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,

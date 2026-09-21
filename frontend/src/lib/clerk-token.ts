@@ -1,12 +1,8 @@
 "use client";
 
 /**
- * Backend auth-token bridge.
- *
- * Historically this read the Supabase access token; the app now authenticates
- * with Clerk, so this returns the Clerk **session token** (RS256 JWT whose
- * `sub` is the Clerk user id). The exported name and signature are unchanged so
- * every caller (`lib/api.ts`, `lib/sse.ts`) keeps working untouched.
+ * Backend auth-token bridge. Returns the Clerk **session token** (RS256 JWT
+ * whose `sub` is the Clerk user id) for `Authorization: Bearer` headers.
  *
  * This is a plain async function rather than a hook, so it cannot use
  * `useAuth()`. It reads the Clerk singleton that `<ClerkProvider>` installs on
@@ -51,7 +47,7 @@ async function waitForClerk(): Promise<ClerkGlobal | null> {
  * Returns the current Clerk session JWT for `Authorization: Bearer` headers,
  * or null when there is no active session.
  */
-export async function getSupabaseAuthToken(): Promise<string | null> {
+export async function getClerkAuthToken(): Promise<string | null> {
   try {
     const clerk = await waitForClerk();
     const session = clerk?.session;

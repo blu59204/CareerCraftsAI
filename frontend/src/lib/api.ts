@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getSupabaseAuthToken } from "@/lib/supabase-token";
+import { getClerkAuthToken } from "@/lib/clerk-token";
 
 const configuredUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 export const API_BASE_URL = configuredUrl.endsWith("/api/v1") ? configuredUrl : `${configuredUrl}/api/v1`;
@@ -15,7 +15,7 @@ const pendingRequests = new Map<string, Promise<unknown>>();
 apiClient.interceptors.request.use(async (config) => {
   if (typeof window !== "undefined") {
     try {
-      const token = await getSupabaseAuthToken();
+      const token = await getClerkAuthToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
