@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Upload, Download, Target, FileText, Wand2, CloudUpload, ChevronDown, Loader2 } from "lucide-react";
+import { Upload, Download, Target, FileText, Wand2, CloudUpload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fadeUp, stagger } from "@/lib/motion-variants";
@@ -10,9 +10,10 @@ import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { AtsScoreRing } from "@/components/resume/AtsScoreRing";
 import { KeywordCoverage } from "@/components/resume/KeywordCoverage";
-import { SuggestionsList, type Suggestion } from "@/components/resume/SuggestionsList";
+import { SuggestionsList } from "@/components/resume/SuggestionsList";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiClient } from "@/lib/api";
+import { getResumeInsightData } from "@/lib/resume-insights";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,7 +25,7 @@ interface AtsData {
   suggestions: string[];
   warnings: string[];
   keyword_score: number;
-  section_score: number;
+  readability_score?: number;
   format_score: number;
 }
 
@@ -51,6 +52,13 @@ interface OptimizeResult {
   warnings?: string[];
 }
 
+interface JobAtsAnalysis {
+  composite_score: number;
+  matched_keywords: string[];
+  missing_keywords: string[];
+  suggestions: string[];
+}
+
 interface AgentRun {
   id: string;
   agent_type: string;
@@ -63,21 +71,6 @@ interface AgentRun {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const MOCK_SUGGESTIONS: Suggestion[] = [
-  {
-    id: "1",
-    original: "Worked on the backend team building REST APIs.",
-    suggestion:
-      "Designed and shipped 12 REST endpoints handling 4k+ daily requests; cut p95 latency from 320ms to 110ms.",
-  },
-  {
-    id: "2",
-    original: "Built a React dashboard.",
-    suggestion:
-      "Built a real-time React dashboard with TanStack Query and WebSockets, used daily by 200+ internal operators.",
-  },
-];
 
 const COVER_LETTER_TONES = ["Professional", "Enthusiastic", "Concise", "Story-driven"] as const;
 type CoverTone = (typeof COVER_LETTER_TONES)[number];
@@ -161,13 +154,11 @@ function CoverLetterGenerator({
   generating,
   onGenerate,
 }: CoverLetterGeneratorProps) {
-  const [showDriveMenu, setShowDriveMenu] = useState(false);
-
   const copyToClipboard = () => {
-    if (letter) navigator.clipboard.writeText(letter);
+    if (letter) void navigator.clipboard.writeText(letter).then(() => toast.success("Copied"), () => toast.error("Could not copy"));
   };
 
-  const downloadPdf = () => {
+  const downloadText = () => {
     if (!letter) return;
     const blob = new Blob([letter], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -176,7 +167,6 @@ function CoverLetterGenerator({
     a.download = "cover-letter.txt";
     a.click();
     URL.revokeObjectURL(url);
-    toast.info("Tip: Open the file and print as PDF for a clean PDF format");
   };
 
   return (
@@ -244,49 +234,11 @@ function CoverLetterGenerator({
                 Copy
               </button>
               <button
-                onClick={downloadPdf}
+                onClick={downloadText}
                 className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-card transition-colors"
               >
-                Download
+                Download text
               </button>
-              <div className="relative">
-                <button
-                  onClick={() => setShowDriveMenu((v) => !v)}
-                  className="flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-card transition-colors"
-                >
-                  <CloudUpload className="h-3.5 w-3.5" />
-                  Drive
-                  <ChevronDown
-                    className={`h-3 w-3 transition-transform ${showDriveMenu ? "rotate-180" : ""}`}
-                  />
-                </button>
-                <AnimatePresence>
-                  {showDriveMenu && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -8, scale: 0.96 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                      transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-9 z-10 min-w-[200px] rounded-2xl border border-border bg-card p-2 shadow-lg"
-                    >
-                      <button
-                        onClick={() => { toast.info("Google Drive integration coming soon"); setShowDriveMenu(false); }}
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs hover:bg-muted"
-                      >
-                        <CloudUpload className="h-3.5 w-3.5 text-muted-foreground" />
-                        Save to Google Drive
-                      </button>
-                      <button
-                        onClick={() => { toast.info("Google Docs integration coming soon"); setShowDriveMenu(false); }}
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs hover:bg-muted"
-                      >
-                        <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                        Save as Google Doc
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
             </div>
           )}
         </div>
@@ -321,9 +273,10 @@ interface TemplateSelectorProps {
   onSelect: (id: TemplateId) => void;
   onTailor: () => void;
   isTailoring: boolean;
+  canTailor: boolean;
 }
 
-function TemplateSelector({ selected, onSelect, onTailor, isTailoring }: TemplateSelectorProps) {
+function TemplateSelector({ selected, onSelect, onTailor, isTailoring, canTailor }: TemplateSelectorProps) {
   return (
     <div className="space-y-6">
       <div>
@@ -379,7 +332,7 @@ function TemplateSelector({ selected, onSelect, onTailor, isTailoring }: Templat
       </div>
 
       <div className="flex items-center gap-3">
-        <LiquidGlassButton tone="primary" size="sm" onClick={onTailor} disabled={isTailoring}>
+        <LiquidGlassButton tone="primary" size="sm" onClick={onTailor} disabled={isTailoring || !canTailor}>
           {isTailoring ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
@@ -486,7 +439,6 @@ export default function ResumePage() {
   // Resume upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploadedDocId, setUploadedDocId] = useState<string | null>(null);
 
   // Optimize / tailor state
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>("modern");
@@ -495,9 +447,9 @@ export default function ResumePage() {
   const [lastMissingKeywords, setLastMissingKeywords] = useState<string[]>([]);
   const [lastWarnings, setLastWarnings] = useState<string[]>([]);
   const [resumePreviewText, setResumePreviewText] = useState<string | null>(null);
-
-  // Suggestions state
-  const [suggestions, setSuggestions] = useState<Suggestion[]>(MOCK_SUGGESTIONS);
+  const [aiChanges, setAiChanges] = useState<string[]>([]);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [jobAts, setJobAts] = useState<{ documentId: string; jdText: string; data: JobAtsAnalysis } | null>(null);
 
   // Cover letter state (lifted so CoverLetterGenerator is stateless)
   const [coverJd, setCoverJd] = useState("");
@@ -508,7 +460,7 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   // Query: resume documents (polls while ATS score is computing)
   // -------------------------------------------------------------------------
-  const { data: resumeDocs, isLoading: docsLoading } = useQuery<ResumeDoc[]>({
+  const { data: resumeDocs, isLoading: docsLoading, isError: docsError } = useQuery<ResumeDoc[]>({
     queryKey: ["resume-docs"],
     queryFn: async () => {
       const { data } = await apiClient.get("/rag/documents?doc_type=resume");
@@ -522,19 +474,20 @@ export default function ResumePage() {
   });
 
   const primaryDoc = resumeDocs?.find((d) => d.is_primary) ?? resumeDocs?.[0] ?? null;
-  const atsScore = primaryDoc?.ats_score ?? null;
-  const atsData = primaryDoc?.ats_data ?? null;
-  const matchedKeywords = atsData?.matched_keywords ?? [];
-  const missingKeywords = atsData?.missing_keywords ?? [];
+  const activeJobAts = jobAts && jobAts.documentId === primaryDoc?.id && jobAts.jdText === jdText.trim() ? jobAts.data : null;
+  const insightData = getResumeInsightData(activeJobAts, primaryDoc);
 
-  const aiSuggestions: Suggestion[] = (atsData?.suggestions ?? []).map((s, i) => ({
-    id: String(i),
-    original: "",
-    suggestion: s,
-  }));
-
-  // Use AI suggestions if available, otherwise fall back to MOCK
-  const activeSuggestions = aiSuggestions.length > 0 ? suggestions : MOCK_SUGGESTIONS;
+  const atsMutation = useMutation<JobAtsAnalysis, Error, { documentId: string; jdText: string }>({
+    mutationFn: async ({ documentId, jdText: description }) => {
+      const { data } = await apiClient.post("/resume/ats-score", { document_id: documentId, jd_text: description });
+      return data as JobAtsAnalysis;
+    },
+    onSuccess: (data, variables) => setJobAts({ ...variables, data }),
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || "Could not analyze this resume and job description");
+    },
+  });
 
   // -------------------------------------------------------------------------
   // Query: agent runs for history tab
@@ -553,8 +506,10 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   const optimizeMutation = useMutation<OptimizeResult, Error, string>({
     mutationFn: async (jdInput: string) => {
+      const jd = jdInput.trim();
+      if (!jd) throw new Error("Paste the job description before tailoring your resume.");
       const { data } = await apiClient.post("/resume/optimize", {
-        jd_text: jdInput,
+        jd_text: jd,
         template: selectedTemplate,
       });
       return data as OptimizeResult;
@@ -562,18 +517,27 @@ export default function ResumePage() {
     onSuccess: (data) => {
       if (data.resume_markdown) setResumePreviewText(data.resume_markdown);
       if (data.pdf_document_id) setLastDocId(data.pdf_document_id);
+      setAiChanges(data.changes_made ?? []);
+      setAiSummary(data.summary ?? null);
       setLastAtsScore(data.ats_score ?? null);
       setLastMissingKeywords(data.keywords_missing ?? []);
       setLastWarnings(data.warnings ?? []);
-      toast.success(
-        data.ats_score != null
-          ? `Resume tailored! ATS score ${data.ats_score}. Review the preview below.`
-          : "Resume tailored! Review the preview below."
-      );
+      if (data.warnings?.length) toast.warning(data.warnings[0]);
+      else toast.success(data.ats_score != null ? `Resume tailored! ATS score ${data.ats_score}.` : "Resume tailored.");
       queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
       queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
     },
-    onError: () => toast.error("Optimization failed — check model settings"),
+    onError: (err: unknown) => {
+      const apiError = err as { message?: string; response?: { status?: number; data?: { detail?: string } } };
+      const detail = apiError.response?.data?.detail;
+      if (detail === "jd_text cannot be empty") {
+        toast.error("Paste the full job description before tailoring your resume.");
+      } else if (apiError.response?.status === 500 || detail === "Agent failed") {
+        toast.error("We couldn’t tailor your resume. Please try again; if it keeps happening, contact support.");
+      } else {
+        toast.error(detail || apiError.message || "We couldn’t tailor your resume. Please try again.");
+      }
+    },
   });
 
   // -------------------------------------------------------------------------
@@ -618,14 +582,19 @@ export default function ResumePage() {
       const { data } = await apiClient.post("/rag/upload", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setUploadedDocId((data as { id: string }).id);
+      setLastDocId(null);
+      setResumePreviewText(null);
+      setAiChanges([]);
+      setAiSummary(null);
+      setJobAts(null);
       toast.success(`Resume uploaded: ${file.name}`);
       if ((data as { warning?: string }).warning) {
         toast.warning((data as { warning: string }).warning);
       }
       queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
-    } catch {
-      toast.error("Upload failed — try a PDF or DOCX file");
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail || "Upload failed — try a PDF or DOCX file");
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -697,24 +666,12 @@ export default function ResumePage() {
   };
 
   // -------------------------------------------------------------------------
-  // Suggestion handlers
-  // -------------------------------------------------------------------------
-  const acceptSuggestion = (id: string) =>
-    setSuggestions((s) => s.filter((x) => x.id !== id));
-  const rejectSuggestion = (id: string) =>
-    setSuggestions((s) => s.filter((x) => x.id !== id));
-
-  // When AI suggestions come in, merge them in (avoiding dupes)
-  const displayedSuggestions: Suggestion[] =
-    aiSuggestions.length > 0 ? aiSuggestions : activeSuggestions;
-
-  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
       <CommandHeader
-        eyebrow="HR SaaS Hero"
+        eyebrow="Resume workspace"
         title="Tailor your resume."
         description="Paste a target job, scan keywords, improve bullets, and export once your preview is ready."
         actions={
@@ -761,11 +718,12 @@ export default function ResumePage() {
                     disabled={saveToDriveMutation.isPending}
                     onClick={() => {
                       setShowExportMenu(false);
-                      if (!primaryDoc?.id) {
+                      const docId = lastDocId ?? primaryDoc?.id;
+                      if (!docId) {
                         toast.info("Upload a resume first, then save it to Drive");
                         return;
                       }
-                      saveToDriveMutation.mutate(primaryDoc.id);
+                      saveToDriveMutation.mutate(docId);
                     }}
                     className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
                   >
@@ -775,12 +733,6 @@ export default function ResumePage() {
                       <CloudUpload className="h-4 w-4 text-muted-foreground" />
                     )}
                     {saveToDriveMutation.isPending ? "Saving…" : "Save to Google Drive"}
-                  </button>
-                  <button
-                    onClick={() => { toast.info("Google Docs integration coming soon"); setShowExportMenu(false); }}
-                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted"
-                  >
-                    <FileText className="h-4 w-4 text-muted-foreground" /> Save as Google Doc
                   </button>
                   <button
                     onClick={() => {
@@ -812,7 +764,7 @@ export default function ResumePage() {
       {/* Tab nav */}
       <motion.div variants={fadeUp}>
         <div className="flex gap-1 rounded-full border border-border bg-muted/40 p-1 text-sm">
-          {(["builder", "templates", "history"] as const).map((t) => (
+          {(["builder", "templates", "history", "cover-letter"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -836,6 +788,7 @@ export default function ResumePage() {
             onSelect={setSelectedTemplate}
             onTailor={() => optimizeMutation.mutate(jdText)}
             isTailoring={optimizeMutation.isPending}
+            canTailor={!!primaryDoc && !!jdText.trim()}
           />
         </motion.div>
       )}
@@ -850,6 +803,8 @@ export default function ResumePage() {
           />
         </motion.div>
       )}
+
+      {tab === "cover-letter" && <motion.div variants={fadeUp}><CoverLetterGenerator tone={coverTone} setTone={setCoverTone} jd={coverJd} setJd={setCoverJd} letter={coverLetter} setLetter={setCoverLetter} generating={generating} onGenerate={generateCoverLetter} /></motion.div>}
 
       {/* Builder tab */}
       {tab === "builder" && (
@@ -887,35 +842,23 @@ export default function ResumePage() {
                   className="h-32 w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
 
-                {jdText && (
+                {jdText.trim() && (
                   <div className="flex items-center justify-between">
-                    <div className="flex gap-2 flex-wrap">
-                      {jdText
-                        .split(/\W+/)
-                        .filter((w) => w.length > 4)
-                        .slice(0, 5)
-                        .map((k) => (
-                          <span
-                            key={k}
-                            className="rounded-full bg-secondary px-2 py-0.5 text-xs text-secondary-foreground"
-                          >
-                            {k}
-                          </span>
-                        ))}
+                    <div className="flex gap-2">
+                      <LiquidGlassButton tone="ghost" size="sm" disabled={!primaryDoc || atsMutation.isPending} onClick={() => primaryDoc && atsMutation.mutate({ documentId: primaryDoc.id, jdText: jdText.trim() })}>
+                        {atsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {atsMutation.isPending ? "Analyzing…" : "Analyze match"}
+                      </LiquidGlassButton>
+                      <LiquidGlassButton tone="primary" size="sm" disabled={!primaryDoc || optimizeMutation.isPending} onClick={() => optimizeMutation.mutate(jdText)}>
+                        {optimizeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {optimizeMutation.isPending ? "Tailoring…" : "Tailor Resume ✨"}
+                      </LiquidGlassButton>
                     </div>
-                    <LiquidGlassButton
-                      tone="primary"
-                      size="sm"
-                      disabled={optimizeMutation.isPending}
-                      onClick={() => optimizeMutation.mutate(jdText)}
-                    >
-                      {optimizeMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : null}
-                      {optimizeMutation.isPending ? "Tailoring…" : "Tailor Resume ✨"}
-                    </LiquidGlassButton>
                   </div>
                 )}
+
+                {docsError && <p role="alert" className="text-sm text-destructive">Could not load your resumes. Refresh the page and try again.</p>}
+                {!primaryDoc && !docsLoading && <p className="text-sm text-muted-foreground">Upload a resume before analyzing or tailoring it.</p>}
 
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span>✓ Keyword matching</span>
@@ -934,16 +877,18 @@ export default function ResumePage() {
             {/* Left aside: ATS score + keyword coverage */}
             <aside className="space-y-6">
               <div className="rounded-3xl border border-border bg-card/60 p-6 text-center">
-                {docsLoading || (primaryDoc && atsScore === null) ? (
+                {docsLoading ? (
                   <div className="flex flex-col items-center justify-center gap-3 py-8">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     <div className="text-xs text-muted-foreground">
-                      {docsLoading ? "Loading…" : "Computing ATS score…"}
+                      Loading resume…
                     </div>
                   </div>
                 ) : (
-                  <AtsScoreRing score={atsScore ?? 0} />
+                  insightData.score != null ? <AtsScoreRing score={insightData.score} /> : <div className="py-10 text-sm text-muted-foreground">Upload a resume to calculate its score</div>
                 )}
+                {insightData.score != null && <div className="text-xs text-muted-foreground">{insightData.scoreLabel}{activeJobAts ? " for this job" : " · run Analyze match for job-specific results"}</div>}
+                {docsError && <div role="alert" className="mt-3 text-xs text-destructive">Could not load your resume.</div>}
                 {primaryDoc && (
                   <div className="mt-3 text-xs text-muted-foreground truncate px-2">
                     {primaryDoc.filename}
@@ -956,18 +901,7 @@ export default function ResumePage() {
                 )}
               </div>
 
-              <KeywordCoverage
-                matched={
-                  matchedKeywords.length > 0
-                    ? matchedKeywords
-                    : ["React", "TypeScript", "Python", "FastAPI"]
-                }
-                missing={
-                  missingKeywords.length > 0
-                    ? missingKeywords
-                    : ["AWS", "Docker", "CI/CD", "PostgreSQL"]
-                }
-              />
+              {activeJobAts ? <KeywordCoverage matched={insightData.matched} missing={insightData.missing} /> : <div className="rounded-3xl border border-border bg-card/60 p-5 text-sm text-muted-foreground">Add a job description and choose <span className="text-foreground">Analyze match</span> to see real keyword coverage.</div>}
             </aside>
 
             {/* Center: resume preview */}
@@ -985,51 +919,29 @@ export default function ResumePage() {
                   {lastWarnings.slice(0, 2).join(" ")}
                 </div>
               )}
+              {aiSummary && <p className="mt-2 text-sm text-muted-foreground">{aiSummary}</p>}
               <div className="mt-3 aspect-[8.5/11] w-full overflow-hidden rounded-2xl border border-border bg-background p-8 text-sm">
                 {resumePreviewText ? (
                   <pre className="whitespace-pre-wrap text-sm font-sans leading-relaxed text-foreground">
                     {resumePreviewText}
                   </pre>
                 ) : (
-                  <>
-                    <div className="text-2xl font-medium">Your Name</div>
-                    <div className="mt-1 text-muted-foreground">
-                      Frontend Engineer · email@you.com · github.com/you
-                    </div>
-                    <div className="mt-6 text-xs uppercase tracking-wide text-muted-foreground">
-                      Experience
-                    </div>
-                    <p className="mt-2">
-                      Resume preview pane — bullets you accept appear here. Upload a resume or tailor
-                      it to see the preview.
-                    </p>
-                  </>
+                  <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">Upload a resume, add a job description, then choose Tailor Resume to generate a real preview.</div>
                 )}
               </div>
             </section>
 
             {/* Right aside: AI suggestions */}
             <aside className="space-y-3">
-              <div className="text-sm text-muted-foreground">AI suggestions</div>
-              {displayedSuggestions.length === 0 ? (
-                <EmptyState
-                  title="All suggestions reviewed"
-                  description="Re-run the Resume Agent to get more tailored bullets."
-                />
-              ) : (
-                <SuggestionsList
-                  suggestions={displayedSuggestions}
-                  onAccept={acceptSuggestion}
-                  onReject={rejectSuggestion}
-                />
-              )}
+              <div className="text-sm text-muted-foreground">Resume Agent changes</div>
+              {aiChanges.length ? <div className="rounded-3xl border border-border bg-card/60 p-5"><ul className="list-disc space-y-2 pl-5 text-sm">{aiChanges.map((change, index) => <li key={`${index}-${change}`}>{change}</li>)}</ul><p className="mt-3 text-xs text-muted-foreground">These changes are reflected in the preview.</p></div> : <EmptyState title="No AI changes yet" description="Upload a resume and job description, then tailor it to see what the Resume Agent changed." />}
+              <div className="pt-3 text-sm text-muted-foreground">ATS recommendations</div>
+              {activeJobAts ? <SuggestionsList suggestions={insightData.suggestions} /> : <EmptyState title="No job analysis yet" description="Choose Analyze match to get keyword gaps and ATS recommendations for this job." />}
             </aside>
           </motion.div>
         </>
       )}
 
-      {/* Suppress unused variable warning for uploadedDocId */}
-      {uploadedDocId && null}
     </motion.div>
   );
 }
