@@ -27,7 +27,7 @@ import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
-import { apiClient } from "@/lib/api";
+import { apiClient, getApiErrorMessage } from "@/lib/api";
 
 type Category = "All" | "Technical" | "Behavioral" | "Company-Specific";
 type Difficulty = "Easy" | "Medium" | "Hard";
@@ -401,8 +401,8 @@ export default function InterviewPrepPage() {
       toast.success("Generating questions — check Agents page for results");
       setTimeout(() => qc.invalidateQueries({ queryKey: ["interview-prep-run"] }), 10000);
     },
-    onError: () => {
-      toast.error("Agent unavailable — backend not connected");
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Agent unavailable — backend not connected"));
     },
   });
 

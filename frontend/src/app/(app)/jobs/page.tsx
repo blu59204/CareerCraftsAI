@@ -28,7 +28,7 @@ import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
-import { apiClient } from "@/lib/api";
+import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
 import { useAgentStore } from "@/store/agentStore";
 
@@ -789,8 +789,8 @@ export default function JobsPage() {
       }
       toast.success("Job Agent started — scanning boards for matching roles");
     },
-    onError: () => {
-      toast.error("Job Agent unavailable — backend not connected");
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Job Agent unavailable — backend not connected"));
     },
   });
 

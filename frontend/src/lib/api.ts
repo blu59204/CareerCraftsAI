@@ -45,6 +45,21 @@ apiClient.interceptors.response.use(
 );
 
 /**
+ * Pulls the backend's `detail` message out of an axios error, falling back to
+ * a generic message only when the backend gave nothing usable (e.g. the
+ * request never reached it). Use this in onError handlers instead of a
+ * hardcoded string, so a 409 "no model configured" doesn't get reported to
+ * the user as "backend not connected".
+ */
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+  }
+  return fallback;
+}
+
+/**
  * Deduplicated GET — prevents duplicate concurrent requests for the same URL.
  * Use for data that multiple components might request simultaneously.
  */

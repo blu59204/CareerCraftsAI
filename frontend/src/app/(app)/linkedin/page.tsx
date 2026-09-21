@@ -23,7 +23,7 @@ import {
   Save,
 } from "lucide-react";
 import { BrandLinkedin } from "@/components/icons/BrandIcons";
-import { apiClient } from "@/lib/api";
+import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { ApprovalModal } from "@/components/agents/ApprovalModal";
 
 interface AgentRun {
@@ -298,8 +298,8 @@ export default function LinkedInPage() {
       toast.success("LinkedIn analysis started");
       qc.invalidateQueries({ queryKey: ["linkedin-run"] });
     },
-    onError: () => {
-      toast.error("Agent unavailable — backend not connected");
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, "Agent unavailable — backend not connected"));
     },
   });
 
