@@ -94,6 +94,8 @@ class NangoIntegrationGateway(IntegrationGateway):
             "outlook_mail",
             "outlook_calendar",
         ):
+            if provider not in self._provider_config_keys:
+                continue
             config_key = self.provider_config_key(provider)
             matched = next(
                 (item for item in connections if item.get("provider_config_key") == config_key),

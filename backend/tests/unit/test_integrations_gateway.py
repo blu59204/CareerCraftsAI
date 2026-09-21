@@ -197,6 +197,38 @@ async def test_connect_session_retries_transient_5xx_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_connections_skips_unconfigured_providers() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/connections"
+        return httpx.Response(
+            200,
+            json={
+                "connections": [
+                    {
+                        "connection_id": "conn-1",
+                        "provider_config_key": "career-gmail",
+                        "created": "2026-01-01T00:00:00Z",
+                        "errors": [],
+                    }
+                ]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = NangoIntegrationGateway(
+        base_url="https://api.nango.dev",
+        secret_key="server-secret",
+        provider_config_keys=CONFIG_KEYS,
+        client=client,
+    )
+
+    connections = await gateway.list_connections(user_id=USER_ID)
+
+    assert [connection.provider for connection in connections] == ["gmail"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_nango_action_does_not_retry_external_mutation() -> None:
     calls = 0
 
