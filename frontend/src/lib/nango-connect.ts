@@ -30,6 +30,14 @@ export async function connectGmail(returnPath: string): Promise<ConnectResult> {
       return { error: { message: "Could not start the secure Gmail connection." } };
     }
     popup.location.href = data.connect_link;
+    const refreshTimer = window.setInterval(() => {
+      if (!popup.closed) return;
+      window.clearInterval(refreshTimer);
+      void apiClient
+        .get("/integrations")
+        .catch(() => undefined)
+        .finally(() => window.location.reload());
+    }, 500);
     return { error: null, popup };
   } catch {
     popup.close();

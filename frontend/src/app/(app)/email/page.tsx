@@ -467,13 +467,17 @@ export default function EmailPage() {
     },
   });
 
-  const gmailConnected = connectedAccounts?.gmail_send ?? false;
-  const { data: integrations = [] } = useQuery<Array<{ provider: string; account_email: string | null }>>({
+  const gmailConnectionFlag = connectedAccounts?.gmail_send ?? false;
+  const { data: integrations = [] } = useQuery<
+    Array<{ provider: string; status: string; account_email: string | null }>
+  >({
     queryKey: ["integrations"],
     queryFn: async () => (await apiClient.get("/integrations")).data,
-    enabled: gmailConnected,
+    enabled: gmailConnectionFlag,
   });
-  const gmailAccountEmail = integrations.find((connection) => connection.provider === "gmail")?.account_email;
+  const gmailConnection = integrations.find((connection) => connection.provider === "gmail");
+  const gmailConnected = gmailConnectionFlag && gmailConnection?.status === "connected";
+  const gmailAccountEmail = gmailConnection?.account_email;
 
   const drafts = [...localDrafts, ...remoteDrafts.filter((d) => !localDrafts.find((x) => x.id === d.id))];
 
