@@ -216,6 +216,9 @@ class NangoIntegrationGateway(IntegrationGateway):
             if response.status_code == 404:
                 raise ConnectionNotFoundError("Connection was not found")
             if response.status_code == 429 or response.status_code >= 500:
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(0.1)
+                    continue
                 raise ProviderUnavailableError("Integration provider is unavailable")
             if response.is_error:
                 raise ProviderUnavailableError("Integration provider rejected the request")
