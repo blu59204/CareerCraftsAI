@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.security import decrypt_api_key, encrypt_api_key
 from app.integrations.exceptions import (
+    ConnectionNotFoundError,
+    IntegrationActionError,
     IntegrationDisabledError,
     ProviderUnavailableError,
 )
@@ -53,6 +56,7 @@ class ConnectionResponse(BaseModel):
     status: str
     connected_at: datetime | None
     last_synced_at: datetime | None
+    account_email: str | None
 
 
 def _connection_response(connection: IntegrationConnection) -> ConnectionResponse:
@@ -62,7 +66,46 @@ def _connection_response(connection: IntegrationConnection) -> ConnectionRespons
         status=connection.status,
         connected_at=connection.connected_at,
         last_synced_at=connection.last_synced_at,
+        account_email=_account_email(connection),
     )
+
+
+def _account_email(connection: IntegrationConnection) -> str | None:
+    if not connection.provider_metadata_enc:
+        return None
+    try:
+        metadata = json.loads(
+            decrypt_api_key(connection.provider_metadata_enc, settings.APP_SECRET_KEY)
+        )
+    except (ValueError, json.JSONDecodeError):
+        return None
+    email = metadata.get("account_email") if isinstance(metadata, dict) else None
+    return email if isinstance(email, str) else None
+
+
+async def _sync_gmail_account_email(
+    connection: IntegrationConnection, *, current_user: User, gateway: IntegrationGateway
+) -> None:
+    if (
+        connection.provider != "gmail"
+        or connection.status != "connected"
+        or connection.provider_metadata_enc
+    ):
+        return
+    try:
+        profile = await gateway.proxy_request(
+            user_id=current_user.id,
+            provider="gmail",
+            method="GET",
+            path="gmail/v1/users/me/profile",
+        )
+    except (ConnectionNotFoundError, IntegrationActionError, ProviderUnavailableError):
+        return
+    email = profile.data.get("emailAddress") if isinstance(profile.data, dict) else None
+    if isinstance(email, str) and email:
+        connection.provider_metadata_enc = encrypt_api_key(
+            json.dumps({"account_email": email}), settings.APP_SECRET_KEY
+        )
 
 
 def _api_error(exc: Exception) -> HTTPException:
@@ -122,6 +165,8 @@ async def list_connections(
             await sync_connection(db, user_id=current_user.id, result=result)
             for result in remote_connections
         ]
+        for connection in connections:
+            await _sync_gmail_account_email(connection, current_user=current_user, gateway=gateway)
         await db.commit()
     except (IntegrationDisabledError, ProviderUnavailableError) as exc:
         await db.rollback()

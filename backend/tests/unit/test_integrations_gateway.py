@@ -1,16 +1,20 @@
 import hashlib
 import hmac
+from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
 import pytest
 
+from app.api.v1.integrations import _account_email, _sync_gmail_account_email
 from app.integrations.exceptions import ConnectionNotFoundError, IntegrationActionError
 from app.integrations.mock import MockIntegrationGateway
 from app.integrations.nango import NangoIntegrationGateway
 from app.integrations.providers import provider_config_key, provider_for_config_key
+from app.integrations.schemas import IntegrationProxyResponse
 from app.integrations.validation import InvalidReturnPath, validate_return_path
 from app.integrations.webhooks import verify_nango_webhook, webhook_event_hash
+from app.models.db import IntegrationConnection
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 CONFIG_KEYS = {"gmail": "career-gmail"}
@@ -46,6 +50,42 @@ def test_webhook_hmac_and_hash_are_raw_body_based() -> None:
         body=body + b" ", signature=signature, signing_key="webhook-key"
     )
     assert webhook_event_hash(body) == hashlib.sha256(body).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_gmail_account_email_is_encrypted_after_profile_lookup() -> None:
+    connection = IntegrationConnection(
+        user_id=USER_ID,
+        provider="gmail",
+        provider_config_key="career-gmail",
+        external_connection_id="conn-1",
+        status="connected",
+    )
+    calls = []
+
+    class Gateway:
+        async def proxy_request(self, **kwargs):
+            calls.append(kwargs)
+            return IntegrationProxyResponse(
+                status_code=200, data={"emailAddress": "other@gmail.com"}
+            )
+
+    await _sync_gmail_account_email(
+        connection,
+        current_user=SimpleNamespace(id=USER_ID),
+        gateway=Gateway(),
+    )
+
+    assert calls == [
+        {
+            "user_id": USER_ID,
+            "provider": "gmail",
+            "method": "GET",
+            "path": "gmail/v1/users/me/profile",
+        }
+    ]
+    assert connection.provider_metadata_enc != "other@gmail.com"
+    assert _account_email(connection) == "other@gmail.com"
 
 
 @pytest.mark.asyncio

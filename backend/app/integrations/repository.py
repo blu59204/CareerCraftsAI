@@ -49,6 +49,7 @@ async def mark_pending(
     elif connection.status != "connected":
         connection.status = "pending"
         connection.disconnected_at = None
+    connection.provider_metadata_enc = None
     await db.flush()
     return connection
 

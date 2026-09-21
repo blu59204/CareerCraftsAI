@@ -1,11 +1,13 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { apiClient } from "@/lib/api";
+import { openNangoConnectWindow } from "@/lib/nango-connect";
 
 type Provider = "gmail" | "google_drive" | "google_calendar" | "outlook_mail" | "outlook_calendar";
 type ConnectionStatus = "pending" | "connected" | "disconnected" | "error" | "revoked";
@@ -15,6 +17,7 @@ type Connection = {
   status: ConnectionStatus;
   connected_at: string | null;
   last_synced_at: string | null;
+  account_email: string | null;
 };
 
 type ConnectSession = {
@@ -37,21 +40,29 @@ function statusLabel(status: ConnectionStatus | undefined): string {
 
 export default function IntegrationsSettingsPage() {
   const queryClient = useQueryClient();
+  const [connectingProvider, setConnectingProvider] = useState<Provider | null>(null);
+  const [connectWindow, setConnectWindow] = useState<Window | null>(null);
   const connections = useQuery<Connection[]>({
     queryKey: ["integrations"],
     queryFn: async () => (await apiClient.get<Connection[]>("/integrations")).data,
+    refetchInterval: connectingProvider ? 2_000 : false,
+  });
+  const currentUser = useQuery<{ email: string }>({
+    queryKey: ["me"],
+    queryFn: async () => (await apiClient.get("/users/me")).data,
   });
 
   const connect = useMutation({
-    mutationFn: async (provider: Provider) => (
+    mutationFn: async ({ provider }: { provider: Provider; popup: Window }) => (
       await apiClient.post<ConnectSession>("/integrations/connect-session", {
         provider,
         return_path: "/settings/integrations",
       })
     ).data,
-    onSuccess: (session) => {
-      // Nango's hosted Connect page receives only the short-lived session link.
-      window.location.assign(session.connect_link);
+    onSuccess: (session, { provider, popup }) => {
+      popup.location.href = session.connect_link;
+      setConnectingProvider(provider);
+      setConnectWindow(popup);
     },
     onError: () => toast.error("Could not start the connection."),
   });
@@ -66,6 +77,34 @@ export default function IntegrationsSettingsPage() {
   });
 
   const byProvider = new Map(connections.data?.map((connection) => [connection.provider, connection]));
+
+  useEffect(() => {
+    if (!connectingProvider) return;
+    if (byProvider.get(connectingProvider)?.status === "connected") {
+      connectWindow?.close();
+      setConnectingProvider(null);
+      setConnectWindow(null);
+      toast.success("Integration connected");
+      return;
+    }
+    const timer = window.setInterval(() => {
+      if (connectWindow?.closed) {
+        setConnectingProvider(null);
+        setConnectWindow(null);
+        queryClient.invalidateQueries({ queryKey: ["integrations"] });
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [byProvider, connectWindow, connectingProvider, queryClient]);
+
+  const startConnect = (provider: Provider) => {
+    const popup = openNangoConnectWindow();
+    if (!popup) {
+      toast.error("Please allow popups to connect an integration.");
+      return;
+    }
+    connect.mutate({ provider, popup });
+  };
 
   return (
     <main className="mx-auto max-w-3xl space-y-6 px-4 py-8">
@@ -89,6 +128,12 @@ export default function IntegrationsSettingsPage() {
           const connected = connection?.status === "connected";
           const pending = connection?.status === "pending";
           const isBusy = connect.isPending || disconnect.isPending;
+          const accountMismatch = Boolean(
+            connected &&
+              connection?.account_email &&
+              currentUser.data?.email &&
+              connection.account_email.toLowerCase() !== currentUser.data.email.toLowerCase(),
+          );
 
           return (
             <section key={provider.id} className="flex items-center justify-between gap-4 rounded-2xl border bg-card p-5">
@@ -98,6 +143,14 @@ export default function IntegrationsSettingsPage() {
                 <p className="mt-2 text-xs capitalize text-muted-foreground" aria-live="polite">
                   Status: {statusLabel(connection?.status)}
                 </p>
+                {connection?.account_email ? (
+                  <p className="mt-1 text-xs text-muted-foreground">Connected account: {connection.account_email}</p>
+                ) : null}
+                {accountMismatch ? (
+                  <p role="alert" className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    This account differs from your CareerCraft login ({currentUser.data?.email}).
+                  </p>
+                ) : null}
               </div>
               {connected ? (
                 <LiquidGlassButton
@@ -115,7 +168,7 @@ export default function IntegrationsSettingsPage() {
                   tone={pending ? "ghost" : "primary"}
                   size="sm"
                   disabled={isBusy}
-                  onClick={() => connect.mutate(provider.id)}
+                  onClick={() => startConnect(provider.id)}
                 >
                   {pending ? <RefreshCw className="mr-2 h-4 w-4" /> : <Link2 className="mr-2 h-4 w-4" />}
                   {pending ? "Reconnect" : "Connect"}
