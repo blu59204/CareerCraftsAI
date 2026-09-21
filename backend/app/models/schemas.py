@@ -28,6 +28,7 @@ class UserResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
+    email: EmailStr | None = None
     full_name: str | None = Field(None, max_length=200)
     headline: str | None = Field(None, max_length=300)
     phone: str | None = Field(None, max_length=30)

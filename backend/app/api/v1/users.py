@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
@@ -105,7 +106,11 @@ async def update_profile(
     update_data = payload.model_dump(exclude_none=True)
     for field, value in update_data.items():
         setattr(current_user, field, value)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="That email is already in use") from exc
     return current_user
 
 

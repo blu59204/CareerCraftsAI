@@ -78,6 +78,7 @@ export default function AccountSettingsPage() {
   const [twoFactor, setTwoFactor] = useState(false);
 
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [headline, setHeadline] = useState("");
   const [phone, setPhone] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
@@ -100,6 +101,7 @@ export default function AccountSettingsPage() {
   useEffect(() => {
     if (user) {
       setName(user.full_name ?? "");
+      setEmail(user.email);
       setHeadline(user.headline ?? "");
       setPhone(user.phone ?? "");
       setLinkedinUrl(user.linkedin_url ?? "");
@@ -125,6 +127,7 @@ export default function AccountSettingsPage() {
   const updateMutation = useMutation({
     mutationFn: async () => {
       const { data } = await apiClient.patch("/users/me", {
+        email: email || undefined,
         full_name: name || undefined,
         headline: headline || undefined,
         phone: phone || undefined,
@@ -222,17 +225,18 @@ export default function AccountSettingsPage() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium">
-                  Email
-                  <span className="ml-2 rounded-full bg-success/15 px-2 py-0.5 text-xs font-normal text-success">
-                    Verified
-                  </span>
+                  Contact email
                 </label>
                 <input
                   type="email"
-                  value={user?.email ?? ""}
-                  disabled
-                  className="w-full rounded-2xl border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground cursor-not-allowed"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Used by CareerCraft. Manage your sign-in email through your identity provider.
+                </p>
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Headline</label>
@@ -313,7 +317,10 @@ export default function AccountSettingsPage() {
 
           {/* Connected accounts */}
           <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-6 text-sm font-medium">Connected accounts</div>
+            <div className="mb-6 flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">Connected accounts</span>
+              <a href="/settings/integrations" className="text-xs text-primary hover:underline">Manage integrations</a>
+            </div>
             <div className="space-y-4">
               {/* Google */}
               <div className="flex items-center justify-between gap-4">
