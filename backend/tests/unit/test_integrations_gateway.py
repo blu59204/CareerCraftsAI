@@ -82,6 +82,41 @@ async def test_nango_connect_session_uses_backend_bearer_auth_only() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connect_session_retries_transient_network_failure() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("transient network drop", request=request)
+        return httpx.Response(
+            201,
+            json={
+                "data": {
+                    "token": "short-lived-session-token",
+                    "connect_link": "https://connect.nango.dev/session",
+                    "expires_at": "2026-01-01T00:00:00Z",
+                }
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    gateway = NangoIntegrationGateway(
+        base_url="https://api.nango.dev",
+        secret_key="server-secret",
+        provider_config_keys=CONFIG_KEYS,
+        client=client,
+    )
+    session = await gateway.create_connect_session(
+        user_id=USER_ID, provider="gmail", return_path="/settings/integrations"
+    )
+    await client.aclose()
+    assert calls == 2  # first attempt dropped, retry succeeded
+    assert session.connect_session_token == "short-lived-session-token"
+
+
+@pytest.mark.asyncio
 async def test_nango_action_does_not_retry_external_mutation() -> None:
     calls = 0
 

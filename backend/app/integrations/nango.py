@@ -57,7 +57,9 @@ class NangoIntegrationGateway(IntegrationGateway):
             "allowed_integrations": [config_key],
             "tags": {"end_user_id": str(user_id)},
         }
-        data = await self._request("POST", "/connect/sessions", json=payload)
+        # Creating a session has no destructive side effect (unlike /action/trigger),
+        # so it's safe to retry through this host's occasional transient network drops.
+        data = await self._request("POST", "/connect/sessions", json=payload, idempotent=True)
         session = _required_object(data, "data")
         token = _required_string(session, "token")
         expires_at = _parse_datetime(_required_string(session, "expires_at"))
@@ -192,13 +194,15 @@ class NangoIntegrationGateway(IntegrationGateway):
             raise ProviderUnavailableError("Nango returned an invalid connections response")
         return connections
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+    async def _request(
+        self, method: str, path: str, *, idempotent: bool = False, **kwargs: Any
+    ) -> dict[str, Any]:
         headers = {
             "Authorization": f"Bearer {self._secret_key}",
             "Accept": "application/json",
         }
         headers.update(kwargs.pop("headers", {}))
-        attempts = 2 if method == "GET" else 1
+        attempts = 2 if (method == "GET" or idempotent) else 1
         for attempt in range(attempts):
             try:
                 response = await self._client.request(
