@@ -66,6 +66,12 @@ class NangoIntegrationGateway(IntegrationGateway):
         connect_link = session.get("connect_link")
         if connect_link is not None and not isinstance(connect_link, str):
             raise ProviderUnavailableError("Nango returned an invalid connect session")
+        if connect_link is not None:
+            # The bundled Connect UI falls back to Nango Cloud's public API
+            # (api.nango.dev) whenever the link's apiURL query param is absent,
+            # so a self-hosted server's own connect_link is unusable without it.
+            separator = "&" if "?" in connect_link else "?"
+            connect_link = f"{connect_link}{separator}apiURL={quote(self._base_url, safe='')}"
         return ConnectSession(provider, token, connect_link, expires_at)
 
     async def get_connection(

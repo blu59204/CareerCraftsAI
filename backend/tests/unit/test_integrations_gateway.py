@@ -78,7 +78,12 @@ async def test_nango_connect_session_uses_backend_bearer_auth_only() -> None:
     )
     await client.aclose()
     assert session.connect_session_token == "short-lived-session-token"
-    assert session.connect_link == "https://connect.nango.dev/session"
+    # apiURL is appended so the Connect UI doesn't fall back to Nango Cloud's
+    # public API (its hardcoded default when the param is absent).
+    assert (
+        session.connect_link
+        == "https://connect.nango.dev/session?apiURL=https%3A%2F%2Fapi.nango.dev"
+    )
 
 
 @pytest.mark.asyncio
