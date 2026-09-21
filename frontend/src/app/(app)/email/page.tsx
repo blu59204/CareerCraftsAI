@@ -456,14 +456,6 @@ export default function EmailPage() {
     },
   });
 
-  const { data: userMe } = useQuery<{ email?: string }>({
-    queryKey: ["user-me-email"],
-    queryFn: async () => {
-      const { data } = await apiClient.get("/users/me");
-      return data;
-    },
-  });
-
   const { data: connectedAccounts } = useQuery<{ google: boolean; gmail_send: boolean }>({
     queryKey: ["connected-accounts"],
     queryFn: async () => {
@@ -473,6 +465,12 @@ export default function EmailPage() {
   });
 
   const gmailConnected = connectedAccounts?.gmail_send ?? false;
+  const { data: integrations = [] } = useQuery<Array<{ provider: string; account_email: string | null }>>({
+    queryKey: ["integrations"],
+    queryFn: async () => (await apiClient.get("/integrations")).data,
+    enabled: gmailConnected,
+  });
+  const gmailAccountEmail = integrations.find((connection) => connection.provider === "gmail")?.account_email;
 
   const drafts = [...localDrafts, ...remoteDrafts.filter((d) => !localDrafts.find((x) => x.id === d.id))];
 
@@ -601,7 +599,7 @@ export default function EmailPage() {
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               {gmailConnected
-                ? `${userMe?.email ?? "Connected"} · Synced`
+                ? `${gmailAccountEmail ?? "Connected account"} · Synced`
                 : "Connect Gmail in Settings → Account"}
             </p>
           </div>

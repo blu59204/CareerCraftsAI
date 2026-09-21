@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
@@ -76,7 +76,10 @@ export default function IntegrationsSettingsPage() {
     onError: () => toast.error("Could not disconnect the integration."),
   });
 
-  const byProvider = new Map(connections.data?.map((connection) => [connection.provider, connection]));
+  const byProvider = useMemo(
+    () => new Map(connections.data?.map((connection) => [connection.provider, connection])),
+    [connections.data],
+  );
 
   useEffect(() => {
     if (!connectingProvider) return;
