@@ -68,3 +68,25 @@ class GmailMCPClient:
         if not isinstance(result.data, dict):
             raise GmailSendError("Gmail returned an invalid response")
         return result.data
+
+    def save_draft(self, to: str, subject: str, body: str) -> dict:
+        message = EmailMessage()
+        message["To"] = to
+        message["Subject"] = subject
+        message.set_content(body)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode().rstrip("=")
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="POST",
+                path="gmail/v1/users/me/drafts",
+                json_data={"message": {"raw": raw}},
+            )
+        except IntegrationActionError as exc:
+            raise GmailSendError("Gmail rejected the draft") from exc
+        except Exception as exc:
+            raise GmailSendError("Gmail is not connected through Nango") from exc
+        if not isinstance(result.data, dict):
+            raise GmailSendError("Gmail returned an invalid response")
+        return result.data

@@ -28,6 +28,23 @@ def test_gmail_send_uses_nango_proxy(monkeypatch) -> None:
     assert b"Subject: Subject" in base64.urlsafe_b64decode(raw + "==")
 
 
+def test_gmail_draft_uses_nango_proxy(monkeypatch) -> None:
+    captured = {}
+
+    def fake_proxy_request(**kwargs):
+        captured.update(kwargs)
+        return IntegrationProxyResponse(status_code=200, data={"id": "draft-1"})
+
+    monkeypatch.setattr("app.services.gmail_service.proxy_request", fake_proxy_request)
+
+    assert GmailMCPClient("00000000-0000-0000-0000-000000000001").save_draft(
+        "to@example.com", "Subject", "Body"
+    ) == {"id": "draft-1"}
+    assert captured["path"] == "gmail/v1/users/me/drafts"
+    raw = captured["json_data"]["message"]["raw"]
+    assert b"To: to@example.com" in base64.urlsafe_b64decode(raw + "==")
+
+
 def test_drive_upload_uses_nango_proxy(monkeypatch) -> None:
     captured = {}
 

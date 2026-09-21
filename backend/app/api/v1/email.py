@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, Field
-from sqlalchemy import select, desc
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.email_agent import email_agent_node
@@ -48,6 +48,7 @@ class EmailDraft(BaseModel):
     initial: str
     body: str
     status: str
+    recipient_email: str | None = None
 
 
 @router.get("/drafts", response_model=list[EmailDraft])
@@ -74,8 +75,10 @@ async def list_drafts(
         out: dict = run.output or {}
         company = inp.get("company", "")
         role = inp.get("role", "role")
-        subject = f"Follow-up on {role} at {company}"
-        body = out.get("draft", {}).get("body", "") if isinstance(out.get("draft"), dict) else ""
+        saved_subject = out.get("subject")
+        subject = saved_subject if isinstance(saved_subject, str) else f"Follow-up on {role} at {company}"
+        body = out.get("body") if isinstance(out.get("body"), str) else ""
+        recipient_email = out.get("recipient") if isinstance(out.get("recipient"), str) else None
         initial = company[0].upper() if company else "?"
         timestamp = _relative_time(run.started_at) if run.started_at else "?"
         drafts.append(
@@ -87,6 +90,7 @@ async def list_drafts(
                 initial=initial,
                 body=body,
                 status=run.status or "unknown",
+                recipient_email=recipient_email,
             )
         )
     return drafts
@@ -95,10 +99,35 @@ async def list_drafts(
 class ComposeRequest(BaseModel):
     company: str = Field(max_length=500)
     role: str = Field(max_length=500)
-    recipient_email: str
+    recipient_email: EmailStr
     application_id: uuid.UUID | None = None
     subject: str | None = Field(default=None, max_length=500)
     body: str | None = Field(default=None, max_length=20000)
+
+
+class GmailDraftRequest(BaseModel):
+    recipient_email: EmailStr
+    subject: str = Field(min_length=1, max_length=500)
+    body: str = Field(min_length=1, max_length=20000)
+
+
+@router.post("/gmail-drafts", response_model=dict)
+@limiter.limit("10/minute")
+async def save_gmail_draft(
+    request: Request,
+    payload: GmailDraftRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.gmail_service import GmailMCPClient
+
+    try:
+        draft = GmailMCPClient(str(current_user.id)).save_draft(
+            str(payload.recipient_email), payload.subject, payload.body
+        )
+    except GmailSendError as exc:
+        logger.warning("Gmail draft save failed for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"id": draft.get("id"), "status": "saved"}
 
 
 @router.post("/compose", response_model=dict)

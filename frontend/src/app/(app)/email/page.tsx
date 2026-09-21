@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import { fadeUp, stagger } from "@/lib/motion-variants";
@@ -35,6 +35,7 @@ interface Draft {
   initial: string;
   body: string;
   status?: string;
+  recipient_email?: string | null;
 }
 
 const DRAFTS: Draft[] = [
@@ -444,6 +445,8 @@ function InboxCleanup() {
 export default function EmailPage() {
   const [selectedId, setSelectedId] = useState<string>("1");
   const [composeText, setComposeText] = useState<string>("");
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [subject, setSubject] = useState("");
   const [emailTab, setEmailTab] = useState<"drafts" | "templates" | "inbox">("drafts");
   const [localDrafts, setLocalDrafts] = useState<Draft[]>(DRAFTS);
   const qc = useQueryClient();
@@ -476,23 +479,40 @@ export default function EmailPage() {
 
   const selected = drafts.find((d) => d.id === selectedId) ?? drafts[0];
 
+  useEffect(() => {
+    setComposeText(selected?.body ?? "");
+    setRecipientEmail(selected?.recipient_email ?? "");
+    setSubject(selected?.subject ?? "");
+  }, [selected?.body, selected?.recipient_email, selected?.subject, selectedId]);
+
   const handleSaveDraft = async () => {
+    if (!gmailConnected) {
+      toast.error("Connect Gmail to save drafts in Gmail.");
+      return;
+    }
+    if (!recipientEmail.trim() || !subject.trim()) {
+      toast.info("Add a recipient and subject before saving.");
+      return;
+    }
     if (!composeText.trim()) {
       toast.info("Nothing to save — compose some text first.");
       return;
     }
     try {
-      await apiClient.post("/email/compose", {
-        company: selected?.company ?? "Unknown",
-        role: selected?.subject ?? "Draft",
-        recipient_email: `recruiter@${(selected?.company ?? "company").toLowerCase().replace(/\s+/g, "")}.com`,
-        subject: selected?.subject ?? "Draft",
+      await apiClient.post("/email/gmail-drafts", {
+        recipient_email: recipientEmail,
+        subject,
         body: composeText,
       });
-      qc.invalidateQueries({ queryKey: ["email-drafts"] });
-      toast.success("Draft saved");
-    } catch {
-      toast.error("Failed to save draft — check backend connection");
+      setLocalDrafts((previous) => previous.map((draft) => (
+        draft.id === selected?.id
+          ? { ...draft, subject, body: composeText, recipient_email: recipientEmail, timestamp: "just now" }
+          : draft
+      )));
+      toast.success("Saved to Gmail drafts");
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error(detail ? `Could not save: ${detail}` : "Failed to save Gmail draft");
     }
   };
 
@@ -507,6 +527,10 @@ export default function EmailPage() {
       toast.info("Nothing to send — compose some text first.");
       return;
     }
+    if (!recipientEmail.trim() || !subject.trim()) {
+      toast.info("Add a recipient and subject before sending.");
+      return;
+    }
     setSending(true);
     try {
       // Clicking Send IS the human-in-the-loop approval: compose creates a
@@ -516,8 +540,8 @@ export default function EmailPage() {
         {
           company: selected?.company ?? "Unknown",
           role: selected?.subject ?? "Draft",
-          recipient_email: `recruiter@${(selected?.company ?? "company").toLowerCase().replace(/\s+/g, "")}.com`,
-          subject: selected?.subject ?? "Follow up",
+          recipient_email: recipientEmail,
+          subject,
           body: composeText,
         },
       );
@@ -559,17 +583,26 @@ export default function EmailPage() {
         description="Draft follow-ups, personalize messages, and keep human approval before anything gets sent."
         actions={
         <div className="flex flex-wrap gap-2">
-          <LiquidGlassButton
-            tone="primary"
-            size="sm"
-            onClick={async () => {
-              const { error } = await connectGmail("/email");
-              if (error) toast.error(error.message);
-            }}
-          >
-            <Mail className="h-4 w-4" />
-            Connect Gmail
-          </LiquidGlassButton>
+          {gmailConnected ? (
+            <a href="/settings/integrations">
+              <LiquidGlassButton tone="ghost" size="sm">
+                <Mail className="h-4 w-4" />
+                Manage integrations
+              </LiquidGlassButton>
+            </a>
+          ) : (
+            <LiquidGlassButton
+              tone="primary"
+              size="sm"
+              onClick={async () => {
+                const { error } = await connectGmail("/email");
+                if (error) toast.error(error.message);
+              }}
+            >
+              <Mail className="h-4 w-4" />
+              Connect Gmail
+            </LiquidGlassButton>
+          )}
           <LiquidGlassButton tone="ghost" size="sm" onClick={() => {
             const newId = `new-${Date.now()}`;
             const blank = { id: newId, subject: "New draft", company: "Untitled", timestamp: "just now", initial: "N", body: "", status: "draft" };
@@ -675,20 +708,15 @@ export default function EmailPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-base font-semibold text-foreground">
-                  {selected.subject}
+                  {subject || selected.subject}
                 </h2>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  To: recruiter@{selected.company.toLowerCase().replace(" ", "")}.com
+                  To: {recipientEmail || "Add recipient"}
                 </p>
               </div>
               <span className="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
                 Draft
               </span>
-            </div>
-            <div className="rounded-2xl bg-background/60 p-4">
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">
-                {selected.body}
-              </pre>
             </div>
           </div>
           ) : (
@@ -706,6 +734,21 @@ export default function EmailPage() {
                 <Zap className="h-3 w-3" />
                 AI Draft
               </button>
+            </div>
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <input
+                type="email"
+                value={recipientEmail}
+                onChange={(e) => setRecipientEmail(e.target.value)}
+                placeholder="Recipient email"
+                className="w-full rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              <input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Subject"
+                className="w-full rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
             </div>
             <textarea
               value={composeText}
