@@ -64,7 +64,7 @@ export function AppTopbar() {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
 
   return (
-    <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-4 rounded-full px-4 md:mx-6">
+    <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-4 overflow-visible rounded-full px-4 md:mx-6">
       <div className="flex max-w-md flex-1 items-center gap-2 rounded-full border border-white/45 bg-white/[0.10] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[20px] dark:border-white/10 dark:bg-black/[0.12]">
         <Search className="h-4 w-4 text-muted-foreground" />
         <input
