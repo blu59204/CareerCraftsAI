@@ -13,9 +13,6 @@ def test_settings_has_allowed_origins(monkeypatch):
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-32-chars-minimum!!")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "svc-key")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "jwt-secret")
     monkeypatch.setenv("FRONTEND_URL", "http://localhost:3000")
 
     from app.core.config import Settings

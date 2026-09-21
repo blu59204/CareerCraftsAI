@@ -44,9 +44,6 @@ jobs:
         env:
           APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
           DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
-          SUPABASE_URL: "https://x.supabase.co"
-          SUPABASE_SERVICE_KEY: "x"
-          SUPABASE_JWT_SECRET: "test-jwt-secret-not-real"
           REDIS_URL: "redis://localhost:6379"
 
   backend-unit-test:
@@ -70,9 +67,6 @@ jobs:
         env:
           APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
           DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
-          SUPABASE_URL: "https://x.supabase.co"
-          SUPABASE_SERVICE_KEY: "x"
-          SUPABASE_JWT_SECRET: "test-jwt-secret-not-real"
           REDIS_URL: "redis://localhost:6379"
 
   backend-workflow-integration-test:

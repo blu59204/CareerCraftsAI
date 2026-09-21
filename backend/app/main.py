@@ -40,9 +40,6 @@ logger = logging.getLogger(__name__)
 _REQUIRED_VARS = [
     "APP_SECRET_KEY",
     "DATABASE_URL",
-    "SUPABASE_URL",
-    "SUPABASE_SERVICE_KEY",
-    "SUPABASE_JWT_SECRET",
     "REDIS_URL",
 ]
 

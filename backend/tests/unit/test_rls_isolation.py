@@ -1,8 +1,8 @@
-"""Regression tests for Fix 4: Supabase RLS + pgvector isolation (2026-06-13 audit).
+"""Regression tests for Fix 4: RLS + pgvector isolation (2026-06-13 audit).
 
 Isolation model:
-  - Backend uses SUPABASE_SERVICE_KEY (service role) via SQLAlchemy — this bypasses
-    all Postgres RLS policies by design.
+  - Backend connects as the table owner via SQLAlchemy — this bypasses all
+    Postgres RLS policies by design (see deploy/oracle/postgres-bootstrap.sql).
   - User isolation is enforced ENTIRELY at the application layer:
       1. Every authenticated endpoint filters by current_user.id in WHERE clauses.
       2. pgvector collections are namespaced by user_id in the collection name.

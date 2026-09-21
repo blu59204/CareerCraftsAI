@@ -105,7 +105,7 @@ CANDIDATE = {
     "projects": [
         {
             "name": "CareerCraft AI Platform",
-            "tech": "Python, FastAPI, LangGraph, pgvector, Supabase",
+            "tech": "Python, FastAPI, LangGraph, pgvector, PostgreSQL",
             "description": (
                 "End-to-end job search automation platform with 15 AI agents. "
                 "Features: resume optimization, cover letter generation, interview "

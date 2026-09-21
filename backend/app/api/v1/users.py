@@ -506,11 +506,11 @@ async def change_password(
     payload: PasswordChangeRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Password changes are managed by Supabase Auth."""
+    """Password changes are managed by Clerk, not this API."""
     _ = (payload, current_user)
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    raise HTTPException(status_code=400, detail="Password changes are managed by Supabase Auth")
+    raise HTTPException(status_code=400, detail="Password changes are managed by Clerk — use Account Settings")
 
 
 @router.delete("/me", status_code=204)
@@ -520,8 +520,10 @@ async def delete_account(
 ):
     """Permanently delete the user's account.
 
-    Deletes the Supabase Auth user when configured, plus the local row.
-    DB cascade removes related records (applications, agent runs, settings).
+    Deletes the Clerk user (best-effort) plus the local row. DB cascade
+    removes related records (applications, agent runs, settings). Deleting
+    the Clerk identity too prevents it from re-provisioning a fresh local
+    row the next time that person signs in.
     """
     auth_subject = str(current_user.supabase_uid or "")
 
@@ -529,6 +531,8 @@ async def delete_account(
     await db.delete(current_user)
     await db.flush()
 
-    # Supabase Auth user deletion would be handled via Supabase Admin API
-    # if needed in the future. For now, local DB cleanup is sufficient.
+    if auth_subject:
+        from app.core.supabase_auth import delete_clerk_user
+        await delete_clerk_user(auth_subject)
+
     logger.info("User account deleted: %s", auth_subject)

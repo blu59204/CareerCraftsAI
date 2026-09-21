@@ -235,7 +235,7 @@ async def delete_document(
     try:
         delete_file(storage_path, owner_id=str(current_user.id))
     except Exception as exc:
-        logger.warning("Supabase file delete failed for %s (best-effort): %s", storage_path, exc)
+        logger.warning("Storage file delete failed for %s (best-effort): %s", storage_path, exc)
 
 
 _DRIVE_MIME_BY_EXT = {

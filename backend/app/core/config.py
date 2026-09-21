@@ -19,11 +19,6 @@ class Settings(BaseSettings):
     # ── Required — app exits with clear error if any are missing ────────
     APP_SECRET_KEY: str
     DATABASE_URL: str
-    SUPABASE_URL: str
-    SUPABASE_SERVICE_KEY: str
-    SUPABASE_JWT_SECRET: str
-    NEXT_PUBLIC_SUPABASE_URL: str = ""
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: str = ""
     REDIS_URL: str
 
     # ── Clerk Auth (primary identity provider) ─────────────────────────
@@ -182,15 +177,11 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD: str = "5/minute"
     RATE_LIMIT_STR: str = "100/minute"
 
-    # ── Supabase Storage ───────────────────────────────────────────────
-    SUPABASE_STORAGE_BUCKET: str = "documents"
-
     # ── Document storage ───────────────────────────────────────────────
-    # Uploaded resumes/documents live on local disk. Supabase Storage is
-    # unreachable from the deployment VM for the same reason the managed
-    # database was (its hosts resolve IPv6-only and the VM has no IPv6).
-    # In Docker this is a named volume shared by backend and agent-worker;
-    # back it up, because unlike the old bucket nothing else holds a copy.
+    # Uploaded resumes/documents live on local disk (self-hosted Postgres too —
+    # both moved off Supabase because the deployment VM has no outbound IPv6,
+    # which Supabase's managed hosts require). In Docker this is a named volume
+    # shared by backend and agent-worker; back it up, nothing else holds a copy.
     DOCUMENT_STORAGE_DIR: str = "/data/documents"
 
     @model_validator(mode="after")

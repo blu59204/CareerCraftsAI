@@ -44,9 +44,6 @@ pytestmark = [
 # -------------------------------------------------------------------
 os.environ.setdefault("APP_SECRET_KEY", "test-secret-key-32-chars-minimum!!")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
-os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
-os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-svc")
-os.environ.setdefault("SUPABASE_JWT_SECRET", "test-jwt-secret-hs256")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 os.environ.setdefault("APP_ENV", "development")
 

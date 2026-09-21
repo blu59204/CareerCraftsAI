@@ -64,8 +64,6 @@ services:
       context: ../../frontend
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         # Next.js inlines NEXT_PUBLIC_* at build time, so the publishable key
         # has to be an ARG as well as runtime env or the client bundle ships
         # without it and Clerk fails to initialise in the browser.
@@ -76,14 +74,12 @@ services:
       PORT: 18101
       HOSTNAME: 127.0.0.1
       BACKEND_URL: http://127.0.0.1:18100
-      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
       # Only the Clerk secret is passed, named explicitly. Using
-      # env_file: backend.env here injected DATABASE_URL, REDIS_URL and the
-      # Supabase service key into the frontend container — credentials it has
-      # no use for and should never hold — and the extra vars broke server-side
-      # rendering with a self-proxy to https://localhost:18101.
+      # env_file: backend.env here injected DATABASE_URL, REDIS_URL and other
+      # backend-only credentials into the frontend container — credentials it
+      # has no use for and should never hold — and the extra vars broke
+      # server-side rendering with a self-proxy to https://localhost:18101.
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
     mem_limit: 768m
     cpus: 0.5

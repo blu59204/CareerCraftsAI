@@ -8,7 +8,6 @@ Usage:
 import os
 import sys
 import time
-import uuid
 
 import pytest
 import httpx
@@ -18,8 +17,6 @@ INTEGRATION = os.environ.get("INTEGRATION") == "1"
 pytestmark = pytest.mark.skipif(not INTEGRATION, reason="INTEGRATION=1 not set")
 
 BACKEND = os.environ.get("TEST_BACKEND_URL", "http://localhost:8000")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
 
 
 @pytest.fixture(scope="module")
@@ -45,29 +42,9 @@ class TestHealthCheck:
 
 
 class TestAuthFlow:
-    def test_register_and_login_via_supabase(self):
-        if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-            pytest.skip("Supabase URL/key not configured")
-        from supabase import create_client
-        client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-        email = f"smoke-{uuid.uuid4().hex[:8]}@test.com"
-        resp = client.auth.sign_up({"email": email, "password": "SmokeTest123!"})
-        assert resp.user is not None
-        session = resp.session
-        if session is None:
-            resp2 = client.auth.sign_in_with_password({"email": email, "password": "SmokeTest123!"})
-            session = resp2.session
-        assert session is not None
-        assert session.access_token is not None
-
-        # Verify backend accepts the JWT
-        backend_resp = httpx.get(
-            f"{BACKEND}/api/v1/users/me",
-            headers={"Authorization": f"Bearer {session.access_token}"},
-        )
-        assert backend_resp.status_code == 200
-        user_data = backend_resp.json()
-        assert "email" in user_data or "id" in user_data
+    def test_backend_rejects_missing_token(self, http):
+        resp = http.get("/api/v1/users/me")
+        assert resp.status_code == 401
 
 
 class TestRAGIngestion:

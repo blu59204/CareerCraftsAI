@@ -11,9 +11,6 @@ def _set_required_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-32-chars-minimum!!")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "test-service-key")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-jwt-secret-hs256")
 
 
 def test_temporal_validation_rejects_partial_mtls_configuration(

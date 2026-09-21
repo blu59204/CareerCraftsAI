@@ -170,6 +170,32 @@ async def get_verified_primary_email(
             await client.aclose()
 
 
+async def delete_clerk_user(subject: str, *, client: httpx.AsyncClient | None = None) -> None:
+    """Delete the Clerk user via the Backend API. Best-effort — logs and swallows failures.
+
+    Called from account deletion so a removed local row can't be re-provisioned
+    by the same Clerk identity signing back in.
+    """
+    if not settings.CLERK_SECRET_KEY:
+        logger.warning("Skipping Clerk user deletion for %s — CLERK_SECRET_KEY not configured", subject)
+        return
+
+    owns_client = client is None
+    client = client or httpx.AsyncClient(timeout=5, trust_env=False)
+    try:
+        response = await client.delete(
+            f"https://api.clerk.com/v1/users/{quote(subject, safe='')}",
+            headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+        )
+        if response.status_code not in (200, 404):
+            logger.warning("Clerk user deletion for %s returned %s", subject, response.status_code)
+    except httpx.RequestError as exc:
+        logger.warning("Clerk user deletion request failed for %s: %s", subject, exc)
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
 def subject_from_payload(payload: dict[str, Any]) -> str:
     """Pull the auth subject out of a verified payload, or raise 401."""
     subject = payload.get("sub") or payload.get("user_id") or payload.get("supabase_uid")

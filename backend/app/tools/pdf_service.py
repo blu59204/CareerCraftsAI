@@ -1,13 +1,11 @@
 """
-pdf_service.py — PDF resume generation and Supabase Storage upload.
+pdf_service.py — PDF resume generation.
 
-Generates ATS-friendly PDF resumes using ReportLab and uploads them
-to Supabase Storage for download in the frontend.
+Generates ATS-friendly PDF resumes using ReportLab for download in the frontend.
 """
 from __future__ import annotations
 
 import io
-import uuid
 
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
@@ -15,9 +13,6 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, ListFlowable, ListItem
 
-from app.services.storage_service import upload_file
-
-BUCKET = "user-documents"
 SECTION_HEADER_STYLE = ParagraphStyle(
     "SectionHeader",
     fontSize=12,
@@ -114,13 +109,3 @@ class PDFService:
             elif stripped and len(stripped) < 200:
                 bullets.append(stripped)
         return bullets if bullets else []
-
-
-async def upload_to_supabase_storage(pdf_bytes: bytes, user_id: str, run_id: str) -> str:
-    path = upload_file(
-        user_id=user_id,
-        filename="resume.pdf",
-        content=pdf_bytes,
-        content_type="application/pdf",
-    )
-    return path

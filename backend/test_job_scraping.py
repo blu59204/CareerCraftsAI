@@ -13,9 +13,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 os.environ.setdefault("APP_SECRET_KEY", "test-key-32-chars-minimum-test")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
-os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
-os.environ.setdefault("SUPABASE_SERVICE_KEY", "test")
-os.environ.setdefault("SUPABASE_JWT_SECRET", "test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 
 

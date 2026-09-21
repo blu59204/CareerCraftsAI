@@ -12,9 +12,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Set minimal env vars
 os.environ.setdefault("APP_SECRET_KEY", "test-key-32-chars-minimum-test-key")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/careercraft")
-os.environ.setdefault("SUPABASE_URL", "https://test.supabase.co")
-os.environ.setdefault("SUPABASE_SERVICE_KEY", "test-key")
-os.environ.setdefault("SUPABASE_JWT_SECRET", "test-secret")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379")
 
 

@@ -97,8 +97,8 @@ def resume_agent_node(state: AgentState) -> AgentState:
 
     All prompt text lives in app/agents/prompts/resume_prompt.py. The result
     equals OUTPUT_SCHEMA.model_dump() + {"pdf_document_id"}. No binary data
-    is placed in state, SSE events, or the DB — the PDF is stored in
-    Supabase Storage and downloaded via GET /resume/download/{document_id}.
+    is placed in state, SSE events, or the DB — the PDF is stored on local
+    disk and downloaded via GET /resume/download/{document_id}.
     """
     from app.core.sync_db import fetch_model_settings, fetch_user_full_name
     from app.core.model_router import _build_llm
