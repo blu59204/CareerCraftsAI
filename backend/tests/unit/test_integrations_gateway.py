@@ -78,12 +78,47 @@ async def test_mismatched_gmail_account_is_revoked_during_connection_sync() -> N
         db=db,
         current_user=SimpleNamespace(id=USER_ID),
         gateway=gateway,
-        login_email="owner@example.com",
+        login_email="owner@gmail.com",
     )
 
     gateway.revoke_connection.assert_awaited_once_with(user_id=USER_ID, provider="gmail")
     assert connection.status == "revoked"
     assert _account_email(connection) == "other@example.com"
+
+
+@pytest.mark.asyncio
+async def test_mismatched_google_account_is_allowed_for_non_gmail_login() -> None:
+    connection = IntegrationConnection(
+        user_id=USER_ID,
+        provider="gmail",
+        provider_config_key="career-gmail",
+        external_connection_id="conn-1",
+        status="connected",
+    )
+    gateway = SimpleNamespace(
+        proxy_request=AsyncMock(
+            return_value=IntegrationProxyResponse(
+                status_code=200, data={"emailAddress": "personal@gmail.com"}
+            )
+        ),
+        revoke_connection=AsyncMock(),
+    )
+    db = SimpleNamespace(
+        execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: connection)),
+        flush=AsyncMock(),
+    )
+
+    await _sync_gmail_account_email(
+        connection,
+        db=db,
+        current_user=SimpleNamespace(id=USER_ID),
+        gateway=gateway,
+        login_email="owner@company.com",
+    )
+
+    gateway.revoke_connection.assert_not_awaited()
+    assert connection.status == "connected"
+    assert _account_email(connection) == "personal@gmail.com"
 
 
 def test_return_path_rejects_open_redirects() -> None:

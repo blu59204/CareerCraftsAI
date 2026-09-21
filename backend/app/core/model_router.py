@@ -122,6 +122,16 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
             )
+        case "deepseek":
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                model=model_settings.model_name,
+                api_key=api_key,
+                base_url="https://api.deepseek.com",
+                timeout=LLM_TIMEOUT_SECONDS,
+                max_retries=LLM_MAX_RETRIES,
+            )
         case "openrouter":
             # OpenRouter is OpenAI-compatible, so we use the ChatOpenAI
             # client pointed at their public base URL. Any model on

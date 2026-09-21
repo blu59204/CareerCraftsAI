@@ -4,12 +4,13 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle, XCircle, Loader2, Trash2, Zap } from "lucide-react";
+import { CheckCircle, XCircle, Loader2, Trash2, Zap, Eye, EyeOff } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { SettingsNav } from "@/components/settings/SettingsNav";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +54,11 @@ const PROVIDERS = [
       "gemini-2.5-flash",
       "gemini-2.5-flash-lite",
     ],
+  },
+  {
+    value: "deepseek",
+    label: "DeepSeek",
+    models: ["deepseek-flash", "deepseek-v4-pro"],
   },
   {
     value: "ollama",
@@ -195,6 +201,7 @@ export default function SettingsModelsPage() {
   const qc = useQueryClient();
   const [provider, setProvider] = useState<Provider>("anthropic");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [modelName, setModelName] = useState<string>(PROVIDER_MODELS.anthropic[0]);
   const [customMode, setCustomMode] = useState(false);
   const [ollamaUrl, setOllamaUrl] = useState("http://localhost:11434");
@@ -282,12 +289,16 @@ export default function SettingsModelsPage() {
         />
       </motion.div>
 
-      <motion.div variants={fadeUp} className="grid gap-6 lg:grid-cols-[1fr_420px]">
+ <motion.div variants={fadeUp}>
+   <SettingsNav />
+ </motion.div>
+
+ <motion.div variants={fadeUp} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.9fr)]">
         {/* Add provider form */}
         <section className="rounded-3xl border border-border bg-card/60 p-6">
           <div className="text-base font-medium">Add provider</div>
           <p className="mt-1 text-sm text-muted-foreground">
-            BYOK — your keys are encrypted at rest. Use Ollama for free local inference.
+            Choose a provider and model. Keys are encrypted at rest and never shown again after saving.
           </p>
 
           <label className="mt-6 block text-xs text-muted-foreground">Provider</label>
@@ -332,14 +343,27 @@ export default function SettingsModelsPage() {
           )}
 
           <label className="mt-4 block text-xs text-muted-foreground">API key</label>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={provider === "ollama" ? "No API key required" : "API key"}
-            disabled={provider === "ollama"}
-            className="mt-1 w-full rounded-2xl border border-border bg-background p-3 text-sm disabled:opacity-50"
-          />
+          <div className="relative mt-1">
+            <input
+              type={showApiKey ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={provider === "ollama" ? "No API key required" : "Paste provider API key"}
+              disabled={provider === "ollama"}
+              autoComplete="new-password"
+              className="w-full rounded-2xl border border-border bg-background p-3 pr-12 text-sm disabled:opacity-50"
+            />
+            {provider !== "ollama" ? (
+              <button
+                type="button"
+                aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                onClick={() => setShowApiKey((visible) => !visible)}
+                className="absolute inset-y-0 right-3 my-auto text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            ) : null}
+          </div>
 
           {provider === "ollama" && (
             <>

@@ -7,6 +7,7 @@ import { Check, Link2, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { SettingsNav } from "@/components/settings/SettingsNav";
 import { apiClient } from "@/lib/api";
 import { openNangoConnectWindow } from "@/lib/nango-connect";
 
@@ -50,6 +51,7 @@ export default function IntegrationsSettingsPage() {
     refetchInterval: connectingProvider ? 2_000 : false,
   });
   const loginEmail = authUser?.primaryEmailAddress?.emailAddress ?? null;
+  const enforceGmailMatch = loginEmail?.toLowerCase().endsWith("@gmail.com") ?? false;
 
   const connect = useMutation({
     mutationFn: async ({ provider }: { provider: Provider; popup: Window }) => (
@@ -79,6 +81,7 @@ export default function IntegrationsSettingsPage() {
     () => new Map(connections.data?.map((connection) => [connection.provider, connection])),
     [connections.data],
   );
+  const connectedCount = [...byProvider.values()].filter((connection) => connection.status === "connected").length;
 
   useEffect(() => {
     if (!connectingProvider) return;
@@ -92,6 +95,7 @@ export default function IntegrationsSettingsPage() {
     const pendingConnection = byProvider.get(connectingProvider);
     if (
       pendingConnection?.status === "revoked" &&
+      enforceGmailMatch &&
       pendingConnection.account_email &&
       loginEmail &&
       pendingConnection.account_email.toLowerCase() !== loginEmail.toLowerCase()
@@ -99,7 +103,7 @@ export default function IntegrationsSettingsPage() {
       connectWindow?.close();
       setConnectingProvider(null);
       setConnectWindow(null);
-      toast.error("Connect the Google account that matches your sign-in email.");
+      toast.error("Gmail accounts must match your @gmail.com sign-in address.");
       return;
     }
     const timer = window.setInterval(() => {
@@ -110,7 +114,7 @@ export default function IntegrationsSettingsPage() {
       }
     }, 500);
     return () => window.clearInterval(timer);
-  }, [byProvider, connectWindow, connectingProvider, loginEmail, queryClient]);
+  }, [byProvider, connectWindow, connectingProvider, enforceGmailMatch, loginEmail, queryClient]);
 
   const startConnect = (provider: Provider) => {
     const popup = openNangoConnectWindow();
@@ -122,14 +126,22 @@ export default function IntegrationsSettingsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-3xl space-y-6 px-4 py-8">
-      <div>
-        <p className="text-sm text-muted-foreground">Connected accounts</p>
-        <h1 className="text-2xl font-semibold">Integrations</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Connections are confirmed by the provider before they become available.
-        </p>
-      </div>
+    <main className="mx-auto w-full max-w-6xl space-y-7 px-4 py-8 sm:px-6">
+      <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">Settings / Connected accounts</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">Integrations</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+            Connect the services CareerCraft can use for approved email, calendar, and document actions.
+          </p>
+        </div>
+        <div className="rounded-xl border border-border bg-card/50 px-4 py-3 text-sm">
+          <span className="font-medium">{connectedCount}</span>
+          <span className="ml-1 text-muted-foreground">of {PROVIDERS.length} connected</span>
+        </div>
+      </header>
+
+      <SettingsNav />
 
       {connections.isError ? (
         <p role="alert" className="rounded-xl border border-destructive/40 p-4 text-sm text-destructive">
@@ -137,22 +149,31 @@ export default function IntegrationsSettingsPage() {
         </p>
       ) : null}
 
-      <div className="space-y-3">
+      {enforceGmailMatch ? (
+        <p className="rounded-xl border border-border bg-card/40 px-4 py-3 text-sm text-muted-foreground">
+          Gmail must use the same <span className="font-medium text-foreground">{loginEmail}</span> address as your CareerCraft sign-in.
+        </p>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-2">
         {PROVIDERS.map((provider) => {
           const connection = byProvider.get(provider.id);
           const connected = connection?.status === "connected";
           const pending = connection?.status === "pending";
           const isBusy = connect.isPending || disconnect.isPending;
           const accountMismatch = Boolean(
-            connection?.account_email &&
+              provider.id === "gmail" &&
+              enforceGmailMatch &&
+              connection?.account_email &&
               loginEmail &&
               connection.account_email.toLowerCase() !== loginEmail.toLowerCase(),
           );
 
           return (
-            <section key={provider.id} className="flex items-center justify-between gap-4 rounded-2xl border bg-card p-5">
-              <div>
-                <h2 className="font-medium">{provider.name}</h2>
+            <section key={provider.id} className="flex min-h-44 flex-col justify-between gap-5 rounded-2xl border border-border bg-card/60 p-5 transition-colors hover:border-primary/30">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="font-medium">{provider.name}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">{provider.description}</p>
                 <p className="mt-2 text-xs capitalize text-muted-foreground" aria-live="polite">
                   Status: {statusLabel(connection?.status)}
@@ -162,9 +183,11 @@ export default function IntegrationsSettingsPage() {
                 ) : null}
                 {accountMismatch ? (
                   <p role="alert" className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                    This Google account does not match your sign-in email ({loginEmail}) and has been disconnected. Connect the matching account.
+                    This Google account does not match your sign-in email ({loginEmail}). It has been disconnected; connect the matching account.
                   </p>
                 ) : null}
+                </div>
+                {connected ? <Check className="mt-1 h-5 w-5 shrink-0 text-success" aria-label="Connected" /> : null}
               </div>
               {connected ? (
                 <LiquidGlassButton
@@ -188,7 +211,6 @@ export default function IntegrationsSettingsPage() {
                   {pending ? "Reconnect" : "Connect"}
                 </LiquidGlassButton>
               )}
-              {connected ? <Check className="h-5 w-5 text-success" aria-label="Connected" /> : null}
             </section>
           );
         })}

@@ -168,6 +168,14 @@ class TestInputValidation:
                 model_name="gpt-4",
             )
 
+    def test_deepseek_provider_is_supported(self):
+        obj = ModelSettingsCreate(
+            provider="deepseek",
+            api_key="sk-test",
+            model_name="deepseek-flash",
+        )
+        assert obj.provider == "deepseek"
+
     def test_api_key_at_max_length_accepted(self):
         """api_key max_length=200 — exactly 200 chars is valid."""
         obj = ModelSettingsCreate(

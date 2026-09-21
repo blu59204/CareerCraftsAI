@@ -69,7 +69,7 @@ export function UserMenu() {
       ? clerkEmail || profileEmail
       : profileEmail || clerkEmail || null;
   const displayName = profile?.full_name || user?.fullName || email;
-  const avatarUrl = profile?.avatar_url ?? user?.imageUrl ?? null;
+  const avatarUrl = user?.imageUrl ?? profile?.avatar_url ?? null;
   const initials = (displayName ?? "?")
     .split(" ")
     .map((part) => part[0])

@@ -111,7 +111,12 @@ async def _sync_gmail_account_email(
                 json.dumps({"account_email": email}), settings.APP_SECRET_KEY
             )
 
-    if isinstance(email, str) and login_email and email.casefold() != login_email.casefold():
+    if (
+        isinstance(email, str)
+        and login_email
+        and login_email.casefold().endswith("@gmail.com")
+        and email.casefold() != login_email.casefold()
+    ):
         try:
             await gateway.revoke_connection(user_id=current_user.id, provider="gmail")
         except ConnectionNotFoundError:

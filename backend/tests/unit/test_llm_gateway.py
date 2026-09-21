@@ -25,6 +25,7 @@ def make_settings(provider: str, model_name: str = "test-model", ollama_url: str
         ("google", "ChatGoogleGenerativeAI"),
         ("ollama", "ChatOllama"),
         ("nvidia_nim", "ChatOpenAI"),
+        ("deepseek", "ChatOpenAI"),
         ("openrouter", "ChatOpenAI"),
         ("opencode", "ChatOpenAI"),
     ],
@@ -45,7 +46,21 @@ def test_model_router_instantiates_correct_class(provider, expected_cls):
         mock_app_settings.APP_SECRET_KEY = "secret"
         mock_cls.return_value = MagicMock()
         _build_llm(settings)
-        mock_cls.assert_called_once()
+    mock_cls.assert_called_once()
+
+
+def test_deepseek_uses_openai_compatible_endpoint():
+    settings = make_settings("deepseek", model_name="deepseek-flash")
+    with (
+        patch("langchain_openai.ChatOpenAI") as mock_cls,
+        patch("app.core.model_router.decrypt_api_key", return_value="plaintext-key"),
+        patch("app.core.model_router.settings") as mock_app_settings,
+    ):
+        mock_app_settings.APP_SECRET_KEY = "secret"
+        mock_cls.return_value = MagicMock()
+        _build_llm(settings)
+    assert mock_cls.call_args.kwargs["base_url"] == "https://api.deepseek.com"
+    assert mock_cls.call_args.kwargs["model"] == "deepseek-flash"
 
 
 def test_decryption_called_during_build():

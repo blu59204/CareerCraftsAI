@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
+import { SettingsNav } from "@/components/settings/SettingsNav";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { connectGmail } from "@/lib/nango-connect";
@@ -78,6 +79,7 @@ export default function AccountSettingsPage() {
   const [followUpReminders, setFollowUpReminders] = useState(true);
   const [weeklyDigest, setWeeklyDigest] = useState(false);
   const [twoFactor, setTwoFactor] = useState(false);
+  const [avatarSaving, setAvatarSaving] = useState(false);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -103,9 +105,7 @@ export default function AccountSettingsPage() {
   useEffect(() => {
     if (user) {
       setName(user.full_name?.trim() || authUser?.fullName || "");
-      setEmail(
-        user.email.endsWith("@users.noreply.clerk") ? signInEmail || user.email : user.email,
-      );
+      setEmail(signInEmail || user.email);
       setHeadline(user.headline ?? "");
       setPhone(user.phone ?? "");
       setLinkedinUrl(user.linkedin_url ?? "");
@@ -131,7 +131,6 @@ export default function AccountSettingsPage() {
   const updateMutation = useMutation({
     mutationFn: async () => {
       const { data } = await apiClient.patch("/users/me", {
-        email: email || undefined,
         full_name: name || undefined,
         headline: headline || undefined,
         phone: phone || undefined,
@@ -162,13 +161,17 @@ export default function AccountSettingsPage() {
   ];
 
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
+    <motion.div initial="hidden" animate="show" variants={stagger} className="mx-auto w-full max-w-6xl space-y-8">
       <motion.div variants={fadeUp}>
         <CommandHeader
           eyebrow="Aurora Onboard"
           title="Account Settings"
           description="Manage identity, OAuth connections, security, and notifications."
         />
+      </motion.div>
+
+      <motion.div variants={fadeUp}>
+        <SettingsNav />
       </motion.div>
 
       {/* Tab navigation */}
@@ -196,8 +199,10 @@ export default function AccountSettingsPage() {
           <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
             <div className="mb-6 text-sm font-medium">Profile</div>
             <div className="flex items-center gap-4 mb-6">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/20 text-lg font-semibold text-primary">
-                {isLoading ? "…" : getInitials(user?.full_name || authUser?.fullName)}
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/15 text-lg font-semibold text-primary">
+                {authUser?.imageUrl ? (
+                  <img src={authUser.imageUrl} alt="Profile" className="h-full w-full object-cover" />
+                ) : isLoading ? "…" : getInitials(user?.full_name || authUser?.fullName)}
               </div>
               <div>
                 <div className="font-medium">
@@ -219,6 +224,36 @@ export default function AccountSettingsPage() {
                     Verified sign-in email
                   </span>
                 ) : null}
+                <div className="mt-2">
+                  <label className="inline-flex cursor-pointer items-center rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted focus-within:ring-2 focus-within:ring-ring">
+                    {avatarSaving ? "Uploading photo…" : "Change profile photo"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      disabled={avatarSaving}
+                      onChange={async (event) => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = "";
+                        if (!file) return;
+                        if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+                          toast.error("Choose an image smaller than 5 MB.");
+                          return;
+                        }
+                        if (!authUser) return;
+                        setAvatarSaving(true);
+                        try {
+                          await authUser.setProfileImage({ file });
+                          toast.success("Profile photo updated");
+                        } catch {
+                          toast.error("Could not update profile photo.");
+                        } finally {
+                          setAvatarSaving(false);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
             <div className="space-y-4">
@@ -237,12 +272,12 @@ export default function AccountSettingsPage() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  readOnly
+                  placeholder="Your sign-in email"
+                  className="w-full cursor-not-allowed rounded-2xl border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground"
                 />
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  Used by CareerCraft. Manage your sign-in email through your identity provider.
+                  Your sign-in email is managed by your identity provider and can’t be changed here.
                 </p>
               </div>
               <div>
@@ -287,19 +322,6 @@ export default function AccountSettingsPage() {
           </motion.div>
 
           {/* Job preferences link */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <LogOut className="h-4 w-4" />
-              Log out
-            </div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              End this browser session and return to the home page.
-            </p>
-            <LiquidGlassButton tone="ghost" size="sm" onClick={handleSignOut}>
-              Log out
-            </LiquidGlassButton>
-          </motion.div>
-
           {/* Job preferences link */}
           <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
             <div className="mb-2 text-sm font-medium">Job preferences</div>

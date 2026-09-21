@@ -61,7 +61,7 @@ class UserPreferencesResponse(UserPreferencesSchema):
 
 
 class ModelSettingsCreate(BaseModel):
-    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim", "openrouter", "opencode"]
+    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim", "deepseek", "openrouter", "opencode"]
     api_key: str = Field(min_length=1, max_length=4096)
     model_name: str
     ollama_url: str | None = None
