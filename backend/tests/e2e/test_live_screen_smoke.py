@@ -14,6 +14,7 @@ API_URL (see conftest.py's `_auth_state` fixture, which skips otherwise).
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -22,12 +23,27 @@ from .screen_manifest import AUTHENTICATED_SCREENS
 
 WEB_URL = os.getenv("WEB_URL", "http://localhost:3000")
 
-# Statuses that always mean a screen is broken. 404 is handled separately:
-# a fresh account legitimately gets a 404 on a GET that probes a saved
-# result before one exists (e.g. /company/{name}/intel before any research
-# has run) — a non-GET 404 (a write hitting a route that should exist) is
-# still a failure.
+# Statuses that always mean a screen is broken.
 _ALWAYS_FAILS = {401, 403, 409, 422, 429}
+
+# GET endpoints that restore a previously saved result keyed by a natural
+# identifier (not an id issued by a prior write), where 404 legitimately
+# means "nothing saved yet" on a fresh account rather than a broken route.
+# Verified against backend/app/api/v1/company.py:62 + the company screen's
+# `apiClient.get(/company/${name}/intel)` (see CompanyResearchPage) — the
+# documented case (a fresh account 404s here before ever researching a
+# company). Any other GET 404 — including on these same screens for a
+# different path — still fails the test; extend this list only when you've
+# confirmed a screen does the same kind of "restore, else 404" probe.
+_PERMITTED_404_GET_PATTERNS = [
+    re.compile(r"/api/v1/company/[^/]+/intel(?:$|[/?])"),
+]
+
+
+def _is_permitted_404(response) -> bool:
+    if response.status != 404 or response.request.method != "GET":
+        return False
+    return any(pattern.search(response.url) for pattern in _PERMITTED_404_GET_PATTERNS)
 
 
 def _track_api_failures(page: Page) -> list[str]:
@@ -38,9 +54,12 @@ def _track_api_failures(page: Page) -> list[str]:
         if "/api/v1/" not in response.url:
             return
         status = response.status
-        is_failure = status in _ALWAYS_FAILS or status >= 500
-        if status == 404 and response.request.method != "GET":
+        if status in _ALWAYS_FAILS or status >= 500:
             is_failure = True
+        elif status == 404:
+            is_failure = not _is_permitted_404(response)
+        else:
+            is_failure = False
         if is_failure:
             try:
                 detail = response.text()[:500]
@@ -92,11 +111,18 @@ def test_authenticated_screen_loads_mobile(authenticated_mobile_page, screen, ar
     assert no_overflow, f"{screen.path} has horizontal overflow at 390x844"
 
     # "Reachable" = Playwright's actionability checks pass (visible, stable,
-    # enabled, receives pointer events) — a fixed header/footer covering the
-    # target raises "intercepts pointer events" on hover, same as on click,
-    # without triggering whatever the action actually does.
-    primary_action = page.get_by_role("button").or_(page.get_by_role("link")).first
-    if primary_action.count() > 0 and primary_action.is_visible():
-        primary_action.hover(timeout=5000)
+    # enabled, receives pointer events) — a fixed overlay covering the target
+    # raises "intercepts pointer events" on hover, same as on click, without
+    # triggering whatever the action actually does. The dominant real-world
+    # failure is a fixed bottom nav/footer covering a page's real CTA, which
+    # sits later in the DOM than header/nav chrome — so target the last
+    # visible interactive element, not the first (a logo link or hamburger
+    # menu, which tells us nothing about a bottom overlay).
+    candidates = page.get_by_role("button").or_(page.get_by_role("link"))
+    count = candidates.count()
+    if count:
+        primary_action = candidates.nth(count - 1)
+        if primary_action.is_visible():
+            primary_action.hover(timeout=5000)
 
     page.screenshot(path=artifact_dir / _screenshot_name(screen, "-mobile"), full_page=True)
