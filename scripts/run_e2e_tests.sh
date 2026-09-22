@@ -69,6 +69,12 @@ done
 export RUN_E2E=1
 log_pass "All required environment variables set"
 
+if [ "${RUN_AGENT_FAILURE_E2E:-0}" = "1" ]; then
+    log_info "Running authenticated agent failure regression suite..."
+    python -m pytest backend/tests/e2e/test_agent_failure_regression.py -m e2e -q
+    log_pass "Agent failure regression suite passed"
+fi
+
 # ── Step 2: Check Docker Stack Health ──────────────────────────────────────
 
 log_info "Checking backend health at http://localhost:8000/api/v1/health ..."
