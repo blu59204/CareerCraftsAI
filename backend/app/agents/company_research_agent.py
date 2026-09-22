@@ -33,6 +33,7 @@ from app.services.exa_service import ExaService
 from app.services.rag_service import (
     chunk_text,
     get_embedding_model,
+    get_embedding_provider,
     get_vector_store,
 )
 
@@ -300,7 +301,7 @@ async def embed_company_intel(
         for i, chunk in enumerate(chunks)
     ]
 
-    store = get_vector_store(user_id, "company", embeddings, provider=model_settings.provider)
+    store = get_vector_store(user_id, "company", embeddings, provider=get_embedding_provider(model_settings))
     store.add_documents(docs)
     return len(docs)
 

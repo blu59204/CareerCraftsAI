@@ -25,15 +25,16 @@ def test_chunk_text_produces_multiple_chunks():
     assert len(chunks) > 1
 
 
-def test_get_embedding_model_anthropic_falls_back_to_ollama():
+def test_get_embedding_model_anthropic_uses_configured_ollama(monkeypatch):
     from app.services.rag_service import get_embedding_model
     settings_mock = MagicMock()
     settings_mock.provider = "anthropic"
     settings_mock.ollama_url = None
+    monkeypatch.setattr("app.services.rag_service.app_settings.EMBEDDING_PROVIDER", "ollama")
     with patch("app.services.rag_service.OllamaEmbeddings") as mock_ollama:
         mock_ollama.return_value = MagicMock()
         get_embedding_model(settings_mock)
-        mock_ollama.assert_called_once_with(model="nomic-embed-text")
+        mock_ollama.assert_called_once_with(model="nomic-embed-text", base_url=None)
 
 
 def test_get_embedding_model_openai():

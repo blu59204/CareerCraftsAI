@@ -12,6 +12,10 @@ from app.core.security import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
+
+class EmbeddingUnavailable(RuntimeError):
+    pass
+
 # Embedding dimension per provider — must match model output
 EMBEDDING_DIMENSIONS: dict[str, int] = {
     "openai": 1536,    # text-embedding-3-small
@@ -52,7 +56,7 @@ def chunk_text(text: str) -> list[str]:
 
 
 def get_embedding_model(model_settings):
-    provider = model_settings.provider
+    provider = get_embedding_provider(model_settings)
     if provider == "openai":
         api_key = decrypt_api_key(model_settings.api_key_enc, app_settings.APP_SECRET_KEY)
         return OpenAIEmbeddings(model="text-embedding-3-small", api_key=api_key)
@@ -61,8 +65,20 @@ def get_embedding_model(model_settings):
         return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
     if provider == "ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url=model_settings.ollama_url)
-    # anthropic + nvidia_nim have no native embedding API — fall back to local nomic-embed-text
-    return OllamaEmbeddings(model="nomic-embed-text")
+    raise EmbeddingUnavailable(f"Unsupported embedding provider: {provider}")
+
+
+def get_embedding_provider(model_settings) -> str:
+    provider = model_settings.provider
+    if provider in {"openai", "google", "ollama"}:
+        return provider
+    fallback = app_settings.EMBEDDING_PROVIDER.strip().lower()
+    if fallback not in {"openai", "google", "ollama"}:
+        raise EmbeddingUnavailable(
+            f"Provider '{provider}' has no embeddings API and EMBEDDING_PROVIDER is unset. "
+            "Set EMBEDDING_PROVIDER to openai, google, or ollama."
+        )
+    return fallback
 
 
 def _psycopg_url() -> str:
@@ -131,7 +147,7 @@ def ingest_document(
         Document(page_content=chunk, metadata={**metadata, "chunk_index": i})
         for i, chunk in enumerate(chunks)
     ]
-    store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
+    store = get_vector_store(user_id, doc_type, embeddings, provider=get_embedding_provider(model_settings))
     store.add_documents(docs)
     _ensure_hnsw_index()
     return len(docs)
@@ -147,7 +163,7 @@ def retrieve(
     """Retrieve top-k relevant chunks."""
     try:
         embeddings = get_embedding_model(model_settings)
-        store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
+        store = get_vector_store(user_id, doc_type, embeddings, provider=get_embedding_provider(model_settings))
         return store.similarity_search(query, k=k)
     except Exception as exc:
         logger.warning("Vector retrieval failed for %s/%s: %s", user_id, doc_type, exc)
@@ -159,7 +175,7 @@ def retrieve(
                 return [
                     Document(
                         page_content=profile_text,
-                        metadata={"fallback": "raw_resume", "doc_type": doc_type},
+                        metadata={"fallback": "raw_resume", "rag_unavailable": True, "doc_type": doc_type},
                     )
                 ]
         return []

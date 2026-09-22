@@ -170,6 +170,7 @@ class Settings(BaseSettings):
     RAG_CHUNK_SIZE: int = 500
     RAG_CHUNK_OVERLAP: int = 50
     RAG_TOP_K: int = 5
+    EMBEDDING_PROVIDER: str = ""
 
     # ── Rate limiting ──────────────────────────────────────────────────
     RATE_LIMIT_DEFAULT: str = "60/minute"
