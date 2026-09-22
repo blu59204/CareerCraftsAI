@@ -33,5 +33,5 @@ export async function waitForAgentRun(runId: string, timeoutMs = 300_000): Promi
     if (TERMINAL_STATUSES.includes(data.status)) return data;
     await new Promise((resolve) => window.setTimeout(resolve, 1_500));
   }
-  throw new Error("Agent run did not finish within 300 seconds");
+  throw new Error(`Agent run did not finish within ${timeoutMs / 1000} seconds`);
 }
