@@ -109,15 +109,17 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             OUTPUT_SCHEMA,
         ).model_dump()
 
+        pending = {
+            "type": "interview_prep",
+            "target_role": target_role,
+            "company": company,
+            **prep_data,
+        }
         return {
             **state,
-            "status": "completed",
-            "result": {
-                "type": "interview_prep",
-                "target_role": target_role,
-                "company": company,
-                **prep_data,
-            },
+            "status": "awaiting_approval",
+            "pending_action": pending,
+            "result": None,
             "messages": state["messages"] + [
                 AIMessage(content=f"Interview prep ready for {target_role} at {company}.")
             ],

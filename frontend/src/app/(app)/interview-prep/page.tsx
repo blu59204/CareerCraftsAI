@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Mic,
@@ -312,7 +312,6 @@ function QuestionCard({ question, company, role }: { question: Question; company
 }
 
 export default function InterviewPrepPage() {
-  const qc = useQueryClient();
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [activeTab, setActiveTab] = useState<Category>("All");
@@ -332,6 +331,13 @@ export default function InterviewPrepPage() {
         .filter((r) => !reviewRunId || r.id === reviewRunId);
       return runs[0] ?? null;
     },
+    refetchInterval: reviewRunId
+      ? (query) => {
+          const status = query.state.data?.status;
+          return status === "awaiting_approval" || status === "completed" ? false : 2000;
+        }
+      : false,
+    refetchIntervalInBackground: true,
   });
 
   useEffect(() => {
@@ -416,7 +422,6 @@ export default function InterviewPrepPage() {
     onSuccess: (data) => {
       setReviewRunId(data.run_id);
       toast.success("Generating questions — check Agents page for results");
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["interview-prep-run"] }), 10000);
     },
     onError: (error) => {
       toast.error(getApiErrorMessage(error, "Agent unavailable — backend not connected"));
