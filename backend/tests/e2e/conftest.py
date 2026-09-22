@@ -277,6 +277,17 @@ def authenticated_page(_authenticated_context) -> Page:
     p.close()
 
 
+@pytest.fixture
+def authenticated_mobile_page(_authenticated_context) -> Page:
+    """Same authenticated session as `authenticated_page`, at a mobile
+    viewport (390x844) for responsive screen smoke coverage."""
+    p = _authenticated_context.new_page()
+    p.set_default_timeout(60000)
+    p.set_viewport_size({"width": 390, "height": 844})
+    yield p
+    p.close()
+
+
 # ── Screenshot Helper ──────────────────────────────────────────────────────
 
 def screenshot(page: Page, test_name: str, step: str) -> None:
