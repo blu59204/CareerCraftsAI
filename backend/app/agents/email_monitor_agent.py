@@ -86,7 +86,7 @@ def email_monitor_node(state: AgentState) -> AgentState:
     """Agent node that scans Gmail for job notifications and classifies them."""
     try:
         user_id = state["user_id"]
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured")
 

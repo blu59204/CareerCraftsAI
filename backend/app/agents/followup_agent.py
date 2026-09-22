@@ -149,7 +149,7 @@ def build_followup_draft(
         from app.core.model_router import _build_llm
         from app.core.sync_db import fetch_model_settings
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("no active model settings for user")
         llm = _build_llm(model_settings)

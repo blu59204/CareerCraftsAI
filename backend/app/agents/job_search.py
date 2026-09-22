@@ -1970,7 +1970,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
 
     try:
         emit(run_id, "thinking", {"step": "start", "message": "Searching job platforms..."})
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {**state, "status": "failed", "error": "missing: active model settings"}
 

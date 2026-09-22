@@ -191,7 +191,7 @@ def nl_search_node(state: AgentState) -> AgentState:
             }
 
         # Get LLM via model router
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 

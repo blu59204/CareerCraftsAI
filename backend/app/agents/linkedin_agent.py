@@ -39,7 +39,7 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
         target_role = state["context"].get("target_role", "software engineer")
         live_browser = bool(state["context"].get("live_browser", True))
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 

@@ -240,7 +240,7 @@ def salary_report_node(state: AgentState) -> AgentState:
             }
 
         # Get user's model settings for LLM routing (Requirement 3.7)
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,

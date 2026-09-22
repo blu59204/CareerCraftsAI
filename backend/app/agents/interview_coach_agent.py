@@ -165,7 +165,7 @@ def start_session_node(state: AgentState) -> AgentState:
                 ),
             }
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,
@@ -312,7 +312,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
                 ),
             }
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,

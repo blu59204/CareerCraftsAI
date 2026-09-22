@@ -101,7 +101,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
 
     try:
         emit(run_id, "thinking", {"step": "start", "message": "Retrieving resume context from RAG..."})
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
