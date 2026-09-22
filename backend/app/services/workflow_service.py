@@ -23,6 +23,16 @@ from app.models.db import AgentRun, ApplicationAttempt, User, WorkflowTask
 # (user, job_application) — see docs on Task 2 idempotent submission.
 ACTIVE_SUBMISSION_STATES = {"submitting", "submitted", "verified"}
 
+AGENT_TIMEOUTS: dict[str, int] = {
+    "auto_apply": 300,
+    "job_search": 120,
+    "company_research": 120,
+    "cover_letter": 90,
+    "salary_intelligence": 90,
+    "resume_optimize": 60,
+    "interview_coach": 30,
+}
+
 DRAFT_TYPES = {
     "resume_ready", "cover_letter_review", "linkedin_edits", "interview_prep",
     "salary_report_review", "interview_session_started", "answer_evaluation",
@@ -144,6 +154,25 @@ async def recover_expired_tasks() -> None:
                 if attempt:
                     attempt.state = "outcome_unknown"
                     attempt.last_error = task.error
+
+        approval_cutoff = now - timedelta(hours=48)
+        abandoned = (await db.execute(select(AgentRun).where(
+            AgentRun.status == "awaiting_approval",
+            AgentRun.started_at < approval_cutoff,
+        ).with_for_update(skip_locked=True).limit(50))).scalars().all()
+        for run in abandoned:
+            run.status = "expired"
+            run.output = {"error": "Approval expired after 48 hours"}
+            run.completed_at = now
+
+        for run in (await db.execute(select(AgentRun).where(
+            AgentRun.status == "running",
+        ).with_for_update(skip_locked=True).limit(50))).scalars().all():
+            timeout = AGENT_TIMEOUTS.get(run.agent_type, settings.AGENT_DEFAULT_TIMEOUT_S) + 60
+            if run.started_at and (now - run.started_at).total_seconds() > timeout:
+                run.status = "failed"
+                run.output = {"error": "Worker did not report completion (timeout)"}
+                run.completed_at = now
         await db.commit()
 
 
