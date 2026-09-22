@@ -238,6 +238,35 @@ async def test_capacity_retry_does_not_resurrect_cancelled_run(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_empty_job_search_failure_is_persisted(monkeypatch):
+    import app.services.workflow_service as workflow_service
+    from app.agents.job_search import job_search_agent_node
+
+    task, run = _make_queued_pair("execute")
+    run.agent_type = "job_search"
+    run.input = {"context": {"titles": [], "search_query": None}}
+    fake = _WorkflowFakeDB(task, run)
+    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    monkeypatch.setattr(workflow_service, "publish", lambda *args: None)
+
+    async def execute_agent(agent_run):
+        return job_search_agent_node({
+            "user_id": str(agent_run.user_id),
+            "run_id": str(agent_run.id),
+            "task_type": "job_search",
+            "context": agent_run.input["context"],
+            "status": "running",
+        })
+
+    monkeypatch.setattr(workflow_service, "execute_agent", execute_agent)
+    await workflow_service.execute_task(str(task.id))
+
+    assert run.status == "failed"
+    assert run.output["error"] == "missing: titles (or search_query)"
+    assert task.status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_browser_provisioning_session_is_not_usable():
     from datetime import datetime, timedelta, timezone
 
