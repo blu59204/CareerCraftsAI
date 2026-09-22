@@ -553,6 +553,19 @@ async def test_continue_action_rejects_malformed_search_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_continue_action_marks_linkedin_outreach_reviewed():
+    from unittest.mock import MagicMock
+
+    from app.services.workflow_service import continue_action
+
+    run = MagicMock()
+    result = await continue_action(run, {"type": "linkedin_outreach", "messages": []})
+
+    assert result["status"] == "completed"
+    assert result["result"]["reviewed"] is True
+
+
+@pytest.mark.asyncio
 async def test_auto_apply_approval_missing_parent_fails_closed(monkeypatch):
     from unittest.mock import MagicMock
 

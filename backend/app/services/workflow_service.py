@@ -36,7 +36,7 @@ AGENT_TIMEOUTS: dict[str, int] = {
 DRAFT_TYPES = {
     "resume_ready", "cover_letter_review", "linkedin_edits", "interview_prep",
     "salary_report_review", "interview_session_started", "answer_evaluation",
-    "company_research", "email_draft", "review_application_draft",
+    "company_research", "email_draft", "review_application_draft", "linkedin_outreach",
 }
 ACTION_TYPES = DRAFT_TYPES | {
     "send_email", "search_confirmation", "auto_apply_approval", "browser_prepare",
