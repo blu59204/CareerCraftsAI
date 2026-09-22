@@ -1966,13 +1966,13 @@ def job_search_agent_node(state: AgentState) -> AgentState:
     max_results = min(int(ctx.get("max_results", 10)), 25)
 
     if not titles:
-        return {**state, "status": "error", "error": "missing: titles (or search_query)"}
+        return {**state, "status": "failed", "error": "missing: titles (or search_query)"}
 
     try:
         emit(run_id, "thinking", {"step": "start", "message": "Searching job platforms..."})
         model_settings = fetch_model_settings(user_id)
         if not model_settings:
-            return {**state, "status": "error", "error": "missing: active model settings"}
+            return {**state, "status": "failed", "error": "missing: active model settings"}
 
         try:
             profile = fetch_user_profile_text(user_id) or ""
