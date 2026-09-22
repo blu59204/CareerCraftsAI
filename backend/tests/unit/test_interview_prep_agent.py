@@ -1,10 +1,23 @@
 import json
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
 
 from app.agents.state import AgentState
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+INTERVIEW_PREP_PAGE = (
+    REPO_ROOT / "frontend" / "src" / "app" / "(app)" / "interview-prep" / "page.tsx"
+)
+
+
+def test_interview_prep_page_has_no_mock_interview_questions():
+    """Mock interview practice must use the generated plan's questions."""
+    source = INTERVIEW_PREP_PAGE.read_text(encoding="utf-8")
+
+    assert "MOCK_INTERVIEW_QUESTIONS" not in source
 
 
 def test_interview_prep_pauses_with_generated_payload_for_review(mock_llm):

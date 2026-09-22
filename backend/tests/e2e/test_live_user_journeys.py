@@ -145,3 +145,43 @@ def test_interview_coach_start_answer_and_next_question(authenticated_page):
     assert next_question_visible or session_complete_visible, (
         "expected either question 2 or the session summary after answering question 1"
     )
+
+
+def test_email_inbox_cleanup_never_shows_fake_sender(authenticated_page):
+    """Inbox Cleanup must render live Gmail metadata (or an explicit
+    connect/empty state) — never the removed hardcoded INBOX_EMAILS sample
+    data (LinkedIn/AWS/GitHub/... preview senders) or its
+    "Preview only — sample data" disclaimer."""
+    page = authenticated_page
+    page.goto(f"{WEB_URL}/email")
+    page.get_by_role("button", name="Inbox", exact=False).click()
+
+    expect(page.get_by_text("Preview only", exact=False)).to_have_count(0)
+    for fake_sender in ["AWS", "Medium Daily", "Glassdoor", "Shopify", "Twitter/X"]:
+        expect(page.get_by_text(fake_sender, exact=True)).to_have_count(0)
+
+
+def test_interview_prep_practice_uses_generated_plan_question(authenticated_page):
+    """Mock interview practice must start from the generated plan's
+    questions array, not the removed MOCK_INTERVIEW_QUESTIONS constant —
+    and must stay disabled with "Generate an interview plan first" until a
+    plan exists."""
+    page = authenticated_page
+    page.goto(f"{WEB_URL}/interview-prep")
+
+    start_button = page.get_by_role("button", name="Start mock interview")
+    expect(start_button).to_be_disabled()
+
+    page.get_by_placeholder("Role").fill("Senior Backend Engineer")
+    page.get_by_role("button", name="Generate questions").click()
+
+    expect(page.get_by_text("AI-generated", exact=False)).to_be_visible(timeout=180_000)
+    expect(start_button).to_be_enabled()
+
+    first_question = page.locator("p.text-sm.font-medium.leading-relaxed").first.inner_text()
+
+    start_button.click()
+    modal_question = page.locator(".rounded-2xl.bg-primary\\/5 p").first.inner_text()
+    assert modal_question.strip() == first_question.strip(), (
+        "expected the mock interview's first question to come from the generated plan"
+    )

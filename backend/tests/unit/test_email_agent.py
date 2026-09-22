@@ -1,10 +1,14 @@
 import json
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from langchain_core.messages import HumanMessage
 
 from app.agents.state import AgentState
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+EMAIL_PAGE = REPO_ROOT / "frontend" / "src" / "app" / "(app)" / "email" / "page.tsx"
 
 
 def make_state() -> AgentState:
@@ -83,3 +87,11 @@ def test_email_agent_fails_without_fabricating_a_draft():
 
     assert result["status"] == "failed"
     assert "Email drafting failed" in result["error"]
+
+
+def test_email_page_has_no_fake_inbox_cleanup_data():
+    """Inbox Cleanup must be Gmail-backed, not the old fabricated preview."""
+    source = EMAIL_PAGE.read_text(encoding="utf-8")
+
+    assert "Preview only — sample data" not in source
+    assert "INBOX_EMAILS" not in source

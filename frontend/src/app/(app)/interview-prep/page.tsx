@@ -81,14 +81,6 @@ const CATEGORY_CONFIG: Record<Exclude<Category, "All">, string> = {
   "Company-Specific": "bg-warning/15 text-warning border-warning/30",
 };
 
-const MOCK_INTERVIEW_QUESTIONS = [
-  "Tell me about yourself.",
-  "What's your greatest technical challenge you've overcome?",
-  "Where do you see yourself in 5 years?",
-  "Describe a conflict with a teammate and how you resolved it.",
-  "What excites you most about this role?",
-];
-
 function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
     <div className="space-y-1.5">
@@ -108,13 +100,19 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-function MockInterviewModal({ onClose }: { onClose: () => void }) {
+function MockInterviewModal({
+  questions,
+  onClose,
+}: {
+  questions: string[];
+  onClose: () => void;
+}) {
   const [step, setStep] = useState(0);
   const [answer, setAnswer] = useState("");
   const [answers, setAnswers] = useState<string[]>([]);
   const [done, setDone] = useState(false);
 
-  const currentQ = MOCK_INTERVIEW_QUESTIONS[step];
+  const currentQ = questions[step];
 
   const handleNext = () => {
     if (!answer.trim()) {
@@ -123,7 +121,7 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
     }
     setAnswers((prev) => [...prev, answer]);
     setAnswer("");
-    if (step + 1 >= MOCK_INTERVIEW_QUESTIONS.length) {
+    if (step + 1 >= questions.length) {
       setDone(true);
     } else {
       setStep((s) => s + 1);
@@ -170,9 +168,9 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Question {step + 1} of {MOCK_INTERVIEW_QUESTIONS.length}</span>
+              <span>Question {step + 1} of {questions.length}</span>
               <div className="flex gap-1">
-                {MOCK_INTERVIEW_QUESTIONS.map((_, i) => (
+                {questions.map((_, i) => (
                   <span
                     key={i}
                     className={`h-1.5 w-5 rounded-full transition-colors ${i <= step ? "bg-primary" : "bg-muted"}`}
@@ -197,7 +195,7 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
             />
             <div className="flex gap-2">
               <LiquidGlassButton tone="primary" size="sm" className="flex-1" onClick={handleNext}>
-                {step + 1 >= MOCK_INTERVIEW_QUESTIONS.length ? "Finish" : "Next question"}
+                {step + 1 >= questions.length ? "Finish" : "Next question"}
               </LiquidGlassButton>
               <LiquidGlassButton tone="ghost" size="sm" onClick={onClose}>
                 Exit
@@ -460,10 +458,17 @@ export default function InterviewPrepPage() {
           description="Generate role-specific questions, rehearse out loud, and turn STAR stories into interview-ready answers."
           actions={
           <div className="flex shrink-0 flex-wrap gap-2">
-            <LiquidGlassButton tone="ghost" size="sm" onClick={() => setMockOpen(true)}>
-              <Mic className="h-4 w-4" />
-              Mock interview
-            </LiquidGlassButton>
+            <span title={aiQuestions.length === 0 ? "Generate an interview plan first" : undefined}>
+              <LiquidGlassButton
+                tone="ghost"
+                size="sm"
+                onClick={() => setMockOpen(true)}
+                disabled={aiQuestions.length === 0}
+              >
+                <Mic className="h-4 w-4" />
+                Mock interview
+              </LiquidGlassButton>
+            </span>
             <LiquidGlassButton
               tone="primary"
               size="sm"
@@ -801,22 +806,33 @@ export default function InterviewPrepPage() {
               <p className="text-sm text-muted-foreground max-w-md">
                 AI will ask questions and evaluate your answers in real time — scored on clarity, structure, and depth.
               </p>
+              {aiQuestions.length === 0 && (
+                <p className="text-xs text-warning">Generate an interview plan first</p>
+              )}
             </div>
-            <LiquidGlassButton
-              tone="primary"
-              size="lg"
-              className="shrink-0 gap-2 sm:w-auto w-full"
-              onClick={() => setMockOpen(true)}
-            >
-              <Play className="h-4 w-4" />
-              Start mock interview
-            </LiquidGlassButton>
+            <span title={aiQuestions.length === 0 ? "Generate an interview plan first" : undefined}>
+              <LiquidGlassButton
+                tone="primary"
+                size="lg"
+                className="shrink-0 gap-2 sm:w-auto w-full"
+                onClick={() => setMockOpen(true)}
+                disabled={aiQuestions.length === 0}
+              >
+                <Play className="h-4 w-4" />
+                Start mock interview
+              </LiquidGlassButton>
+            </span>
           </div>
         </motion.div>
       </motion.div>
 
       <AnimatePresence>
-        {mockOpen && <MockInterviewModal onClose={() => setMockOpen(false)} />}
+        {mockOpen && (
+          <MockInterviewModal
+            questions={aiQuestions.map((q) => q.text)}
+            onClose={() => setMockOpen(false)}
+          />
+        )}
       </AnimatePresence>
     </>
   );

@@ -188,6 +188,85 @@ async def compose_email(
     }
 
 
+class InboxCleanupEmail(BaseModel):
+    id: str
+    from_: str = Field(alias="from")
+    subject: str
+    date: str
+    unsubscribe_url: str | None = None
+
+
+class InboxCleanupArchiveRequest(BaseModel):
+    message_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+def _header_value(headers: list[dict], name: str) -> str:
+    for header in headers:
+        if isinstance(header, dict) and header.get("name", "").lower() == name.lower():
+            value = header.get("value")
+            return value if isinstance(value, str) else ""
+    return ""
+
+
+def _first_https_unsubscribe_url(list_unsubscribe: str) -> str | None:
+    # Typical raw header: "<mailto:x@y.com>, <https://example.com/unsub>"
+    for token in list_unsubscribe.split(","):
+        candidate = token.strip().strip("<>").strip()
+        if candidate.lower().startswith("https://"):
+            return candidate
+    return None
+
+
+@router.get("/inbox-cleanup", response_model=list[InboxCleanupEmail])
+@limiter.limit("10/minute")
+async def list_inbox_cleanup(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.gmail_service import GmailMCPClient
+
+    client = GmailMCPClient(str(current_user.id))
+    messages = client.search_threads(
+        "category:promotions OR category:updates newer_than:30d", max_results=25
+    )
+
+    results: list[InboxCleanupEmail] = []
+    for message in messages:
+        message_id = message.get("id") if isinstance(message, dict) else None
+        if not message_id:
+            continue
+        metadata = client.get_message_metadata(message_id)
+        payload = metadata.get("payload") if isinstance(metadata, dict) else None
+        headers = payload.get("headers", []) if isinstance(payload, dict) else []
+        list_unsubscribe = _header_value(headers, "List-Unsubscribe")
+        results.append(
+            InboxCleanupEmail(
+                id=message_id,
+                **{"from": _header_value(headers, "From")},
+                subject=_header_value(headers, "Subject"),
+                date=_header_value(headers, "Date"),
+                unsubscribe_url=_first_https_unsubscribe_url(list_unsubscribe)
+                if list_unsubscribe
+                else None,
+            )
+        )
+    return results
+
+
+@router.post("/inbox-cleanup/archive", response_model=dict)
+@limiter.limit("10/minute")
+async def archive_inbox_cleanup(
+    request: Request,
+    payload: InboxCleanupArchiveRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.gmail_service import GmailMCPClient
+
+    client = GmailMCPClient(str(current_user.id))
+    archived = sum(1 for message_id in payload.message_ids if client.archive_message(message_id))
+    return {"archived": archived}
+
+
 @router.post("/approve/{run_id}", response_model=dict)
 async def approve_and_send(
     run_id: str,
