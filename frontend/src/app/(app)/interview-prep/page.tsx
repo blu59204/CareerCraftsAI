@@ -325,6 +325,10 @@ export default function InterviewPrepPage() {
   const { data: lastRun } = useQuery({
     queryKey: ["interview-prep-run", reviewRunId],
     queryFn: async () => {
+      if (reviewRunId) {
+        const { data } = await apiClient.get(`/agents/runs/${reviewRunId}`);
+        return data as { id: string; agent_type: string; status: string; output: Record<string, unknown> | null };
+      }
       const { data } = await apiClient.get("/agents/runs?limit=50");
       const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { id: string; agent_type: string; status: string; output: Record<string, unknown> | null }[])
         .filter((r) => r.agent_type === "interview_prep" && ["awaiting_approval", "completed"].includes(r.status))

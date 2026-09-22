@@ -10,3 +10,5 @@ Implemented the RC-5 frontend fix for inline review pages.
 Verification: `npm run type-check` passed; `git diff --check` passed. No frontend test harness exists.
 
 Follow-up fix: interview prep now returns an `awaiting_approval` checkpoint with its generated payload in `pending_action`; the frontend polls the exact run ID until the checkpoint or completed state. Added `backend/tests/unit/test_interview_prep_agent.py` (1 passed).
+
+The exact review run is now fetched through `/agents/runs/{reviewRunId}` while polling queued/running states.
