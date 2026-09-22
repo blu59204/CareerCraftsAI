@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.harness import get_harness
 from app.agents.interview_coach_agent import compute_session_summary
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import apply_harness_result
+from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR, apply_harness_result
 from app.models.db import AgentRun, InterviewSession, User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/interview", tags=["interview"])
 
@@ -64,6 +67,9 @@ async def start_session(
         raise HTTPException(status_code=504, detail="Interview session start timed out") from None
     output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
+    if agent_run.status == "failed":
+        logger.warning("Interview session start failed for run %s: %s", run_id, harness_result.get("error"))
+        raise HTTPException(status_code=502, detail=CLIENT_SAFE_AGENT_ERROR)
     questions = output.get("questions") or []
     question = questions[0] if questions else None
     return {
@@ -134,6 +140,9 @@ async def submit_answer(
 
     output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
+    if agent_run.status == "failed":
+        logger.warning("Answer evaluation failed for run %s: %s", run_id, harness_result.get("error"))
+        raise HTTPException(status_code=502, detail=CLIENT_SAFE_AGENT_ERROR)
 
     # Re-fetch the session (already own it, per the IDOR check above) to read
     # the questions/scores the agent's sync-DB helper just updated, so we can

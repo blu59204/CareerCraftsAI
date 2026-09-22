@@ -295,3 +295,49 @@ async def test_interview_session_contract_start_then_answer_to_completion(monkey
                 assert second_answer_call.kwargs["context"]["question_index"] == 1
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_start_session_returns_502_not_200_when_harness_run_fails(monkeypatch):
+    """A failed harness run must not surface as an HTTP 200 with a malformed
+    body (no `question` key) — the frontend's mutation onSuccess handler
+    assumes a successful contract and would otherwise mishandle it. The
+    route must raise instead, so the client's onError path fires."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.v1.deps import get_current_user, get_db
+    from app.main import app
+
+    user_id = uuid.uuid4()
+    monkeypatch.setattr(
+        "app.main.verify_token",
+        lambda token: {"sub": str(user_id), "email": "a@b.com"},
+    )
+
+    async def _fake_user():
+        return MagicMock(id=user_id, email="a@b.com")
+
+    fake_db = _FakeInterviewDB()
+
+    async def _fake_db():
+        return fake_db
+
+    fake_harness = MagicMock()
+    fake_harness.run = AsyncMock(
+        return_value={"status": "failed", "error": "provider timeout"}
+    )
+
+    app.dependency_overrides[get_current_user] = _fake_user
+    app.dependency_overrides[get_db] = _fake_db
+    try:
+        with patch("app.api.v1.interview.get_harness", AsyncMock(return_value=fake_harness)):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/api/v1/interview/session/start",
+                    json={"role": "Python Engineer", "company": "Stripe"},
+                    headers={"Authorization": "Bearer test-token"},
+                )
+                assert response.status_code == 502, response.text
+                assert "question" not in response.json()
+    finally:
+        app.dependency_overrides.clear()
