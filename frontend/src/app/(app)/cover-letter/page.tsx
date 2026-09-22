@@ -35,6 +35,7 @@ export default function CoverLetterPage() {
       });
       if (data.content) {
         setLetter(data.content);
+        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
         toast.success("Cover letter generated");
       } else {
         toast.error("No cover letter returned — check your AI model settings");

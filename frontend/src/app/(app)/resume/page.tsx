@@ -514,7 +514,7 @@ export default function ResumePage() {
       });
       return data as OptimizeResult;
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       if (data.resume_markdown) setResumePreviewText(data.resume_markdown);
       if (data.pdf_document_id) setLastDocId(data.pdf_document_id);
       setAiChanges(data.changes_made ?? []);
@@ -522,6 +522,9 @@ export default function ResumePage() {
       setLastAtsScore(data.ats_score ?? null);
       setLastMissingKeywords(data.keywords_missing ?? []);
       setLastWarnings(data.warnings ?? []);
+      if (data.resume_markdown && data.run_id) {
+        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
+      }
       if (data.warnings?.length) toast.warning(data.warnings[0]);
       else toast.success(data.ats_score != null ? `Resume tailored! ATS score ${data.ats_score}.` : "Resume tailored.");
       queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
@@ -654,6 +657,7 @@ export default function ResumePage() {
 
       if (data.content) {
         setCoverLetter(data.content);
+        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
         toast.success("Cover letter generated");
       } else {
         toast.error("No cover letter content returned — check model settings");

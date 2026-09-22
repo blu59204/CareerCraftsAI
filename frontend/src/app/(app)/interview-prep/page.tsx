@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -320,16 +320,30 @@ export default function InterviewPrepPage() {
   const [mockOpen, setMockOpen] = useState(false);
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [reviewRunId, setReviewRunId] = useState<string | null>(null);
+  const [approvedRunId, setApprovedRunId] = useState<string | null>(null);
 
   const { data: lastRun } = useQuery({
-    queryKey: ["interview-prep-run"],
+    queryKey: ["interview-prep-run", reviewRunId],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=50");
-      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { agent_type: string; status: string; output: Record<string, unknown> | null }[])
-        .filter((r) => r.agent_type === "interview_prep" && r.status === "completed");
+      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { id: string; agent_type: string; status: string; output: Record<string, unknown> | null }[])
+        .filter((r) => r.agent_type === "interview_prep" && ["awaiting_approval", "completed"].includes(r.status))
+        .filter((r) => !reviewRunId || r.id === reviewRunId);
       return runs[0] ?? null;
     },
   });
+
+  useEffect(() => {
+    if (!reviewRunId || approvedRunId === reviewRunId || lastRun?.id !== reviewRunId || lastRun.status !== "awaiting_approval" || !lastRun.output) return;
+    setApprovedRunId(reviewRunId);
+    apiClient.post(`/agents/${reviewRunId}/approve`, { approved: true })
+      .then(() => toast.success("Interview prep generated"))
+      .catch(() => {
+        setApprovedRunId(null);
+        toast.error("Interview prep approval failed");
+      });
+  }, [approvedRunId, lastRun, reviewRunId]);
 
   // Map agent output fields to Question[] — handles both old `questions` and new split fields
   const aiQuestions: Question[] = (() => {
@@ -387,8 +401,8 @@ export default function InterviewPrepPage() {
     activeTab === "All" ? allQuestions : allQuestions.filter((q) => q.category === activeTab);
 
   const generateMutation = useMutation({
-    mutationFn: () =>
-      apiClient.post("/agents/run", {
+    mutationFn: async (): Promise<{ run_id: string; status: string }> => {
+      const { data } = await apiClient.post("/agents/run", {
         task_type: "interview_prep",
         context: {
           mode: "generate",
@@ -396,8 +410,11 @@ export default function InterviewPrepPage() {
           role: role || "Software Engineer",
           count: 8,
         },
-      }),
-    onSuccess: () => {
+      });
+      return data;
+    },
+    onSuccess: (data) => {
+      setReviewRunId(data.run_id);
       toast.success("Generating questions — check Agents page for results");
       setTimeout(() => qc.invalidateQueries({ queryKey: ["interview-prep-run"] }), 10000);
     },
