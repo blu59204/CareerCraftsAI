@@ -338,7 +338,7 @@ export default function InterviewPrepPage() {
     refetchInterval: reviewRunId
       ? (query) => {
           const status = query.state.data?.status;
-          return status === "awaiting_approval" || status === "completed" ? false : 2000;
+          return status === "completed" ? false : 2000;
         }
       : false,
     refetchIntervalInBackground: true,

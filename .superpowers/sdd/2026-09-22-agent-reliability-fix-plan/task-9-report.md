@@ -12,3 +12,5 @@ Verification: `npm run type-check` passed; `git diff --check` passed. No fronten
 Follow-up fix: interview prep now returns an `awaiting_approval` checkpoint with its generated payload in `pending_action`; the frontend polls the exact run ID until the checkpoint or completed state. Added `backend/tests/unit/test_interview_prep_agent.py` (1 passed).
 
 The exact review run is now fetched through `/agents/runs/{reviewRunId}` while polling queued/running states.
+
+Polling now continues through `awaiting_approval` until the approved run reaches `completed`.
