@@ -45,8 +45,10 @@ async def test_real_async_graph_runner_preserves_approval():
     graph.add_edge(START, "apply")
     graph.add_edge("apply", END)
     pending = {"requires_approval": True, "type": "auto_apply_approval", "actions_pending": []}
+    model_settings = object()
+    pipeline = AsyncMock(return_value=pending)
     with (
-        patch("app.agents.orchestrator.run_auto_apply_pipeline", AsyncMock(return_value=pending)),
+        patch("app.agents.orchestrator.run_auto_apply_pipeline", pipeline),
         patch("app.agents.orchestrator.emit"),
     ):
         result = await graph.compile().ainvoke(
@@ -56,10 +58,12 @@ async def test_real_async_graph_runner_preserves_approval():
                 "task_type": "auto_apply",
                 "status": "running",
                 "context": {"_durable": True},
+                "model_settings": model_settings,
             }
         )
     assert result["status"] == "awaiting_approval"
     assert result["pending_action"] == pending
+    assert pipeline.await_args.kwargs["model_settings"] is model_settings
 
 
 @pytest.mark.parametrize(

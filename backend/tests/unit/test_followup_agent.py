@@ -100,6 +100,21 @@ async def test_schedule_followups_delay_derived_from_applied_at_not_now():
     assert 0 <= day5_delay_ms <= one_day_ms + 5000
 
 
+def test_build_followup_draft_uses_db_settings_fallback():
+    from app.agents.followup_agent import build_followup_draft
+
+    model_settings = object()
+    parsed = types.SimpleNamespace(subject="Checking in", body="Hello")
+    with patch("app.core.sync_db.fetch_model_settings", return_value=model_settings) as fetch, \
+         patch("app.core.model_router._build_llm", return_value=object()) as build_llm, \
+         patch("app.agents._llm_json.call_llm_json", return_value=parsed):
+        result = build_followup_draft("user", "Acme", "Engineer", None, 5)
+
+    assert result == {"subject": "Checking in", "body": "Hello"}
+    fetch.assert_called_once_with("user")
+    build_llm.assert_called_once_with(model_settings)
+
+
 # ---------------------------------------------------------------------------
 # run_followup (execution side) — backend/app/api/internal.py
 # ---------------------------------------------------------------------------

@@ -96,6 +96,7 @@ async def run_auto_apply_pipeline(
     linkedin_credentials: dict | None = None,
     live_browser: bool = False,
     run_id: str | None = None,
+    model_settings: Any | None = None,
 ) -> dict[str, Any]:
     """Run the fully automated job application pipeline.
 
@@ -150,7 +151,7 @@ async def run_auto_apply_pipeline(
 
     # ── Step 2: Score jobs against user profile ─────────────────────
     logger.info("[AutoApply] Step 2: Scoring %d jobs", len(jobs))
-    model_settings = fetch_model_settings(user_id)
+    model_settings = model_settings or fetch_model_settings(user_id)
     if not model_settings:
         results["errors"].append("No AI model configured — add API key in Settings")
         return results
