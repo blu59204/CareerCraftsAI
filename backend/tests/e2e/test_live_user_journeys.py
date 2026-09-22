@@ -49,6 +49,21 @@ def test_company_research_renders_full_intel(authenticated_page):
     # Timestamp rendered from the agent's researched_at field.
     expect(page.get_by_text("Last researched:", exact=False)).to_be_visible()
 
+    # Source warnings ("Partial data - failed sources: ...") only render when
+    # one or more of the agent's 4 sources (website/news/tech_stack/glassdoor)
+    # failed for this particular run — a live "Example Corp" search may hit
+    # all 4 sources cleanly, so asserting this is always visible would make
+    # the test flaky. Assert on it conditionally instead: when the DOM shows
+    # the warning, verify it's actually visible (not just present-but-hidden)
+    # and non-empty, so the source-warnings render path stays covered on the
+    # runs where it does fire.
+    partial_data_warning = page.get_by_text("Partial data - failed sources:", exact=False)
+    if partial_data_warning.count() > 0:
+        expect(partial_data_warning).to_be_visible()
+        assert partial_data_warning.inner_text().strip() != "Partial data - failed sources:", (
+            "expected at least one failed source name after the warning prefix"
+        )
+
     # Force Refresh must exist and re-run with force_refresh: true — it must
     # not silently reuse stale data forever.
     expect(page.get_by_role("button", name="Force Refresh")).to_be_visible()
