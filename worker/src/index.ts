@@ -1,5 +1,7 @@
 import { Worker, Queue, ConnectionOptions } from "bullmq";
+import axios from "axios";
 import IORedis from "ioredis";
+import { BACKEND_URL, INTERNAL_SECRET } from "./config";
 import { processJobSearch } from "./processors/job-search.processor";
 import { processFollowupEmail } from "./processors/followup.processor";
 import { processStatusCheck } from "./processors/status-check.processor";
@@ -37,6 +39,17 @@ async function main(): Promise<void> {
     process.exit(1);
   } finally {
     probe.disconnect();
+  }
+
+  try {
+    await axios.get(`${BACKEND_URL}/internal/health`, {
+      headers: { "x-internal-secret": INTERNAL_SECRET },
+      timeout: 10_000,
+    });
+  } catch (err) {
+    const message = axios.isAxiosError(err) ? err.message : String(err);
+    console.error(`[worker] backend authentication failed at ${BACKEND_URL}: ${message}`);
+    process.exit(1);
   }
 
   const queue = new Queue("agent-queue", { connection });

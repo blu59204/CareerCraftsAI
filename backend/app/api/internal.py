@@ -27,6 +27,11 @@ def _verify_secret(x_internal_secret: str = Header(...)) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
+@router.get("/health", dependencies=[Depends(_verify_secret)])
+async def internal_health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 class JobSearchTrigger(BaseModel):
     user_id: str
     run_id: str
