@@ -747,16 +747,30 @@ def test_dashboard_reload_restores_in_progress_agent_run(authenticated_page):
     — mounted globally in AppShell off the `localStorage`-persisted
     `activeRunId` (frontend/src/store/agentStore.ts) — whose `reconcile()`
     calls GET /agents/runs/{id} on mount and repopulates the in-memory
-    zustand `runs` store, which a full browser reload always wipes. That is
-    the mechanism this test exercises: launch a run through /agents (the
-    only surface that calls `initRun`/`setActiveRun`, same as the
-    AutoApply/EmailMonitor tests above), confirm the client actually shows
-    live status for it, hard-reload, and confirm the *same* run's status is
-    still shown afterward — proving the store was rebuilt from the server,
-    not that a list endpoint happens to contain a DB row (a plain
-    GET /users/me/stats list would pass that check whether or not reload
-    restoration works at all, which is why /dashboard was the wrong page
-    for this)."""
+    zustand `runs` store, which a full browser reload always wipes.
+
+    Critically, `useAgentStream`'s mount effect also does this *synchronously,
+    before `reconcile()`'s GET resolves* (sse.ts:19):
+    `if (!useAgentStore.getState().runs[id]) useAgentStore.getState().initRun(id)`.
+    `initRun` unconditionally sets a synthetic `status: "running"` placeholder
+    whenever the store has no entry for the id — which is always true right
+    after a reload. So asserting a post-reload status of "running" (or
+    "queued") proves nothing: it would read identically whether `reconcile()`
+    actually succeeds, silently fails (it swallows all errors — sse.ts:35),
+    or is deleted outright. Only `awaiting_approval` distinguishes a real
+    restore from the placeholder, since `initRun` never produces that status
+    and `setCheckpoint` (which does) is only ever called from a live
+    `reconcile()`/SSE response.
+
+    So this drives Salary via the generic /agents launcher (the same surface
+    the AutoApply/EmailMonitor tests above use — it calls `initRun`/
+    `setActiveRun` on `POST /agents/run` success) all the way to its
+    `awaiting_approval` HITL checkpoint *before* reloading, then reloads and
+    asserts the checkpoint UI (`ApprovalModal`'s "Review Required" dialog,
+    which only renders when `run.status === "awaiting_approval" &&
+    run.pendingAction`) is still present afterward — a state the synthetic
+    placeholder can never produce. The gate is never touched (no
+    Approve/Discard click)."""
     page = authenticated_page
 
     run_id_holder: dict[str, str] = {}
@@ -773,37 +787,52 @@ def test_dashboard_reload_restores_in_progress_agent_run(authenticated_page):
     page.on("response", _capture_run_id)
 
     page.goto(f"{WEB_URL}/agents")
-    page.get_by_role("button", name="Company", exact=False).click()
+    page.get_by_role("button", name="Salary", exact=False).click()
     page.get_by_role("button", name="Run agent").click()
 
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline and "id" not in run_id_holder:
         page.wait_for_timeout(500)
-    assert "id" in run_id_holder, "expected /agents/run to return a run_id for the Company Research run"
+    assert "id" in run_id_holder, "expected /agents/run to return a run_id for the Salary run"
     run_id = run_id_holder["id"]
 
-    # Confirm the run is actually live in the real client store (driven by
-    # useAgentStream, not just a fresh mutation response) before reloading —
-    # this is what makes the reload below a genuine restoration check.
+    # Wait for the real awaiting_approval checkpoint — not just any
+    # in-flight status — before reloading. This can only appear once the
+    # backend has actually paused the run at its HITL gate and the client
+    # has received it (via SSE `checkpoint` or `reconcile()`), never from
+    # the synthetic `initRun` placeholder described above.
+    expect(page.get_by_text("Review Required")).to_be_visible(timeout=180_000)
     run_id_label = page.get_by_text(run_id[:8]).first
-    expect(run_id_label).to_be_visible(timeout=30_000)
+    expect(run_id_label).to_be_visible()
     status_before = run_id_label.locator("xpath=ancestor::div[1]").get_by_text(
-        re.compile(r"running|queued|awaiting approval")
+        "awaiting approval", exact=True
     )
     expect(status_before).to_be_visible()
 
     # The actual reload the brief requires: a full browser reload wipes the
     # in-memory zustand `runs` store — only `activeRunId` survives, via
-    # localStorage. Whatever reappears below can only come from AppShell's
-    # global useAgentStream(activeRunId) re-running reconcile() against
-    # GET /agents/runs/{id} and rebuilding the store from the server.
+    # localStorage. `useAgentStream` will immediately re-seed a synthetic
+    # "running" placeholder for it, so asserting specifically that the
+    # checkpoint UI and "awaiting approval" status are visible again — not
+    # merely "running" — is what proves AppShell's global
+    # useAgentStream(activeRunId) actually re-ran reconcile() against
+    # GET /agents/runs/{id} and rebuilt the real state from the server,
+    # rather than the reload just leaving the placeholder in place.
     page.reload()
+    expect(page.get_by_text("Review Required")).to_be_visible(timeout=30_000)
     run_id_label_after = page.get_by_text(run_id[:8]).first
-    expect(run_id_label_after).to_be_visible(timeout=30_000)
+    expect(run_id_label_after).to_be_visible()
     status_after = run_id_label_after.locator("xpath=ancestor::div[1]").get_by_text(
-        re.compile(r"running|queued|awaiting approval|completed")
+        "awaiting approval", exact=True
     )
     expect(status_after).to_be_visible()
+
+    # HITL gate: never approve/cancel from this test — it exists only to
+    # prove the checkpoint survives a reload, not to act on it. (These are
+    # ApprovalModal's own buttons, the generic /agents launcher's checkpoint
+    # UI — not the dedicated /salary page's differently-labeled ones.)
+    expect(page.get_by_role("button", name="Approve & Execute")).to_be_visible()
+    expect(page.get_by_role("button", name="Cancel")).to_be_visible()
 
 
 # ---------------------------------------------------------------------------
