@@ -13,6 +13,7 @@ Bugs confirmed absent (audit P0):
   - apply_linkedin task string said "Click through all steps and Submit" — fixed in Fix 2
   - fill_and_submit_form is always called with submit=False from apply_to_any_portal
 """
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -102,7 +103,11 @@ def test_email_agent_node_always_returns_awaiting_approval():
 
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = MagicMock(
-        content="Subject: Following up\n\nHi, I'm interested in the role."
+        content=json.dumps({
+            "subject": "Following up",
+            "body": "Hi, I'm interested in the role.",
+            "intent_detected": "status_request",
+        })
     )
 
     with (

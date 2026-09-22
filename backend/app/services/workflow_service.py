@@ -168,7 +168,10 @@ async def recover_expired_tasks() -> None:
         for run in (await db.execute(select(AgentRun).where(
             AgentRun.status == "running",
         ).with_for_update(skip_locked=True).limit(50))).scalars().all():
-            timeout = AGENT_TIMEOUTS.get(run.agent_type, settings.AGENT_DEFAULT_TIMEOUT_S) + 60
+            agent_type = getattr(run, "agent_type", None)
+            if not agent_type:
+                continue
+            timeout = AGENT_TIMEOUTS.get(agent_type, settings.AGENT_DEFAULT_TIMEOUT_S) + 60
             if run.started_at and (now - run.started_at).total_seconds() > timeout:
                 run.status = "failed"
                 run.output = {"error": "Worker did not report completion (timeout)"}
