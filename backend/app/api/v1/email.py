@@ -226,8 +226,14 @@ async def list_inbox_cleanup(
     from app.services.gmail_service import GmailMCPClient
 
     client = GmailMCPClient(str(current_user.id))
-    messages = client.search_threads(
-        "category:promotions OR category:updates newer_than:30d", max_results=25
+    # search_threads/get_message_metadata are synchronous and block on a
+    # thread.join() internally (integration_proxy_service.py::_run) — run
+    # them off the event loop so up to 26 sequential Gmail calls here don't
+    # stall every other concurrent request.
+    messages = await asyncio.to_thread(
+        client.search_threads,
+        "category:promotions OR category:updates newer_than:30d",
+        max_results=25,
     )
 
     results: list[InboxCleanupEmail] = []
@@ -235,7 +241,7 @@ async def list_inbox_cleanup(
         message_id = message.get("id") if isinstance(message, dict) else None
         if not message_id:
             continue
-        metadata = client.get_message_metadata(message_id)
+        metadata = await asyncio.to_thread(client.get_message_metadata, message_id)
         payload = metadata.get("payload") if isinstance(metadata, dict) else None
         headers = payload.get("headers", []) if isinstance(payload, dict) else []
         list_unsubscribe = _header_value(headers, "List-Unsubscribe")
@@ -263,7 +269,12 @@ async def archive_inbox_cleanup(
     from app.services.gmail_service import GmailMCPClient
 
     client = GmailMCPClient(str(current_user.id))
-    archived = sum(1 for message_id in payload.message_ids if client.archive_message(message_id))
+    # archive_message is synchronous/blocking (see list_inbox_cleanup above)
+    # and this route allows up to 50 message_ids — run each off the event loop.
+    archived = 0
+    for message_id in payload.message_ids:
+        if await asyncio.to_thread(client.archive_message, message_id):
+            archived += 1
     return {"archived": archived}
 
 
