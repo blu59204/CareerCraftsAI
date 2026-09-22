@@ -103,3 +103,45 @@ def test_salary_report_awaits_approval(authenticated_page):
     expect(approve_button).to_be_visible()
     expect(approve_button).to_be_enabled()
     expect(page.get_by_role("button", name="Discard")).to_be_visible()
+
+
+def test_interview_coach_start_answer_and_next_question(authenticated_page):
+    """Interview Coach must return the full session/question/feedback
+    contract fixed in this change — not just {run_id, status} — and the
+    per-turn question_index bug (every answer silently scored against
+    question 0) must not resurface: after answering question 1, the UI must
+    show question 2, not a repeat of question 1."""
+    page = authenticated_page
+    page.goto(f"{WEB_URL}/interview")
+    page.get_by_placeholder("Target Role *").fill("Senior Backend Engineer")
+    page.get_by_role("button", name="Start Session").click()
+
+    expect(page.get_by_text("Failed to start session")).to_have_count(0)
+
+    # start_session_node's LLM call + session write can take a while.
+    expect(page.get_by_text("Question 1")).to_be_visible(timeout=180_000)
+    first_question = page.locator("p.text-lg.font-medium").inner_text()
+    assert first_question.strip(), "expected the first question's text to render"
+
+    page.get_by_placeholder("Type your answer (minimum 10 words)...").fill(
+        "I designed a distributed job queue that processed a million tasks a "
+        "day and cut p99 latency by forty percent."
+    )
+    page.get_by_role("button", name="Submit Answer").click()
+
+    expect(page.get_by_text("Failed to submit answer")).to_have_count(0)
+
+    # Score/rating/tips feedback for question 1 must render.
+    expect(page.get_by_text("Previous Feedback")).to_be_visible(timeout=180_000)
+    expect(page.get_by_text("Q1:", exact=False)).to_be_visible()
+    expect(page.get_by_text("/100", exact=False)).to_be_visible()
+
+    # Either the next question renders (question_index correctly advanced to
+    # 1, not reset to 0) or, if the agent only generated one question, the
+    # session-complete summary renders instead — both are valid terminal
+    # states for this contract; a repeat of question 1 with no summary is not.
+    next_question_visible = page.get_by_text("Question 2").is_visible()
+    session_complete_visible = page.get_by_text("Session Complete").is_visible()
+    assert next_question_visible or session_complete_visible, (
+        "expected either question 2 or the session summary after answering question 1"
+    )

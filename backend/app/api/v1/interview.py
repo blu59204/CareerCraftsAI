@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.harness import get_harness
+from app.agents.interview_coach_agent import compute_session_summary
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import apply_harness_result
 from app.models.db import AgentRun, InterviewSession, User
@@ -23,7 +24,8 @@ class StartSessionRequest(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    answer: str
+    answer_text: str
+    question_index: int
 
 
 @router.post("/session/start")
@@ -60,9 +62,17 @@ async def start_session(
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
         await db.flush()
         raise HTTPException(status_code=504, detail="Interview session start timed out") from None
-    apply_harness_result(agent_run, harness_result)
+    output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
-    return {"run_id": run_id, "status": agent_run.status}
+    questions = output.get("questions") or []
+    question = questions[0] if questions else None
+    return {
+        "run_id": run_id,
+        "status": agent_run.status,
+        "session_id": output.get("session_id"),
+        "question": question,
+        "question_index": 0,
+    }
 
 
 @router.post("/session/{session_id}/answer")
@@ -72,7 +82,7 @@ async def submit_answer(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if len(body.answer.split()) < 10:
+    if len(body.answer_text.split()) < 10:
         raise HTTPException(status_code=422, detail="Answer must be at least 10 words")
 
     # Verify the session belongs to this user (prevents IDOR into another user's session)
@@ -91,7 +101,11 @@ async def submit_answer(
         user_id=current_user.id,
         agent_type="interview_coach",
         status="running",
-        input={"session_id": str(session_id), "answer": body.answer},
+        input={
+            "session_id": str(session_id),
+            "question_index": body.question_index,
+            "answer_text": body.answer_text,
+        },
     )
     db.add(agent_run)
     await db.flush()
@@ -102,7 +116,11 @@ async def submit_answer(
             harness.run(
                 user_id=str(current_user.id),
                 task_type="evaluate_answer",
-                context={"session_id": str(session_id), "answer": body.answer},
+                context={
+                    "session_id": str(session_id),
+                    "question_index": body.question_index,
+                    "answer_text": body.answer_text,
+                },
                 user_settings={},
                 run_id=run_id,
             ),
@@ -113,9 +131,32 @@ async def submit_answer(
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
         await db.flush()
         raise HTTPException(status_code=504, detail="Answer evaluation timed out") from None
-    apply_harness_result(agent_run, harness_result)
+
+    output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
-    return {"run_id": run_id, "status": agent_run.status}
+
+    # Re-fetch the session (already own it, per the IDOR check above) to read
+    # the questions/scores the agent's sync-DB helper just updated, so we can
+    # derive the next question and, once the last one is answered, the summary.
+    session_after = await db.execute(
+        select(InterviewSession).where(InterviewSession.id == session_id)
+    )
+    session_row = session_after.scalar_one_or_none()
+    questions = (session_row.questions if session_row else None) or []
+    scores = (session_row.scores if session_row else None) or []
+
+    next_index = body.question_index + 1
+    next_question = questions[next_index] if next_index < len(questions) else None
+    summary = compute_session_summary(scores) if next_question is None else None
+
+    return {
+        "run_id": run_id,
+        "status": agent_run.status,
+        "feedback": output,
+        "next_question": next_question,
+        "question_index": body.question_index,
+        "summary": summary,
+    }
 
 
 @router.get("/session/{session_id}/summary")
