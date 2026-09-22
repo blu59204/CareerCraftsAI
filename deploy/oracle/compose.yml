@@ -27,6 +27,17 @@ services:
     mem_limit: 1500m
     cpus: 0.5
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18100/health')\" || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
   agent-worker:
     build: ../../backend
     network_mode: host
@@ -39,6 +50,11 @@ services:
     cpus: 0.75
     stop_grace_period: 360s
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
   temporal-worker:
     build: ../../backend
     network_mode: host
@@ -52,6 +68,11 @@ services:
     cpus: 0.5
     stop_grace_period: 60s
     restart: on-failure:5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
   scheduler:
     build: ../../worker
     network_mode: host
@@ -59,6 +80,14 @@ services:
     mem_limit: 256m
     cpus: 0.25
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      # worker/src/index.ts calls BACKEND_INTERNAL_URL/internal/health with
+      # INTERNAL_SECRET at process startup and exits(1) on failure -- a
+      # genuinely hard dependency, not just a nice-to-have ordering.
+      backend:
+        condition: service_healthy
   frontend:
     build:
       context: ../../frontend
@@ -84,6 +113,15 @@ services:
     mem_limit: 768m
     cpus: 0.5
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:18101',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>process.exit(r.statusCode===200&&d.length>100?0:1))}).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
   postgres:
     # Self-hosted database. Supabase's direct host (db.<ref>.supabase.co) is
     # IPv6-only and this VM has no IPv6, so the managed database is simply
@@ -101,6 +139,14 @@ services:
     mem_limit: 1g
     cpus: 0.5
     restart: unless-stopped
+    healthcheck:
+      # pg_isready only needs the server to accept the connection and respond
+      # (even with an auth challenge) to report healthy -- it doesn't need a
+      # real role, so no POSTGRES_USER (postgres.env, gitignored) is needed here.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 18132"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   redis:
     image: redis:8-alpine
     network_mode: host
@@ -110,6 +156,17 @@ services:
       - redis_data:/data
     mem_limit: 384m
     restart: unless-stopped
+    healthcheck:
+      # redis.conf (gitignored, on the VM) sets `port 18179` and `requirepass
+      # <generated>` -- the password isn't available at compose-authoring
+      # time, and a plain `ping` would fail (NOAUTH) even when Redis is
+      # perfectly healthy, turning this into a false negative. Accepting
+      # either PONG or NOAUTH still proves the daemon is up and speaking the
+      # Redis protocol without needing the secret in this file.
+      test: ["CMD-SHELL", "redis-cli -p 18179 ping | grep -qE 'PONG|NOAUTH'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
   gateway:
     image: nginx:alpine
     network_mode: host
@@ -117,6 +174,11 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     mem_limit: 128m
     restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
   sandbox-server:
     build:
       context: .
