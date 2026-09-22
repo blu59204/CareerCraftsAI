@@ -10,8 +10,10 @@ Requirements before running:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -21,8 +23,24 @@ from playwright.sync_api import Page
 E2E_DIR = Path(__file__).parent
 SCREENSHOT_DIR = E2E_DIR / "screenshots"
 VIDEO_DIR = E2E_DIR / "videos"
+AUTH_DIR = E2E_DIR / ".auth"
+AUTH_STATE_PATH = AUTH_DIR / "state.json"
+ARTIFACT_DIR = E2E_DIR / ".artifacts"
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Vars required for a real (RUN_LIVE_E2E=1) authenticated live run, distinct
+# from the legacy RUN_E2E prerequisite check above.
+REQUIRED_LIVE_VARS = ("TEST_JWT", "TEST_EMAIL", "TEST_PASSWORD", "WEB_URL", "API_URL")
+
+
+def _is_live_run() -> bool:
+    return os.getenv("RUN_LIVE_E2E") == "1"
+
+
+def _missing_live_vars() -> list[str]:
+    return [var for var in REQUIRED_LIVE_VARS if not os.getenv(var)]
 
 
 # ── Environment Validation ──────────────────────────────────────────────────
@@ -50,6 +68,7 @@ def pytest_configure(config):
     E2E_DIR.mkdir(parents=True, exist_ok=True)
     SCREENSHOT_DIR.mkdir(exist_ok=True)
     VIDEO_DIR.mkdir(exist_ok=True)
+    ARTIFACT_DIR.mkdir(exist_ok=True)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -70,6 +89,11 @@ def pytest_collection_modifyitems(config, items):
             skip_msg += "\nThen run with: RUN_E2E=1 pytest backend/tests/e2e/ -v -s --headed"
 
             for item in items:
+                # test_harness_contract.py verifies the harness itself (route
+                # manifest completeness, safety-fixture defaults) and must run
+                # without live credentials or a running backend/browser.
+                if "test_harness_contract" in str(item.fspath):
+                    continue
                 if "e2e" in str(item.fspath) or any(
                     marker.name in ("e2e", "browser", "integration")
                     for marker in item.own_markers
@@ -93,6 +117,52 @@ def api_client():
     )
     yield client
     client.close()
+
+
+# ── Live-run Safety Gate ─────────────────────────────────────────────────────
+# Human-in-the-loop protection: any test that would send an email, message a
+# recruiter, or submit a job application must check `live_safety` first and
+# skip/no-op the destructive step unless the operator opted in explicitly.
+
+@dataclass(frozen=True)
+class LiveSafety:
+    allow_external_writes: bool
+
+
+@pytest.fixture(scope="session")
+def live_safety() -> LiveSafety:
+    return LiveSafety(allow_external_writes=os.getenv("ALLOW_LIVE_SENDS") == "1")
+
+
+# ── Agent Run Polling ────────────────────────────────────────────────────────
+
+def _wait_for_terminal(client: httpx.Client, run_id: str, timeout_s: int = 120) -> dict:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        response = client.get(f"/agents/runs/{run_id}")
+        response.raise_for_status()
+        data = response.json()
+        if data["status"] in {"completed", "awaiting_approval", "failed", "expired"}:
+            return data
+        time.sleep(1)
+    raise AssertionError(f"run {run_id} did not reach terminal status within {timeout_s}s")
+
+
+@pytest.fixture
+def wait_for_run():
+    """Callable fixture: wait_for_run(api_client, run_id, timeout_s=120) -> dict."""
+    return _wait_for_terminal
+
+
+# ── Artifact Directory ───────────────────────────────────────────────────────
+
+@pytest.fixture
+def artifact_dir(request) -> Path:
+    """Per-test directory (gitignored) for screenshots/videos/traces to land in."""
+    safe_name = re.sub(r"[^\w.-]", "_", request.node.name)
+    path = ARTIFACT_DIR / safe_name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 # ── Playwright Browser ──────────────────────────────────────────────────────
@@ -119,6 +189,89 @@ def browser_context(playwright):
 @pytest.fixture(scope="function")
 def page(browser_context, request) -> Page:
     p = browser_context.new_page()
+    p.set_default_timeout(60000)
+    yield p
+    p.close()
+
+
+# ── Authenticated Session ────────────────────────────────────────────────────
+# Signs in once per test session through the real Clerk UI (see
+# scripts/e2e_browser_login.py for the interactive reference script) and
+# persists the storage state so later tests reuse it instead of re-logging in.
+
+def _clerk_login(page: Page, web_url: str, email: str, password: str, otp_code: str) -> None:
+    page.goto(f"{web_url}/login", wait_until="domcontentloaded", timeout=60000)
+    page.fill("input[type=email]", email)
+
+    password_input = page.query_selector("input[type=password]")
+    if password_input:
+        password_input.fill(password)
+    page.click("button[type=submit]")
+    page.wait_for_timeout(3000)
+
+    code_input = (
+        page.query_selector("input[name=code]")
+        or page.query_selector("input[inputmode=numeric]")
+        or page.query_selector("input[maxlength='8']")
+    )
+    if code_input:
+        code_input.fill(otp_code)
+        submit_button = page.query_selector("button[type=submit]")
+        if submit_button and submit_button.is_enabled():
+            submit_button.click()
+        else:
+            page.keyboard.press("Enter")
+
+    page.wait_for_function("!!(window.Clerk && window.Clerk.user)", timeout=30000)
+
+
+@pytest.fixture(scope="session")
+def _auth_state(playwright) -> Path:
+    if not _is_live_run():
+        pytest.skip("Set RUN_LIVE_E2E=1 to run authenticated live E2E tests")
+
+    missing = _missing_live_vars()
+    if missing:
+        pytest.fail(f"RUN_LIVE_E2E=1 but missing required env vars: {', '.join(missing)}")
+
+    web_url = os.environ["WEB_URL"]
+    otp_code = os.getenv("TEST_OTP_CODE", "424242")
+    headless = os.getenv("HEADLESS", "1").lower() in ("1", "true", "yes")
+
+    AUTH_DIR.mkdir(parents=True, exist_ok=True)
+    browser = playwright.chromium.launch(headless=headless)
+    context = browser.new_context(viewport={"width": 1920, "height": 1080})
+    login_page = context.new_page()
+    try:
+        _clerk_login(login_page, web_url, os.environ["TEST_EMAIL"], os.environ["TEST_PASSWORD"], otp_code)
+        context.storage_state(path=str(AUTH_STATE_PATH))
+    finally:
+        context.close()
+        browser.close()
+
+    return AUTH_STATE_PATH
+
+
+@pytest.fixture(scope="session")
+def _authenticated_context(playwright, _auth_state):
+    headless = os.getenv("HEADLESS", "1").lower() in ("1", "true", "yes")
+    browser = playwright.chromium.launch(
+        headless=headless,
+        args=["--disable-blink-features=AutomationControlled"],
+    )
+    context = browser.new_context(
+        storage_state=str(_auth_state),
+        viewport={"width": 1920, "height": 1080},
+        record_video_dir=str(VIDEO_DIR),
+    )
+    yield context
+    context.close()
+    browser.close()
+
+
+@pytest.fixture
+def authenticated_page(_authenticated_context) -> Page:
+    p = _authenticated_context.new_page()
     p.set_default_timeout(60000)
     yield p
     p.close()

@@ -1,28 +1,33 @@
 #!/usr/bin/env bash
-# run_tests.sh — Full CareerCraft AI E2E test suite runner.
+# run_e2e_tests.sh — reproducible live E2E runner for CareerCraft AI.
+#
+# Signs in through the real Clerk UI, exercises every authenticated screen,
+# and drives the agent matrix against a real running stack. Never approves
+# an email send, LinkedIn outreach, or job application submit — those stay
+# gated behind ALLOW_LIVE_SENDS=1 (see backend/tests/e2e/conftest.py::live_safety).
+#
+# Required environment variables:
+#   TEST_JWT       Clerk session JWT for the API client
+#   TEST_EMAIL     Clerk test account email (use a +clerk_test alias)
+#   TEST_PASSWORD  Clerk test account password
+#   WEB_URL        Frontend origin, e.g. http://localhost:3000
+#   API_URL        Backend API base, e.g. http://localhost:8000/api/v1
+#
+# Optional:
+#   TEST_OTP_CODE  Clerk test OTP (defaults to the fixed test code 424242)
 #
 # Usage:
-#   bash tests/e2e/run_tests.sh
-#
-# Prerequisites:
-#   1. Docker Compose stack running: docker compose up -d
-#   2. Test user exists in Supabase with uploaded resume and configured API key
-#   3. Environment variables set (see checks below)
-#   4. Python deps installed: pip install pytest-playwright playwright httpx reportlab
-#   5. Chromium installed: playwright install chromium
+#   ./scripts/run_e2e_tests.sh
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
-
-PASS=0
-FAIL=0
 
 log_info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
 log_pass()  { echo -e "${GREEN}[PASS]${NC} $*"; }
@@ -31,16 +36,16 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 
 echo ""
 echo "=========================================="
-echo " CareerCraft AI — E2E Test Suite Runner"
+echo " CareerCraft AI — Live E2E Test Runner"
 echo "=========================================="
 echo ""
 
-# ── Step 1: Check Required Environment Variables ──────────────────────────
+# ── Step 1: Check Required Environment Variables ───────────────────────────
 
 log_info "Checking environment variables..."
 
 MISSING_VARS=()
-for VAR in TEST_EMAIL TEST_PASSWORD TEST_JWT; do
+for VAR in TEST_JWT TEST_EMAIL TEST_PASSWORD WEB_URL API_URL; do
     if [ -z "${!VAR:-}" ]; then
         MISSING_VARS+=("$VAR")
     fi
@@ -50,61 +55,50 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     log_fail "Missing required environment variables: ${MISSING_VARS[*]}"
     echo ""
     echo "Set them before running:"
-    echo "  export TEST_EMAIL='testuser@email.com'"
-    echo "  export TEST_PASSWORD='your-password'"
     echo "  export TEST_JWT='eyJ...'"
+    echo "  export TEST_EMAIL='cc.e2e+clerk_test@gmail.com'"
+    echo "  export TEST_PASSWORD='your-password'"
+    echo "  export WEB_URL='http://localhost:3000'"
+    echo "  export API_URL='http://localhost:8000/api/v1'"
     echo ""
-    echo "Optional but recommended:"
-    echo "  export TEST_JOB_URL='https://www.naukri.com/job-listings/...'"
-    echo "  export ANTHROPIC_API_KEY='sk-ant-...'"
+    echo "Optional:"
+    echo "  export TEST_OTP_CODE='424242'   # defaults to the Clerk test code"
+    echo "  export ALLOW_LIVE_SENDS=1       # opt in to real email/outreach/apply sends"
     exit 1
 fi
 
-for VAR in TEST_JOB_URL ANTHROPIC_API_KEY; do
-    if [ -z "${!VAR:-}" ]; then
-        log_warn "$VAR not set — tests that need it will be skipped"
-    fi
-done
-
-export RUN_E2E=1
+export TEST_OTP_CODE="${TEST_OTP_CODE:-424242}"
 log_pass "All required environment variables set"
 
-if [ "${RUN_AGENT_FAILURE_E2E:-0}" = "1" ]; then
-    log_info "Running authenticated agent failure regression suite..."
-    python -m pytest backend/tests/e2e/test_agent_failure_regression.py -m e2e -q
-    log_pass "Agent failure regression suite passed"
-fi
+# ── Step 2: Check Both Health URLs ──────────────────────────────────────────
 
-# ── Step 2: Check Docker Stack Health ──────────────────────────────────────
-
-log_info "Checking backend health at http://localhost:8000/api/v1/health ..."
-if curl -sf --max-time 10 "http://localhost:8000/api/v1/health" > /dev/null 2>&1; then
+log_info "Checking backend health at ${API_URL}/health ..."
+if curl -sf --max-time 10 "${API_URL}/health" > /dev/null 2>&1; then
     log_pass "Backend is healthy"
 else
-    log_fail "Backend is not reachable. Run: docker compose up -d"
+    log_fail "Backend is not reachable at ${API_URL}/health. Run: docker compose up -d"
     exit 1
 fi
 
-# ── Step 3: Check Frontend ─────────────────────────────────────────────────
-
-log_info "Checking frontend at http://localhost:3000 ..."
-if curl -sf --max-time 10 "http://localhost:3000" > /dev/null 2>&1; then
-    log_pass "Frontend is running"
+log_info "Checking frontend at ${WEB_URL} ..."
+if curl -sf --max-time 10 "${WEB_URL}" > /dev/null 2>&1; then
+    log_pass "Frontend is reachable"
 else
-    log_warn "Frontend not reachable at http://localhost:3000 — UI tests will fail"
+    log_fail "Frontend is not reachable at ${WEB_URL}. Run: docker compose up -d"
+    exit 1
 fi
 
-# ── Step 5: Generate Test Fixtures ─────────────────────────────────────────
+# ── Step 3: Generate Test Fixtures ──────────────────────────────────────────
 
 log_info "Generating test fixtures..."
-if python tests/fixtures/create_test_fixtures.py; then
+if python backend/tests/fixtures/create_test_fixtures.py; then
     log_pass "Test fixtures created"
 else
     log_fail "Failed to create test fixtures"
     exit 1
 fi
 
-# ── Step 6: Verify Chromium Installed ──────────────────────────────────────
+# ── Step 4: Verify Chromium Installed ───────────────────────────────────────
 
 log_info "Checking Playwright Chromium..."
 if python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); p.chromium.launch(); p.stop()" 2>/dev/null; then
@@ -114,51 +108,33 @@ else
     exit 1
 fi
 
-# ── Step 7: Create Output Directories ──────────────────────────────────────
+# ── Step 5: Run the Live Suite ───────────────────────────────────────────────
 
-mkdir -p tests/e2e/screenshots tests/e2e/videos tests/e2e/outputs tests/fixtures
-log_info "Output directories created"
-
-# ── Step 8: Run the Test Suite ─────────────────────────────────────────────
+mkdir -p backend/tests/e2e/.artifacts
 
 echo ""
 echo "=========================================="
-echo " Running E2E Test Suite"
+echo " Running Live E2E Test Suite"
 echo "=========================================="
 echo ""
 
-START_TIME=$(date +%s)
+export RUN_LIVE_E2E=1
 
-pytest \
-    tests/e2e/test_careercraft_full.py \
-    -v \
-    -s \
-    --headed \
-    --slowmo=500 \
-    --tb=short \
-    --color=yes \
-    2>&1 | tee tests/e2e/results.log
+RUN_LIVE_E2E=1 python -m pytest \
+    backend/tests/e2e/test_harness_contract.py \
+    backend/tests/e2e/test_live_screen_smoke.py \
+    backend/tests/e2e/test_live_user_journeys.py \
+    backend/tests/e2e/test_agent_matrix.py \
+    -m e2e -v --tb=short \
+    2>&1 | tee backend/tests/e2e/results.log
 
 EXIT_CODE=${PIPESTATUS[0]}
-
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
-
-# ── Step 9: Print Summary ──────────────────────────────────────────────────
 
 echo ""
 echo "=========================================="
 echo " Test Suite Complete"
 echo "=========================================="
-echo "  Duration: ${DURATION}s"
-
-PASS_COUNT=$(grep -c "PASSED" tests/e2e/results.log 2>/dev/null || echo 0)
-FAIL_COUNT=$(grep -c "FAILED" tests/e2e/results.log 2>/dev/null || echo 0)
-
-echo -e "  Result:   ${GREEN}PASSED=${PASS_COUNT}${NC} ${RED}FAILED=${FAIL_COUNT}${NC}"
-echo "  Log:      tests/e2e/results.log"
-echo "  Screens:  tests/e2e/screenshots/"
-echo "  Videos:   tests/e2e/videos/"
+echo "  Log: backend/tests/e2e/results.log"
 echo "=========================================="
 
-exit $EXIT_CODE
+exit "$EXIT_CODE"

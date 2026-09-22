@@ -71,6 +71,16 @@ _inventory_files.csv
 _tmp_*.png
 .tmp_*.png
 
+# Live E2E test artifacts (backend/tests/e2e/) — saved auth state, screenshots,
+# videos, traces, and run logs are machine-local and may contain live session data.
+backend/tests/e2e/.auth/
+backend/tests/e2e/.artifacts/
+backend/tests/e2e/screenshots/
+backend/tests/e2e/videos/
+backend/tests/e2e/traces/
+backend/tests/e2e/outputs/
+backend/tests/e2e/results.log
+
 # Deployment credentials and machine-local verification output
 .env.*.local
 *.secret
