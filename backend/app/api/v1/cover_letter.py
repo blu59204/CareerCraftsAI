@@ -28,6 +28,7 @@ class GenerateResponse(BaseModel):
     status: str
     content: str | None = None
     tone: str | None = None
+    warnings: list[str] = []
     document_id: str | None = None
     version_number: int | None = None
 
@@ -104,6 +105,9 @@ async def generate_cover_letter(
     action = harness_result.get("pending_action") or harness_result.get("result") or {}
     if not isinstance(action, dict):
         action = {}
+    warnings = action.get("warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
     content = action.get("cover_letter_markdown") or action.get("content")
     status = harness_result.get("status", "completed")
 
@@ -112,6 +116,7 @@ async def generate_cover_letter(
         status=status,
         content=content,
         tone=payload.tone,
+        warnings=warnings,
         document_id=action.get("document_id"),
         version_number=action.get("version_number"),
     )

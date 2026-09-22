@@ -6,6 +6,7 @@ Implemented the requested frontend reliability fixes:
 - Added `linkedin_outreach` contact/message cards.
 - Added `salary_report_review` percentile cards and negotiation script rendering.
 - Registered `linkedin_outreach` as a draft action so approval completes and marks it reviewed.
+- Preserved cover-letter warnings through the FastAPI response schema for the inline banner.
 - Preserved existing HITL approval behavior and unrelated user changes.
 
 Validation:
