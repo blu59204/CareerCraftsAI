@@ -742,41 +742,67 @@ def test_auto_apply_first_checkpoint_includes_drafts_and_rejects_cleanly(
 
 
 def test_dashboard_reload_restores_in_progress_agent_run(authenticated_page):
-    """Reloading /dashboard mid-run must not lose track of an in-flight
-    agent. The dashboard has no direct GET /agents/runs/{id} call, but its
-    "Recent Agent Runs" list is fetched fresh from GET /users/me/stats on
-    every mount — and that endpoint reads the same AgentRun rows backing
-    GET /agents/runs/{id} — so a full reload must still show the run as
-    running/awaiting_approval/completed rather than as if it had never
-    started, proving state is server-restored rather than held only in a
-    client-side store that a real browser reload would wipe.
-
-    Company Research is used to generate the in-flight run since it is the
-    simplest existing screen already wired through the /agents/run + poll
-    pattern (Task 4) and reliably takes well over a minute server-side."""
+    """Reloading mid-run must not lose track of an in-flight agent on the
+    client. The real restore path is `useAgentStream` (frontend/src/lib/sse.ts)
+    — mounted globally in AppShell off the `localStorage`-persisted
+    `activeRunId` (frontend/src/store/agentStore.ts) — whose `reconcile()`
+    calls GET /agents/runs/{id} on mount and repopulates the in-memory
+    zustand `runs` store, which a full browser reload always wipes. That is
+    the mechanism this test exercises: launch a run through /agents (the
+    only surface that calls `initRun`/`setActiveRun`, same as the
+    AutoApply/EmailMonitor tests above), confirm the client actually shows
+    live status for it, hard-reload, and confirm the *same* run's status is
+    still shown afterward — proving the store was rebuilt from the server,
+    not that a list endpoint happens to contain a DB row (a plain
+    GET /users/me/stats list would pass that check whether or not reload
+    restoration works at all, which is why /dashboard was the wrong page
+    for this)."""
     page = authenticated_page
-    page.goto(f"{WEB_URL}/company")
-    page.get_by_placeholder("Enter company name...").fill("Example Corp")
-    page.get_by_role("button", name="Research").click()
 
-    # Company Research runs 60-180s server-side — plenty of time to
-    # navigate away mid-run without waiting for it to finish.
-    page.goto(f"{WEB_URL}/dashboard")
-    recent_run_entry = page.get_by_text("company_research", exact=True).first
-    expect(recent_run_entry).to_be_visible(timeout=30_000)
-    status_before = recent_run_entry.locator(
-        "xpath=ancestor::div[contains(@class,'rounded-xl')][1]"
-    ).get_by_text(re.compile(r"running|queued|awaiting approval"))
+    run_id_holder: dict[str, str] = {}
+
+    def _capture_run_id(response):
+        if response.request.method == "POST" and response.url.endswith("/agents/run"):
+            try:
+                run_id = response.json().get("run_id")
+            except Exception:
+                return
+            if run_id:
+                run_id_holder["id"] = run_id
+
+    page.on("response", _capture_run_id)
+
+    page.goto(f"{WEB_URL}/agents")
+    page.get_by_role("button", name="Company", exact=False).click()
+    page.get_by_role("button", name="Run agent").click()
+
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and "id" not in run_id_holder:
+        page.wait_for_timeout(500)
+    assert "id" in run_id_holder, "expected /agents/run to return a run_id for the Company Research run"
+    run_id = run_id_holder["id"]
+
+    # Confirm the run is actually live in the real client store (driven by
+    # useAgentStream, not just a fresh mutation response) before reloading —
+    # this is what makes the reload below a genuine restoration check.
+    run_id_label = page.get_by_text(run_id[:8]).first
+    expect(run_id_label).to_be_visible(timeout=30_000)
+    status_before = run_id_label.locator("xpath=ancestor::div[1]").get_by_text(
+        re.compile(r"running|queued|awaiting approval")
+    )
     expect(status_before).to_be_visible()
 
-    # The actual reload the brief requires: state must survive a full
-    # browser reload of /dashboard, not just an in-app SPA navigation.
+    # The actual reload the brief requires: a full browser reload wipes the
+    # in-memory zustand `runs` store — only `activeRunId` survives, via
+    # localStorage. Whatever reappears below can only come from AppShell's
+    # global useAgentStream(activeRunId) re-running reconcile() against
+    # GET /agents/runs/{id} and rebuilding the store from the server.
     page.reload()
-    recent_run_entry_after = page.get_by_text("company_research", exact=True).first
-    expect(recent_run_entry_after).to_be_visible(timeout=30_000)
-    status_after = recent_run_entry_after.locator(
-        "xpath=ancestor::div[contains(@class,'rounded-xl')][1]"
-    ).get_by_text(re.compile(r"running|queued|awaiting approval|completed"))
+    run_id_label_after = page.get_by_text(run_id[:8]).first
+    expect(run_id_label_after).to_be_visible(timeout=30_000)
+    status_after = run_id_label_after.locator("xpath=ancestor::div[1]").get_by_text(
+        re.compile(r"running|queued|awaiting approval|completed")
+    )
     expect(status_after).to_be_visible()
 
 
