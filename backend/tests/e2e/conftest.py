@@ -54,13 +54,17 @@ def _check_env_vars() -> list[str]:
 
 def _check_backend_health() -> tuple[bool, str]:
     api_url = os.getenv("API_URL", "http://localhost:8000/api/v1")
+    # /health is served at the app root, not under the /api/v1 prefix API_URL
+    # includes (backend/app/main.py's @app.get("/health") has no router
+    # prefix) — strip the suffix before appending /health.
+    health_url = f"{api_url.removesuffix('/api/v1')}/health"
     try:
-        r = httpx.get(f"{api_url}/health", timeout=10.0)
+        r = httpx.get(health_url, timeout=10.0)
         if r.status_code == 200 and r.json().get("status") == "ok":
             return True, ""
         return False, f"/health returned {r.status_code}: {r.text[:200]}"
     except httpx.ConnectError:
-        return False, f"Backend not reachable at {api_url}. Run: docker compose up -d"
+        return False, f"Backend not reachable at {health_url}. Run: docker compose up -d"
     except Exception as e:
         return False, str(e)
 

@@ -72,11 +72,16 @@ log_pass "All required environment variables set"
 
 # ── Step 2: Check Both Health URLs ──────────────────────────────────────────
 
-log_info "Checking backend health at ${API_URL}/health ..."
-if curl -sf --max-time 10 "${API_URL}/health" > /dev/null 2>&1; then
+# /health is served at the app root, not under the /api/v1 prefix that
+# API_URL includes (see backend/app/main.py's @app.get("/health")) — strip
+# the suffix before appending /health.
+HEALTH_URL="${API_URL%/api/v1}/health"
+
+log_info "Checking backend health at ${HEALTH_URL} ..."
+if curl -sf --max-time 10 "${HEALTH_URL}" > /dev/null 2>&1; then
     log_pass "Backend is healthy"
 else
-    log_fail "Backend is not reachable at ${API_URL}/health. Run: docker compose up -d"
+    log_fail "Backend is not reachable at ${HEALTH_URL}. Run: docker compose up -d"
     exit 1
 fi
 

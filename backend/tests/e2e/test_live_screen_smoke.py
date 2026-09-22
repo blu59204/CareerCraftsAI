@@ -94,6 +94,10 @@ def _assert_screen_loads(page: Page, screen) -> None:
 
 
 @pytest.mark.e2e
+# Overrides pyproject.toml's global 60s pytest-timeout: page load +
+# networkidle wait + assertions can bump close to the 60s cap under a slow
+# live stack, matching the timeout convention applied to the other e2e files.
+@pytest.mark.timeout(600)
 @pytest.mark.parametrize("screen", AUTHENTICATED_SCREENS, ids=lambda item: item.path)
 def test_authenticated_screen_loads(authenticated_page, screen, artifact_dir):
     page = authenticated_page
@@ -102,6 +106,7 @@ def test_authenticated_screen_loads(authenticated_page, screen, artifact_dir):
 
 
 @pytest.mark.e2e
+@pytest.mark.timeout(600)
 @pytest.mark.parametrize("screen", AUTHENTICATED_SCREENS, ids=lambda item: item.path)
 def test_authenticated_screen_loads_mobile(authenticated_mobile_page, screen, artifact_dir):
     page = authenticated_mobile_page

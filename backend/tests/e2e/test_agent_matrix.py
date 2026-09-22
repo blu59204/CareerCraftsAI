@@ -58,6 +58,10 @@ pytestmark = [
         reason="Set RUN_LIVE_E2E=1 to run the live agent matrix (hits all 12 graph "
         "agents with real model calls and tokens)",
     ),
+    # Overrides pyproject.toml's global 60s pytest-timeout: individual cases
+    # wait up to 300s (auto_apply) and the concurrency test alone waits
+    # 150s + 150s sequentially within one test.
+    pytest.mark.timeout(600),
 ]
 
 AGENT_CASES = [

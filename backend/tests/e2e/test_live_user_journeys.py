@@ -16,9 +16,17 @@ import re
 import time
 from datetime import datetime, timezone
 
+import pytest
 from playwright.sync_api import expect
 
 WEB_URL = os.getenv("WEB_URL", "http://localhost:3000")
+
+# `-m e2e` is how scripts/run_e2e_tests.sh selects live suites — without this
+# marker these tests are silently deselected under the real runner. 600s
+# overrides pyproject.toml's global 60s pytest-timeout: several journeys here
+# (Company Research, Salary) wait up to 180s server-side for a single agent
+# run, well past the global cap.
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(600)]
 
 
 def _fixture_value(label: str) -> str:
@@ -968,7 +976,7 @@ def test_followup_schedule_set_when_application_marked_applied(api_client, wait_
         api_client.patch(f"/jobs/applications/{application_id}/status", json={"status": "saved"})
 
 
-def test_email_monitor_scan_never_shows_send_checkpoint(authenticated_page):
+def test_email_monitor_scan_never_shows_send_checkpoint(authenticated_page, api_client, wait_for_run):
     """EmailMonitorAgent's node always returns `pending_action=None` — it
     only classifies inbox notifications and updates application status
     (interview/rejected/viewed detection), it never drafts or sends a
@@ -976,21 +984,48 @@ def test_email_monitor_scan_never_shows_send_checkpoint(authenticated_page):
     UI surface — there is no dedicated Email Monitor screen) must reach a
     terminal state without ever presenting the approval checkpoint used by
     every send/submit-capable agent, proving the scan really is
-    read-only."""
-    page = authenticated_page
-    page.goto(f"{WEB_URL}/agents")
+    read-only.
 
+    Scoped to the run_id this test itself starts (via `GET
+    /agents/runs/{run_id}`, matching the AutoApply/dashboard-restoration
+    tests' pattern above) rather than searching the page for a "failed"
+    status badge — a page-text search can't tell this run's outcome apart
+    from an earlier failed EmailMonitor run already visible in this shared
+    account's history."""
+    page = authenticated_page
+
+    run_id_holder: dict[str, str] = {}
+
+    def _capture_run_id(response):
+        if response.request.method == "POST" and response.url.endswith("/agents/run"):
+            try:
+                run_id = response.json().get("run_id")
+            except Exception:
+                return
+            if run_id:
+                run_id_holder["id"] = run_id
+
+    page.on("response", _capture_run_id)
+
+    page.goto(f"{WEB_URL}/agents")
     page.get_by_role("button", name="Monitor", exact=False).click()
     page.get_by_role("button", name="Run agent").click()
 
-    terminal_badge = page.get_by_text("completed", exact=True).or_(
-        page.get_by_text("failed", exact=True)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and "id" not in run_id_holder:
+        page.wait_for_timeout(500)
+    assert "id" in run_id_holder, "expected /agents/run to return a run_id for the Email Monitor run"
+    run_id = run_id_holder["id"]
+
+    run = wait_for_run(api_client, run_id, timeout_s=180)
+    assert run["status"] in {"completed", "failed"}, (
+        f"expected this specific run ({run_id}) to reach a terminal status without a "
+        f"checkpoint, got {run}"
     )
-    expect(terminal_badge.first).to_be_visible(timeout=180_000)
     expect(page.get_by_text("Review Required")).to_have_count(0)
 
 
-def test_linkedin_outreach_identify_and_reject_draft(authenticated_page):
+def test_linkedin_outreach_identify_and_reject_draft(authenticated_page, api_client, wait_for_run):
     """Outreach must run the real linkedin_outreach agent — draft messages
     render inline in the queue card (a bespoke UI, not the shared
     ApprovalModal) — and rejecting a draft must go through Discard
@@ -1001,24 +1036,71 @@ def test_linkedin_outreach_identify_and_reject_draft(authenticated_page):
     for this run (live third-party data, outside this test's control) the
     run completes with an explicit "no contacts" notice instead of a
     checkpoint — that is asserted as the fallback rather than silently
-    passed over."""
+    passed over.
+
+    Scoped to the run_id this test itself starts. The queue UI
+    (frontend/src/app/(app)/linkedin/outreach/page.tsx) renders no run id
+    anywhere in the DOM — only company name and status badge — so a
+    `.first` match on company name or a status-text search can't tell this
+    run's card apart from an older card for the same well-known company
+    left over from a previous test run. Falling back to the
+    `api_client`/`wait_for_run` pattern the AutoApply/dashboard-restoration
+    tests use (this file, above) is the only way to check *this specific*
+    run's outcome."""
     page = authenticated_page
     company = "Stripe"
+
+    run_id_holder: dict[str, str] = {}
+
+    def _capture_run_id(response):
+        if response.request.method == "POST" and response.url.endswith("/linkedin/outreach/identify"):
+            try:
+                run_id = response.json().get("run_id")
+            except Exception:
+                return
+            if run_id:
+                run_id_holder["id"] = run_id
+
+    page.on("response", _capture_run_id)
 
     page.goto(f"{WEB_URL}/linkedin/outreach")
     page.get_by_placeholder("Company name").fill(company)
     page.get_by_role("button", name="Find Contacts").click()
 
     expect(page.get_by_text("Failed to start outreach", exact=False)).to_have_count(0)
-    queue_card = page.locator("div.glass-panel", has_text=company).first
-    expect(queue_card).to_be_visible(timeout=180_000)
 
-    discard_button = queue_card.get_by_role("button", name="Discard")
-    if discard_button.count() > 0:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and "id" not in run_id_holder:
+        page.wait_for_timeout(500)
+    assert "id" in run_id_holder, "expected /linkedin/outreach/identify to return a run_id"
+    run_id = run_id_holder["id"]
+
+    run = wait_for_run(api_client, run_id, timeout_s=180)
+    assert run["status"] in {"completed", "awaiting_approval"}, run
+
+    if run["status"] == "awaiting_approval":
+        # The queue polls GET /linkedin/outreach/queue on a 10s interval and
+        # has no run-id DOM hook — wait out a poll cycle so this run_id's
+        # card (now awaiting_approval) is actually rendered before scoping
+        # into it by its still-unique-enough (company, status) pairing.
+        # GET /linkedin/outreach/queue orders newest-first
+        # (AgentRun.started_at.desc()), so among cards matching (company,
+        # awaiting_approval) this run's own card — just started — is the
+        # first, not the last.
+        queue_card = page.locator("div.glass-panel", has_text=company).filter(
+            has=page.get_by_text("awaiting approval", exact=True)
+        ).first
+        expect(queue_card).to_be_visible(timeout=30_000)
+        discard_button = queue_card.get_by_role("button", name="Discard")
         approve_button = queue_card.get_by_role("button", name="Approve & Send")
         expect(approve_button).to_be_visible()
         expect(approve_button).to_be_enabled()
         discard_button.click()
         expect(page.get_by_text("Message discarded")).to_be_visible(timeout=30_000)
+
+        run_after = wait_for_run(api_client, run_id, timeout_s=30)
+        assert run_after["status"] != "awaiting_approval", (
+            f"expected discarding this run's ({run_id}) draft to clear its checkpoint: {run_after}"
+        )
     else:
-        expect(queue_card.get_by_text("completed", exact=True)).to_be_visible(timeout=30_000)
+        assert run["status"] == "completed", run
