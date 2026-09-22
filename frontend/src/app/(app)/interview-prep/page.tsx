@@ -327,10 +327,10 @@ export default function InterviewPrepPage() {
     queryFn: async () => {
       if (reviewRunId) {
         const { data } = await apiClient.get(`/agents/runs/${reviewRunId}`);
-        return data as { id: string; agent_type: string; status: string; output: Record<string, unknown> | null };
+        return data as { id: string; agent_type: string; status: string; output: (Record<string, unknown> & { warnings?: string[] }) | null };
       }
       const { data } = await apiClient.get("/agents/runs?limit=50");
-      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { id: string; agent_type: string; status: string; output: Record<string, unknown> | null }[])
+      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { id: string; agent_type: string; status: string; output: (Record<string, unknown> & { warnings?: string[] }) | null }[])
         .filter((r) => r.agent_type === "interview_prep" && ["awaiting_approval", "completed"].includes(r.status))
         .filter((r) => !reviewRunId || r.id === reviewRunId);
       return runs[0] ?? null;
@@ -405,6 +405,8 @@ export default function InterviewPrepPage() {
     lastRun?.output && Array.isArray((lastRun.output as Record<string, unknown>).questions_to_ask)
       ? (lastRun.output as Record<string, unknown>).questions_to_ask as string[]
       : null;
+
+  const warnings = Array.isArray(lastRun?.output?.warnings) ? lastRun.output.warnings : [];
 
   const allQuestions = [...aiQuestions, ...BASE_QUESTIONS];
   const filtered =
@@ -584,6 +586,14 @@ export default function InterviewPrepPage() {
 
           {/* RIGHT: prep assistant */}
           <div className="space-y-4">
+            {warnings.length > 0 && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+                <p className="font-medium">Warnings</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+                </ul>
+              </div>
+            )}
             {/* AI Prep Score */}
             <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-5">
               <div className="flex items-center gap-2">

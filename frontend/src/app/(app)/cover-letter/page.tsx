@@ -16,6 +16,7 @@ export default function CoverLetterPage() {
   const [jd, setJd] = useState("");
   const [tone, setTone] = useState<Tone>("Professional");
   const [letter, setLetter] = useState("");
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
 
   const generate = async () => {
@@ -28,11 +29,12 @@ export default function CoverLetterPage() {
     };
     try {
       const { data } = await apiClient.post<{
-        run_id: string; status: string; content: string | null; tone: string | null;
+        run_id: string; status: string; content: string | null; tone: string | null; warnings?: string[];
       }>("/cover-letter/generate", {
         tone: toneMap[tone],
         jd_text: jd || undefined,
       });
+      setWarnings(data.warnings ?? []);
       if (data.content) {
         setLetter(data.content);
         await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
@@ -113,6 +115,14 @@ export default function CoverLetterPage() {
 
         {/* Output */}
         <div className="rounded-3xl border border-border bg-card/60 p-6">
+          {warnings.length > 0 && (
+            <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+              <p className="font-medium">Warnings</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+              </ul>
+            </div>
+          )}
           <div className="mb-3 flex items-center justify-between">
             <span className="text-sm font-medium text-foreground">Cover Letter</span>
             {letter && (

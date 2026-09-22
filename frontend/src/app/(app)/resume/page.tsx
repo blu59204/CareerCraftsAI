@@ -919,8 +919,11 @@ export default function ResumePage() {
                 </div>
               )}
               {lastWarnings.length > 0 && (
-                <div className="mt-1 text-xs text-warning">
-                  {lastWarnings.slice(0, 2).join(" ")}
+                <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+                  <p className="font-medium">Warnings</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    {lastWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+                  </ul>
                 </div>
               )}
               {aiSummary && <p className="mt-2 text-sm text-muted-foreground">{aiSummary}</p>}
