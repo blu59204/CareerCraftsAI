@@ -1,7 +1,13 @@
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.interview_prep_prompt import (
+    OUTPUT_SCHEMA,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+)
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings
@@ -68,8 +74,6 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
     target_role = "software engineer"
     company = "the company"
     try:
-        import json
-
         user_id = state["user_id"]
         ctx = state["context"]
         target_role = ctx.get("target_role", ctx.get("role", "software engineer"))
@@ -94,39 +98,16 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             selection_criteria="What are the candidate's strongest stories? Where are the gaps they'll be questioned on?",
         )
 
-        response = llm.invoke([
-            HumanMessage(
-                content=_QUESTIONS_PROMPT.format(
-                    role=target_role,
-                    company=company,
-                    context=context_text,
-                    thinking=thinking,
-                )
-            )
-        ])
-
-        raw = response.content.strip()
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1] if len(parts) > 1 else raw
-            if raw.strip().startswith("json"):
-                raw = raw.strip()[4:].strip()
-        raw = raw.strip()
-        try:
-            prep_data = json.loads(raw)
-        except (json.JSONDecodeError, IndexError) as exc:
-            logger.warning("Interview prep LLM returned invalid JSON: %s. Using fallback.", exc)
-            return {
-                **state,
-                "status": "completed",
-                "result": _fallback_prep(
-                    target_role, company,
-                    f"LLM response could not be parsed as JSON: {str(exc)[:200]}"
-                ),
-                "messages": state["messages"] + [
-                    AIMessage(content=f"Interview prep ready for {target_role} at {company}.")
-                ],
-            }
+        prep_data = call_llm_json(
+            llm,
+            SYSTEM_PROMPT,
+            build_user_prompt({
+                "role": target_role,
+                "company": company,
+                "research_notes": thinking,
+            }, [context_text]),
+            OUTPUT_SCHEMA,
+        ).model_dump()
 
         return {
             **state,
@@ -142,12 +123,12 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             ],
         }
     except Exception as exc:
-        logger.error("Interview prep agent failed for user %s: %s", state.get("user_id"), exc)
+        logger.exception("Interview prep agent failed for user %s", state.get("user_id"))
         return {
             **state,
-            "status": "completed",
-            "result": _fallback_prep(target_role, company, "Interview prep generation failed"),
+            "status": "failed",
+            "error": f"Interview prep generation failed: {str(exc)[:200]}",
             "messages": state["messages"] + [
-                AIMessage(content=f"Interview prep fallback ready for {target_role}.")
+                AIMessage(content=f"Interview prep generation failed for {target_role}.")
             ],
         }

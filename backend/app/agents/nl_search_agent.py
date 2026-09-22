@@ -6,7 +6,6 @@ validates them, and returns a structured interpretation for user confirmation
 before delegating to the existing Job_Search_Agent.
 """
 
-import json
 import logging
 import time
 import uuid
@@ -14,8 +13,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.nl_search_prompt import SYSTEM_PROMPT, OUTPUT_SCHEMA, build_user_prompt
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings
@@ -55,59 +56,30 @@ class SearchParameters:
 # Parameter extraction via LLM
 # ---------------------------------------------------------------------------
 
-EXTRACT_PROMPT = """You are a job search query parser. Given a natural language job search query, extract structured parameters.
-
-Return ONLY valid JSON with the following keys (use null for fields not mentioned):
-{{
-  "role_title": "string or null — the job title/role the user is searching for",
-  "seniority": "string or null — e.g. junior, mid, senior, lead, principal, staff",
-  "location": "string or null — city, state, country, or region",
-  "remote_preference": "string or null — remote, hybrid, onsite, or null",
-  "industry": "string or null — industry or company type",
-  "salary_range": [min, max] or null — annual salary range as integers,
-  "company_size": "string or null — startup, mid-size, enterprise, or null",
-  "tech_stack": ["list of technologies mentioned"],
-  "additional_constraints": ["any other preferences or constraints"]
-}}
-
-Query: {query}
-
-JSON:"""
-
-
-def _parse_llm_response(content: str) -> dict:
-    """Parse LLM JSON response, handling markdown code fences."""
-    content = content.strip()
-    if content.startswith("```"):
-        content = content.split("```")[1]
-        if content.startswith("json"):
-            content = content[4:]
-        content = content.strip()
-    return json.loads(content)
-
-
 def extract_parameters(llm: BaseChatModel, query: str) -> SearchParameters:
     """Use LLM to extract structured search parameters from a natural language query."""
-    resp = llm.invoke([HumanMessage(content=EXTRACT_PROMPT.format(query=query))])
-    parsed = _parse_llm_response(resp.content)
-
-    salary_range = None
-    if parsed.get("salary_range") and len(parsed["salary_range"]) == 2:
-        try:
-            salary_range = (int(parsed["salary_range"][0]), int(parsed["salary_range"][1]))
-        except (ValueError, TypeError):
-            salary_range = None
+    parsed = call_llm_json(
+        llm,
+        SYSTEM_PROMPT,
+        build_user_prompt({"query": query}),
+        OUTPUT_SCHEMA,
+    )
+    salary_range = (
+        (parsed.salary_min, parsed.salary_max)
+        if parsed.salary_min is not None and parsed.salary_max is not None
+        else None
+    )
 
     return SearchParameters(
-        role_title=parsed.get("role_title"),
-        seniority=parsed.get("seniority"),
-        location=parsed.get("location"),
-        remote_preference=parsed.get("remote_preference"),
-        industry=parsed.get("industry"),
+        role_title=parsed.titles[0] if parsed.titles else None,
+        seniority=None,
+        location=parsed.locations[0] if parsed.locations else None,
+        remote_preference=parsed.remote,
+        industry=parsed.company_types[0] if parsed.company_types else None,
         salary_range=salary_range,
-        company_size=parsed.get("company_size"),
-        tech_stack=parsed.get("tech_stack") or [],
-        additional_constraints=parsed.get("additional_constraints") or [],
+        company_size=None,
+        tech_stack=parsed.skills,
+        additional_constraints=parsed.exclude,
     )
 
 

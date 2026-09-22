@@ -1,3 +1,4 @@
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -28,10 +29,11 @@ def make_state() -> AgentState:
 def test_email_agent_drafts_and_pauses_for_approval(mock_llm):
     from app.agents.email_agent import email_agent_node
 
-    mock_llm.responses = [
-        "Subject: Following up — Senior Python Engineer\n\n"
-        "Dear Hiring Team,\n\nI wanted to follow up..."
-    ]
+    mock_llm.responses = [json.dumps({
+        "subject": "Following up — Senior Python Engineer",
+        "body": "Dear Hiring Team, I wanted to follow up...",
+        "intent_detected": "status_request",
+    })]
 
     _patch_settings = "app.agents.email_agent.fetch_model_settings"
     _patch_llm = "app.agents.email_agent._build_llm"
@@ -55,7 +57,9 @@ def test_email_agent_never_auto_sends(mock_llm):
     """Critical: email agent must NEVER call send_message directly."""
     from app.agents.email_agent import email_agent_node
 
-    mock_llm.responses = ["Subject: Test\n\nBody"]
+    mock_llm.responses = [json.dumps({
+        "subject": "Test", "body": "Body", "intent_detected": "status_request"
+    })]
 
     _patch_settings = "app.agents.email_agent.fetch_model_settings"
     _patch_llm = "app.agents.email_agent._build_llm"
@@ -70,15 +74,12 @@ def test_email_agent_never_auto_sends(mock_llm):
     mock_gmail.send_message.assert_not_called()
 
 
-def test_email_agent_uses_fallback_gracefully():
+def test_email_agent_fails_without_fabricating_a_draft():
     from app.agents.email_agent import email_agent_node
 
     with patch("app.agents.email_agent.fetch_model_settings", return_value=MagicMock()), \
          patch("app.agents.email_agent._build_llm", side_effect=Exception("LLM unavailable")):
         result = email_agent_node(make_state())
 
-    assert result["status"] == "awaiting_approval"
-    assert result["pending_action"]["type"] == "send_email"
-    assert result["pending_action"]["recipient"] == "recruiter@stripe.com"
-    assert "Email drafting failed" in result["pending_action"]["thinking"]
-    assert "LLM unavailable" not in result["pending_action"]["thinking"]
+    assert result["status"] == "failed"
+    assert "Email drafting failed" in result["error"]

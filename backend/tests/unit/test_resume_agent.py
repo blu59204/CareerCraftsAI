@@ -58,7 +58,7 @@ def test_resume_agent_pauses_for_approval(mock_llm):
     assert result["pending_action"]["ats_score"] >= 0
 
 
-def test_resume_agent_uses_fallback_on_exception():
+def test_resume_agent_fails_without_fabricating_a_draft():
     from app.agents.resume_agent import resume_agent_node
 
     with patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock()), \
@@ -69,10 +69,8 @@ def test_resume_agent_uses_fallback_on_exception():
          patch("app.core.event_bus.emit"):
         result = resume_agent_node(make_state())
 
-    assert result["status"] == "awaiting_approval"
-    assert result["pending_action"]["type"] == "resume_ready"
-    assert result["pending_action"]["pdf_document_id"] == "doc-456"
-    assert any("allback" in w or "ailed" in w for w in result["pending_action"]["warnings"])
+    assert result["status"] == "failed"
+    assert "Resume generation failed" in result["error"]
 
 
 def test_resume_agent_degrades_without_pdf_storage(mock_llm):
