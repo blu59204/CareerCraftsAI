@@ -73,10 +73,12 @@ class TestPDFGeneration:
 class TestDatabaseConnection:
     @pytest.mark.asyncio
     async def test_db_select_one_works(self):
+        from sqlalchemy import text
+
         from app.core.database import async_engine
         try:
             async with async_engine.begin() as conn:
-                result = await conn.execute("SELECT 1")
+                result = await conn.execute(text("SELECT 1"))
                 assert result is not None
         except Exception as e:
             pytest.fail(f"Database connection failed: {e}")

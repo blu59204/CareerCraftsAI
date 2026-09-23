@@ -269,3 +269,36 @@ def test_token_tracking_callback_noop_on_zero_tokens():
     get_and_reset_tokens()
     cb.on_llm_end(result)
     assert get_and_reset_tokens() == 0
+
+
+def test_tokens_recorded_in_worker_thread_are_visible_to_the_run():
+    """Sync agent nodes run via asyncio.to_thread; their LLM tokens must reach the
+    caller (previously a threading.local lost them, so tokens_used was always 0)."""
+    import asyncio
+
+    from app.core.model_router import _add_tokens, begin_token_tracking, get_and_reset_tokens
+
+    async def run(count: int) -> int:
+        begin_token_tracking()
+        await asyncio.to_thread(_add_tokens, count)
+        await asyncio.sleep(0)
+        return get_and_reset_tokens()
+
+    async def main():
+        return await asyncio.gather(run(120), run(7))
+
+    assert asyncio.run(main()) == [120, 7]
+
+
+def test_token_tracking_reads_usage_metadata_when_llm_output_has_none():
+    from app.core.model_router import _total_tokens
+
+    message = MagicMock()
+    message.usage_metadata = {"total_tokens": 42}
+    generation = MagicMock()
+    generation.message = message
+    result = MagicMock()
+    result.llm_output = None
+    result.generations = [[generation]]
+
+    assert _total_tokens(result) == 42

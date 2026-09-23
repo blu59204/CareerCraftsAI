@@ -85,7 +85,15 @@ def _assert_screen_loads(page: Page, screen) -> None:
     page.wait_for_load_state("networkidle")
 
     assert "/login" not in page.url
-    expect(page.get_by_text(screen.heading, exact=False).first).to_be_visible()
+    # get_by_role("heading", ...) rather than get_by_text(...).first: every
+    # sidebar nav link repeats the current screen's name (e.g. "Dashboard"),
+    # comes earlier in DOM order than the page's own <h1>, and is legitimately
+    # hidden on the mobile viewport — get_by_text(...).first silently resolved
+    # to that hidden nav link there, failing visibility for every mobile
+    # screen even though the real heading was rendered and visible. A longer
+    # explicit timeout (default is 5s) covers screens that fetch account data
+    # (integrations, models, outreach queue) before rendering their heading.
+    expect(page.get_by_role("heading", name=screen.heading, exact=False).first).to_be_visible(timeout=20_000)
     assert not page.get_by_text("Unable to verify your session").is_visible()
 
     real_console_errors = [e for e in console_errors if "favicon" not in e.lower()]
@@ -123,11 +131,20 @@ def test_authenticated_screen_loads_mobile(authenticated_mobile_page, screen, ar
     # sits later in the DOM than header/nav chrome — so target the last
     # visible interactive element, not the first (a logo link or hamburger
     # menu, which tells us nothing about a bottom overlay).
+    #
+    # Exclude disabled buttons: LiquidGlassButton (the app's shared button
+    # component) applies Tailwind's disabled:pointer-events-none, so a
+    # disabled button correctly never "receives pointer events" — the hover
+    # falls through to its container, which looks identical to a real
+    # overlay bug but isn't one. Found live: this button always happened to
+    # be the last interactive element on Interview/Interview Prep/LinkedIn
+    # Outreach while their forms were empty, flagging all three as false
+    # positives for a fixed-overlay bug that doesn't exist.
     candidates = page.get_by_role("button").or_(page.get_by_role("link"))
-    count = candidates.count()
-    if count:
-        primary_action = candidates.nth(count - 1)
-        if primary_action.is_visible():
-            primary_action.hover(timeout=5000)
+    for i in range(candidates.count() - 1, -1, -1):
+        candidate = candidates.nth(i)
+        if candidate.is_visible() and not candidate.is_disabled():
+            candidate.hover(timeout=5000)
+            break
 
     page.screenshot(path=artifact_dir / _screenshot_name(screen, "-mobile"), full_page=True)

@@ -16,13 +16,13 @@ class Screen(NamedTuple):
 
 AUTHENTICATED_SCREENS = [
     Screen("/onboarding", "Welcome"), Screen("/dashboard", "Dashboard"),
-    Screen("/agents", "Agent"), Screen("/jobs", "Job"),
-    Screen("/applications", "Applications"), Screen("/resume", "Resume"),
+    Screen("/agents", "Agent"), Screen("/jobs", "Find your next role"),
+    Screen("/applications", "Application Tracker"), Screen("/resume", "Resume"),
     Screen("/cover-letter", "Cover Letter"), Screen("/linkedin", "LinkedIn"),
-    Screen("/linkedin/outreach", "LinkedIn Outreach"), Screen("/email", "Email"),
-    Screen("/interview", "Interview Coach"), Screen("/interview-prep", "Interview"),
+    Screen("/linkedin/outreach", "LinkedIn Outreach"), Screen("/email", "AI-powered outreach"),
+    Screen("/interview", "Interview Coach"), Screen("/interview-prep", "Practice makes perfect"),
     Screen("/company", "Company"), Screen("/salary", "Salary"),
-    Screen("/leads", "Leads"), Screen("/settings", "Account Settings"),
+    Screen("/leads", "Recruiter Contacts"), Screen("/settings", "Account Settings"),
     Screen("/settings/account", "Account Settings"), Screen("/settings/profile", "Job"),
     Screen("/settings/integrations", "Integrations"), Screen("/settings/models", "Model Settings"),
 ]
