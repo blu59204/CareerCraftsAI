@@ -85,7 +85,15 @@ def _assert_screen_loads(page: Page, screen) -> None:
     page.wait_for_load_state("networkidle")
 
     assert "/login" not in page.url
-    expect(page.get_by_text(screen.heading, exact=False).first).to_be_visible()
+    # get_by_role("heading", ...) rather than get_by_text(...).first: every
+    # sidebar nav link repeats the current screen's name (e.g. "Dashboard"),
+    # comes earlier in DOM order than the page's own <h1>, and is legitimately
+    # hidden on the mobile viewport — get_by_text(...).first silently resolved
+    # to that hidden nav link there, failing visibility for every mobile
+    # screen even though the real heading was rendered and visible. A longer
+    # explicit timeout (default is 5s) covers screens that fetch account data
+    # (integrations, models, outreach queue) before rendering their heading.
+    expect(page.get_by_role("heading", name=screen.heading, exact=False).first).to_be_visible(timeout=20_000)
     assert not page.get_by_text("Unable to verify your session").is_visible()
 
     real_console_errors = [e for e in console_errors if "favicon" not in e.lower()]
