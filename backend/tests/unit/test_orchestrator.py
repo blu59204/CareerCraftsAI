@@ -1,4 +1,7 @@
 import uuid
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from app.agents.state import AgentState
 
@@ -57,3 +60,18 @@ def test_route_awaiting_approval_goes_to_end():
     from app.agents.orchestrator import route_task
 
     assert route_task(make_state("resume_optimize", status="awaiting_approval")) == "__end__"
+
+
+@pytest.mark.asyncio
+async def test_agent_exception_persists_failed_status():
+    from app.agents.orchestrator import _run_agent_safely
+
+    async def broken(_state):
+        raise RuntimeError("provider unavailable")
+
+    with patch("app.core.model_router.get_and_reset_tokens", return_value=0), \
+         patch("app.core.agent_runs_repository.upsert_agent_run", new=AsyncMock()) as upsert:
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            await _run_agent_safely(broken, make_state("email"))
+
+    assert upsert.await_args.kwargs["status"] == "failed"

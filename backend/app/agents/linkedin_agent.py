@@ -1,6 +1,12 @@
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.linkedin_prompt import (
+    OUTPUT_SCHEMA,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+)
 
 from app.agents.state import AgentState
 from app.agents.thinking import think_and_select
@@ -33,7 +39,7 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
         target_role = state["context"].get("target_role", "software engineer")
         live_browser = bool(state["context"].get("live_browser", True))
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
@@ -51,39 +57,30 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
             selection_criteria="Which experiences/skills are most relevant? What narrative positions this person best?",
         )
 
-        headline = llm.invoke([
-            HumanMessage(
-                content=_HEADLINE_PROMPT.format(
-                    role=target_role, context=context_text, thinking=thinking
-                )
-            )
-        ]).content
-
-        about = llm.invoke([
-            HumanMessage(
-                content=_ABOUT_PROMPT.format(
-                    role=target_role, context=context_text, thinking=thinking
-                )
-            )
-        ]).content
-
-        bullets = llm.invoke([
-            HumanMessage(
-                content=_BULLETS_PROMPT.format(
-                    role=target_role, context=context_text, thinking=thinking
-                )
-            )
-        ]).content
+        profile = call_llm_json(
+            llm,
+            SYSTEM_PROMPT,
+            build_user_prompt(
+                {"target_role": target_role, "current_profile": thinking},
+                [context_text],
+            ),
+            OUTPUT_SCHEMA,
+        )
+        bullets = "\n".join(
+            f"• {bullet}"
+            for experience in profile.experiences[:3]
+            for bullet in experience.bullets[:3]
+        )
 
         return {
             **state,
             "status": "awaiting_approval",
             "pending_action": {
                 "type": "linkedin_edits",
-                "headline": headline.strip(),
-                "about": about.strip(),
-                "experience_bullets": bullets.strip(),
-                "thinking": thinking,
+                "headline": profile.headline,
+                "about": profile.about,
+                "experience_bullets": bullets,
+                "thinking": " ".join(profile.before_after_notes),
                 "live_browser": live_browser,
             },
             "messages": state["messages"] + [
@@ -91,36 +88,12 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
             ],
         }
     except Exception as exc:
-        logger.error(
-            "LinkedIn agent failed for user %s: %s", state.get("user_id"), exc
-        )
-        target_role = state.get("context", {}).get("target_role", "software engineer")
-        headline = f"{target_role.title()} | Builder of reliable, user-focused products"
-        about = (
-            f"I build practical software for {target_role} roles, with focus on clean "
-            "delivery, collaboration, and measurable product impact.\n\n"
-            "I enjoy turning fuzzy requirements into shipped features, improving systems, "
-            "and learning fast across product and engineering teams."
-        )
-        bullets = "\n".join(
-            [
-                "• Built and improved production features with attention to reliability and user value.",
-                "• Collaborated across teams to clarify requirements and deliver maintainable solutions.",
-                "• Used feedback and metrics to improve product quality and delivery speed.",
-            ]
-        )
+        logger.exception("LinkedIn agent failed for user %s", state.get("user_id"))
         return {
             **state,
-            "status": "awaiting_approval",
-            "pending_action": {
-                "type": "linkedin_edits",
-                "headline": headline,
-                "about": about,
-                "experience_bullets": bullets,
-                "thinking": "Fallback draft used because live model call failed.",
-                "live_browser": bool(state.get("context", {}).get("live_browser", True)),
-            },
+            "status": "failed",
+            "error": f"LinkedIn optimization failed: {str(exc)[:200]}",
             "messages": state["messages"] + [
-                AIMessage(content="LinkedIn fallback sections ready for review.")
+                AIMessage(content="LinkedIn optimization failed; no fabricated profile was created.")
             ],
         }

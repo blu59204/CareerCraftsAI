@@ -11,6 +11,7 @@ Bugs caught:
 Each test is annotated with what the OLD code did vs what the NEW code does.
 """
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -55,6 +56,23 @@ def test_state_with_all_optional_fields():
     }
     assert state["status"] == "running"
     assert state["tokens_used"] == 0
+
+
+def test_model_settings_is_propagated_state_data():
+    settings = MagicMock(provider="openai")
+    state: AgentState = {"user_id": "usr_123", "run_id": "run_1", "model_settings": settings}
+
+    assert state["model_settings"] is settings
+
+
+def test_resume_memory_heuristic_uses_resume_markdown():
+    from app.agents.semantic_memory import _heuristic_memories
+
+    memories = _heuristic_memories(
+        uuid.uuid4(), "resume", {"resume_markdown": "# Tailored resume"}
+    )
+
+    assert any("tailored resume" in memory.content for memory in memories)
 
 
 # ---------------------------------------------------------------------------

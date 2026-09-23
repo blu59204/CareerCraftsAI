@@ -6,26 +6,28 @@ import { motion } from 'motion/react'
 import { fadeUp, stagger } from '@/lib/motion-variants'
 import { LiquidGlassButton } from '@/components/ui/LiquidGlassButton'
 import { CommandHeader } from '@/components/immersive/CommandHeader'
-import { apiClient } from '@/lib/api'
+import { apiClient, getApiErrorMessage } from '@/lib/api'
 import { toast } from 'sonner'
 import { Play, Send, Trophy } from 'lucide-react'
 
 type QuestionType = 'behavioral' | 'technical' | 'situational'
 
 interface Question {
-  id: string
-  text: string
+  type: string
+  question: string
+  context?: string
 }
 
 interface AnswerFeedback {
   score: number
-  feedback: string
+  rating: string
+  tips: string[]
 }
 
 interface SessionSummary {
   overall_score: number
-  strengths: string[]
-  improvements: string[]
+  count: number
+  rating: string
 }
 
 export default function InterviewPage() {
@@ -34,6 +36,7 @@ export default function InterviewPage() {
   const [questionType, setQuestionType] = useState<QuestionType>('behavioral')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null)
+  const [questionIndex, setQuestionIndex] = useState(0)
   const [answer, setAnswer] = useState('')
   const [feedbacks, setFeedbacks] = useState<AnswerFeedback[]>([])
   const [summary, setSummary] = useState<SessionSummary | null>(null)
@@ -48,28 +51,30 @@ export default function InterviewPage() {
     onSuccess: (res) => {
       setSessionId(res.data.session_id)
       setCurrentQuestion(res.data.question)
+      setQuestionIndex(res.data.question_index ?? 0)
       toast.success('Session started!')
     },
-    onError: () => toast.error('Failed to start session'),
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Failed to start session')),
   })
 
   const submitAnswer = useMutation({
     mutationFn: () =>
       apiClient.post(`/interview/session/${sessionId}/answer`, {
-        question_id: currentQuestion?.id,
-        answer,
+        question_index: questionIndex,
+        answer_text: answer,
       }),
     onSuccess: (res) => {
       setFeedbacks((prev) => [...prev, res.data.feedback])
       setAnswer('')
       if (res.data.next_question) {
         setCurrentQuestion(res.data.next_question)
+        setQuestionIndex(res.data.question_index + 1)
       } else {
         setSummary(res.data.summary)
         setCurrentQuestion(null)
       }
     },
-    onError: () => toast.error('Failed to submit answer'),
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Failed to submit answer')),
   })
 
   const handleSubmitAnswer = () => {
@@ -87,17 +92,21 @@ export default function InterviewPage() {
           <Trophy className="w-12 h-12 mx-auto text-warning" />
           <h1 className="text-2xl font-bold">Session Complete</h1>
           <p className="text-4xl font-bold">{summary.overall_score}/100</p>
+          <p className="text-sm text-muted-foreground capitalize">{summary.rating} · {summary.count} questions answered</p>
         </motion.div>
-        <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
-          <h2 className="font-semibold">Strengths</h2>
-          <ul className="list-disc pl-5 space-y-1">
-            {summary.strengths.map((s, i) => <li key={i}>{s}</li>)}
-          </ul>
-          <h2 className="font-semibold">Areas to Improve</h2>
-          <ul className="list-disc pl-5 space-y-1">
-            {summary.improvements.map((s, i) => <li key={i}>{s}</li>)}
-          </ul>
-        </motion.div>
+        {feedbacks.length > 0 && (
+          <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
+            <h2 className="font-semibold text-sm">Feedback Recap</h2>
+            {feedbacks.map((fb, i) => (
+              <div key={i} className="p-3 bg-muted rounded-lg text-sm space-y-1">
+                <span className="font-medium capitalize">Q{i + 1}: {fb.score}/100 ({fb.rating})</span>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  {fb.tips.map((tip, j) => <li key={j}>{tip}</li>)}
+                </ul>
+              </div>
+            ))}
+          </motion.div>
+        )}
       </motion.div>
     )
   }
@@ -159,7 +168,7 @@ export default function InterviewPage() {
       {currentQuestion && (
         <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-6">
           <p className="text-sm text-muted-foreground">Question {feedbacks.length + 1}</p>
-          <p className="text-lg font-medium">{currentQuestion.text}</p>
+          <p className="text-lg font-medium">{currentQuestion.question}</p>
           <textarea
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
@@ -180,8 +189,11 @@ export default function InterviewPage() {
         <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
           <h2 className="font-semibold text-sm">Previous Feedback</h2>
           {feedbacks.map((fb, i) => (
-            <div key={i} className="p-3 bg-muted rounded-lg text-sm">
-              <span className="font-medium">Q{i + 1}: {fb.score}/100</span> — {fb.feedback}
+            <div key={i} className="p-3 bg-muted rounded-lg text-sm space-y-1">
+              <span className="font-medium capitalize">Q{i + 1}: {fb.score}/100 ({fb.rating})</span>
+              <ul className="list-disc pl-5 space-y-0.5">
+                {fb.tips.map((tip, j) => <li key={j}>{tip}</li>)}
+              </ul>
             </div>
           ))}
         </motion.div>

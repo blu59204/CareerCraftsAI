@@ -47,6 +47,9 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const [editedText, setEditedText] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const actionType = (action.type as string) || "unknown";
+  const warnings = Array.isArray(action.warnings)
+    ? action.warnings.filter((warning): warning is string => typeof warning === "string")
+    : [];
 
   const decide = async (approved: boolean) => {
     setLoading(true);
@@ -100,6 +103,15 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+
+          {warnings.length > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+              <p className="font-medium">Warnings</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+              </ul>
+            </div>
+          )}
 
           {/* Email preview */}
           {actionType === "send_email" && (
@@ -302,6 +314,50 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
             </div>
           )}
 
+          {/* LinkedIn outreach drafts */}
+          {actionType === "linkedin_outreach" && (
+            <div className="space-y-3">
+              {(Array.isArray(action.messages) ? action.messages : []).map((draft, index) => {
+                const item = draft as Record<string, unknown>;
+                return (
+                  <div key={`${String(item.contact_name ?? "contact")}-${index}`} className="rounded-xl border border-border bg-background/70 p-4 space-y-2">
+                    <div>
+                      <p className="font-medium">{String(item.contact_name ?? "Unknown contact")}</p>
+                      <p className="text-xs text-muted-foreground">{String(item.contact_title ?? "")}</p>
+                    </div>
+                    <p className="whitespace-pre-wrap text-sm text-foreground">{String(item.message ?? "—")}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Salary report */}
+          {actionType === "salary_report_review" && (() => {
+            const report = (action.report ?? {}) as Record<string, unknown>;
+            const script = (action.script ?? {}) as Record<string, unknown>;
+            return (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {["p25", "p50", "p75"].map((key) => (
+                    <div key={key} className="rounded-xl border border-border bg-background/70 p-3 text-center">
+                      <p className="text-xs uppercase tracking-wider text-muted-foreground">{key}</p>
+                      <p className="mt-1 text-lg font-semibold">{String(report[key] ?? "—")}</p>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Negotiation Script</span>
+                  <div className="mt-1 rounded-xl border border-border bg-background/70 p-4 text-sm whitespace-pre-wrap">
+                    {Object.entries(script).map(([key, value]) => (
+                      <p key={key} className="mb-2 last:mb-0"><span className="font-medium capitalize">{key.replace(/_/g, " ")}:</span> {typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Search confirmation (NL Search) */}
           {actionType === "search_confirmation" && (
             <div className="space-y-3">
@@ -326,7 +382,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
             <p className="text-sm">{String(action.message ?? "Review your application")}</p>
             <BrowserWorkspace runId={runId} />
           </>}
-          {!["send_email", "resume_ready", "linkedin_edits", "cover_letter_review", "search_confirmation", "browser_input", "browser_review", "application_answers_required"].includes(actionType) && (
+          {!["send_email", "resume_ready", "linkedin_edits", "cover_letter_review", "search_confirmation", "browser_input", "browser_review", "application_answers_required", "linkedin_outreach", "salary_report_review"].includes(actionType) && (
             <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/70 p-4">
               <pre className="text-xs font-mono whitespace-pre-wrap text-foreground">
                 {JSON.stringify(action, null, 2)}

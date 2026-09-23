@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Mic,
@@ -81,14 +81,6 @@ const CATEGORY_CONFIG: Record<Exclude<Category, "All">, string> = {
   "Company-Specific": "bg-warning/15 text-warning border-warning/30",
 };
 
-const MOCK_INTERVIEW_QUESTIONS = [
-  "Tell me about yourself.",
-  "What's your greatest technical challenge you've overcome?",
-  "Where do you see yourself in 5 years?",
-  "Describe a conflict with a teammate and how you resolved it.",
-  "What excites you most about this role?",
-];
-
 function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
     <div className="space-y-1.5">
@@ -108,13 +100,19 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-function MockInterviewModal({ onClose }: { onClose: () => void }) {
+function MockInterviewModal({
+  questions,
+  onClose,
+}: {
+  questions: string[];
+  onClose: () => void;
+}) {
   const [step, setStep] = useState(0);
   const [answer, setAnswer] = useState("");
   const [answers, setAnswers] = useState<string[]>([]);
   const [done, setDone] = useState(false);
 
-  const currentQ = MOCK_INTERVIEW_QUESTIONS[step];
+  const currentQ = questions[step];
 
   const handleNext = () => {
     if (!answer.trim()) {
@@ -123,7 +121,7 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
     }
     setAnswers((prev) => [...prev, answer]);
     setAnswer("");
-    if (step + 1 >= MOCK_INTERVIEW_QUESTIONS.length) {
+    if (step + 1 >= questions.length) {
       setDone(true);
     } else {
       setStep((s) => s + 1);
@@ -170,9 +168,9 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
         ) : (
           <div className="space-y-4">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>Question {step + 1} of {MOCK_INTERVIEW_QUESTIONS.length}</span>
+              <span>Question {step + 1} of {questions.length}</span>
               <div className="flex gap-1">
-                {MOCK_INTERVIEW_QUESTIONS.map((_, i) => (
+                {questions.map((_, i) => (
                   <span
                     key={i}
                     className={`h-1.5 w-5 rounded-full transition-colors ${i <= step ? "bg-primary" : "bg-muted"}`}
@@ -197,7 +195,7 @@ function MockInterviewModal({ onClose }: { onClose: () => void }) {
             />
             <div className="flex gap-2">
               <LiquidGlassButton tone="primary" size="sm" className="flex-1" onClick={handleNext}>
-                {step + 1 >= MOCK_INTERVIEW_QUESTIONS.length ? "Finish" : "Next question"}
+                {step + 1 >= questions.length ? "Finish" : "Next question"}
               </LiquidGlassButton>
               <LiquidGlassButton tone="ghost" size="sm" onClick={onClose}>
                 Exit
@@ -312,7 +310,6 @@ function QuestionCard({ question, company, role }: { question: Question; company
 }
 
 export default function InterviewPrepPage() {
-  const qc = useQueryClient();
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [activeTab, setActiveTab] = useState<Category>("All");
@@ -320,16 +317,41 @@ export default function InterviewPrepPage() {
   const [mockOpen, setMockOpen] = useState(false);
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [reviewRunId, setReviewRunId] = useState<string | null>(null);
+  const [approvedRunId, setApprovedRunId] = useState<string | null>(null);
 
   const { data: lastRun } = useQuery({
-    queryKey: ["interview-prep-run"],
+    queryKey: ["interview-prep-run", reviewRunId],
     queryFn: async () => {
+      if (reviewRunId) {
+        const { data } = await apiClient.get(`/agents/runs/${reviewRunId}`);
+        return data as { id: string; agent_type: string; status: string; output: (Record<string, unknown> & { warnings?: string[] }) | null };
+      }
       const { data } = await apiClient.get("/agents/runs?limit=50");
-      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { agent_type: string; status: string; output: Record<string, unknown> | null }[])
-        .filter((r) => r.agent_type === "interview_prep" && r.status === "completed");
+      const runs = ((Array.isArray(data) ? data : data.runs ?? []) as { id: string; agent_type: string; status: string; output: (Record<string, unknown> & { warnings?: string[] }) | null }[])
+        .filter((r) => r.agent_type === "interview_prep" && ["awaiting_approval", "completed"].includes(r.status))
+        .filter((r) => !reviewRunId || r.id === reviewRunId);
       return runs[0] ?? null;
     },
+    refetchInterval: reviewRunId
+      ? (query) => {
+          const status = query.state.data?.status;
+          return status === "completed" ? false : 2000;
+        }
+      : false,
+    refetchIntervalInBackground: true,
   });
+
+  useEffect(() => {
+    if (!reviewRunId || approvedRunId === reviewRunId || lastRun?.id !== reviewRunId || lastRun.status !== "awaiting_approval" || !lastRun.output) return;
+    setApprovedRunId(reviewRunId);
+    apiClient.post(`/agents/${reviewRunId}/approve`, { approved: true })
+      .then(() => toast.success("Interview prep generated"))
+      .catch(() => {
+        setApprovedRunId(null);
+        toast.error("Interview prep approval failed");
+      });
+  }, [approvedRunId, lastRun, reviewRunId]);
 
   // Map agent output fields to Question[] — handles both old `questions` and new split fields
   const aiQuestions: Question[] = (() => {
@@ -382,13 +404,15 @@ export default function InterviewPrepPage() {
       ? (lastRun.output as Record<string, unknown>).questions_to_ask as string[]
       : null;
 
+  const warnings = Array.isArray(lastRun?.output?.warnings) ? lastRun.output.warnings : [];
+
   const allQuestions = [...aiQuestions, ...BASE_QUESTIONS];
   const filtered =
     activeTab === "All" ? allQuestions : allQuestions.filter((q) => q.category === activeTab);
 
   const generateMutation = useMutation({
-    mutationFn: () =>
-      apiClient.post("/agents/run", {
+    mutationFn: async (): Promise<{ run_id: string; status: string }> => {
+      const { data } = await apiClient.post("/agents/run", {
         task_type: "interview_prep",
         context: {
           mode: "generate",
@@ -396,10 +420,12 @@ export default function InterviewPrepPage() {
           role: role || "Software Engineer",
           count: 8,
         },
-      }),
-    onSuccess: () => {
+      });
+      return data;
+    },
+    onSuccess: (data) => {
+      setReviewRunId(data.run_id);
       toast.success("Generating questions — check Agents page for results");
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["interview-prep-run"] }), 10000);
     },
     onError: (error) => {
       toast.error(getApiErrorMessage(error, "Agent unavailable — backend not connected"));
@@ -432,10 +458,17 @@ export default function InterviewPrepPage() {
           description="Generate role-specific questions, rehearse out loud, and turn STAR stories into interview-ready answers."
           actions={
           <div className="flex shrink-0 flex-wrap gap-2">
-            <LiquidGlassButton tone="ghost" size="sm" onClick={() => setMockOpen(true)}>
-              <Mic className="h-4 w-4" />
-              Mock interview
-            </LiquidGlassButton>
+            <span title={aiQuestions.length === 0 ? "Generate an interview plan first" : undefined}>
+              <LiquidGlassButton
+                tone="ghost"
+                size="sm"
+                onClick={() => setMockOpen(true)}
+                disabled={aiQuestions.length === 0}
+              >
+                <Mic className="h-4 w-4" />
+                Mock interview
+              </LiquidGlassButton>
+            </span>
             <LiquidGlassButton
               tone="primary"
               size="sm"
@@ -558,6 +591,14 @@ export default function InterviewPrepPage() {
 
           {/* RIGHT: prep assistant */}
           <div className="space-y-4">
+            {warnings.length > 0 && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+                <p className="font-medium">Warnings</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+                </ul>
+              </div>
+            )}
             {/* AI Prep Score */}
             <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-5">
               <div className="flex items-center gap-2">
@@ -765,22 +806,33 @@ export default function InterviewPrepPage() {
               <p className="text-sm text-muted-foreground max-w-md">
                 AI will ask questions and evaluate your answers in real time — scored on clarity, structure, and depth.
               </p>
+              {aiQuestions.length === 0 && (
+                <p className="text-xs text-warning">Generate an interview plan first</p>
+              )}
             </div>
-            <LiquidGlassButton
-              tone="primary"
-              size="lg"
-              className="shrink-0 gap-2 sm:w-auto w-full"
-              onClick={() => setMockOpen(true)}
-            >
-              <Play className="h-4 w-4" />
-              Start mock interview
-            </LiquidGlassButton>
+            <span title={aiQuestions.length === 0 ? "Generate an interview plan first" : undefined}>
+              <LiquidGlassButton
+                tone="primary"
+                size="lg"
+                className="shrink-0 gap-2 sm:w-auto w-full"
+                onClick={() => setMockOpen(true)}
+                disabled={aiQuestions.length === 0}
+              >
+                <Play className="h-4 w-4" />
+                Start mock interview
+              </LiquidGlassButton>
+            </span>
           </div>
         </motion.div>
       </motion.div>
 
       <AnimatePresence>
-        {mockOpen && <MockInterviewModal onClose={() => setMockOpen(false)} />}
+        {mockOpen && (
+          <MockInterviewModal
+            questions={aiQuestions.map((q) => q.text)}
+            onClose={() => setMockOpen(false)}
+          />
+        )}
       </AnimatePresence>
     </>
   );

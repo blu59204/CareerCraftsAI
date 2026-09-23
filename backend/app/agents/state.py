@@ -40,6 +40,8 @@ class AgentState(_AgentStateRequired, total=False):
     pending_action: dict | None
     result: dict | None
     error: str | None
+    # Resolved ORM settings row; nodes fall back to the DB when absent.
+    model_settings: Any
     # Total tokens consumed by this run — written by ResumeAgent and any agent
     # that tracks token usage; read by agent_runs_repository for billing records.
     tokens_used: int

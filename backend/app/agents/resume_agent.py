@@ -15,19 +15,6 @@ from app.services.storage_service import upload_file
 logger = logging.getLogger(__name__)
 
 
-# ── Fallback (used when LLM is unavailable) ─────────────────────
-def _fallback_resume_text(context_text: str, full_name: str | None, jd_text: str) -> str:
-    name = full_name or "Candidate"
-    source = context_text.strip() or "Resume context not available."
-    summary = (
-        f"{name}\n\nSUMMARY\n"
-        "Software professional focused on practical delivery and reliable product outcomes."
-    )
-    if jd_text:
-        summary += " Resume draft aligned to supplied job description keywords."
-    return f"{summary}\n\nEXPERIENCE\n{source[:1800]}\n\nSKILLS\nSoftware engineering, collaboration, delivery\n"
-
-
 def _persist_resume_document(
     user_id: str,
     full_name: str | None,
@@ -114,7 +101,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
 
     try:
         emit(run_id, "thinking", {"step": "start", "message": "Retrieving resume context from RAG..."})
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
@@ -162,39 +149,9 @@ def resume_agent_node(state: AgentState) -> AgentState:
             "messages": state.get("messages", []) + [AIMessage(content=parsed.resume_markdown[:200])],
         }
     except Exception as exc:
-        logger.error("Resume agent failed for user %s: %s", user_id, exc)
-        emit(run_id, "thinking", {"step": "fallback", "message": "Live LLM call failed — using fallback resume draft."})
-        fallback_text = _fallback_resume_text("", full_name, jd_text)
-        fallback = _score_parsed_resume(
-            ResumeOutput(
-                resume_markdown=fallback_text,
-                summary="Fallback draft — live model call failed.",
-                ats_score=0,
-                keywords_matched=[],
-                keywords_missing=[],
-                changes_made=[],
-                warnings=["LLM unavailable; showing extractive fallback."],
-            ),
-            jd_text,
-        )
-        try:
-            pdf_bytes = generate_resume_pdf(fallback.resume_markdown, full_name=full_name, template=template)
-            try:
-                pdf_document_id = _persist_resume_document(
-                    user_id, full_name, template, fallback, jd_text, pdf_bytes
-                )
-            except Exception as se:
-                logger.warning("Fallback PDF persist failed, continuing without download: %s", se)
-                pdf_document_id = None
-                fallback.warnings = list(fallback.warnings or []) + ["PDF storage unavailable — preview only."]
-        except Exception as se:
-            logger.warning("Fallback PDF generation failed: %s", se)
-            return {**state, "status": "error", "error": str(se)}
-        emit(run_id, "complete", {"result": _resume_pending_action(fallback, pdf_document_id)})
+        logger.exception("Resume agent failed for user %s", user_id)
         return {
             **state,
-            "status": "awaiting_approval",
-            "pending_action": _resume_pending_action(fallback, pdf_document_id),
-            "result": _resume_pending_action(fallback, pdf_document_id),
-            "messages": state.get("messages", []) + [AIMessage(content="Resume fallback draft ready for review.")],
+            "status": "failed",
+            "error": f"Resume generation failed: {str(exc)[:200]}",
         }

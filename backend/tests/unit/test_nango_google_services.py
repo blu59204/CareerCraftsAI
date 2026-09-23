@@ -45,6 +45,71 @@ def test_gmail_draft_uses_nango_proxy(monkeypatch) -> None:
     assert b"To: to@example.com" in base64.urlsafe_b64decode(raw + "==")
 
 
+def test_gmail_get_message_metadata_uses_nango_proxy(monkeypatch) -> None:
+    captured = {}
+
+    def fake_proxy_request(**kwargs):
+        captured.update(kwargs)
+        return IntegrationProxyResponse(
+            status_code=200,
+            data={
+                "id": "msg-1",
+                "snippet": "a body preview that must never leak",
+                "payload": {"headers": [{"name": "From", "value": "a@b.com"}]},
+            },
+        )
+
+    monkeypatch.setattr("app.services.gmail_service.proxy_request", fake_proxy_request)
+
+    result = GmailMCPClient("00000000-0000-0000-0000-000000000001").get_message_metadata("msg-1")
+
+    assert captured["provider"] == "gmail"
+    assert captured["method"] == "GET"
+    assert captured["path"].startswith("gmail/v1/users/me/messages/msg-1?")
+    assert "format=metadata" in captured["path"]
+    assert captured["path"].count("metadataHeaders=") == 4
+    assert "snippet" not in result
+    assert result["payload"]["headers"][0]["value"] == "a@b.com"
+
+
+def test_gmail_get_message_metadata_degrades_on_failure(monkeypatch) -> None:
+    def fake_proxy_request(**kwargs):
+        raise RuntimeError("Gmail is not connected through Nango")
+
+    monkeypatch.setattr("app.services.gmail_service.proxy_request", fake_proxy_request)
+
+    assert (
+        GmailMCPClient("00000000-0000-0000-0000-000000000001").get_message_metadata("msg-1")
+        == {}
+    )
+
+
+def test_gmail_archive_message_uses_nango_proxy(monkeypatch) -> None:
+    captured = {}
+
+    def fake_proxy_request(**kwargs):
+        captured.update(kwargs)
+        return IntegrationProxyResponse(status_code=200, data={"id": "msg-1", "labelIds": []})
+
+    monkeypatch.setattr("app.services.gmail_service.proxy_request", fake_proxy_request)
+
+    result = GmailMCPClient("00000000-0000-0000-0000-000000000001").archive_message("msg-1")
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == "gmail/v1/users/me/messages/msg-1/modify"
+    assert captured["json_data"] == {"removeLabelIds": ["INBOX"]}
+    assert result == {"id": "msg-1", "labelIds": []}
+
+
+def test_gmail_archive_message_degrades_on_failure(monkeypatch) -> None:
+    def fake_proxy_request(**kwargs):
+        raise RuntimeError("Gmail is not connected through Nango")
+
+    monkeypatch.setattr("app.services.gmail_service.proxy_request", fake_proxy_request)
+
+    assert GmailMCPClient("00000000-0000-0000-0000-000000000001").archive_message("msg-1") == {}
+
+
 def test_drive_upload_uses_nango_proxy(monkeypatch) -> None:
     captured = {}
 

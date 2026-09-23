@@ -143,8 +143,16 @@ async def upload_document(
                 model_settings,
             )
             embedded_at = datetime.now(timezone.utc)
-        except Exception:
-            # Embedding failed — document saved without vectors, can retry later
+        except Exception as exc:
+            logger.warning(
+                "Embedding failed for doc_type=%s user=%s: %s",
+                doc_type,
+                current_user.id,
+                exc,
+            )
+            upload_warning = (
+                (upload_warning + " ") if upload_warning else ""
+            ) + "Document saved but not indexed for AI search — check Settings → Models."
             embedded_at = None
 
     doc = UserDocument(

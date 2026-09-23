@@ -223,7 +223,7 @@ def _heuristic_memories(user_id: UUID, agent_type: str, output: dict[str, Any]) 
                 )
             )
 
-    if agent_type == "resume" and output.get("resume_text"):
+    if agent_type == "resume" and output.get("resume_markdown"):
         memories.append(
             Memory(
                 user_id=user_id,

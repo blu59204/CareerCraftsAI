@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -11,12 +10,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select, func
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
-from app.core.event_bus import stream_events, publish, emit
+from app.core.event_bus import stream_events, publish
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
 
@@ -42,17 +41,6 @@ VALID_TASKS = {
     "auto_apply",
 }
 
-AGENT_TIMEOUTS: dict[str, int] = {
-    "auto_apply": 300,
-    "job_search": 120,
-    "company_research": 120,
-    "cover_letter": 90,
-    "salary_intelligence": 90,
-    "resume_optimize": 60,
-    "interview_coach": 30,
-}
-
-
 class RunRequest(BaseModel):
     task_type: str
     context: dict = Field(default_factory=dict)
@@ -69,90 +57,6 @@ class ApproveRequest(BaseModel):
     approved: bool
     action_type: str | None = None
     edits: dict[str, Any] | None = None
-
-
-# ── Background agent runner ─────────────────────────────────────
-
-
-async def _run_agent_background(
-    run_id: str, user_id: str, task_type: str, context: dict,
-) -> None:
-    from app.core.database import AsyncSessionLocal
-    from app.core.event_bus import publish, emit
-
-    # ── Update status to running, then close session immediately ──────
-    async with AsyncSessionLocal() as db:
-        agent_run = await db.get(AgentRun, uuid.UUID(run_id))
-        if agent_run:
-            agent_run.status = "running"
-            await db.commit()
-
-    emit(run_id, "log", f"Agent {task_type} starting...")
-
-    try:
-        # ── Dispatch to orchestrator (no DB session held open) ────────
-        from app.agents.orchestrator import orchestrator
-        from app.agents.state import AgentState
-        from langchain_core.messages import HumanMessage
-
-        state: AgentState = AgentState(
-            user_id=user_id,
-            run_id=run_id,
-            task_type=task_type,
-            messages=[HumanMessage(content=str(context))],
-            context=context,
-            status="running",
-            pending_action=None,
-            result=None,
-            error=None,
-        )
-
-        timeout = AGENT_TIMEOUTS.get(task_type, 60)
-        result_state = await asyncio.wait_for(
-            orchestrator.ainvoke(state),
-            timeout=timeout,
-        )
-
-        # ── Persist result in fresh session ───────────────────────────
-        async with AsyncSessionLocal() as db:
-            run = await db.get(AgentRun, uuid.UUID(run_id))
-            if run:
-                st = result_state.get("status") if isinstance(result_state, dict) else str(result_state)
-                run.status = st if st in ("completed", "failed", "awaiting_approval") else "completed"
-                if st == "awaiting_approval":
-                    # Save pending_action so approve_or_cancel can read action_type
-                    run.output = result_state.get("pending_action") or {}
-                else:
-                    run.output = result_state.get("result") if isinstance(result_state, dict) else None
-                run.tokens_used = result_state.get("tokens_used") if isinstance(result_state, dict) else None
-                run.completed_at = datetime.now(timezone.utc)
-                await db.commit()
-
-    except asyncio.TimeoutError:
-        logger.error("Agent %s timed out after %ds", task_type, AGENT_TIMEOUTS.get(task_type, 60))
-        async with AsyncSessionLocal() as db:
-            run = await db.get(AgentRun, uuid.UUID(run_id))
-            if run:
-                run.status = "failed"
-                run.error = f"Agent timed out after {AGENT_TIMEOUTS.get(task_type, 60)}s"
-                run.completed_at = datetime.now(timezone.utc)
-                await db.commit()
-        emit(run_id, "error", "Agent timed out")
-
-    except Exception as exc:
-        import re
-        sanitized = re.sub(r'(sk-[a-zA-Z0-9_-]{20,})', 'sk-***REDACTED***', str(exc))
-        sanitized = re.sub(r'(nvapi-[a-zA-Z0-9_-]{20,})', 'nvapi-***REDACTED***', sanitized)
-        sanitized = re.sub(r'(Bearer\s+)[A-Za-z0-9._-]{20,}', r'\1***REDACTED***', sanitized)
-        logger.error("Agent %s failed: %s", task_type, sanitized[:200])
-        async with AsyncSessionLocal() as db:
-            run = await db.get(AgentRun, uuid.UUID(run_id))
-            if run:
-                run.status = "failed"
-                run.error = sanitized[:500]
-                run.completed_at = datetime.now(timezone.utc)
-                await db.commit()
-        emit(run_id, "error", "Agent failed")
 
 
 # ── Endpoints ───────────────────────────────────────────────────
@@ -172,18 +76,22 @@ async def run_agent(
     # Serialize admission for this user across all API replicas.
     await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
     # Concurrent run check
-    active_count = await db.execute(
-        select(func.count(AgentRun.id)).where(
+    active_runs = await db.execute(
+        select(AgentRun.id).where(
             AgentRun.user_id == current_user.id,
-            AgentRun.status.in_(["queued", "running", "awaiting_approval"]),
+            AgentRun.status.in_(["queued", "running"]),
         )
     )
-    count = active_count.scalar() or 0
+    active_run_ids = [str(run_id) for run_id in active_runs.scalars().all()]
+    count = len(active_run_ids)
     max_concurrent = getattr(settings, "AGENT_MAX_CONCURRENT_PER_USER", 2)
     if count >= max_concurrent:
         raise HTTPException(
             status_code=429,
-            detail=f"Max {max_concurrent} concurrent agent runs reached. Wait for current runs to complete.",
+            detail={
+                "message": f"Max {max_concurrent} concurrent agent runs reached. Wait for current runs to complete.",
+                "run_ids": active_run_ids,
+            },
         )
 
     run_id = str(uuid.uuid4())

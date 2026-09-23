@@ -18,8 +18,10 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
+from pydantic import BaseModel, Field
 
+from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import _get_sync_factory, fetch_model_settings
@@ -28,6 +30,12 @@ from app.services.exa_service import ExaService
 logger = logging.getLogger(__name__)
 
 AGENT_TYPE = "salary_intelligence"
+
+
+class NegotiationDraft(BaseModel):
+    opening: str
+    counter_offer: int = Field(ge=0)
+    justifications: list[str] = Field(min_length=2)
 
 NEGOTIATION_SYSTEM_PROMPT = """You are a salary negotiation expert. Given the role, company,
 market salary percentiles, and the candidate's offer classification, generate a negotiation script.
@@ -170,8 +178,6 @@ def _generate_negotiation_script(
 
     Returns dict with: opening, counter_offer, justifications.
     """
-    import json
-
     company_text = f" at {company}" if company else ""
     prompt_content = (
         f"Role: {role}{company_text}\n"
@@ -184,46 +190,13 @@ def _generate_negotiation_script(
         f"Generate the negotiation script."
     )
 
-    response = llm.invoke([
-        SystemMessage(content=NEGOTIATION_SYSTEM_PROMPT),
-        HumanMessage(content=prompt_content),
-    ])
-
-    raw = response.content.strip()
-    # Strip markdown fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    if raw.endswith("```"):
-        raw = raw[:-3]
-
-    try:
-        script = json.loads(raw.strip())
-    except json.JSONDecodeError:
-        # Fallback: construct a basic script
-        script = {
-            "opening": (
-                f"Thank you for the offer. Based on my research of market rates "
-                f"for {role} roles, I'd like to discuss the compensation."
-            ),
-            "counter_offer": p75,
-            "justifications": [
-                f"Market data shows the 75th percentile for this role is ${p75:,}, reflecting the value I bring.",
-                f"My experience and skills position me competitively in the current market for {role} positions.",
-            ],
-        }
-
-    # Ensure counter_offer is set to p75
+    script = call_llm_json(
+        llm,
+        NEGOTIATION_SYSTEM_PROMPT,
+        prompt_content,
+        NegotiationDraft,
+    ).model_dump()
     script["counter_offer"] = p75
-
-    # Ensure at least 2 justifications
-    if not isinstance(script.get("justifications"), list) or len(script["justifications"]) < 2:
-        script["justifications"] = [
-            f"Market data shows the 75th percentile for this role is ${p75:,}.",
-            f"My qualifications align with top-tier candidates in the {role} space.",
-        ]
-
     return script
 
 
@@ -267,7 +240,7 @@ def salary_report_node(state: AgentState) -> AgentState:
             }
 
         # Get user's model settings for LLM routing (Requirement 3.7)
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,

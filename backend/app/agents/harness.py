@@ -136,6 +136,16 @@ class AgentHarness:
 
         await self._ensure_initialized()
 
+        # Resolve once per run. Keep the ORM row (including only encrypted key
+        # material) in state; nodes retain their DB fallback for direct calls.
+        model_settings = None
+        try:
+            from app.core.sync_db import fetch_model_settings
+
+            model_settings = await asyncio.to_thread(fetch_model_settings, user_id)
+        except Exception as exc:
+            logger.warning("Harness: model settings fetch failed, using node fallback: %s", exc)
+
         # ── 1. Build memory context ──────────────────────────────────
         mem_context: dict[str, Any] = {}
         semantic_context: dict[str, Any] = {}
@@ -205,6 +215,7 @@ class AgentHarness:
             pending_action=None,
             result=None,
             error=None,
+            model_settings=model_settings,
         )
 
         result_state: AgentState | None = None

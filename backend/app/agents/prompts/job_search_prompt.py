@@ -30,6 +30,18 @@ class JobSearchOutput(BaseModel):
 OUTPUT_SCHEMA = JobSearchOutput
 
 
+class ExtractedJob(BaseModel):
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    description: str = ""
+    job_url: str = ""
+
+
+class JobExtractionOutput(BaseModel):
+    jobs: list[ExtractedJob] = Field(default_factory=list)
+
+
 def build_user_prompt(context: dict, rag_chunks: list[str] | None = None) -> str:
     profile = context.get("candidate_profile", context.get("profile", "NOT_PROVIDED"))
     prefs = context.get("preferences", context.get("filters", "NOT_PROVIDED"))

@@ -127,11 +127,11 @@ def test_45_postings_all_scored_then_ranked_before_truncation():
     assert "j40" in {m["job_id"] for m in result["result"]["matches"]}
 
 
-def test_missing_titles_returns_error_shape():
+def test_missing_titles_returns_failed_shape():
     from app.agents import job_search as js
 
     result = js.job_search_agent_node(make_state(titles=[], search_query=None))
-    assert result["status"] == "error"
+    assert result["status"] == "failed"
     assert "titles" in result["error"]
 
 

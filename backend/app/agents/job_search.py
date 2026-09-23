@@ -1,7 +1,6 @@
 import asyncio
 import concurrent.futures
 import inspect
-import json
 import logging
 import os
 from urllib.parse import quote_plus
@@ -10,6 +9,7 @@ import httpx
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents._llm_json import call_llm_json
+from app.agents.prompts.job_search_prompt import JobExtractionOutput
 from app.agents.state import AgentState
 from app.core.config import settings as app_settings
 from app.core.event_bus import emit
@@ -159,15 +159,13 @@ Page text:
 
 def _extract_jobs_from_text(llm, page_text: str, max_results: int) -> list[dict]:
     try:
-        resp = llm.invoke([HumanMessage(
-            content=EXTRACT_PROMPT.format(max_results=max_results, text=page_text[:6000])
-        )])
-        content = resp.content.strip()
-        if content.startswith("```"):
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        return json.loads(content)[:max_results]
+        parsed = call_llm_json(
+            llm,
+            "Extract job listings from the supplied page text. Return only JSON.",
+            EXTRACT_PROMPT.format(max_results=max_results, text=page_text[:6000]),
+            JobExtractionOutput,
+        )
+        return [job.model_dump() for job in parsed.jobs[:max_results]]
     except Exception as exc:
         logger.warning("Job extraction from page text failed: %s", exc)
         return []
@@ -1968,13 +1966,13 @@ def job_search_agent_node(state: AgentState) -> AgentState:
     max_results = min(int(ctx.get("max_results", 10)), 25)
 
     if not titles:
-        return {**state, "status": "error", "error": "missing: titles (or search_query)"}
+        return {**state, "status": "failed", "error": "missing: titles (or search_query)"}
 
     try:
         emit(run_id, "thinking", {"step": "start", "message": "Searching job platforms..."})
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
-            return {**state, "status": "error", "error": "missing: active model settings"}
+            return {**state, "status": "failed", "error": "missing: active model settings"}
 
         try:
             profile = fetch_user_profile_text(user_id) or ""
