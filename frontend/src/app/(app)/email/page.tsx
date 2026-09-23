@@ -558,9 +558,9 @@ export default function EmailPage() {
       />
 
       {/* 3-column layout */}
-      <motion.div variants={fadeUp} className="flex gap-4">
+      <motion.div variants={fadeUp} className="flex flex-col gap-4 lg:flex-row">
         {/* Left sidebar */}
-        <div className="w-[280px] shrink-0 space-y-4">
+        <div className="w-full space-y-4 lg:w-[280px] lg:shrink-0">
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-success" : "bg-muted-foreground"}`} />
@@ -708,7 +708,7 @@ export default function EmailPage() {
         </div>
 
         {/* Right sidebar */}
-        <div className="w-[280px] shrink-0 space-y-4">
+        <div className="w-full space-y-4 lg:w-[280px] lg:shrink-0">
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="mb-3 flex items-center gap-2">
               <span className="text-sm font-semibold text-foreground">
