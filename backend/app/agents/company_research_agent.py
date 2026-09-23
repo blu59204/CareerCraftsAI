@@ -33,6 +33,7 @@ from app.services.exa_service import ExaService
 from app.services.rag_service import (
     chunk_text,
     get_embedding_model,
+    get_embedding_provider,
     get_vector_store,
 )
 
@@ -152,7 +153,7 @@ async def fetch_all_sources(
         results["website"] = website_data
     except Exception as exc:
         logger.warning("Company research: website fetch failed for '%s': %s", company_name, exc)
-        failures["website"] = str(exc)
+        failures["website"] = "Website research failed"
 
     # 2. News (Exa)
     try:
@@ -160,7 +161,7 @@ async def fetch_all_sources(
         results["news"] = news_items
     except Exception as exc:
         logger.warning("Company research: news fetch failed for '%s': %s", company_name, exc)
-        failures["news"] = str(exc)
+        failures["news"] = "News research failed"
 
     # 3. Tech stack (Exa)
     try:
@@ -168,7 +169,7 @@ async def fetch_all_sources(
         results["tech_stack"] = tech_stack
     except Exception as exc:
         logger.warning("Company research: tech_stack fetch failed for '%s': %s", company_name, exc)
-        failures["tech_stack"] = str(exc)
+        failures["tech_stack"] = "Tech stack research failed"
 
     # 4. Glassdoor (Exa)
     try:
@@ -176,7 +177,7 @@ async def fetch_all_sources(
         results["glassdoor"] = glassdoor_data
     except Exception as exc:
         logger.warning("Company research: glassdoor fetch failed for '%s': %s", company_name, exc)
-        failures["glassdoor"] = str(exc)
+        failures["glassdoor"] = "Glassdoor research failed"
 
     return results, failures
 
@@ -300,7 +301,7 @@ async def embed_company_intel(
         for i, chunk in enumerate(chunks)
     ]
 
-    store = get_vector_store(user_id, "company", embeddings, provider=model_settings.provider)
+    store = get_vector_store(user_id, "company", embeddings, provider=get_embedding_provider(model_settings))
     store.add_documents(docs)
     return len(docs)
 

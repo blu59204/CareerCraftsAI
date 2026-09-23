@@ -8,7 +8,6 @@ export default function ContactPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,13 +15,12 @@ export default function ContactPage() {
       toast.error("Fill in all fields");
       return;
     }
-    setSending(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setSending(false);
-    toast.success("Message sent — we'll reply within 24 hours");
-    setName("");
-    setEmail("");
-    setMessage("");
+    // No contact-message backend exists; open the user's mail client with a
+    // prefilled email rather than faking a "sent" confirmation.
+    const subject = encodeURIComponent(`Contact form — ${name}`);
+    const body = encodeURIComponent(`From: ${name} <${email}>\n\n${message}`);
+    window.location.href = `mailto:hello@careercraft.ai?subject=${subject}&body=${body}`;
+    toast.info("Opening your email client…");
   };
 
   return (
@@ -63,8 +61,8 @@ export default function ContactPage() {
             className="w-full resize-none rounded-2xl border border-border bg-card/40 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
-        <LiquidGlassButton tone="primary" disabled={sending} className="w-full">
-          {sending ? "Sending…" : "Send message"}
+        <LiquidGlassButton tone="primary" className="w-full">
+          Send message
         </LiquidGlassButton>
       </form>
 

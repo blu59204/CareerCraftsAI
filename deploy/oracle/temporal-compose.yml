@@ -1,0 +1,70 @@
+# Self-hosted Temporal (server + its own Postgres + Web UI), running on the
+# same dedicated box as deploy/oracle/nango-compose.yml (spare capacity there,
+# and keeps it off the shared/resource-constrained main app VM).
+#
+# Unlike Nango, temporalio images are genuine multi-arch (native arm64) --
+# no binfmt/QEMU emulation needed here.
+#
+# Kept on Temporal's stock ports (7233 frontend, 6933-6939 internal cluster
+# membership, temporal-postgres on a dedicated 19232) rather than remapped
+# into the 191xx range like Nango, since nothing else on this box conflicts
+# and remapping Temporal's multi-port membership ring is its own footgun.
+# The 6933-6939 internal ports and temporal-postgres must NOT be reachable
+# from the public internet -- see the host-firewall step in the deploy notes,
+# only 7233 (frontend, for the oraclevm worker) and the UI's reverse-proxied
+# port should be open beyond loopback.
+name: temporal-isolated
+services:
+  temporal-postgres:
+    image: postgres:16-alpine
+    network_mode: host
+    command: postgres -p 19232 -c listen_addresses=127.0.0.1
+    env_file: /opt/careercraft-secrets/temporal.env
+    volumes:
+      - temporal_pgdata:/var/lib/postgresql/data
+    mem_limit: 384m
+    cpus: 0.25
+    restart: unless-stopped
+  temporal:
+    image: temporalio/auto-setup:1.24
+    network_mode: host
+    env_file: /opt/careercraft-secrets/temporal.env
+    environment:
+      DB: postgres12
+      DB_PORT: "19232"
+      POSTGRES_SEEDS: 127.0.0.1
+      # Under network_mode: host, auto-setup's entrypoint otherwise resolves
+      # the box's own hostname to bind on -- which on Ubuntu is 127.0.1.1
+      # (the /etc/hosts loopback alias), not reachable even locally. Force it.
+      BIND_ON_IP: 0.0.0.0
+      # Required by Ringpop membership whenever bindOnIP is 0.0.0.0/[::] --
+      # it can't self-derive a single advertised address in that case. This
+      # must be an address that actually exists on a local interface (Oracle's
+      # public IP is NAT'd, not assigned to any NIC -- using it here caused
+      # the server's own internal health check to fail forever with "Frontend
+      # is not healthy yet", confirmed via `ip -4 addr show`). External
+      # clients (the oraclevm worker) still just dial the public IP:7233
+      # directly; NAT translation is transparent below the app layer, so this
+      # only affects internal self-identification, not external reachability.
+      TEMPORAL_BROADCAST_ADDRESS: "10.0.0.182"
+    depends_on:
+      - temporal-postgres
+    mem_limit: 1g
+    cpus: 1.0
+    restart: unless-stopped
+  temporal-ui:
+    image: temporalio/ui:2.54.1
+    network_mode: host
+    environment:
+      TEMPORAL_ADDRESS: 127.0.0.1:7233
+      TEMPORAL_UI_PORT: "19280"
+      # Loopback only -- nginx on this box does auth_basic + TLS in front of
+      # it, since the OSS UI has no login of its own.
+      TEMPORAL_UI_PUBLIC_PATH: ""
+    depends_on:
+      - temporal
+    mem_limit: 256m
+    cpus: 0.25
+    restart: unless-stopped
+volumes:
+  temporal_pgdata:

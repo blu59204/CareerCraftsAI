@@ -1,24 +1,15 @@
-"""
-form_filler_service.py — LLM-powered job application form filling.
+from __future__ import annotations
 
-Uses the LLM to dynamically generate answers for any form field based on:
-1. User profile from DB (name, email, phone, experience, preferences)
-2. User's resume text from RAG
-3. Agent memory (past applications, preferences, learnings)
-4. Job description context
-
-The LLM sees the form field label and generates the best answer using all
-available user context. This handles ANY form — Workday, Greenhouse, Lever,
-custom ATS, or company career pages.
-"""
+import asyncio
 import logging
 from dataclasses import dataclass, field
+from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.sync_db import _get_sync_factory, fetch_user_profile_text
-from app.services.browser_control_service import run_browser_task
+from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +45,15 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
 
     factory = _get_sync_factory()
     with factory() as db:
-        user = db.execute(select(User).where(User.supabase_uid == user_id)).scalars().first()
+        user_uuid = None
+        try:
+            user_uuid = UUID(str(user_id))
+        except ValueError:
+            pass
+        criteria = User.supabase_uid == str(user_id)
+        if user_uuid:
+            criteria = (User.id == user_uuid) | criteria
+        user = db.execute(select(User).where(criteria)).scalars().first()
         prefs = db.execute(
             select(UserPreferences).where(UserPreferences.user_id == user.id)
         ).scalars().first() if user else None
@@ -64,8 +63,8 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
     parts = full_name.split() if full_name else []
 
     # Map experience level to years
-    exp_years_map = {"entry": "0-2", "junior": "1-3", "mid": "3-5", "senior": "5-10", "lead": "8-12", "principal": "10+"}
-    exp_level = prefs.experience_level or "mid" if prefs else "mid"
+    exp_level = prefs.experience_level or "" if prefs else ""
+    experience_years = str(prefs.years_experience) if prefs and prefs.years_experience is not None else ""
 
     return UserFormProfile(
         full_name=full_name,
@@ -76,7 +75,7 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
         linkedin_url=user.linkedin_url or "" if user else "",
         current_title=prefs.current_title or "" if prefs else "",
         experience_level=exp_level,
-        experience_years=exp_years_map.get(exp_level, "3-5"),
+        experience_years=experience_years,
         work_mode=prefs.work_mode or "remote" if prefs else "remote",
         salary_min=prefs.salary_min if prefs else None,
         salary_max=prefs.salary_max if prefs else None,
@@ -128,12 +127,11 @@ RULES:
 - For open-ended questions ("Why this role?", "Tell us about yourself"), write compelling \
   2-3 sentence answers using the resume and job description context.
 - For dropdowns/selects, pick the closest matching option.
-- For yes/no questions about work authorization: answer "Yes" for authorized, "No" for sponsorship needed.
+- For work authorization or sponsorship, use only explicitly confirmed candidate facts; otherwise return NEEDS_HUMAN.
 - For "How did you hear about us?": say "LinkedIn" or "Job Board".
 - For salary: use the salary expectation from profile. If field is optional and no data, skip.
 - NEVER fabricate credentials, degrees, or certifications not in the resume.
-- NEVER leave required fields empty.
-- For ambiguous fields, use the safest reasonable default."""
+- For unknown required or ambiguous fields, return NEEDS_HUMAN rather than guessing."""
 
 
 def generate_form_answers(
@@ -190,30 +188,36 @@ async def fill_and_submit_form(
     resume_path: str | None = None,
     cover_letter: str = "",
     job_description: str = "",
+    live_browser: bool = False,
+    submit: bool = False,
+    past_learnings: list[str] | None = None,
 ) -> dict:
-    """Navigate to a job URL, use LLM to fill the form with user data, and submit.
+    """Navigate to a job URL and use LLM/agent to fill the form with user data.
 
-    The browser-use agent is given the user's full profile context so the LLM
-    can generate appropriate answers for ANY form field it encounters.
-
-    Args:
-        llm: LLM for browser agent + form answer generation
-        user_id: User ID for persistent browser session
-        job_url: URL of the job posting or application form
-        resume_path: Path to tailored resume PDF to upload
-        cover_letter: Pre-generated cover letter text
-        job_description: JD text for context
-
-    Returns:
-        Dict with status and message
+    past_learnings — optional list of portal-specific learnings from the harness
+    (e.g. ["portal:greenhouse:auto_fill_works", "portal:workday:requires_manual"]).
+    Injected into the task prompt so the browser agent adapts its approach based
+    on what has worked and failed on previous runs for this user.
     """
     profile = build_user_form_profile(user_id)
     context = _build_profile_context(profile, job_description)
 
-    # Build the browser-use task with full user context so LLM can answer any field
-    task = f"""You are filling a job application form. You have the candidate's complete profile below.
-Use this data to fill EVERY field on the form accurately.
+    # Build harness learning hint — surfaces portal outcomes to the browser agent
+    learning_hint = ""
+    if past_learnings:
+        relevant = [l for l in past_learnings if "portal:" in l]
+        if relevant:
+            learning_hint = (
+                "\n\nPAST FORM-FILLING EXPERIENCE (from previous runs):\n"
+                + "\n".join(f"- {l.replace('portal:', '').replace(':', ' → ')}" for l in relevant[:8])
+                + "\nUse this to adapt: if a portal is marked 'requires_manual', stop early and report REQUIRES_MANUAL."
+            )
 
+    # Build the browser-use task with full user context so LLM can answer any field
+    task = (  # noqa: S608 - browser task text, not SQL.
+        f"""You are filling a job application form. You have the candidate's complete profile below.
+Use this data to fill EVERY field on the form accurately.
+{learning_hint}
 {context}
 
 COVER LETTER (use if there's a cover letter field):
@@ -230,8 +234,8 @@ TASK:
    - File upload: {'upload resume from ' + resume_path if resume_path else 'skip or use pre-uploaded'}
    - Text areas (cover letter, "why this role?"): use the cover letter above or write a compelling answer
 4. If the form has multiple pages, fill each page completely then click Next/Continue
-5. On the final page, click Submit
-6. Confirm submission was successful
+5. {"On the final page, click Submit only after confirming all fields." if submit else "On the final page, STOP before clicking final Submit/Send Application and report READY_FOR_REVIEW."}
+6. {"Confirm submission was successful" if submit else "Do not submit. The user must review and submit manually."}
 
 IMPORTANT:
 - Fill fields using EXACT profile data (don't make up info)
@@ -242,13 +246,20 @@ IMPORTANT:
 - For experience/years: {profile.experience_years} years
 - For salary: {profile.salary_min or 'negotiable'}
 - If you encounter CAPTCHA/OTP/video, stop and report 'REQUIRES_MANUAL'
-- If account creation is needed, use email {profile.email} with password 'TempPass123!'"""
+- If account creation is needed, stop and report 'REQUIRES_ACCOUNT_CREATION'."""  # noqa: S608
+    )
 
     try:
-        result = await run_browser_task(llm, task, user_id, max_steps=30)
+        result = await run_browser_task(llm, task, user_id, max_steps=30, live_browser=live_browser)
+        if "REQUIRES_ACCOUNT_CREATION" in (result or ""):
+            return {"status": "requires_account_creation", "message": result}
         if "REQUIRES_MANUAL" in (result or ""):
             return {"status": "requires_manual", "message": result}
-        return {"status": "applied", "message": result or "Form submitted successfully"}
+        marker = "SUBMITTED" if submit else "READY_FOR_REVIEW"
+        if marker not in (result or ""):
+            return {"status": "failed", "message": "Browser outcome could not be verified"}
+        status = "applied" if submit else "ready_for_review"
+        return {"status": status, "message": result or "Form prepared for review"}
     except Exception as exc:
         logger.error("Form filling failed for %s: %s", job_url, exc)
-        return {"status": "failed", "message": str(exc)}
+        return {"status": "failed", "message": "Form filling failed"}

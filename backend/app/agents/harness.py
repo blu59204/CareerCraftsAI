@@ -35,9 +35,10 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from app.agents.orchestrator import orchestrator
+from app.agents.semantic_memory import SemanticMemoryBridge
 from app.agents.state import AgentState
 from app.agents.strategies import TASK_TO_AGENT, strategies_for_task
-from app.agents.memory import MemoryManager
+from app.agents.memory import MemoryManager as HarnessMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,8 @@ class AgentHarness:
     """
 
     def __init__(self, db_url: str, redis_url: str) -> None:
-        self._memory = MemoryManager(db_url=db_url, redis_url=redis_url)
+        self._memory = HarnessMemoryManager(db_url=db_url, redis_url=redis_url)
+        self._semantic_memory = SemanticMemoryBridge()
         self._initialized = False
         self._reflection_hooks: list[ReflectionHook] = []
         self._init_lock = asyncio.Lock()
@@ -134,8 +136,20 @@ class AgentHarness:
 
         await self._ensure_initialized()
 
+        # Resolve once per run. Keep the ORM row (including only encrypted key
+        # material) in state; nodes retain their DB fallback for direct calls.
+        model_settings = None
+        try:
+            from app.core.sync_db import fetch_model_settings
+
+            model_settings = await asyncio.to_thread(fetch_model_settings, user_id)
+        except Exception as exc:
+            logger.warning("Harness: model settings fetch failed, using node fallback: %s", exc)
+
         # ── 1. Build memory context ──────────────────────────────────
         mem_context: dict[str, Any] = {}
+        semantic_context: dict[str, Any] = {}
+        task_text = _summarise(context, 1000)
         try:
             mem_context = await self._memory.build_agent_context(
                 user_id=user_id,
@@ -144,6 +158,16 @@ class AgentHarness:
             )
         except Exception as exc:
             logger.warning("Harness: memory context fetch failed, continuing without: %s", exc)
+
+        try:
+            semantic_context = await self._semantic_memory.build_context(
+                user_id=user_id,
+                agent_type=agent_type,
+                task_text=task_text,
+                user_settings=user_settings,
+            )
+        except Exception as exc:
+            logger.warning("Harness: pgvector memory context failed, continuing without: %s", exc)
 
         # ── 2 & 3. Strategy selection & context injection ────────────
         strategy = "standard"
@@ -159,6 +183,7 @@ class AgentHarness:
         enriched_context: dict[str, Any] = {
             **context,
             "_memory": mem_context,
+            "_pgvector_memory": semantic_context,
             "_strategy": strategy,
         }
 
@@ -190,6 +215,7 @@ class AgentHarness:
             pending_action=None,
             result=None,
             error=None,
+            model_settings=model_settings,
         )
 
         result_state: AgentState | None = None
@@ -197,8 +223,7 @@ class AgentHarness:
         error_msg: str | None = None
 
         try:
-            loop = asyncio.get_running_loop()
-            result_state = await loop.run_in_executor(None, orchestrator.invoke, state)
+            result_state = await orchestrator.ainvoke(state)
             success = result_state["status"] in {"completed", "awaiting_approval"}
             error_msg = result_state.get("error")
         except Exception as exc:
@@ -208,7 +233,7 @@ class AgentHarness:
                 task_type,
                 exc,
             )
-            error_msg = str(exc)
+            error_msg = "Agent failed"
             result_state = {
                 **state,
                 "status": "failed",
@@ -228,6 +253,19 @@ class AgentHarness:
                     agent_type=agent_type,
                     output=output,
                 )
+            try:
+                await self._semantic_memory.save_after_run(
+                    user_id=user_id,
+                    agent_type=agent_type,
+                    task_type=task_type,
+                    context=context,
+                    output=output if isinstance(output, dict) else {"output": output},
+                    success=success,
+                    strategy=strategy,
+                    user_settings=user_settings,
+                )
+            except Exception as exc:
+                logger.warning("Harness: pgvector memory save failed: %s", exc)
 
         context_summary = _summarise(context)
 
@@ -280,6 +318,7 @@ class AgentHarness:
             "error": error_msg,
             "strategy_used": strategy,
             "duration_ms": duration_ms,
+            "tokens_used": result_state.get("tokens_used") if result_state else None,
         }
 
     # ------------------------------------------------------------------
@@ -334,6 +373,22 @@ class AgentHarness:
         Also saves the workflow as a reusable procedure (procedural memory).
         """
         new_learnings: list[dict[str, Any]] = []
+        output_summary = _summarise(output)
+
+        if output_summary:
+            await self._memory.set_preference(
+                user_id,
+                f"last_{agent_type}_output",
+                output_summary[:1000],
+            )
+
+        action_type = output.get("type", agent_type)
+        if action_type:
+            await self._memory.set_preference(
+                user_id,
+                f"last_{agent_type}_action",
+                str(action_type)[:200],
+            )
 
         # Example: if resume output includes match_score, infer what worked
         if agent_type == "resume":
@@ -343,11 +398,89 @@ class AgentHarness:
                     {"learning": "high_keyword_match", "success_rate": 1.0, "sample_count": 1}
                 )
 
+        if agent_type == "job_search":
+            matches = output.get("matches") or output.get("result", {}).get("matches") or []
+            if isinstance(matches, list) and matches:
+                companies = [
+                    str(item.get("company"))
+                    for item in matches[:5]
+                    if isinstance(item, dict) and item.get("company")
+                ]
+                roles = [
+                    str(item.get("title") or item.get("role"))
+                    for item in matches[:5]
+                    if isinstance(item, dict) and (item.get("title") or item.get("role"))
+                ]
+                if companies:
+                    await self._memory.set_preference(user_id, "recent_job_companies", json.dumps(companies))
+                if roles:
+                    await self._memory.set_preference(user_id, "recent_job_roles", json.dumps(roles))
+
+        if agent_type == "linkedin" and action_type == "linkedin_edits":
+            if output.get("headline"):
+                await self._memory.set_preference(
+                    user_id,
+                    "last_linkedin_headline",
+                    str(output["headline"])[:300],
+                )
+            if output.get("about"):
+                await self._memory.set_preference(
+                    user_id,
+                    "last_linkedin_about",
+                    str(output["about"])[:1200],
+                )
+
         # If email output has open_rate signal
         if agent_type == "email":
             if output.get("delivered"):
                 new_learnings.append(
                     {"learning": "deliverable_email", "success_rate": 1.0, "sample_count": 1}
+                )
+
+        if agent_type == "auto_apply":
+            # Track per-portal outcomes so future runs know which portals work.
+            # Structure in output["applications"]: list of {platform, job_url, status, ...}
+            applications = output.get("applications") or []
+            portal_outcomes: dict[str, list[str]] = {}
+            for app in applications:
+                portal = (app.get("platform") or "unknown").lower()
+                status = app.get("status") or "unknown"
+                portal_outcomes.setdefault(portal, []).append(status)
+
+            for portal, statuses in portal_outcomes.items():
+                total = len(statuses)
+                success_count = sum(1 for s in statuses if s in ("draft_saved", "applied"))
+                manual_count = sum(1 for s in statuses if s == "requires_manual")
+                fail_count = sum(1 for s in statuses if s == "failed")
+
+                # Save portal-specific learning so the harness biases strategy selection.
+                # Key format: "portal:<name>:<outcome>" — parsed by _select_strategy.
+                if manual_count == total and total >= 1:
+                    # Portal consistently requires manual — don't waste browser sessions
+                    new_learnings.append({
+                        "learning": f"portal:{portal}:requires_manual",
+                        "success_rate": 0.0,
+                        "sample_count": total,
+                    })
+                elif success_count > 0:
+                    rate = success_count / total
+                    new_learnings.append({
+                        "learning": f"portal:{portal}:auto_fill_works",
+                        "success_rate": rate,
+                        "sample_count": total,
+                    })
+
+            # Save summary for UI / dashboard
+            if applications:
+                await self._memory.set_preference(
+                    user_id,
+                    "last_auto_apply_portals",
+                    json.dumps(list(portal_outcomes.keys())[:10]),
+                )
+                await self._memory.set_preference(
+                    user_id,
+                    "last_auto_apply_count",
+                    str(len(applications)),
                 )
 
         if new_learnings:
@@ -358,7 +491,6 @@ class AgentHarness:
             )
 
         # Save as procedural memory — the workflow that succeeded
-        action_type = output.get("type", agent_type)
         trigger = f"{agent_type}_{action_type}"
         workflow = {
             "agent_type": agent_type,
@@ -454,7 +586,7 @@ class AgentHarness:
         try:
             from langchain_core.messages import HumanMessage as HM
 
-            response = await asyncio.get_event_loop().run_in_executor(
+            response = await asyncio.get_running_loop().run_in_executor(
                 None, lambda: llm.invoke([HM(content=prompt)])
             )
             raw = response.content.strip()

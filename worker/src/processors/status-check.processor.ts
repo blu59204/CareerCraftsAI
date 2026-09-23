@@ -1,8 +1,6 @@
 import { Job } from "bullmq";
 import axios from "axios";
-
-const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:8000";
-const INTERNAL_SECRET = process.env.APP_SECRET_KEY ?? "";
+import { BACKEND_URL, INTERNAL_SECRET } from "../config";
 
 /**
  * Checks application status on job platforms every 6 hours.
@@ -29,11 +27,17 @@ export async function processStatusCheck(job: Job): Promise<void> {
       );
     }
   } catch (err: unknown) {
-    const message = axios.isAxiosError(err)
-      ? err.response?.data?.detail ?? err.message
-      : String(err);
+    if (axios.isAxiosError(err)) {
+      console.error(
+        `[status-check] POST ${BACKEND_URL}/internal/applications/check-status user=${user_id} failed: status=${err.response?.status ?? "NO_RESPONSE"} body=${JSON.stringify(err.response?.data) ?? err.message}`
+      );
+    }
+    const rawDetail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+    const message =
+      typeof rawDetail === "string" ? rawDetail : rawDetail ? JSON.stringify(rawDetail) : (axios.isAxiosError(err) ? err.message : String(err));
+    const status = axios.isAxiosError(err) ? (err.response?.status ?? "NO_RESPONSE") : "unknown";
     throw new Error(
-      `Status check failed for user ${user_id}: ${message}`
+      `Status check failed for user ${user_id}: status=${status} ${message}`
     );
   }
 }

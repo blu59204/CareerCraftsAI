@@ -1,26 +1,84 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Bot, FileText, Search, Linkedin, Mail, Sparkles } from "lucide-react";
+import {
+  Bot,
+  Building2,
+  CheckCircle2,
+  Clock3,
+  DollarSign,
+  FileText,
+  Mail,
+  MessageSquare,
+  MonitorCheck,
+  Play,
+  Search,
+  Sparkles,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
+import { BrandLinkedin } from "@/components/icons/BrandIcons";
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
+import { useAgentStore } from "@/store/agentStore";
 
-// BUG 4: map UI keys to backend VALID_TASKS
-// "orchestrator" and "followup" have no backend equivalent — removed from list
+// Each agent previously carried its own hue — cyan, violet, fuchsia, indigo,
+// rose, lime and more across thirteen cards. Thirteen unrelated hues read as
+// decoration rather than meaning, and the purple/fuchsia/indigo gradients are
+// the most recognisable generative-UI tell there is.
+//
+// These four tints are near-neighbours of the brand green (146) plus one warm
+// complement, so the grid reads as one system, and the colour now encodes what
+// the agent *does* — shared tint means shared job.
+const ACCENT = {
+  // Moves an application forward.
+  pipeline: "from-[hsl(146_55%_45%/0.22)] to-[hsl(146_55%_45%/0.04)]",
+  // Produces something you will read and edit.
+  document: "from-[hsl(40_70%_50%/0.20)] to-[hsl(40_70%_50%/0.04)]",
+  // Talks to a human.
+  outreach: "from-[hsl(175_50%_42%/0.20)] to-[hsl(175_50%_42%/0.04)]",
+  // Gathers information you act on later.
+  intel: "from-[hsl(60_8%_45%/0.18)] to-[hsl(60_8%_45%/0.04)]",
+} as const;
+
 const AGENTS = [
-  { key: "resume_optimize", label: "Resume", icon: FileText },
-  { key: "job_search", label: "Job Search", icon: Search },
-  { key: "linkedin_optimize", label: "LinkedIn", icon: Linkedin },
-  { key: "email", label: "Email", icon: Mail },
-  { key: "interview_prep", label: "Interview Prep", icon: Sparkles },
+  { key: "auto_apply", label: "Auto Apply", icon: Bot, accent: ACCENT.pipeline, note: "Isolated browser + two reviews" },
+  { key: "resume_optimize", label: "Resume", icon: FileText, accent: ACCENT.document, note: "Tailored resume draft" },
+  { key: "job_search", label: "Job Search", icon: Search, accent: ACCENT.pipeline, note: "Fresh matching roles" },
+  { key: "nl_job_search", label: "NL Search", icon: Search, accent: ACCENT.pipeline, note: "Plain-English query parser" },
+  { key: "linkedin_optimize", label: "LinkedIn", icon: BrandLinkedin, accent: ACCENT.document, note: "Profile rewrite" },
+  { key: "linkedin_outreach", label: "Outreach", icon: Users, accent: ACCENT.outreach, note: "Recruiter drafts" },
+  { key: "email", label: "Email", icon: Mail, accent: ACCENT.outreach, note: "Reviewable draft" },
+  { key: "email_monitor", label: "Monitor", icon: MonitorCheck, accent: ACCENT.outreach, note: "Inbox status scan" },
+  { key: "interview_prep", label: "Interview Prep", icon: Sparkles, accent: ACCENT.document, note: "Question set" },
+  { key: "interview_coach", label: "Coach", icon: MessageSquare, accent: ACCENT.outreach, note: "Mock interview session" },
+  { key: "cover_letter", label: "Cover Letter", icon: FileText, accent: ACCENT.document, note: "Role-specific letter" },
+  { key: "salary_intelligence", label: "Salary", icon: DollarSign, accent: ACCENT.intel, note: "Market benchmark" },
+  { key: "company_research", label: "Company", icon: Building2, accent: ACCENT.intel, note: "Interview intel brief" },
 ];
+
+const DEFAULT_CONTEXT: Record<string, Record<string, unknown>> = {
+  auto_apply: { search_query: "software engineer", location: "Remote", max_applications: 1 },
+  resume_optimize: { jd_text: "Software Engineer role focused on product delivery, reliability, and measurable impact." },
+  job_search: { search_query: "software engineer", location: "Remote", max_results: 10 },
+  nl_job_search: { query: "remote senior backend role at a product company using Python or TypeScript" },
+  linkedin_optimize: { target_role: "Software Engineer" },
+  linkedin_outreach: { company_name: "Target Company", role_context: "Software Engineer" },
+  email: { company: "Target Company", role: "Software Engineer", recipient_email: "recruiter@example.com" },
+  email_monitor: {},
+  interview_prep: { role: "Software Engineer", company: "Target Company" },
+  interview_coach: { role: "Software Engineer", company: "Target Company" },
+  cover_letter: { tone: "formal", jd_text: "Software Engineer role focused on product delivery, reliability, and measurable impact." },
+  salary_intelligence: { role: "Software Engineer", company: "Target Company", location: "Remote" },
+  company_research: { company_name: "Target Company" },
+};
 
 // BUG 6: interface matches backend AgentRunResponse (started_at, not created_at)
 interface AgentRun {
@@ -28,12 +86,8 @@ interface AgentRun {
   agent_type: string;
   status: string;
   started_at: string;
+  output: { error?: string } | null;
   duration_ms: number | null;
-}
-
-interface UserMe {
-  full_name: string | null;
-  active_model?: string | null;
 }
 
 interface RagDocument {
@@ -53,37 +107,63 @@ function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+function runMessage(run: AgentRun): string {
+  if (run.status === "queued") return "Queued for a worker";
+  if (run.status === "awaiting_approval") return "Waiting for approval";
+  if (run.status === "running") return "In progress...";
+  if (run.status === "failed") return run.output?.error ?? "Failed";
+  if (run.duration_ms !== null) return `Completed in ${(run.duration_ms / 1000).toFixed(1)}s`;
+  return run.status === "awaiting_approval" ? "Waiting for approval" : "Completed";
+}
+
+function runStatus(run?: AgentRun) {
+  if (!run) return { label: "Ready", icon: Clock3, className: "text-muted-foreground" };
+  if (run.status === "completed") return { label: "Last run succeeded", icon: CheckCircle2, className: "text-success" };
+  if (run.status === "failed") return { label: "Last run failed", icon: TriangleAlert, className: "text-danger" };
+  if (run.status === "awaiting_approval") return { label: "Review pending", icon: Clock3, className: "text-warning" };
+  return { label: "Running", icon: Clock3, className: "text-primary" };
+}
+
 export default function AgentsPage() {
   const [active, setActive] = useState("resume_optimize");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [contextText, setContextText] = useState(JSON.stringify(DEFAULT_CONTEXT.resume_optimize, null, 2));
   const qc = useQueryClient();
+  const initRun = useAgentStore((s) => s.initRun);
+  const storeActiveRunId = useAgentStore((s) => s.activeRunId);
+  const setActiveRun = useAgentStore((s) => s.setActiveRun);
+  // Persisted run survives navigation + reload, so the panel reappears on return.
+  const displayRunId = activeRunId ?? storeActiveRunId;
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("run");
+    if (requested && /^[0-9a-f-]{36}$/i.test(requested)) setActiveRun(requested);
+  }, [setActiveRun]);
 
   const runMutation = useMutation({
-    mutationFn: () =>
-      apiClient.post<{ run_id: string }>("/agents/run", { task_type: active, context: {} }),
+    mutationFn: async () => {
+      const context = JSON.parse(contextText);
+      if (!context || Array.isArray(context) || typeof context !== "object") throw new Error("Context must be a JSON object");
+      return apiClient.post<{ run_id: string }>("/agents/run", {
+        task_type: active,
+        context,
+      });
+    },
     onSuccess: (res) => {
       toast.success(`${AGENTS.find((a) => a.key === active)?.label} Agent started`);
+      initRun(res.data.run_id);
       setActiveRunId(res.data.run_id);
       setTimeout(() => qc.invalidateQueries({ queryKey: ["agent-runs"] }), 3000);
     },
-    onError: () => toast.error("Agent unavailable — backend not connected"),
+    onError: () => toast.error("Could not queue the agent. Check your context, model settings, and active-run limit."),
   });
 
   const { data: runs = [], isLoading: runsLoading } = useQuery<AgentRun[]>({
     queryKey: ["agent-runs"],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=10");
-      return data;
+      return Array.isArray(data) ? data : data.runs ?? [];
     },
-  });
-
-  // BUG 19: fetch context sidebar from API
-  const { data: userMe } = useQuery<UserMe>({
-    queryKey: ["user-me"],
-    queryFn: async () => {
-      const { data } = await apiClient.get("/users/me");
-      return data;
-    },
+    refetchInterval: 5000,
   });
 
   const { data: ragDocs = [] } = useQuery<RagDocument[]>({
@@ -108,121 +188,175 @@ export default function AgentsPage() {
   const filteredRuns = runs.filter(
     (r) => r.agent_type === active
   );
+  const activeAgent = AGENTS.find((a) => a.key === active) ?? AGENTS[0];
+  const ActiveIcon = activeAgent.icon;
+  const latestRun = filteredRuns[0];
+  const latestStatus = runStatus(latestRun);
+  const LatestStatusIcon = latestStatus.icon;
 
   // BUG 7: find the awaiting run to pass run_id to approval
   const awaitingRun = runs.find((r) => r.status === "awaiting_approval");
 
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="grid gap-6 lg:grid-cols-[220px_1fr_320px]">
-      <motion.aside variants={fadeUp} className="rounded-3xl border border-border bg-card/40 p-3">
-        <div className="px-2 py-2 text-xs uppercase tracking-wide text-muted-foreground">Agents</div>
-        <nav className="space-y-1">
+    <motion.div initial="hidden" animate="show" variants={stagger} className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <motion.section variants={fadeUp} className="space-y-5">
+        <CommandHeader
+          eyebrow="Finlytic AI Agent"
+          title="Run workspace agents."
+          description="Coordinate resume, job search, LinkedIn, email, and interview agents from one approval-safe cockpit."
+          actions={
+            <div className={`hidden items-center gap-2 rounded-full border border-border bg-card/45 px-3 py-2 text-xs sm:flex ${latestStatus.className}`}>
+              <LatestStatusIcon className="h-4 w-4" />
+              {latestStatus.label}
+            </div>
+          }
+        />
+        <div className="rounded-2xl border border-border bg-card/50 p-3 shadow-sm">
+          <nav className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
           {AGENTS.map((a) => {
             const Icon = a.icon;
             const isActive = active === a.key;
             return (
               <button
                 key={a.key}
-                onClick={() => setActive(a.key)}
-                className={`flex w-full items-center gap-2 rounded-2xl px-3 py-2 text-sm ${
-                  isActive ? "bg-primary/15 text-foreground" : "text-muted-foreground hover:bg-card"
+                onClick={() => { setActive(a.key); setContextText(JSON.stringify(DEFAULT_CONTEXT[a.key] ?? {}, null, 2)); }}
+                className={`group min-h-[76px] rounded-xl border px-3 py-3 text-left transition ${
+                  isActive
+                    ? "border-primary/35 bg-primary/10 text-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]"
+                    : "border-transparent bg-background/30 text-muted-foreground hover:border-border hover:bg-card/70"
                 }`}
               >
-                <Icon className="h-4 w-4" />
-                {a.label}
+                <div className="flex items-center gap-2">
+                  <span className={`grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br ${a.accent}`}>
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  <span className="text-sm font-medium">{a.label}</span>
+                </div>
+                <div className="mt-2 line-clamp-1 text-xs text-muted-foreground">{a.note}</div>
               </button>
             );
           })}
-        </nav>
-      </motion.aside>
-
-      <motion.section variants={fadeUp} className="rounded-3xl border border-border bg-card/40 p-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Bot className="h-5 w-5 text-primary" />
-            <div className="font-medium">{AGENTS.find((a) => a.key === active)?.label} Agent</div>
-          </div>
-          <LiquidGlassButton
-            tone="primary"
-            size="sm"
-            disabled={runMutation.isPending}
-            onClick={() => runMutation.mutate()}
-          >
-            {runMutation.isPending ? "Running…" : "Run"}
-          </LiquidGlassButton>
+          </nav>
         </div>
-        <div className="mt-6 min-h-[400px] rounded-2xl border border-border bg-background/40 p-4">
+
+        <div className="rounded-2xl border border-border bg-card/50 p-5 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${activeAgent.accent}`}>
+                <ActiveIcon className="h-5 w-5 text-foreground" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold tracking-tight">{activeAgent.label} Agent</h2>
+                  <Bot className="h-4 w-4 text-primary" />
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">{activeAgent.note}</p>
+              </div>
+            </div>
+            <LiquidGlassButton
+              tone="primary"
+              size="sm"
+              disabled={runMutation.isPending}
+              onClick={() => runMutation.mutate()}
+              className="w-full sm:w-auto"
+            >
+              <Play className="h-4 w-4" />
+              {runMutation.isPending ? "Running..." : "Run agent"}
+            </LiquidGlassButton>
+          </div>
+
+          <label className="mt-4 block text-sm font-medium">
+            Task context (JSON)
+            <textarea value={contextText} onChange={event => setContextText(event.target.value)}
+              className="mt-2 min-h-28 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs"
+              spellCheck={false} />
+          </label>
+          <div className="mt-5 min-h-[240px] rounded-xl border border-border bg-background/45 p-4">
           {/* BUG 12: mount AgentStatusStream when a run is active */}
-          {activeRunId ? (
+          {displayRunId ? (
             <AgentStatusStream
-              runId={activeRunId}
+              runId={displayRunId}
               onApprove={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
-                setActiveRunId(null);
               }}
               onCancel={() => {
                 qc.invalidateQueries({ queryKey: ["agent-runs"] });
                 setActiveRunId(null);
+                setActiveRun(null);
               }}
             />
           ) : (
-            <EmptyState
-              icon={<Sparkles className="h-6 w-6" />}
-              title="Automate repetitive applications."
-              description="Select an agent and click Run to start. Live progress will appear here."
-              action={
-                <LiquidGlassButton
-                  tone="primary"
-                  disabled={runMutation.isPending}
-                  onClick={() => runMutation.mutate()}
-                >
-                  {runMutation.isPending ? "Running…" : "Start run"}
-                </LiquidGlassButton>
-              }
-            />
+            <div className="flex min-h-[208px] items-center justify-center">
+              <div className="w-full max-w-md text-center">
+                <span className={`mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br ${activeAgent.accent}`}>
+                  <Sparkles className="h-6 w-6 text-foreground" />
+                </span>
+                <h3 className="mt-4 text-xl font-semibold tracking-tight">{latestStatus.label}</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{latestRun ? runMessage(latestRun) : activeAgent.note}</p>
+              </div>
+            </div>
           )}
+          </div>
         </div>
       </motion.section>
 
-      <motion.aside variants={fadeUp} className="space-y-3">
+      <motion.aside variants={fadeUp} className="space-y-4">
         {/* BUG 19: dynamic context sidebar */}
-        <div className="text-sm text-muted-foreground">Context</div>
-        <div className="rounded-3xl border border-border bg-card/40 p-4 text-sm">
-          <div className="text-xs text-muted-foreground">Resume</div>
-          <div className="mt-1">{primaryResume?.filename ?? "No resume uploaded"}</div>
-          <div className="mt-3 text-xs text-muted-foreground">Model</div>
-          <div className="mt-1">{activeModel?.model_name ?? activeModel?.provider ?? "—"}</div>
+        <div className="rounded-2xl border border-border bg-card/50 p-4 text-sm shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Context</div>
+          <div className="mt-4 space-y-3">
+            <div className="rounded-xl bg-background/45 p-3">
+              <div className="text-xs text-muted-foreground">Resume</div>
+              <div className="mt-1 truncate font-medium">{primaryResume?.filename ?? "No resume uploaded"}</div>
+            </div>
+            <div className="rounded-xl bg-background/45 p-3">
+              <div className="text-xs text-muted-foreground">Model</div>
+              <div className="mt-1 truncate font-medium">{activeModel?.model_name ?? activeModel?.provider ?? "Not configured"}</div>
+            </div>
+          </div>
         </div>
 
-        <div className="text-sm text-muted-foreground">Run history</div>
-        {runsLoading ? (
-          <>
-            <div className="h-16 shimmer rounded-3xl" />
-            <div className="h-16 shimmer rounded-3xl" />
-          </>
-        ) : filteredRuns.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-            No runs yet for this agent.
+        <div className="rounded-2xl border border-border bg-card/50 p-4 shadow-sm">
+          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Run history</div>
+          <div className="space-y-2">
+            {runsLoading ? (
+              <>
+                <div className="h-16 shimmer rounded-xl" />
+                <div className="h-16 shimmer rounded-xl" />
+              </>
+            ) : filteredRuns.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                No runs yet.
+              </div>
+            ) : (
+              filteredRuns.map((run) => (
+                <button key={run.id} className="w-full text-left" onClick={() => { setActiveRunId(run.id); setActiveRun(run.id); }}>
+                <AgentStatusCard
+                  agentName={`${run.agent_type.charAt(0).toUpperCase() + run.agent_type.slice(1).replace(/_/g, " ")} Agent`}
+                  status={
+                    run.status === "completed"
+                      ? "succeeded"
+                      : run.status === "failed"
+                        ? "failed"
+                        : run.status === "awaiting_approval"
+                          ? "awaiting_approval"
+                          : "running"
+                  }
+                  latestMessage={runMessage(run)}
+                  startedAt={relativeTime(run.started_at)}
+                />
+                </button>
+              ))
+            )}
           </div>
-        ) : (
-          filteredRuns.map((run) => (
-            <AgentStatusCard
-              key={run.id}
-              agentName={`${run.agent_type.charAt(0).toUpperCase() + run.agent_type.slice(1).replace(/_/g, " ")} Agent`}
-              status={run.status === "completed" ? "succeeded" : run.status === "failed" ? "failed" : "running"}
-              latestMessage={run.duration_ms ? `Completed in ${run.duration_ms}ms` : "In progress…"}
-              startedAt={relativeTime(run.started_at)}
-            />
-          ))
-        )}
+        </div>
 
         {/* BUG 7: wire approval callbacks with actual run_id — only show if NOT the same as activeRunId to avoid duplicates */}
-        {awaitingRun && awaitingRun.id !== activeRunId && (
-          <AgentStatusStream
-            runId={awaitingRun.id}
-            onApprove={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}
-            onCancel={() => qc.invalidateQueries({ queryKey: ["agent-runs"] })}
-          />
+        {awaitingRun && awaitingRun.id !== displayRunId && (
+          <button className="w-full rounded-xl border border-border p-3 text-sm text-primary"
+            onClick={() => { setActiveRunId(awaitingRun.id); setActiveRun(awaitingRun.id); }}>
+            Open pending review · {awaitingRun.agent_type}
+          </button>
         )}
       </motion.aside>
     </motion.div>

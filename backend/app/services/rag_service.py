@@ -12,6 +12,10 @@ from app.core.security import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
+
+class EmbeddingUnavailable(RuntimeError):
+    pass
+
 # Embedding dimension per provider — must match model output
 EMBEDDING_DIMENSIONS: dict[str, int] = {
     "openai": 1536,    # text-embedding-3-small
@@ -22,8 +26,15 @@ EMBEDDING_DIMENSIONS: dict[str, int] = {
 }
 
 
-def collection_name(user_id: str, doc_type: str) -> str:
-    return f"{user_id}_{doc_type}"
+def collection_name(user_id: str, doc_type: str, provider: str = "openai") -> str:
+    """Generate collection name namespaced by user, doc_type, and embedding provider.
+
+    Provider namespacing prevents dimension mismatch when users switch between
+    providers with different embedding dimensions (e.g., OpenAI 1536-d vs Google 768-d).
+    """
+    # Map provider to dimension to ensure collections are separated by embedding size
+    dimension = EMBEDDING_DIMENSIONS.get(provider, 768)
+    return f"{user_id}_{doc_type}_{provider}_{dimension}d"
 
 
 def extract_text(content: bytes, filename: str) -> str:
@@ -45,7 +56,7 @@ def chunk_text(text: str) -> list[str]:
 
 
 def get_embedding_model(model_settings):
-    provider = model_settings.provider
+    provider = get_embedding_provider(model_settings)
     if provider == "openai":
         api_key = decrypt_api_key(model_settings.api_key_enc, app_settings.APP_SECRET_KEY)
         return OpenAIEmbeddings(model="text-embedding-3-small", api_key=api_key)
@@ -54,8 +65,20 @@ def get_embedding_model(model_settings):
         return GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
     if provider == "ollama":
         return OllamaEmbeddings(model="nomic-embed-text", base_url=model_settings.ollama_url)
-    # anthropic + nvidia_nim have no native embedding API — fall back to local nomic-embed-text
-    return OllamaEmbeddings(model="nomic-embed-text")
+    raise EmbeddingUnavailable(f"Unsupported embedding provider: {provider}")
+
+
+def get_embedding_provider(model_settings) -> str:
+    provider = model_settings.provider
+    if provider in {"openai", "google", "ollama"}:
+        return provider
+    fallback = app_settings.EMBEDDING_PROVIDER.strip().lower()
+    if fallback not in {"openai", "google", "ollama"}:
+        raise EmbeddingUnavailable(
+            f"Provider '{provider}' has no embeddings API and EMBEDDING_PROVIDER is unset. "
+            "Set EMBEDDING_PROVIDER to openai, google, or ollama."
+        )
+    return fallback
 
 
 def _psycopg_url() -> str:
@@ -73,15 +96,41 @@ def _psycopg_url() -> str:
 
 
 def get_vector_store(user_id: str, doc_type: str, embeddings, provider: str = "openai"):
-    """Get or create PGVector store for a user+doc_type collection."""
+    """Get or create PGVector store for a user+doc_type+provider collection.
+
+    Provider is included in the collection name to prevent dimension mismatch
+    when users switch between embedding providers.
+    """
     from langchain_postgres import PGVector
 
-    table = collection_name(user_id, doc_type)
+    table = collection_name(user_id, doc_type, provider)
     return PGVector(
-        connection_string=_psycopg_url(),
+        connection=_psycopg_url(),
         collection_name=table,
-        embedding=embeddings,
+        embeddings=embeddings,
+        use_jsonb=True,
     )
+
+
+def _ensure_hnsw_index() -> None:
+    """Create the LangChain embedding HNSW index after the table exists."""
+    try:
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(_psycopg_url(), pool_pre_ping=True)
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_langchain_embedding_hnsw
+                    ON public.langchain_pg_embedding
+                    USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """))
+        finally:
+            engine.dispose()
+    except Exception as exc:
+        logger.warning("Failed to ensure langchain_pg_embedding HNSW index: %s", exc)
 
 
 def ingest_document(
@@ -98,8 +147,9 @@ def ingest_document(
         Document(page_content=chunk, metadata={**metadata, "chunk_index": i})
         for i, chunk in enumerate(chunks)
     ]
-    store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
+    store = get_vector_store(user_id, doc_type, embeddings, provider=get_embedding_provider(model_settings))
     store.add_documents(docs)
+    _ensure_hnsw_index()
     return len(docs)
 
 
@@ -111,6 +161,21 @@ def retrieve(
     k: int = 5,
 ) -> list[Document]:
     """Retrieve top-k relevant chunks."""
-    embeddings = get_embedding_model(model_settings)
-    store = get_vector_store(user_id, doc_type, embeddings, provider=model_settings.provider)
-    return store.similarity_search(query, k=k)
+    try:
+        embeddings = get_embedding_model(model_settings)
+        store = get_vector_store(user_id, doc_type, embeddings, provider=get_embedding_provider(model_settings))
+        return store.similarity_search(query, k=k)
+    except Exception as exc:
+        logger.warning("Vector retrieval failed for %s/%s: %s", user_id, doc_type, exc)
+        if doc_type == "resume":
+            from app.core.sync_db import fetch_user_profile_text
+
+            profile_text = fetch_user_profile_text(user_id)
+            if profile_text:
+                return [
+                    Document(
+                        page_content=profile_text,
+                        metadata={"fallback": "raw_resume", "rag_unavailable": True, "doc_type": doc_type},
+                    )
+                ]
+        return []

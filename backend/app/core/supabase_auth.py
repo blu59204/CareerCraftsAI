@@ -1,71 +1,308 @@
-"""Supabase JWT verification — supports asymmetric (ES256/RS256) via JWKS and legacy HS256.
+"""Clerk Auth verification — JWKS-based JWT decode (RS256).
 
-Supabase migrated to asymmetric JWT signing (ES256 by default for new projects).
-We fetch the project's JWKS and verify with the matching public key when the token
-header indicates an asymmetric algorithm. Legacy HS256 tokens are still verified
-with SUPABASE_JWT_SECRET.
+Historical module name: this file used to verify Supabase ES256 tokens. The
+module path and every exported name are kept because routers, middleware and
+tests import them (``verify_token`` / ``verify_auth_jwt`` / ``verify_supabase_jwt``
+are all the same callable).
 
-Algorithm is pinned to the set _ALLOWED_ALGORITHMS — `alg:none` and any unexpected
-algorithm are rejected (prevents algorithm confusion / CWE-327).
+Clerk signs session tokens with RS256 using keys published at
+``{CLERK_ISSUER}/.well-known/jwks.json``. The ``sub`` claim is a *text* id such
+as ``user_2abc...`` — not a UUID — and is stored in ``users.supabase_uid``,
+which is a TEXT column. The RLS policies in
+``supabase/migrations/0028_clerk_third_party_auth_rls.sql`` match on that exact
+column via ``auth.jwt() ->> 'sub'``, so the column name stays as-is.
+
+The JWKS client is built lazily on first verification, never at import time —
+an unset or unreachable JWKS URL must not break importing the app (or
+collecting the test suite).
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any
+from urllib.parse import quote
 
+import httpx
 import jwt
-from fastapi import HTTPException
-from jwt import PyJWKClient
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.database import get_db
+from app.models import User
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_ALGORITHMS = ["ES256", "RS256", "HS256"]
-_ASYMMETRIC = {"ES256", "RS256"}
-
-_JWKS_URL = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
-_jwks_client = PyJWKClient(_JWKS_URL, cache_keys=True, lifespan=3600)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
+_CLOCK_SKEW_LEEWAY = 60
+_ALGORITHMS = ["RS256"]
 
 
-def _get_signing_key(token: str):
-    return _jwks_client.get_signing_key_from_jwt(token).key
+class ClerkIdentityError(Exception):
+    """Clerk could not confirm the user's verified primary email."""
+
+# Built lazily by _get_jwks_client(); tests patch this attribute directly.
+_jwks_client: jwt.PyJWKClient | None = None
 
 
-def verify_supabase_jwt(token: str) -> dict:
-    """Verify a Supabase JWT — asymmetric via JWKS or legacy HS256."""
+def _jwks_url() -> str:
+    """Resolve the JWKS endpoint from explicit config or from the issuer."""
+    if settings.CLERK_JWKS_URL:
+        return settings.CLERK_JWKS_URL
+    if settings.CLERK_ISSUER:
+        return f"{settings.CLERK_ISSUER.rstrip('/')}/.well-known/jwks.json"
+    return ""
+
+
+def _get_jwks_client() -> jwt.PyJWKClient:
+    """Return the process-wide JWKS client, constructing it on first use.
+
+    Constructing at import time would make a bad/missing URL a hard import
+    failure for every module that touches auth.
+    """
+    global _jwks_client
+    if _jwks_client is None:
+        url = _jwks_url()
+        if not url:
+            logger.error(
+                "Clerk auth is not configured — set CLERK_JWKS_URL or CLERK_ISSUER"
+            )
+            raise HTTPException(status_code=401, detail="Authentication not configured")
+        _jwks_client = jwt.PyJWKClient(url, cache_keys=True, lifespan=3600)
+    return _jwks_client
+
+
+def reset_jwks_client() -> None:
+    """Drop the cached JWKS client (config reload / tests)."""
+    global _jwks_client
+    _jwks_client = None
+
+
+def verify_token(token: str) -> dict[str, Any]:
+    """Decode and validate a Clerk JWT using JWKS (RS256). Returns payload dict."""
     try:
-        header = jwt.get_unverified_header(token)
-    except jwt.InvalidTokenError as exc:
-        logger.error(f"JWT header parse failed: {exc} | token_prefix={token[:32]}")
-        raise HTTPException(status_code=401, detail="Invalid token") from exc
-
-    alg = header.get("alg")
-    if alg not in _ALLOWED_ALGORITHMS:
-        logger.error(f"JWT alg not allowed: {alg} | token_prefix={token[:32]}")
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    try:
-        if alg in _ASYMMETRIC:
-            key = _get_signing_key(token)
+        signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+        options: dict[str, Any] = {"require": ["exp", "sub"]}
+        kwargs: dict[str, Any] = {}
+        if settings.CLERK_AUDIENCE:
+            kwargs["audience"] = settings.CLERK_AUDIENCE
         else:
-            key = settings.SUPABASE_JWT_SECRET
-
+            # Clerk session tokens have no fixed `aud` — don't demand one.
+            options["verify_aud"] = False
+        if settings.CLERK_ISSUER:
+            kwargs["issuer"] = settings.CLERK_ISSUER
         payload = jwt.decode(
             token,
-            key,
-            algorithms=[alg],
-            audience="authenticated",
-            options={"require": ["exp", "sub"]},
+            signing_key.key,
+            algorithms=_ALGORITHMS,
+            leeway=_CLOCK_SKEW_LEEWAY,
+            options=options,
+            **kwargs,
         )
+        return payload
+    except HTTPException:
+        raise
     except jwt.ExpiredSignatureError as exc:
-        logger.error(f"JWT expired: {exc} | token_prefix={token[:32]}")
         raise HTTPException(status_code=401, detail="Token expired") from exc
     except jwt.InvalidTokenError as exc:
-        logger.error(f"JWT verify failed: {exc} | token_prefix={token[:32]}")
-        raise HTTPException(status_code=401, detail="Invalid token") from exc
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
 
-    if not payload.get("sub"):
-        raise HTTPException(status_code=401, detail="Invalid token: missing sub")
 
-    return payload
+verify_auth_jwt = verify_token
+
+
+async def get_verified_primary_email(
+    subject: str, *, client: httpx.AsyncClient | None = None
+) -> str:
+    """Resolve the verified primary email for a Clerk user via the Backend API."""
+    if not settings.CLERK_SECRET_KEY:
+        raise ClerkIdentityError("Clerk Backend API is not configured")
+
+    owns_client = client is None
+    client = client or httpx.AsyncClient(timeout=5, trust_env=False)
+    try:
+        try:
+            response = await client.get(
+                f"https://api.clerk.com/v1/users/{quote(subject, safe='')}",
+                headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+            )
+        except httpx.RequestError as exc:
+            raise ClerkIdentityError("Clerk user lookup failed") from exc
+        if response.status_code != 200:
+            raise ClerkIdentityError("Clerk user lookup failed")
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise ClerkIdentityError("Clerk user lookup returned invalid data") from exc
+        primary_id = data.get("primary_email_address_id") if isinstance(data, dict) else None
+        addresses = data.get("email_addresses") if isinstance(data, dict) else None
+        if not isinstance(primary_id, str) or not isinstance(addresses, list):
+            raise ClerkIdentityError("Clerk primary email is unavailable")
+
+        primary = next(
+            (
+                item
+                for item in addresses
+                if isinstance(item, dict) and item.get("id") == primary_id
+            ),
+            None,
+        )
+        email = primary.get("email_address") if primary else None
+        verification = primary.get("verification") if primary else None
+        if (
+            not isinstance(email, str)
+            or not email.strip()
+            or not isinstance(verification, dict)
+            or verification.get("status") != "verified"
+        ):
+            raise ClerkIdentityError("Clerk primary email is not verified")
+        return email.strip().casefold()
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+async def delete_clerk_user(subject: str, *, client: httpx.AsyncClient | None = None) -> None:
+    """Delete the Clerk user via the Backend API. Best-effort — logs and swallows failures.
+
+    Called from account deletion so a removed local row can't be re-provisioned
+    by the same Clerk identity signing back in.
+    """
+    if not settings.CLERK_SECRET_KEY:
+        logger.warning("Skipping Clerk user deletion for %s — CLERK_SECRET_KEY not configured", subject)
+        return
+
+    owns_client = client is None
+    client = client or httpx.AsyncClient(timeout=5, trust_env=False)
+    try:
+        response = await client.delete(
+            f"https://api.clerk.com/v1/users/{quote(subject, safe='')}",
+            headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+        )
+        if response.status_code not in (200, 404):
+            logger.warning("Clerk user deletion for %s returned %s", subject, response.status_code)
+    except httpx.RequestError as exc:
+        logger.warning("Clerk user deletion request failed for %s: %s", subject, exc)
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+def subject_from_payload(payload: dict[str, Any]) -> str:
+    """Pull the auth subject out of a verified payload, or raise 401."""
+    subject = payload.get("sub") or payload.get("user_id") or payload.get("supabase_uid")
+    if not subject:
+        raise HTTPException(status_code=401, detail="Invalid token — missing sub claim")
+    return str(subject)
+
+
+def _profile_from_payload(payload: dict[str, Any], subject: str) -> dict[str, Any]:
+    """Map Clerk claims onto User columns.
+
+    ``users.email`` is NOT NULL, but Clerk only emits an ``email`` claim when the
+    instance is configured to add it as a custom session claim. Fall back to a
+    deterministic, non-deliverable placeholder so first-sight provisioning never
+    fails; the profile endpoints can correct it later.
+    """
+    meta = payload.get("user_metadata") or {}
+    email = (
+        payload.get("email")
+        or payload.get("primary_email_address")
+        or meta.get("email")
+        or f"{subject}@users.noreply.clerk"
+    )
+    return {
+        "supabase_uid": subject,
+        "email": email,
+        "full_name": payload.get("full_name")
+        or payload.get("name")
+        or meta.get("full_name"),
+        "avatar_url": payload.get("image_url")
+        or payload.get("picture")
+        or meta.get("avatar_url"),
+    }
+
+
+async def _select_by_uid(db: AsyncSession, subject: str) -> User | None:
+    result = await db.execute(select(User).where(User.supabase_uid == subject))
+    return result.scalars().first()
+
+
+async def get_or_provision_user(
+    db: AsyncSession,
+    subject: str,
+    payload: dict[str, Any] | None = None,
+) -> User:
+    """Load the User for a Clerk subject, creating the row on first sight.
+
+    Nothing else creates ``public.users`` rows any more — the Supabase
+    ``on_auth_user_created`` trigger lived on ``auth.users``, which does not
+    exist here. So the first authenticated request for a subject provisions it.
+
+    Race handling: two concurrent first requests for the same subject both miss
+    the SELECT. The INSERT uses ``ON CONFLICT (supabase_uid) DO NOTHING`` so the
+    loser is a no-op instead of a unique violation, and any other integrity
+    error (e.g. the unique ``email`` index) is caught, rolled back, and followed
+    by a re-SELECT. Either way both requests end up with the same row.
+    """
+    payload = payload or {}
+    user = await _select_by_uid(db, subject)
+    if user is not None:
+        return user
+
+    values = _profile_from_payload(payload, subject)
+    try:
+        await db.execute(
+            pg_insert(User)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["supabase_uid"])
+        )
+        await db.commit()
+    except IntegrityError as exc:
+        # Concurrent insert won the race, or the email collides with an existing
+        # row. Roll back and fall through to the re-SELECT below.
+        await db.rollback()
+        logger.info("User provisioning conflict for %s: %s", subject, exc.orig)
+
+    user = await _select_by_uid(db, subject)
+    if user is not None:
+        return user
+
+    # Not a supabase_uid race — an existing row already owns this email. Adopt it
+    # only if it has never been bound to an auth subject (pre-Clerk rows);
+    # otherwise refuse rather than hand over somebody else's account.
+    result = await db.execute(select(User).where(User.email == values["email"]))
+    existing = result.scalars().first()
+    if existing is not None and not existing.supabase_uid:
+        existing.supabase_uid = subject
+        await db.commit()
+        await db.refresh(existing)
+        logger.info("Bound pre-existing user %s to auth subject %s", existing.id, subject)
+        return existing
+
+    logger.error("User provisioning failed for subject %s", subject)
+    raise HTTPException(status_code=500, detail="User provisioning failed")
+
+
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Extract Bearer token, verify locally, load (or provision) User by subject."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+
+    payload = verify_token(token)
+    subject = subject_from_payload(payload)
+    return await get_or_provision_user(db, subject, payload)
+
+
+verify_supabase_jwt = verify_token  # alias used by test_edge_cases

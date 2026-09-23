@@ -17,22 +17,28 @@ export function JobMatchCard({ jobs }: Props) {
           View all
         </Link>
       </div>
-      <ul className="mt-4 space-y-3">
-        {jobs.slice(0, 4).map((j) => (
-          <li key={j.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-card/40 px-4 py-3">
-            <div>
-              <div className="text-sm font-medium">{j.role}</div>
-              <div className="text-xs text-muted-foreground">
-                {j.company}
-                {j.location ? ` · ${j.location}` : ""}
+      {jobs.length > 0 ? (
+        <ul className="mt-4 space-y-3">
+          {jobs.slice(0, 4).map((j) => (
+            <li key={j.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-card/40 px-4 py-3">
+              <div>
+                <div className="text-sm font-medium">{j.role}</div>
+                <div className="text-xs text-muted-foreground">
+                  {j.company}
+                  {j.location ? ` · ${j.location}` : ""}
+                </div>
               </div>
-            </div>
-            <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
-              {j.matchPercent}%
-            </span>
-          </li>
-        ))}
-      </ul>
+              <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
+                {j.matchPercent}%
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          No saved jobs yet. Run Search Jobs to find matches.
+        </div>
+      )}
     </motion.div>
   );
 }

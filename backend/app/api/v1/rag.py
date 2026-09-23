@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.models.db import User, UserDocument, UserModelSettings
+from app.services.drive_service import DriveError, upload_to_drive
 from app.services.rag_service import extract_text, ingest_document
-from app.services.storage_service import delete_file, upload_file
+from app.services.storage_service import delete_file, download_file, upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +38,16 @@ class DocumentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _score_resume_background(doc_id: str, raw_text: str) -> None:
-    """Compute ATS score asynchronously after resume upload."""
+async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> None:
+    """Compute ATS score asynchronously after resume upload.
+
+    user_id is passed explicitly so the update query can scope to the owner —
+    prevents a latent IDOR if the background task is ever called with untrusted input.
+    """
     try:
         from app.services.ats_service import compute_ats_score
         from app.core.database import AsyncSessionLocal
+        from app.models.db import UserDocument
 
         # Background scoring without a JD uses a generic placeholder to get baseline scores
         generic_jd = (
@@ -53,7 +59,10 @@ async def _score_resume_background(doc_id: str, raw_text: str) -> None:
 
         async with AsyncSessionLocal() as db:
             res = await db.execute(
-                select(UserDocument).where(UserDocument.id == uuid.UUID(doc_id))
+                select(UserDocument).where(
+                    UserDocument.id == uuid.UUID(doc_id),
+                    UserDocument.user_id == uuid.UUID(str(user_id)),
+                )
             )
             doc = res.scalar_one_or_none()
             if doc:
@@ -134,8 +143,16 @@ async def upload_document(
                 model_settings,
             )
             embedded_at = datetime.now(timezone.utc)
-        except Exception:
-            # Embedding failed — document saved without vectors, can retry later
+        except Exception as exc:
+            logger.warning(
+                "Embedding failed for doc_type=%s user=%s: %s",
+                doc_type,
+                current_user.id,
+                exc,
+            )
+            upload_warning = (
+                (upload_warning + " ") if upload_warning else ""
+            ) + "Document saved but not indexed for AI search — check Settings → Models."
             embedded_at = None
 
     doc = UserDocument(
@@ -152,7 +169,7 @@ async def upload_document(
 
     # Trigger ATS scoring in background for resumes
     if doc_type == "resume" and raw_text:
-        asyncio.create_task(_score_resume_background(str(doc.id), raw_text))
+        asyncio.create_task(_score_resume_background(str(doc.id), str(current_user.id), raw_text))
 
     return DocumentResponse(
         id=doc.id,
@@ -224,6 +241,65 @@ async def delete_document(
     await db.delete(doc)
     await db.flush()
     try:
-        delete_file(storage_path)
+        delete_file(storage_path, owner_id=str(current_user.id))
     except Exception as exc:
-        logger.warning("Supabase file delete failed for %s (best-effort): %s", storage_path, exc)
+        logger.warning("Storage file delete failed for %s (best-effort): %s", storage_path, exc)
+
+
+_DRIVE_MIME_BY_EXT = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "txt": "text/plain",
+}
+
+
+class SaveToDriveResponse(BaseModel):
+    id: str
+    name: str
+    web_view_link: str | None = None
+
+
+@router.post("/documents/{document_id}/save-to-drive", response_model=SaveToDriveResponse)
+async def save_document_to_drive(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Push a stored document (e.g. resume) to the user's connected Google Drive."""
+    result = await db.execute(
+        select(UserDocument).where(
+            UserDocument.id == document_id,
+            UserDocument.user_id == current_user.id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    owner_id = str(current_user.id)
+    ext = doc.filename.rsplit(".", 1)[-1].lower() if "." in doc.filename else ""
+    mime_type = _DRIVE_MIME_BY_EXT.get(ext, "application/octet-stream")
+
+    try:
+        content = await asyncio.to_thread(download_file, doc.storage_path, owner_id)
+    except Exception as exc:
+        logger.warning("Drive save: download failed for %s: %s", doc.storage_path, exc)
+        raise HTTPException(status_code=502, detail="Could not read the stored document") from exc
+
+    try:
+        uploaded = await asyncio.to_thread(
+            upload_to_drive, owner_id, doc.filename, content, mime_type
+        )
+    except DriveError as exc:
+        # Actionable Google reason (scopes / API disabled / token) — safe to show.
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.warning("Drive save: upload failed for %s: %s", doc.filename, exc)
+        raise HTTPException(status_code=502, detail="Drive upload failed") from exc
+
+    return SaveToDriveResponse(
+        id=uploaded.get("id", ""),
+        name=uploaded.get("name", doc.filename),
+        web_view_link=uploaded.get("webViewLink"),
+    )

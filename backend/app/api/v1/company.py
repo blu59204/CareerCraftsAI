@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.harness import get_harness
 from app.api.v1.deps import get_current_user, get_db
+from app.api.v1.run_utils import apply_harness_result
 from app.models.db import AgentRun, CompanyIntelModel, User
 
 router = APIRouter(prefix="/company", tags=["company"])
+
+HARNESS_TIMEOUT_SECONDS = 120
 
 
 class CompanyResearchRequest(BaseModel):
@@ -34,14 +38,25 @@ async def research_company(
     await db.flush()
 
     harness = await get_harness()
-    await harness.run(
-        user_id=str(current_user.id),
-        task_type="company_research",
-        context={"company_name": body.company_name},
-        user_settings={},
-        run_id=run_id,
-    )
-    return {"run_id": run_id, "status": "running"}
+    try:
+        harness_result = await asyncio.wait_for(
+            harness.run(
+                user_id=str(current_user.id),
+                task_type="company_research",
+                context={"company_name": body.company_name},
+                user_settings={},
+                run_id=run_id,
+            ),
+            timeout=HARNESS_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        agent_run.status = "failed"
+        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
+        await db.flush()
+        raise HTTPException(status_code=504, detail="Company research timed out") from None
+    apply_harness_result(agent_run, harness_result)
+    await db.flush()
+    return {"run_id": run_id, "status": agent_run.status}
 
 
 @router.get("/{name}/intel")

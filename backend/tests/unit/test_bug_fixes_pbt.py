@@ -2,10 +2,10 @@
 Property-based tests validating critical bug fixes remain intact.
 Uses hypothesis for generative testing.
 """
+
+from unittest.mock import MagicMock, patch
+
 import pytest
-from hypothesis import given, settings as h_settings
-from hypothesis import strategies as st
-from unittest.mock import patch, MagicMock
 
 
 # Property 1: Settings always has ALLOWED_ORIGINS attribute
@@ -13,12 +13,10 @@ def test_settings_has_allowed_origins(monkeypatch):
     monkeypatch.setenv("APP_SECRET_KEY", "test-secret-key-32-chars-minimum!!")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
-    monkeypatch.setenv("SUPABASE_URL", "https://test.supabase.co")
-    monkeypatch.setenv("SUPABASE_SERVICE_KEY", "svc-key")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "jwt-secret")
     monkeypatch.setenv("FRONTEND_URL", "http://localhost:3000")
 
     from app.core.config import Settings
+
     s = Settings(_env_file=None)
     assert hasattr(s, "ALLOWED_ORIGINS")
     assert isinstance(s.ALLOWED_ORIGINS, str)
@@ -27,13 +25,15 @@ def test_settings_has_allowed_origins(monkeypatch):
 # Property 2: sync_db fetch_model_settings never raises RuntimeError from thread
 def test_sync_db_no_runtime_error():
     """fetch_model_settings uses sync engine — no asyncio.run() RuntimeError."""
-    from app.core.sync_db import _get_sync_factory
     from sqlalchemy.orm import Session
+
+    from app.core.sync_db import _get_sync_factory
 
     with patch("app.core.sync_db.settings") as mock_settings:
         mock_settings.DATABASE_URL = "postgresql+asyncpg://u:p@localhost/db"
         # Reset globals to force re-creation
         import app.core.sync_db as sdb
+
         sdb._sync_engine = None
         sdb._sync_factory = None
         factory = _get_sync_factory()
@@ -45,17 +45,22 @@ def test_sync_db_no_runtime_error():
 # Property 6: VALID_STATUSES is exhaustive set
 def test_valid_statuses_set():
     from app.api.v1.jobs import VALID_STATUSES
+
     expected = {"saved", "applied", "viewed", "interview", "offer", "rejected"}
     assert VALID_STATUSES == expected
 
 
 # Property 7: GmailMCPClient.search_threads returns [] when OAuth unavailable
 def test_gmail_returns_empty_without_oauth():
-    with patch("app.services.gmail_service.GmailToolkit", side_effect=Exception("No creds")):
-        from app.services.gmail_service import GmailMCPClient
-        client = GmailMCPClient(user_id="test-user")
+    from app.services.gmail_service import GmailMCPClient
+
+    client = GmailMCPClient(user_id="test-user")
+    with patch(
+        "app.services.gmail_service.proxy_request",
+        side_effect=Exception("No Nango connection"),
+    ):
         result = client.search_threads("test query")
-        assert result == []
+    assert result == []
 
 
 # Property 10: YouTube returns [] when API key is empty
@@ -66,6 +71,7 @@ async def test_youtube_returns_empty_without_api_key():
         mock_settings.REDIS_URL = "redis://localhost:6379"
         # Reset redis client
         import app.services.youtube_service as yt
+
         yt._redis_client = MagicMock()
         yt._redis_client.get.return_value = None
 
@@ -80,7 +86,15 @@ def test_onboarding_model_default():
     import re
     from pathlib import Path
 
-    onboarding_path = Path(__file__).resolve().parents[3] / "frontend" / "src" / "app" / "(app)" / "onboarding" / "page.tsx"
+    onboarding_path = (
+        Path(__file__).resolve().parents[3]
+        / "frontend"
+        / "src"
+        / "app"
+        / "(app)"
+        / "onboarding"
+        / "page.tsx"
+    )
     if not onboarding_path.exists():
         pytest.skip("Frontend source not available")
 
@@ -98,7 +112,8 @@ def test_onboarding_model_default():
 def test_internal_no_duplicate_secret_params():
     """Verify internal handlers use dependencies, not duplicate Header params."""
     import inspect
-    from app.api.internal import run_job_search, run_followup
+
+    from app.api.internal import run_followup, run_job_search
 
     sig_search = inspect.signature(run_job_search)
     sig_followup = inspect.signature(run_followup)
@@ -113,6 +128,40 @@ def test_psycopg_url_conversion():
     with patch("app.services.rag_service.app_settings") as mock:
         mock.DATABASE_URL = "postgresql+asyncpg://user:pass@host/db"
         from app.services.rag_service import _psycopg_url
+
         result = _psycopg_url()
         assert "+psycopg" in result
         assert "+asyncpg" not in result
+
+
+def test_event_bus_emit_does_not_raise_when_redis_unavailable(monkeypatch):
+    """Agent nodes should not fail just because Redis Pub/Sub is unavailable."""
+    import app.core.event_bus as event_bus
+
+    class BrokenRedis:
+        async def publish(self, channel, message):
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(event_bus, "_get_redis", lambda: BrokenRedis())
+
+    event_bus.emit("run-1", "log", "hello")
+
+
+def test_memory_manager_uses_dedicated_tables_not_legacy_agent_tables():
+    """Memory DDL must avoid old agent_* tables with incompatible columns."""
+    from app.agents.memory.manager import _DDL
+
+    assert "agent_memory_episodes" in _DDL
+    assert "agent_memory_learnings" in _DDL
+    assert "CREATE TABLE IF NOT EXISTS agent_episodes" not in _DDL
+    assert "CREATE TABLE IF NOT EXISTS agent_learnings" not in _DDL
+
+
+def test_dev_cors_allows_localhost_and_loopback_origins():
+    """Dev CORS should allow both localhost and 127.0.0.1 browser origins."""
+    from app.main import _build_cors_origins
+
+    origins = _build_cors_origins("http://localhost:3000", "development")
+
+    assert "http://localhost:3000" in origins
+    assert "http://127.0.0.1:3000" in origins

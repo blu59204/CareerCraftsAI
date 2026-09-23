@@ -9,8 +9,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api";
+import { BrowserWorkspace } from "./BrowserWorkspace";
+import { useAgentStore } from "@/store/agentStore";
 
 interface Props {
   runId: string;
@@ -19,16 +22,59 @@ interface Props {
   onCancel: () => void;
 }
 
+function CharCount({ current, max }: { current: number; max: number }) {
+  const pct = Math.min(100, (current / max) * 100);
+  return (
+    <span
+      className={`text-xs tabular-nums ${pct > 90 ? "text-red-400" : pct > 75 ? "text-yellow-400" : "text-muted-foreground"}`}
+    >
+      {current}/{max}
+    </span>
+  );
+}
+
+interface RequiredField {
+  field_id: string;
+  question_key?: string | null;
+  label: string;
+  required: boolean;
+  options?: string[];
+}
+
 export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const [loading, setLoading] = useState(false);
-  const actionType = action.type as string;
+  const [editing, setEditing] = useState(false);
+  const [editedText, setEditedText] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const actionType = (action.type as string) || "unknown";
+  const warnings = Array.isArray(action.warnings)
+    ? action.warnings.filter((warning): warning is string => typeof warning === "string")
+    : [];
 
   const decide = async (approved: boolean) => {
     setLoading(true);
     try {
-      await apiClient.post(`/agents/${runId}/approve`, { approved });
-      approved ? toast.success("Action approved") : toast.info("Action cancelled");
-      approved ? onApprove() : onCancel();
+      const edits = !approved
+        ? undefined
+        : actionType === "application_answers_required"
+          ? { answers }
+          : editedText
+            ? { body: editedText }
+            : undefined;
+      await apiClient.post(`/agents/${runId}/approve`, {
+        approved,
+        edits,
+      });
+      if (approved) {
+        useAgentStore.getState().clearCheckpoint(runId);
+        useAgentStore.getState().setRunStatus(runId, "queued");
+        toast.success("Action approved");
+        onApprove();
+      } else {
+        useAgentStore.getState().setError(runId, "Cancelled by you");
+        toast.info("Action cancelled");
+        onCancel();
+      }
     } catch {
       toast.error("Failed to process approval");
     } finally {
@@ -36,60 +82,330 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape" && !editing) onCancel();
+  };
+
   return (
-    <Dialog open>
-      <DialogContent className="max-w-lg">
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent
+        className="max-w-2xl max-h-[90vh] overflow-y-auto"
+        onKeyDown={handleKeyDown}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            Review Required{" "}
-            <Badge variant="secondary">{actionType?.replace(/_/g, " ")}</Badge>
+            Review Required
+            <Badge variant="secondary" className="capitalize">
+              {actionType.replace(/_/g, " ")}
+            </Badge>
           </DialogTitle>
-          <DialogDescription>Review before executing.</DialogDescription>
+          <DialogDescription>Review before executing this action.</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3 py-2 text-sm">
-          {actionType === "send_email" && (
-            <>
-              <div>
-                <span className="font-medium">To:</span> {action.recipient as string}
-              </div>
-              <div>
-                <span className="font-medium">Subject:</span> {action.subject as string}
-              </div>
-              <div className="bg-slate-50 rounded p-3 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                {action.body as string}
-              </div>
-            </>
-          )}
-          {actionType === "resume_ready" && (
-            <div className="bg-slate-50 rounded p-3 whitespace-pre-wrap max-h-64 overflow-y-auto">
-              {action.resume_text as string}
+
+        <div className="space-y-4 py-2">
+
+          {warnings.length > 0 && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+              <p className="font-medium">Warnings</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+              </ul>
             </div>
           )}
-          {actionType === "linkedin_edits" && (
-            <div className="space-y-2">
-              <div>
-                <span className="font-medium">Headline:</span> {action.headline as string}
+
+          {/* Email preview */}
+          {actionType === "send_email" && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-[60px_1fr] gap-1 text-sm">
+                <span className="font-medium text-muted-foreground">To:</span>
+                <span className="text-foreground">{String(action.recipient ?? "—")}</span>
+                <span className="font-medium text-muted-foreground">Subject:</span>
+                <span className="text-foreground">{String(action.subject ?? "—")}</span>
               </div>
-              <p className="text-slate-600">
-                {(action.about as string)?.slice(0, 200)}...
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Email Body
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (!editing) setEditedText(String(action.body ?? ""));
+                    setEditing(!editing);
+                  }}
+                >
+                  {editing ? "Preview" : "Edit"}
+                </Button>
+              </div>
+              {editing ? (
+                <div className="space-y-1">
+                  <Textarea
+                    value={editedText}
+                    onChange={(e) => setEditedText(e.target.value)}
+                    className="min-h-48 font-mono text-sm"
+                    placeholder="Edit the email body..."
+                  />
+                  <div className="flex justify-end">
+                    <CharCount current={editedText.length} max={1500} />
+                  </div>
+                </div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto rounded-xl border border-border bg-background/70 p-4 text-sm whitespace-pre-wrap text-foreground">
+                  {String(action.body ?? "—")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Resume preview */}
+          {actionType === "resume_ready" && (() => {
+            const ats = (action.ats_breakdown ??
+              (typeof action.ats_score === "object" ? action.ats_score : null)) as
+              {
+                composite_score?: number;
+                keyword_score?: number;
+                readability_score?: number;
+                format_score?: number;
+                missing_keywords?: string[];
+              } | null;
+            return (
+            <div className="space-y-3">
+              {/* ats_score is the composite int; ats_breakdown carries the
+                  sub-scores. Older runs stored only the int, so fall back to
+                  treating ats_score as an object if that is what arrived. */}
+              {ats ? (
+                <div className="flex items-center gap-3 rounded-xl border border-border bg-background/70 p-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+                    <span className="text-lg font-bold text-primary">
+                      {ats.composite_score ?? "—"}
+                    </span>
+                  </div>
+                  <div className="text-sm">
+                    <p className="font-medium">ATS Score</p>
+                    <p className="text-muted-foreground">
+                      Keyword: {ats.keyword_score ?? "—"} |
+                      Readability: {ats.readability_score ?? "—"} |
+                      Format: {ats.format_score ?? "—"}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {ats && ats.missing_keywords ? (
+                <div className="flex flex-wrap gap-1">
+                  {ats.missing_keywords?.slice(0, 8).map((kw: string) => (
+                    <Badge key={kw} variant="outline" className="text-xs">
+                      + {kw}
+                    </Badge>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Resume Draft
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (!editing) setEditedText(String(action.resume_markdown ?? action.resume_text ?? ""));
+                    setEditing(!editing);
+                  }}
+                >
+                  {editing ? "Preview" : "Edit"}
+                </Button>
+              </div>
+              {editing ? (
+                <div className="space-y-1">
+                  <Textarea
+                    value={editedText}
+                    onChange={(e) => setEditedText(e.target.value)}
+                    className="min-h-48 font-mono text-sm"
+                    placeholder="Edit the resume draft..."
+                  />
+                  <div className="flex justify-end">
+                    <CharCount current={editedText.length} max={5000} />
+                  </div>
+                </div>
+              ) : (
+                <div className="max-h-80 overflow-y-auto rounded-xl border border-border bg-background/70 p-4 text-sm whitespace-pre-wrap text-foreground font-mono">
+                  {String(action.resume_markdown ?? action.resume_text ?? "—")}
+                </div>
+              )}
+            </div>
+            );
+          })()}
+
+          {/* LinkedIn edits */}
+          {actionType === "linkedin_edits" && (
+            <div className="space-y-3">
+              <div>
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Headline</span>
+                <p className="mt-1 rounded-lg border border-border bg-background/70 p-3 text-sm">{String(action.headline ?? "—")}</p>
+              </div>
+              <div>
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">About</span>
+                <p className="mt-1 rounded-lg border border-border bg-background/70 p-3 text-sm whitespace-pre-wrap">{String(action.about ?? "—")}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Missing answers required before preparation can continue */}
+          {actionType === "application_answers_required" && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{String(action.message ?? "Answer these questions once — approved answers are reused on later applications.")}</p>
+              {((action.fields as RequiredField[]) ?? []).map((field) => (
+                <div key={field.field_id} className="space-y-1">
+                  <label className="text-sm font-medium">{field.label}</label>
+                  {field.options && field.options.length > 0 ? (
+                    <select
+                      className="w-full rounded-lg border border-border bg-background/70 p-2 text-sm"
+                      value={answers[field.field_id] ?? ""}
+                      onChange={(e) => setAnswers({ ...answers, [field.field_id]: e.target.value })}
+                    >
+                      <option value="" disabled>Select an answer</option>
+                      {field.options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="w-full rounded-lg border border-border bg-background/70 p-2 text-sm"
+                      value={answers[field.field_id] ?? ""}
+                      onChange={(e) => setAnswers({ ...answers, [field.field_id]: e.target.value })}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Cover letter */}
+          {actionType === "cover_letter_review" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Cover Letter
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (!editing) setEditedText(String(action.body ?? ""));
+                    setEditing(!editing);
+                  }}
+                >
+                  {editing ? "Preview" : "Edit"}
+                </Button>
+              </div>
+              {editing ? (
+                <div className="space-y-1">
+                  <Textarea
+                    value={editedText}
+                    onChange={(e) => setEditedText(e.target.value)}
+                    className="min-h-48 font-mono text-sm"
+                  />
+                  <CharCount current={editedText.length} max={1500} />
+                </div>
+              ) : (
+                <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/70 p-4 text-sm whitespace-pre-wrap">
+                  {String(action.body ?? "—")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* LinkedIn outreach drafts */}
+          {actionType === "linkedin_outreach" && (
+            <div className="space-y-3">
+              {(Array.isArray(action.messages) ? action.messages : []).map((draft, index) => {
+                const item = draft as Record<string, unknown>;
+                return (
+                  <div key={`${String(item.contact_name ?? "contact")}-${index}`} className="rounded-xl border border-border bg-background/70 p-4 space-y-2">
+                    <div>
+                      <p className="font-medium">{String(item.contact_name ?? "Unknown contact")}</p>
+                      <p className="text-xs text-muted-foreground">{String(item.contact_title ?? "")}</p>
+                    </div>
+                    <p className="whitespace-pre-wrap text-sm text-foreground">{String(item.message ?? "—")}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Salary report */}
+          {actionType === "salary_report_review" && (() => {
+            const report = (action.report ?? {}) as Record<string, unknown>;
+            const script = (action.script ?? {}) as Record<string, unknown>;
+            return (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {["p25", "p50", "p75"].map((key) => (
+                    <div key={key} className="rounded-xl border border-border bg-background/70 p-3 text-center">
+                      <p className="text-xs uppercase tracking-wider text-muted-foreground">{key}</p>
+                      <p className="mt-1 text-lg font-semibold">{String(report[key] ?? "—")}</p>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Negotiation Script</span>
+                  <div className="mt-1 rounded-xl border border-border bg-background/70 p-4 text-sm whitespace-pre-wrap">
+                    {Object.entries(script).map(([key, value]) => (
+                      <p key={key} className="mb-2 last:mb-0"><span className="font-medium capitalize">{key.replace(/_/g, " ")}:</span> {typeof value === "object" ? JSON.stringify(value) : String(value)}</p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Search confirmation (NL Search) */}
+          {actionType === "search_confirmation" && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                We interpreted your search as:
+                <span className="ml-2 font-medium text-foreground">
+                  {String(action.original_query ?? "—")}
+                </span>
               </p>
+              {action.interpretation ? (
+                <div className="rounded-xl border border-border bg-background/70 p-4">
+                  <pre className="text-xs font-mono whitespace-pre-wrap">
+                    {JSON.stringify(action.interpretation, null, 2)}
+                  </pre>
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Generic fallback for unknown action types */}
+          {["browser_input", "browser_review"].includes(actionType) && <>
+            <p className="text-sm">{String(action.message ?? "Review your application")}</p>
+            <BrowserWorkspace runId={runId} />
+          </>}
+          {!["send_email", "resume_ready", "linkedin_edits", "cover_letter_review", "search_confirmation", "browser_input", "browser_review", "application_answers_required", "linkedin_outreach", "salary_report_review"].includes(actionType) && (
+            <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/70 p-4">
+              <pre className="text-xs font-mono whitespace-pre-wrap text-foreground">
+                {JSON.stringify(action, null, 2)}
+              </pre>
             </div>
           )}
         </div>
-        <div className="flex gap-2 pt-2">
-          <Button
-            onClick={() => decide(true)}
-            disabled={loading}
-            className="flex-1"
-          >
-            {loading ? "Processing..." : "Approve & Execute"}
-          </Button>
+
+        <div className="flex gap-3 pt-2">
           <Button
             variant="outline"
             onClick={() => decide(false)}
             disabled={loading}
+            className="flex-1"
           >
             Cancel
+          </Button>
+          <Button
+            onClick={() => decide(true)}
+            disabled={loading}
+            className="flex-[2]"
+          >
+            {loading ? "Processing..." : actionType === "browser_input" ? "Continue preparation" : actionType === "browser_review" ? "Approve final submission" : actionType === "application_answers_required" ? "Save answers & continue" : "Approve & Execute"}
           </Button>
         </div>
       </DialogContent>

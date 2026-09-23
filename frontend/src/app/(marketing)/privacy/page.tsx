@@ -29,8 +29,8 @@ export default function PrivacyPage() {
         <section>
           <h2 className="mb-3 text-lg font-medium text-foreground">Data storage</h2>
           <p>
-            Data is stored in Supabase (PostgreSQL) hosted on AWS infrastructure. Your resume and
-            agent outputs are stored in your account namespace and accessible only to you.
+            Data is stored in a self-hosted PostgreSQL database. Your resume and agent outputs are
+            stored in your account namespace and accessible only to you.
           </p>
         </section>
 

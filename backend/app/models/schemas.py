@@ -8,7 +8,9 @@ from pydantic import BaseModel, EmailStr, Field
 class UserCreate(BaseModel):
     email: EmailStr
     full_name: str | None = None
-    supabase_uid: str = Field(min_length=36, max_length=36)
+    # Auth subject (`sub`). Clerk emits a text id like "user_2abc..." (~32 chars),
+    # so this is no longer a fixed-width UUID — only non-empty and bounded.
+    supabase_uid: str = Field(min_length=1, max_length=255)
 
 
 class UserResponse(BaseModel):
@@ -26,6 +28,7 @@ class UserResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
+    email: EmailStr | None = None
     full_name: str | None = Field(None, max_length=200)
     headline: str | None = Field(None, max_length=300)
     phone: str | None = Field(None, max_length=30)
@@ -35,6 +38,7 @@ class UserProfileUpdate(BaseModel):
 
 class UserPreferencesSchema(BaseModel):
     experience_level: str | None = None
+    years_experience: int | None = Field(None, ge=0, le=60)
     job_type: str | None = None
     work_mode: str | None = None
     salary_min: int | None = None
@@ -43,6 +47,10 @@ class UserPreferencesSchema(BaseModel):
     preferred_locations: list[str] = []
     current_title: str | None = Field(None, max_length=200)
     bio: str | None = Field(None, max_length=2000)
+    # When True, autonomous job search and apply use a visible Chromium
+    # streamed to the UI.  When False (default), the headless job-board
+    # API waterfall runs.  Always overridable per-request.
+    prefer_live_browser: bool = False
 
 
 class UserPreferencesResponse(UserPreferencesSchema):
@@ -53,8 +61,8 @@ class UserPreferencesResponse(UserPreferencesSchema):
 
 
 class ModelSettingsCreate(BaseModel):
-    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim"]
-    api_key: str = Field(min_length=1, max_length=200)
+    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim", "deepseek", "openrouter", "opencode"]
+    api_key: str = Field(min_length=1, max_length=4096)
     model_name: str
     ollama_url: str | None = None
 
@@ -244,3 +252,21 @@ class OutreachMessageResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ─── Job Search Profile Schemas ───────────────────────────────────────────────
+
+
+class JobSearchProfileResponse(BaseModel):
+    resume_found: bool
+    resume_filename: str | None = None
+    role_suggestions: list[str] = []
+    skills: list[str] = []
+    inferred_years_experience: int | None = None
+    inferred_experience_level: str | None = None
+    saved_preferences: UserPreferencesSchema
+    search_query_preview: str
+    location_preview: str
+    work_mode_preview: str | None = None
+    missing_fields: list[str] = []
+    analysis_notes: list[str] = []

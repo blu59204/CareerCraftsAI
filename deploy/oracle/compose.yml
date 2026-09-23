@@ -1,0 +1,201 @@
+# Oracle Cloud "always free" VM deployment. network_mode: host throughout
+# because the VM has no IPv6 route and Supabase's direct DB host + Storage are
+# IPv6-only there, so this self-hosts Postgres and local-disk document storage
+# instead (see the per-service comments below). Not the topology the root
+# docker-compose.yml documents/scripts assume -- see the comment at the top of
+# that file for the normal multi-VM/local Docker Compose stack.
+#
+# Compose v2 resolves the default .env file relative to THIS file's directory
+# (deploy/oracle/), not the CWD you run `docker compose` from -- confirmed via
+# `docker compose config` silently defaulting every var to blank despite a
+# correct .env sitting at the repo root. Keep a real .env here (gitignored,
+# NEXT_PUBLIC_API_URL / NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY / CLERK_SECRET_KEY),
+# or pass `--env-file <path>` explicitly on every invocation.
+name: careercraft-isolated
+services:
+  backend:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    command: uvicorn app.main:app --host 127.0.0.1 --port 18100
+    init: true
+    # Uploaded resumes/documents. Supabase Storage is unreachable from this VM
+    # for the same reason the database was, so files live on local disk.
+    # Shared with agent-worker, which reads documents during agent runs.
+    volumes:
+      - docstore:/data/documents
+    mem_limit: 1500m
+    cpus: 0.5
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:18100/health')\" || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+  agent-worker:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    command: python -m app.workflow_worker
+    init: true
+    volumes:
+      - docstore:/data/documents
+    mem_limit: 2g
+    cpus: 0.75
+    stop_grace_period: 360s
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  temporal-worker:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    profiles: ["temporal-worker"]
+    command: python -m app.temporal_worker
+    init: true
+    volumes:
+      - docstore:/data/documents
+    mem_limit: 1g
+    cpus: 0.5
+    stop_grace_period: 60s
+    restart: on-failure:5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  scheduler:
+    build: ../../worker
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    mem_limit: 256m
+    cpus: 0.25
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      # worker/src/index.ts calls BACKEND_INTERNAL_URL/internal/health with
+      # INTERNAL_SECRET at process startup and exits(1) on failure -- a
+      # genuinely hard dependency, not just a nice-to-have ordering.
+      backend:
+        condition: service_healthy
+  frontend:
+    build:
+      context: ../../frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        # Next.js inlines NEXT_PUBLIC_* at build time, so the publishable key
+        # has to be an ARG as well as runtime env or the client bundle ships
+        # without it and Clerk fails to initialise in the browser.
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        BACKEND_URL: http://127.0.0.1:18100
+    network_mode: host
+    environment:
+      PORT: 18101
+      HOSTNAME: 127.0.0.1
+      BACKEND_URL: http://127.0.0.1:18100
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      # Only the Clerk secret is passed, named explicitly. Using
+      # env_file: backend.env here injected DATABASE_URL, REDIS_URL and other
+      # backend-only credentials into the frontend container — credentials it
+      # has no use for and should never hold — and the extra vars broke
+      # server-side rendering with a self-proxy to https://localhost:18101.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+    mem_limit: 768m
+    cpus: 0.5
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:18101',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>process.exit(r.statusCode===200&&d.length>100?0:1))}).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  postgres:
+    # Self-hosted database. Supabase's direct host (db.<ref>.supabase.co) is
+    # IPv6-only and this VM has no IPv6, so the managed database is simply
+    # unreachable from here; the pooler is the only IPv4 path and it rejects
+    # the tenant. Running Postgres locally removes that dependency entirely.
+    image: pgvector/pgvector:pg16
+    network_mode: host
+    # listen_addresses is pinned to loopback because network_mode: host means
+    # any other value would expose the database on the VM's public interface.
+    command: postgres -p 18132 -c listen_addresses=127.0.0.1
+    env_file: /opt/careercraft-secrets/postgres.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-bootstrap.sql:/docker-entrypoint-initdb.d/00-bootstrap.sql:ro
+    mem_limit: 1g
+    cpus: 0.5
+    restart: unless-stopped
+    healthcheck:
+      # pg_isready only needs the server to accept the connection and respond
+      # (even with an auth challenge) to report healthy -- it doesn't need a
+      # real role, so no POSTGRES_USER (postgres.env, gitignored) is needed here.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 18132"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:8-alpine
+    network_mode: host
+    command: redis-server /etc/redis/careercraft.conf
+    volumes:
+      - /opt/careercraft-secrets/redis.conf:/etc/redis/careercraft.conf:ro
+      - redis_data:/data
+    mem_limit: 384m
+    restart: unless-stopped
+    healthcheck:
+      # redis.conf (gitignored, on the VM) sets `port 18179` and `requirepass
+      # <generated>` -- the password isn't available at compose-authoring
+      # time, and a plain `ping` would fail (NOAUTH) even when Redis is
+      # perfectly healthy, turning this into a false negative. Accepting
+      # either PONG or NOAUTH still proves the daemon is up and speaking the
+      # Redis protocol without needing the secret in this file.
+      test: ["CMD-SHELL", "redis-cli -p 18179 ping | grep -qE 'PONG|NOAUTH'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+  gateway:
+    image: nginx:alpine
+    network_mode: host
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    mem_limit: 128m
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+  sandbox-server:
+    build:
+      context: .
+      dockerfile: OpenSandbox.Dockerfile
+    network_mode: host
+    env_file: /opt/careercraft-secrets/sandbox.env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./sandbox.toml:/etc/opensandbox.toml:ro
+      - sandbox_metadata:/root/.opensandbox
+    environment:
+      SANDBOX_CONFIG_PATH: /etc/opensandbox.toml
+    mem_limit: 512m
+    cpus: 0.25
+    restart: unless-stopped
+volumes:
+  redis_data:
+  sandbox_metadata:
+  pgdata:
+  docstore:

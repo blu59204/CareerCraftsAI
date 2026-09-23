@@ -1,10 +1,10 @@
 import asyncio
 import logging
-import uuid
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+CLIENT_SAFE_AGENT_ERROR = "Agent failed"
 
 try:
     from bullmq import Queue as _BullQueue
@@ -34,10 +34,15 @@ async def _run_job_search_inline(
     search_query: str,
     location: str,
     max_results: int,
+    live_browser: bool = False,
+    work_mode: str = "",
+    platforms: list[str] | None = None,
+    remote: str = "any",
 ) -> None:
     """Dev fallback: run job search agent directly without BullMQ."""
     try:
         from app.core.database import AsyncSessionLocal
+        from app.core.event_bus import emit
         from app.agents.harness import AgentHarness
         from app.models.db import AgentRun, UserModelSettings
         from sqlalchemy import select
@@ -64,16 +69,23 @@ async def _run_job_search_inline(
             }
 
         harness = AgentHarness(db_url=settings.DATABASE_URL, redis_url=settings.REDIS_URL)
-        output = await harness.run(
-            user_id=user_id,
-            task_type="job_search",
-            context={
-                "search_query": search_query,
-                "location": location,
-                "max_results": max_results,
-            },
-            user_settings=user_settings,
-            run_id=run_id,
+        output = await asyncio.wait_for(
+            harness.run(
+                user_id=user_id,
+                task_type="job_search",
+                context={
+                    "search_query": search_query,
+                    "location": location,
+                    "max_results": max_results,
+                    "live_browser": live_browser,
+                    "work_mode": work_mode,
+                    "platforms": platforms or [],
+                    "remote": remote,
+                },
+                user_settings=user_settings,
+                run_id=run_id,
+            ),
+            timeout=300,
         )
 
         async with AsyncSessionLocal() as db:
@@ -81,31 +93,69 @@ async def _run_job_search_inline(
                 select(AgentRun).where(AgentRun.id == _uuid.UUID(run_id))
             )
             run = result.scalars().first()
+            final_status = output.get("status", "failed")
             if run:
-                run.status = "completed"
-                run.output = output
+                run.status = final_status
+                if final_status == "completed":
+                    run.output = output
+                else:
+                    if output.get("error"):
+                        logger.warning(
+                            "Inline job-search run %s failed: %s",
+                            run_id,
+                            output.get("error"),
+                        )
+                    run.output = {"error": CLIENT_SAFE_AGENT_ERROR}
                 await db.commit()
 
-            # Persist matched jobs as saved JobApplications
-            if output.get("status") == "completed":
-                matches = (output.get("result") or {}).get("matches", [])
-                from app.models.db import JobApplication
-                async with AsyncSessionLocal() as db2:
-                    for job in matches:
-                        app = JobApplication(
-                            user_id=_uuid.UUID(user_id),
-                            company=job.get("company", "Unknown"),
-                            role=job.get("title", "Unknown"),
-                            job_url=job.get("job_url"),
-                            jd_text=job.get("description"),
-                            match_score=job.get("match_score"),
-                            status="saved",
+        if output.get("status") == "completed":
+            matches = (output.get("result") or {}).get("matches", [])
+            from sqlalchemy import select as _select
+
+            from app.models.db import JobApplication
+            async with AsyncSessionLocal() as db2:
+                for job in matches:
+                    url = job.get("url") or job.get("job_url")
+                    if not url or (job.get("match_score") or 0) < 50:
+                        continue
+                    exists = (
+                        await db2.execute(
+                            _select(JobApplication.id).where(
+                                JobApplication.user_id == _uuid.UUID(user_id),
+                                JobApplication.job_url == url,
+                            )
                         )
-                        db2.add(app)
-                    await db2.commit()
+                    ).scalar_one_or_none()
+                    if exists is not None:
+                        continue
+                    db2.add(JobApplication(
+                        user_id=_uuid.UUID(user_id),
+                        company=job.get("company", "Unknown") or "Unknown",
+                        role=job.get("title", "Unknown") or "Unknown",
+                        location=job.get("location"),
+                        job_url=url,
+                        jd_text=(job.get("description") or "")[:4000],
+                        match_score=job.get("match_score"),
+                        status="saved",
+                    ))
+                await db2.commit()
+
+        if final_status == "completed":
+            emit(run_id, "complete", output.get("result") or {})
+        elif final_status == "awaiting_approval":
+            emit(run_id, "checkpoint", output.get("pending_action") or {})
+        else:
+            emit(run_id, "error", CLIENT_SAFE_AGENT_ERROR)
 
     except Exception as exc:
-        logger.error("Dev inline job-search failed for run %s: %s", run_id, exc)
+        logger.error(
+            "Dev inline job-search failed for run %s: %s",
+            run_id,
+            exc,
+            exc_info=True,
+        )
+        from app.core.event_bus import emit
+        emit(run_id, "error", CLIENT_SAFE_AGENT_ERROR)
         try:
             from app.core.database import AsyncSessionLocal
             from app.models.db import AgentRun
@@ -118,10 +168,20 @@ async def _run_job_search_inline(
                 run = result.scalars().first()
                 if run:
                     run.status = "failed"
-                    run.output = {"error": str(exc)}
+                    run.output = {"error": CLIENT_SAFE_AGENT_ERROR}
                     await db.commit()
-        except Exception:
-            pass
+        except Exception as db_exc:
+            logger.warning("Failed to mark inline job-search run %s failed: %s", run_id, db_exc)
+
+
+def make_job_search_id(user_id: str, search_query: str, location: str, max_results: int) -> str:
+    """Deterministic BullMQ job id — duplicate clicks don't double-run."""
+    import hashlib
+
+    digest = hashlib.sha256(
+        f"{user_id}:{search_query}:{location}:{max_results}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{user_id}:job_search:{digest}"
 
 
 async def enqueue_job_search(
@@ -130,14 +190,39 @@ async def enqueue_job_search(
     search_query: str,
     location: str,
     max_results: int,
-) -> str:
-    job_id = str(uuid.uuid4())
+    live_browser: bool = False,
+    work_mode: str = "",
+    job_id: str | None = None,
+    platforms: list[str] | None = None,
+    remote: str = "any",
+) -> tuple[str, bool]:
+    """Enqueue a job-search run. Returns (job_id, queued).
+
+    queued=True means BullMQ accepted the job. queued=False means the dev
+    inline fallback ran (development only, with a WARNING). Production with
+    an unreachable queue raises RuntimeError — never inline.
+    """
+    job_id = job_id or make_job_search_id(user_id, search_query, location, max_results)
+    payload = {
+        "user_id": user_id,
+        "run_id": run_id,
+        "search_query": search_query,
+        "location": location,
+        "max_results": max_results,
+        "live_browser": live_browser,
+        "work_mode": work_mode,
+        "platforms": platforms or [],
+        "remote": remote,
+    }
 
     if not _BULLMQ_AVAILABLE:
         if settings.APP_ENV == "development":
             logger.info("Dev mode: running job-search inline (no BullMQ)")
-            asyncio.create_task(_run_job_search_inline(user_id, run_id, search_query, location, max_results))
-            return job_id
+            asyncio.create_task(_run_job_search_inline(
+                user_id, run_id, search_query, location, max_results,
+                live_browser, work_mode, platforms, remote,
+            ))
+            return job_id, False
         raise RuntimeError("bullmq is not installed; run: pip install bullmq")
 
     try:
@@ -145,13 +230,7 @@ async def enqueue_job_search(
         try:
             await queue.add(
                 "job-search",
-                {
-                    "user_id": user_id,
-                    "run_id": run_id,
-                    "search_query": search_query,
-                    "location": location,
-                    "max_results": max_results,
-                },
+                payload,
                 {
                     "jobId": job_id,
                     "attempts": 3,
@@ -163,9 +242,12 @@ async def enqueue_job_search(
     except Exception as exc:
         if settings.APP_ENV == "development":
             logger.warning("Dev mode: Redis unavailable (%s) — running job-search inline", exc)
-            asyncio.create_task(_run_job_search_inline(user_id, run_id, search_query, location, max_results))
-            return job_id
+            asyncio.create_task(_run_job_search_inline(
+                user_id, run_id, search_query, location, max_results,
+                live_browser, work_mode, platforms, remote,
+            ))
+            return job_id, False
         logger.error("Failed to enqueue job-search for run %s: %s", run_id, exc)
-        raise RuntimeError(f"Queue unavailable: {exc}") from exc
+        raise RuntimeError("Queue unavailable") from exc
 
-    return job_id
+    return job_id, True

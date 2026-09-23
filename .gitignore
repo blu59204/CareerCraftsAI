@@ -36,3 +36,56 @@ Thumbs.db
 # Supabase
 supabase/.branches
 supabase/.temp
+
+# AI tooling / agent configs (not needed in repo)
+# NOTE: .github/ is intentionally NOT ignored — CI workflows must be tracked.
+.claude/
+.codex/
+.agents/
+.kiro/
+.cursor/
+.windsurf/
+.aider*
+.verdent/
+.mcp.json
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+D:\CareerCraft AI\motionsites.ai-prompt-library
+
+# Browser automation profiles/captures may contain cookies, tokens, or private page data.
+.browser_data/
+**/.browser_data/
+.playwright-cli/
+.playwright-mcp/
+
+# Root-level status reports, temp screenshots, session logs (transient clutter)
+/*.txt
+/*.png
+
+# Test/smoke output directories (screenshot + log artifacts, never source)
+output/
+backend/output/
+_inventory_git.txt
+_inventory_files.csv
+_tmp_*.png
+.tmp_*.png
+
+# Live E2E test artifacts (backend/tests/e2e/) — saved auth state, screenshots,
+# videos, traces, and run logs are machine-local and may contain live session data.
+backend/tests/e2e/.auth/
+backend/tests/e2e/.artifacts/
+backend/tests/e2e/screenshots/
+backend/tests/e2e/videos/
+backend/tests/e2e/traces/
+backend/tests/e2e/outputs/
+backend/tests/e2e/results.log
+
+# Deployment credentials and machine-local verification output
+.env.*.local
+*.secret
+deploy/secrets/
+*.tsbuildinfo
+
+# Quarantined scratch/junk files pending deletion by the user
+_scratch/

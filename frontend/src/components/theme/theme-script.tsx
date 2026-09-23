@@ -1,3 +1,5 @@
+import Script from "next/script";
+
 export function ThemeScript({ zoneDefault }: { zoneDefault: "light" | "dark" }) {
   const code = `
     (function () {
@@ -12,7 +14,7 @@ export function ThemeScript({ zoneDefault }: { zoneDefault: "light" | "dark" }) 
     })();
   `;
   return (
-    <script
+    <Script
       id="theme-init"
       dangerouslySetInnerHTML={{ __html: code }}
     />

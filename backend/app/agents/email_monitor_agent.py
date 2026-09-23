@@ -86,7 +86,7 @@ def email_monitor_node(state: AgentState) -> AgentState:
     """Agent node that scans Gmail for job notifications and classifies them."""
     try:
         user_id = state["user_id"]
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured")
 
@@ -133,7 +133,7 @@ def email_monitor_node(state: AgentState) -> AgentState:
         }
     except Exception as exc:
         logger.error("Email monitor failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
 
 
 def _classify_notification(notif: dict, llm) -> dict | None:
@@ -214,7 +214,7 @@ async def run_email_monitor(user_id: str) -> dict:
     )
 
     import asyncio
-    result_state = await asyncio.get_event_loop().run_in_executor(
+    result_state = await asyncio.get_running_loop().run_in_executor(
         None, email_monitor_node, state
     )
 

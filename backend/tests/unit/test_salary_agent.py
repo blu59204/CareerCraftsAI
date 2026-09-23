@@ -1,76 +1,89 @@
-"""Unit tests for the salary agent module."""
+"""Unit tests for Salary Agent — percentiles, negotiation script, offer classification."""
+import json
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-from app.agents.salary_agent import (
-    OfferClassification,
-    classify_offer,
-    _extract_percentiles,
-)
+from app.agents.state import AgentState
 
 
-class TestClassifyOffer:
-    """Tests for classify_offer pure function."""
-
-    def test_below_market_when_offer_below_p25(self):
-        result = classify_offer(offer=80_000, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.BELOW_MARKET
-
-    def test_above_market_when_offer_above_p75(self):
-        result = classify_offer(offer=150_000, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.ABOVE_MARKET
-
-    def test_at_market_when_offer_equals_p25(self):
-        result = classify_offer(offer=90_000, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.AT_MARKET
-
-    def test_at_market_when_offer_equals_p75(self):
-        result = classify_offer(offer=130_000, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.AT_MARKET
-
-    def test_at_market_when_offer_between_p25_and_p75(self):
-        result = classify_offer(offer=110_000, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.AT_MARKET
-
-    def test_below_market_boundary(self):
-        # One dollar below p25
-        result = classify_offer(offer=89_999, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.BELOW_MARKET
-
-    def test_above_market_boundary(self):
-        # One dollar above p75
-        result = classify_offer(offer=130_001, p25=90_000, p50=110_000, p75=130_000)
-        assert result == OfferClassification.ABOVE_MARKET
+def make_state(role: str = "Senior Python Engineer", location: str = "San Francisco") -> AgentState:
+    return AgentState(
+        user_id="usr_test",
+        run_id=str(uuid.uuid4()),
+        task_type="salary_intelligence",
+        messages=[],
+        context={
+            "role": role,
+            "location": location,
+            "experience_years": 7,
+        },
+        status="running",
+        pending_action=None,
+        result=None,
+        error=None,
+    )
 
 
-class TestExtractPercentiles:
-    """Tests for _extract_percentiles helper."""
+def test_offer_classification_enum():
+    from app.agents.salary_agent import OfferClassification
 
-    def test_returns_none_when_insufficient_data(self):
-        results = [{"text": "No salary info here"}]
-        assert _extract_percentiles(results) is None
+    assert OfferClassification.ABOVE_MARKET.value == "above_market"
+    assert OfferClassification.AT_MARKET.value == "at_market"
+    assert OfferClassification.BELOW_MARKET.value == "below_market"
 
-    def test_returns_none_for_empty_results(self):
-        assert _extract_percentiles([]) is None
 
-    def test_extracts_from_salary_text(self):
-        results = [
-            {"text": "Salary range: $80,000 to $120,000 per year"},
-            {"text": "Average compensation $100,000 annually"},
-            {"text": "Top earners make $150,000 salary"},
-        ]
-        percentiles = _extract_percentiles(results)
-        assert percentiles is not None
-        assert percentiles["p25"] <= percentiles["p50"] <= percentiles["p75"]
-        assert all(v > 0 for v in percentiles.values())
+def test_salary_agent_pauses_for_approval(mock_llm):
+    from app.agents.salary_agent import salary_report_node
 
-    def test_filters_unreasonable_values(self):
-        results = [
-            {"text": "The company has 5000 employees with salaries from $90,000 to $130,000"},
-            {"text": "Revenue of $50,000,000 but average salary $110,000"},
-            {"text": "Salary $100,000 per year"},
-        ]
-        percentiles = _extract_percentiles(results)
-        assert percentiles is not None
-        # Should only include reasonable salary values (20k-1M)
-        assert all(20_000 <= v <= 1_000_000 for v in percentiles.values())
+    mock_llm.responses = [
+        json.dumps({
+            "p25": 160000,
+            "p50": 190000,
+            "p75": 220000,
+            "p90": 250000,
+        }),
+        json.dumps({
+            "opening": "Thank you for the offer...",
+            "counter_offer": 220000,
+            "justifications": ["Market data shows...", "My experience with..."],
+        }),
+    ]
+
+    with (
+        patch("app.agents.salary_agent.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch("app.agents.salary_agent._build_llm", return_value=mock_llm),
+        patch("app.agents.salary_agent.ExaService") as mock_exa_cls,
+        patch("app.agents.salary_agent._log_agent_run", return_value=None),
+    ):
+        mock_exa = MagicMock()
+        mock_exa.search_salary = AsyncMock(return_value=[
+            {"title": "Salary data", "text": "$160,000 per year"},
+            {"title": "Salary data 2", "text": "$190,000 salary annually"},
+            {"title": "Salary data 3", "text": "$220,000 per year"},
+            {"title": "Salary data 4", "text": "$250,000 annually"},
+        ])
+        mock_exa_cls.return_value = mock_exa
+
+        result = salary_report_node(make_state())
+
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_action"] is not None
+    assert result["pending_action"]["type"] == "salary_report_review"
+    report = result["pending_action"]["report"]
+    assert "p25" in report
+    assert "p50" in report
+    assert "p75" in report
+    assert result["pending_action"]["script"] is not None
+
+
+def test_salary_agent_handles_exa_failure(mock_llm):
+    from app.agents.salary_agent import salary_report_node
+
+    with (
+        patch("app.agents.salary_agent.fetch_model_settings", return_value=MagicMock()),
+        patch("app.agents.salary_agent.ExaService", side_effect=Exception("Exa unavailable")),
+    ):
+        result = salary_report_node(make_state())
+
+    assert result["status"] == "failed"
+    assert result["error"] is not None

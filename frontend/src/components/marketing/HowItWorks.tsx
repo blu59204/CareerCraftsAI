@@ -33,7 +33,8 @@ const STEPS = [
 
 export function HowItWorks() {
   return (
-    <section id="how" className="relative bg-muted/30 py-28">
+    <section id="how" className="relative overflow-hidden bg-background py-28">
+      <div className="absolute inset-x-0 top-1/2 h-px bg-gradient-to-r from-transparent via-primary/25 to-transparent" />
       <div className="mx-auto max-w-6xl px-6">
         <motion.div
           initial="hidden"
@@ -44,15 +45,15 @@ export function HowItWorks() {
         >
           <motion.div
             variants={fadeUp}
-            className="text-sm font-medium text-primary"
+            className="inline-flex rounded-full border border-border bg-card/70 px-3 py-1 text-xs font-medium uppercase tracking-[0.22em] text-primary"
           >
-            How it works
+            AI Workflow
           </motion.div>
           <motion.h2
             variants={fadeUp}
             className="mt-2 text-4xl font-medium text-foreground md:text-5xl"
           >
-            From resume to interview in 4 steps.
+            From resume to interview in one controlled flow.
           </motion.h2>
         </motion.div>
 
@@ -61,16 +62,17 @@ export function HowItWorks() {
           whileInView="show"
           viewport={{ once: true, margin: "-60px" }}
           variants={stagger}
-          className="grid gap-6 md:grid-cols-2 lg:grid-cols-4"
+          className="relative grid gap-4 md:grid-cols-2 lg:grid-cols-4"
         >
           {STEPS.map((s) => (
             <motion.div
               key={s.n}
               variants={fadeUp}
-              className="rounded-3xl border border-border bg-card/60 p-8 hover:shadow-md transition-shadow"
+              className="group relative overflow-hidden rounded-[2rem] border border-border/80 bg-card/70 p-7 shadow-[0_24px_90px_hsl(var(--background)/0.28)] backdrop-blur-xl transition hover:-translate-y-1 hover:border-primary/30"
             >
+              <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-primary/55 to-transparent opacity-0 transition group-hover:opacity-100" />
               <div className="mb-4 flex items-center gap-2">
-                <span className="text-xs font-medium text-primary bg-primary/10 rounded-full px-2 py-0.5">
+                <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                   {s.n}
                 </span>
               </div>

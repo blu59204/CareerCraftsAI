@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+logger = logging.getLogger(__name__)
 
 
 def _get_user_or_ip(request: Request) -> str:
@@ -12,8 +16,8 @@ def _get_user_or_ip(request: Request) -> str:
             token = auth.removeprefix("Bearer ").strip()
             payload = jwt.decode(token, options={"verify_signature": False})
             return payload.get("sub", get_remote_address(request))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Rate limit JWT subject extraction failed: %s", exc)
     return get_remote_address(request)
 
 

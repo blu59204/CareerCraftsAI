@@ -1,3 +1,17 @@
-# Security constraint: langgraph-checkpoint-sqlite has CVE-2025-67644 (SQL injection)
-# We use PostgreSQL checkpoints only. Never install the SQLite variant.
-langgraph-checkpoint-sqlite==0.0.0
+# Security constraints — pin to known-safe versions
+# CVE-2025-67644 only affects SQLite checkpoints (not used here — PostgreSQL only)
+langgraph-checkpoint-sqlite==0.0.0       # block — use PostgreSQL checkpoints only
+
+# LangGraph / LangChain — pinned to the versions resolved and verified 2026-06-13.
+# The orchestrator uses 0.2.x APIs (set_conditional_entry_point, StateGraph.compile).
+# Do not upgrade past these without running the full test suite against the new
+# version in a staging environment and migrating in-flight agent_runs checkpoints.
+langgraph==0.2.76
+langchain-core==0.3.86
+langchain==0.3.30
+langchain-anthropic==0.3.22
+langchain-openai==0.3.35
+langchain-google-genai==2.1.12
+langchain-ollama==0.3.10
+langchain-community==0.3.31
+langchain-google-community==2.0.10

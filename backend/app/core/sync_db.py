@@ -7,7 +7,10 @@ be reused from a worker thread.  A dedicated *synchronous* SQLAlchemy engine is
 created once (protected by a threading.Lock) and reused across all calls,
 avoiding both connection pool exhaustion and the asyncio.run() RuntimeError.
 """
+import asyncio
+import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,6 +20,50 @@ from app.core.config import settings
 _lock = threading.Lock()
 _sync_engine = None
 _sync_factory = None
+
+
+def _run_fresh(coro):
+    """Run a coroutine on a fresh event loop.
+
+    On Windows, use a ProactorEventLoop so Playwright (and any other code that
+    spawns a subprocess) works — the default Selector loop that uvicorn installs
+    raises NotImplementedError on subprocess creation.
+    """
+    if sys.platform == "win32":
+        loop = asyncio.ProactorEventLoop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+    return asyncio.run(coro)
+
+
+def run_coro_sync(coro):
+    """Run an async coroutine to completion from a synchronous context.
+
+    Agent nodes execute inside a thread-pool worker (harness runs
+    orchestrator.invoke via run_in_executor), so there is normally no event
+    loop bound to the current thread and asyncio.run() is correct. If a loop
+    happens to be running in this thread, fall back to executing the coroutine
+    on a dedicated worker thread so we never call run_until_complete on a loop
+    owned by another thread (the source of "attached to a different loop"
+    errors). Always use this instead of asyncio.get_event_loop()/new_event_loop.
+    """
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+
+    if running is None:
+        # No loop in this thread — safe to spin up a throwaway loop.
+        return _run_fresh(coro)
+
+    # A loop is already running here; run the coroutine on a separate thread
+    # with its own fresh loop to avoid cross-loop reuse.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_run_fresh, coro).result()
 
 
 def _get_sync_factory():
@@ -36,6 +83,16 @@ def _get_sync_factory():
     return _sync_factory
 
 
+import uuid as _uuid
+
+
+def _to_uuid(user_id: str):
+    try:
+        return _uuid.UUID(user_id)
+    except (ValueError, AttributeError):
+        return user_id
+
+
 def fetch_model_settings(user_id: str):
     """Return active UserModelSettings row for user_id, or None."""
     from app.models.db import UserModelSettings
@@ -44,7 +101,7 @@ def fetch_model_settings(user_id: str):
     with factory() as db:
         result = db.execute(
             select(UserModelSettings).where(
-                UserModelSettings.user_id == user_id,
+                UserModelSettings.user_id == _to_uuid(user_id),
                 UserModelSettings.is_active == True,  # noqa: E712
             )
         )
@@ -57,7 +114,7 @@ def fetch_user_full_name(user_id: str) -> str:
 
     factory = _get_sync_factory()
     with factory() as db:
-        result = db.execute(select(User.full_name).where(User.id == user_id))
+        result = db.execute(select(User.full_name).where(User.id == _to_uuid(user_id)))
         return result.scalars().first() or ""
 
 
@@ -69,7 +126,7 @@ def fetch_user_profile_text(user_id: str) -> str:
     with factory() as db:
         result = db.execute(
             select(UserDocument).where(
-                UserDocument.user_id == user_id,
+                UserDocument.user_id == _to_uuid(user_id),
                 UserDocument.doc_type == "resume",
                 UserDocument.is_primary == True,  # noqa: E712
             )

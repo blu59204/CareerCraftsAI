@@ -7,6 +7,7 @@ import { Users, Send, Check, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 
 interface OutreachRun {
@@ -51,12 +52,13 @@ export default function LinkedInOutreachPage() {
 
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      <motion.div variants={fadeUp}>
-        <div className="text-sm text-muted-foreground">LinkedIn Outreach</div>
-        <h1 className="mt-1 text-3xl font-medium">Connect with decision-makers.</h1>
-      </motion.div>
+      <CommandHeader
+        eyebrow="Finlytic AI Agent"
+        title="LinkedIn Outreach"
+        description="Find decision-makers, draft messages, and keep every outreach action behind approval."
+      />
 
-      <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6 space-y-4">
+      <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-6">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">Find Contacts</span>
@@ -81,10 +83,10 @@ export default function LinkedInOutreachPage() {
           </div>
         ) : (
           queue.map((run) => (
-            <div key={run.id} className="rounded-3xl border border-border bg-card/60 p-5 space-y-3">
+            <div key={run.id} className="glass-panel space-y-3 rounded-3xl p-5">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">{run.input?.company_name ?? "Unknown"}</span>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${run.status === "completed" ? "bg-green-100 text-green-700" : run.status === "awaiting_approval" ? "bg-amber-100 text-amber-700" : "bg-primary/10 text-primary"}`}>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${run.status === "completed" ? "bg-success/10 text-success" : run.status === "awaiting_approval" ? "bg-warning/10 text-warning" : "bg-primary/10 text-primary"}`}>
                   {run.status.replace("_", " ")}
                 </span>
               </div>
@@ -114,9 +116,9 @@ export default function LinkedInOutreachPage() {
       </motion.div>
 
       <motion.div variants={fadeUp}>
-        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-          <Send className="h-4 w-4 shrink-0 text-amber-600" />
-          <p className="text-sm text-amber-800">Every outreach message requires your approval before sending.</p>
+        <div className="flex items-center gap-3 rounded-2xl border border-warning/30 bg-warning/10 px-5 py-4">
+          <Send className="h-4 w-4 shrink-0 text-warning" />
+          <p className="text-sm text-warning">Every outreach message requires your approval before sending.</p>
         </div>
       </motion.div>
     </motion.div>

@@ -1,6 +1,6 @@
 """
 Run with: INTEGRATION=1 pytest tests/integration/test_rag_pipeline.py -v
-Requires: real DATABASE_URL, SUPABASE_URL/keys, model API key configured in DB.
+Requires: real DATABASE_URL, model API key configured in DB.
 """
 import os
 

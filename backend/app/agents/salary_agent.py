@@ -18,8 +18,10 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
+from pydantic import BaseModel, Field
 
+from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import _get_sync_factory, fetch_model_settings
@@ -28,6 +30,12 @@ from app.services.exa_service import ExaService
 logger = logging.getLogger(__name__)
 
 AGENT_TYPE = "salary_intelligence"
+
+
+class NegotiationDraft(BaseModel):
+    opening: str
+    counter_offer: int = Field(ge=0)
+    justifications: list[str] = Field(min_length=2)
 
 NEGOTIATION_SYSTEM_PROMPT = """You are a salary negotiation expert. Given the role, company,
 market salary percentiles, and the candidate's offer classification, generate a negotiation script.
@@ -132,22 +140,28 @@ def _log_agent_run(
     duration_ms: int,
 ) -> None:
     """Log run to agent_runs table synchronously (called from thread executor)."""
+    from app.core.event_bus import suppress_terminal_events
+    if suppress_terminal_events.get():
+        return
     from app.models.db import AgentRun
 
     factory = _get_sync_factory()
     with factory() as db:
-        agent_run = AgentRun(
-            id=uuid.UUID(run_id),
-            user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
-            agent_type=AGENT_TYPE,
-            status=status,
-            input=input_data,
-            output=output_data,
-            tokens_used=tokens_used,
-            duration_ms=duration_ms,
-            completed_at=datetime.now(timezone.utc) if status != "running" else None,
-        )
-        db.add(agent_run)
+        run_uuid = uuid.UUID(run_id)
+        agent_run = db.get(AgentRun, run_uuid)
+        if agent_run is None:
+            agent_run = AgentRun(
+                id=run_uuid,
+                user_id=uuid.UUID(user_id) if isinstance(user_id, str) else user_id,
+                agent_type=AGENT_TYPE,
+            )
+            db.add(agent_run)
+        agent_run.status = status
+        agent_run.input = input_data
+        agent_run.output = output_data
+        agent_run.tokens_used = tokens_used
+        agent_run.duration_ms = duration_ms
+        agent_run.completed_at = datetime.now(timezone.utc) if status != "running" else None
         db.commit()
 
 
@@ -164,8 +178,6 @@ def _generate_negotiation_script(
 
     Returns dict with: opening, counter_offer, justifications.
     """
-    import json
-
     company_text = f" at {company}" if company else ""
     prompt_content = (
         f"Role: {role}{company_text}\n"
@@ -178,46 +190,13 @@ def _generate_negotiation_script(
         f"Generate the negotiation script."
     )
 
-    response = llm.invoke([
-        SystemMessage(content=NEGOTIATION_SYSTEM_PROMPT),
-        HumanMessage(content=prompt_content),
-    ])
-
-    raw = response.content.strip()
-    # Strip markdown fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    if raw.endswith("```"):
-        raw = raw[:-3]
-
-    try:
-        script = json.loads(raw.strip())
-    except json.JSONDecodeError:
-        # Fallback: construct a basic script
-        script = {
-            "opening": (
-                f"Thank you for the offer. Based on my research of market rates "
-                f"for {role} roles, I'd like to discuss the compensation."
-            ),
-            "counter_offer": p75,
-            "justifications": [
-                f"Market data shows the 75th percentile for this role is ${p75:,}, reflecting the value I bring.",
-                f"My experience and skills position me competitively in the current market for {role} positions.",
-            ],
-        }
-
-    # Ensure counter_offer is set to p75
+    script = call_llm_json(
+        llm,
+        NEGOTIATION_SYSTEM_PROMPT,
+        prompt_content,
+        NegotiationDraft,
+    ).model_dump()
     script["counter_offer"] = p75
-
-    # Ensure at least 2 justifications
-    if not isinstance(script.get("justifications"), list) or len(script["justifications"]) < 2:
-        script["justifications"] = [
-            f"Market data shows the 75th percentile for this role is ${p75:,}.",
-            f"My qualifications align with top-tier candidates in the {role} space.",
-        ]
-
     return script
 
 
@@ -261,7 +240,7 @@ def salary_report_node(state: AgentState) -> AgentState:
             }
 
         # Get user's model settings for LLM routing (Requirement 3.7)
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,
@@ -271,26 +250,10 @@ def salary_report_node(state: AgentState) -> AgentState:
 
         # Query Exa for salary data (Requirement 3.1)
         exa_service = ExaService()
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Running inside an existing event loop — create new loop in thread
-                new_loop = asyncio.new_event_loop()
-                try:
-                    salary_results = new_loop.run_until_complete(
-                        exa_service.search_salary(role, company, location)
-                    )
-                finally:
-                    new_loop.close()
-            else:
-                salary_results = loop.run_until_complete(
-                    exa_service.search_salary(role, company, location)
-                )
-        except RuntimeError:
-            # No event loop available, create one
-            salary_results = asyncio.run(
-                exa_service.search_salary(role, company, location)
-            )
+        from app.core.sync_db import run_coro_sync
+        salary_results = run_coro_sync(
+            exa_service.search_salary(role, company, location)
+        )
 
         # Extract percentiles from search results (Requirement 3.2)
         percentiles = _extract_percentiles(salary_results)
@@ -386,4 +349,4 @@ def salary_report_node(state: AgentState) -> AgentState:
     except Exception as exc:
         duration_ms = int((time.monotonic() - start_time) * 1000)
         logger.error("Salary agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}

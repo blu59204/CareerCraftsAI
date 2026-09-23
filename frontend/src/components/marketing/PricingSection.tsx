@@ -38,13 +38,17 @@ const TIERS: PricingTier[] = [
 
 export function PricingSection() {
   return (
-    <section id="pricing" className="bg-background py-28">
+    <section id="pricing" className="relative overflow-hidden bg-background py-28">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="mb-14 text-center">
-          <div className="text-sm text-muted-foreground">Pricing</div>
-          <h2 className="mt-2 text-4xl font-medium md:text-5xl">Simple plans. Your keys. Your costs.</h2>
+        <div className="relative mb-14 text-center">
+          <div className="inline-flex rounded-full border border-border bg-card/70 px-3 py-1 text-xs uppercase tracking-[0.22em] text-muted-foreground">
+            SaaS Pricing Flow
+          </div>
+          <h2 className="mx-auto mt-5 max-w-2xl text-4xl font-medium leading-tight md:text-5xl">
+            Simple plans. Your keys. Your costs.
+          </h2>
         </div>
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="relative grid gap-4 md:grid-cols-3">
           {TIERS.map((t) => (
             <PricingCard key={t.name} tier={t} />
           ))}

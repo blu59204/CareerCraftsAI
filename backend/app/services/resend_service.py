@@ -31,4 +31,4 @@ def send_transactional_email(to: str, subject: str, html: str) -> dict:
         return resp.json()
     except Exception as exc:
         logger.error("Resend delivery failed to %s: %s", to, exc)
-        raise RuntimeError(f"Email delivery failed: {exc}") from exc
+        raise RuntimeError("Email delivery failed") from exc

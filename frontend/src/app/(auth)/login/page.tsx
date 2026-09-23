@@ -1,18 +1,18 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { SignInPage, type AuthMode, type Testimonial } from "@/components/ui/sign-in";
-
-const GMAIL_SCOPES = [
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/drive.readonly",
-].join(" ");
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+// `@clerk/nextjs/legacy` exposes the classic custom-flow hooks
+// ({ isLoaded, signIn, setActive }). Nothing here renders Clerk UI.
+import { useSignIn, useSignUp } from "@clerk/nextjs/legacy";
+import type { OAuthStrategy } from "@clerk/nextjs/types";
+import {
+  SignInPage,
+  type AuthMode,
+  type AuthPasswordSubmitData,
+  type AuthVerificationState,
+  type Testimonial,
+} from "@/components/ui/sign-in";
 
 const TESTIMONIALS: Testimonial[] = [
   {
@@ -38,135 +38,269 @@ const TESTIMONIALS: Testimonial[] = [
 const HERO_IMAGE =
   "https://images.unsplash.com/photo-1642615835477-d303d7dc9ee9?w=2160&q=80";
 
-function useSupabase() {
-  const ref = React.useRef<ReturnType<typeof createClient>>();
-  if (!ref.current && typeof window !== "undefined") {
-    ref.current = createClient();
+const DEFAULT_DESTINATION = "/dashboard";
+
+/** Only ever follow same-origin paths out of `?redirect_url=`. */
+function safeDestination(raw: string | null): string {
+  if (!raw) return DEFAULT_DESTINATION;
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin !== window.location.origin) return DEFAULT_DESTINATION;
+    const path = `${url.pathname}${url.search}`;
+    if (!path.startsWith("/") || path.startsWith("//")) return DEFAULT_DESTINATION;
+    if (path.startsWith("/login") || path.startsWith("/register")) return DEFAULT_DESTINATION;
+    return path;
+  } catch {
+    return DEFAULT_DESTINATION;
   }
-  return ref.current!;
 }
 
-function LoginContent() {
+function describeError(err: unknown): string {
+  const clerkErrors = (err as { errors?: { longMessage?: string; message?: string }[] })?.errors;
+  const first = clerkErrors?.[0];
+  return first?.longMessage || first?.message || "Something went wrong. Please try again.";
+}
+
+export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const supabase = useSupabase();
+  const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
+  const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
+
   const [mode, setMode] = useState<AuthMode>("sign-in");
-  const [error, setError] = useState<string | null>(searchParams.get("error"));
-  const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [verification, setVerification] = useState<AuthVerificationState | null>(null);
+  // Which flow the code field is completing — a new account, or a sign-in whose
+  // only enabled first factor is an emailed code.
+  const [verificationFlow, setVerificationFlow] = useState<"sign-up" | "sign-in" | "sign-in-second">("sign-up");
+  const [destination, setDestination] = useState(DEFAULT_DESTINATION);
 
-  const nextPath = searchParams.get("redirect_url") ?? "/dashboard";
+  // Read query params from the browser instead of `useSearchParams()` so this
+  // page does not need a Suspense boundary during static prerendering.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("mode") === "sign-up") setMode("sign-up");
+    setDestination(safeDestination(params.get("redirect_url")));
+    const oauthError = params.get("error");
+    if (oauthError) setErrorMessage(decodeURIComponent(oauthError));
+  }, []);
 
-  const oauthSignIn = async (
-    provider: "google" | "linkedin_oidc" | "github",
-    scopes?: string,
-  ) => {
-    setError(null);
+  const clerkReady = signInLoaded && signUpLoaded && !!signIn && !!signUp;
+
+  const startOAuth = async (strategy: OAuthStrategy) => {
+    if (!signIn) return;
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-        scopes,
-        queryParams:
-          provider === "google" ? { access_type: "offline", prompt: "consent" } : undefined,
-      },
-    });
-    if (error) {
-      setError(error.message);
+    setErrorMessage(null);
+
+    try {
+      // Provider scopes (Gmail/Drive for the Email agent) are configured on the
+      // Google connection in the Clerk Dashboard, not passed from the client.
+      await signIn.authenticateWithRedirect({
+        strategy,
+        redirectUrl: "/sso-callback",
+        redirectUrlComplete: destination,
+      });
+    } catch (err) {
+      setErrorMessage(describeError(err));
       setLoading(false);
     }
-    // success: browser redirects to provider
   };
+
+  const handleGoogleSignIn = () => void startOAuth("oauth_google");
+  const handleGithubSignIn = () => void startOAuth("oauth_github");
+  const handleLinkedInSignIn = () => void startOAuth("oauth_linkedin_oidc");
 
   const handlePasswordSubmit = async ({
     email,
     password,
-  }: {
-    email: string;
-    password: string;
-  }) => {
-    setError(null);
-    setInfo(null);
+    fullName,
+    phone,
+    headline,
+    linkedinUrl,
+  }: AuthPasswordSubmitData) => {
+    if (!signIn || !signUp || !setSignInActive) return;
+
     setLoading(true);
-    try {
-      if (mode === "sign-up") {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-          },
-        });
-        if (error) throw error;
-        setInfo("Check your email to confirm your account.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        router.push(nextPath);
-        router.refresh();
+    setErrorMessage(null);
+    setInfoMessage(null);
+
+    if (mode === "sign-in") {
+      try {
+        // Which first factors exist is instance configuration, not something
+        // the client can assume. Passing a password to create() when password
+        // is not an enabled first factor leaves the attempt in a non-complete
+        // state that surfaces as an unexplained "needs_second_factor", so ask
+        // Clerk what it supports before choosing a strategy.
+        const attempt = await signIn.create({ identifier: email });
+        const factors = attempt.supportedFirstFactors ?? [];
+        const supportsPassword = factors.some((f) => f.strategy === "password");
+        const emailCodeFactor = factors.find((f) => f.strategy === "email_code");
+
+        if (supportsPassword && password) {
+          const result = await signIn.attemptFirstFactor({ strategy: "password", password });
+          if (result.status === "complete") {
+            await setSignInActive({ session: result.createdSessionId });
+            router.push(destination);
+            return;
+          }
+
+          // A correct password can still land on needs_second_factor — Clerk
+          // asks for an emailed code to confirm ownership. Previously this
+          // dead-ended with the raw status printed at the user, which is why
+          // password sign-in appeared broken. Drive the second factor instead.
+          if (result.status === "needs_second_factor") {
+            const second = (result.supportedSecondFactors ?? []).find(
+              (f) => f.strategy === "email_code",
+            );
+            if (second) {
+              await signIn.prepareSecondFactor({ strategy: "email_code" });
+              setVerificationFlow("sign-in-second");
+              setVerification({
+                email,
+                title: "Confirm it's you",
+                description: `We sent a confirmation code to ${email}.`,
+              });
+              return;
+            }
+          }
+
+          setErrorMessage(
+            `Additional verification is required to finish signing in (${result.status}).`,
+          );
+          return;
+        }
+
+        if (emailCodeFactor) {
+          // Password is off for this instance — fall back to the emailed code
+          // rather than dead-ending the user on a form they cannot submit.
+          await signIn.prepareFirstFactor({
+            strategy: "email_code",
+            emailAddressId: (emailCodeFactor as { emailAddressId: string }).emailAddressId,
+          });
+          setVerificationFlow("sign-in");
+          setVerification({
+            email,
+            description: `Password sign-in is turned off for this workspace. We sent a sign-in code to ${email}.`,
+          });
+          return;
+        }
+
+        setErrorMessage(
+          "No supported sign-in method is enabled for this workspace. Try a social provider.",
+        );
+      } catch (err) {
+        setErrorMessage(describeError(err));
+      } finally {
+        setLoading(false);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Authentication failed");
+      return;
+    }
+
+    try {
+      await signUp.create({
+        emailAddress: email,
+        password,
+        unsafeMetadata: {
+          full_name: fullName,
+          phone,
+          headline,
+          linkedin_url: linkedinUrl,
+        },
+      });
+      await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      setVerificationFlow("sign-up");
+      setVerification({ email });
+      setInfoMessage(null);
+    } catch (err) {
+      setErrorMessage(describeError(err));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleMagicLink = async (email: string) => {
-    setError(null);
-    setInfo(null);
+  const handleVerificationSubmit = async (code: string) => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-      },
-    });
-    if (error) setError(error.message);
-    else setInfo("Magic link sent. Check your inbox.");
-    setLoading(false);
+    setErrorMessage(null);
+
+    // The same code field now serves two flows: confirming a new account, and
+    // completing a sign-in when email_code is the only enabled first factor.
+    if (verificationFlow === "sign-in" || verificationFlow === "sign-in-second") {
+      if (!signIn || !setSignInActive) return;
+      try {
+        // email_code serves as the first factor when password is disabled, and
+        // as the second factor when Clerk wants ownership confirmed after a
+        // correct password. Same code field, different Clerk call.
+        const result =
+          verificationFlow === "sign-in-second"
+            ? await signIn.attemptSecondFactor({ strategy: "email_code", code })
+            : await signIn.attemptFirstFactor({ strategy: "email_code", code });
+        if (result.status === "complete") {
+          await setSignInActive({ session: result.createdSessionId });
+          router.push(destination);
+          return;
+        }
+        setErrorMessage(`Could not complete sign in (${result.status}).`);
+      } catch (err) {
+        setErrorMessage(describeError(err));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (!signUp || !setSignUpActive) return;
+
+    try {
+      const result = await signUp.attemptEmailAddressVerification({ code });
+
+      if (result.status === "complete") {
+        await setSignUpActive({ session: result.createdSessionId });
+        router.push(destination);
+        return;
+      }
+
+      setErrorMessage(`Could not complete sign up (${result.status}).`);
+    } catch (err) {
+      setErrorMessage(describeError(err));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleResetPassword = async () => {
-    const email = window.prompt("Enter your email to receive a reset link:");
-    if (!email) return;
-    setError(null);
-    setInfo(null);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/settings/account`,
-    });
-    if (error) setError(error.message);
-    else setInfo("Password reset link sent.");
+  const handleVerificationCancel = () => {
+    setVerificationFlow("sign-up");
+    setVerification(null);
+    setErrorMessage(null);
+    setInfoMessage(null);
+  };
+
+  const handleModeSwitch = (next: AuthMode) => {
+    setMode(next);
+    setVerificationFlow("sign-up");
+    setVerification(null);
+    setErrorMessage(null);
+    setInfoMessage(null);
   };
 
   return (
     <SignInPage
       mode={mode}
-      onModeSwitch={setMode}
+      onModeSwitch={handleModeSwitch}
       testimonials={TESTIMONIALS}
       heroImageSrc={HERO_IMAGE}
       onPasswordSubmit={handlePasswordSubmit}
-      onMagicLink={handleMagicLink}
-      onGoogleSignIn={() => oauthSignIn("google", GMAIL_SCOPES)}
-      onLinkedInSignIn={() => oauthSignIn("linkedin_oidc", "openid profile email")}
-      onGithubSignIn={() => oauthSignIn("github", "read:user user:email")}
-      onResetPassword={handleResetPassword}
-      errorMessage={error}
-      infoMessage={info}
-      loading={loading}
+      onMagicLink={() => {}}
+      onGoogleSignIn={handleGoogleSignIn}
+      onLinkedInSignIn={handleLinkedInSignIn}
+      onGithubSignIn={handleGithubSignIn}
+      onResetPassword={() => {}}
+      verification={verification}
+      onVerificationSubmit={handleVerificationSubmit}
+      onVerificationCancel={handleVerificationCancel}
+      errorMessage={errorMessage}
+      infoMessage={infoMessage}
+      loading={loading || !clerkReady}
     />
-  );
-}
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
-    }>
-      <LoginContent />
-    </Suspense>
   );
 }

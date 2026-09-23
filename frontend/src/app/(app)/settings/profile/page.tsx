@@ -7,11 +7,13 @@ import { Briefcase, MapPin, DollarSign, Target, Loader2, X, Sparkles } from "luc
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface UserPreferences {
   experience_level: string | null;
+  years_experience: number | null;
   job_type: string | null;
   work_mode: string | null;
   salary_min: number | null;
@@ -20,11 +22,15 @@ interface UserPreferences {
   preferred_locations: string[];
   current_title: string | null;
   bio: string | null;
+  // When true, autonomous job search + apply open a visible Chromium and
+  // stream browser_frame SSE events to the UI.  Default false (headless).
+  prefer_live_browser: boolean;
 }
 
 interface FormState {
   current_title: string;
   experience_level: string;
+  years_experience: string;
   job_type: string;
   work_mode: string;
   salary_min: string;
@@ -32,6 +38,7 @@ interface FormState {
   target_roles: string;
   preferred_locations: string;
   bio: string;
+  prefer_live_browser: boolean;
 }
 
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
@@ -61,6 +68,21 @@ const POPULAR_ROLES = [
   "Security Engineer",
 ];
 
+function splitCsv(value: string | null | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toggleCsvValue(value: string, item: string) {
+  const values = splitCsv(value);
+  if (values.includes(item)) {
+    return values.length > 1 ? values.filter((v) => v !== item).join(", ") : value;
+  }
+  return [...values, item].join(", ");
+}
+
 function PillButton({
   label,
   active,
@@ -74,6 +96,7 @@ function PillButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors",
         active
@@ -90,7 +113,12 @@ function TagPill({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs">
       {label}
-      <button type="button" onClick={onRemove} className="ml-0.5 hover:text-foreground text-muted-foreground">
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${label}`}
+        className="ml-0.5 text-muted-foreground hover:text-foreground"
+      >
         <X className="h-3 w-3" />
       </button>
     </span>
@@ -111,6 +139,7 @@ export default function ProfilePreferencesPage() {
   const [form, setForm] = useState<FormState>({
     current_title: "",
     experience_level: "mid",
+    years_experience: "",
     job_type: "full-time",
     work_mode: "remote",
     salary_min: "",
@@ -118,6 +147,7 @@ export default function ProfilePreferencesPage() {
     target_roles: "",
     preferred_locations: "",
     bio: "",
+    prefer_live_browser: false,
   });
 
   const [suggestingRoles, setSuggestingRoles] = useState(false);
@@ -128,6 +158,7 @@ export default function ProfilePreferencesPage() {
       setForm({
         current_title: prefs.current_title ?? "",
         experience_level: prefs.experience_level ?? "mid",
+        years_experience: prefs.years_experience != null ? String(prefs.years_experience) : "",
         job_type: prefs.job_type ?? "full-time",
         work_mode: prefs.work_mode ?? "remote",
         salary_min: prefs.salary_min != null ? String(prefs.salary_min) : "",
@@ -135,12 +166,15 @@ export default function ProfilePreferencesPage() {
         target_roles: (prefs.target_roles ?? []).join(", "),
         preferred_locations: (prefs.preferred_locations ?? []).join(", "),
         bio: prefs.bio ?? "",
+        prefer_live_browser: Boolean(prefs.prefer_live_browser),
       });
     }
   }, [prefs]);
 
-  function set(key: keyof FormState, value: string) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+  // Single set helper: strings for text/number fields, booleans for the
+  // prefer_live_browser toggle.  Keeps call sites uniform.
+  function set(key: keyof FormState, value: string | boolean) {
+    setForm((prev) => ({ ...prev, [key]: value }) as FormState);
   }
 
   const parsedRoles = form.target_roles
@@ -152,6 +186,8 @@ export default function ProfilePreferencesPage() {
     .split(",")
     .map((l) => l.trim())
     .filter(Boolean);
+  const selectedJobTypes = splitCsv(form.job_type);
+  const selectedWorkModes = splitCsv(form.work_mode);
 
   function removeRole(role: string) {
     const updated = parsedRoles.filter((r) => r !== role).join(", ");
@@ -199,6 +235,7 @@ export default function ProfilePreferencesPage() {
       const payload = {
         current_title: form.current_title || undefined,
         experience_level: form.experience_level || undefined,
+        years_experience: form.years_experience ? parseInt(form.years_experience, 10) : undefined,
         job_type: form.job_type || undefined,
         work_mode: form.work_mode || undefined,
         salary_min: form.salary_min ? parseInt(form.salary_min, 10) : undefined,
@@ -206,6 +243,7 @@ export default function ProfilePreferencesPage() {
         target_roles: parsedRoles,
         preferred_locations: parsedLocations,
         bio: form.bio || undefined,
+        prefer_live_browser: form.prefer_live_browser,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -219,13 +257,12 @@ export default function ProfilePreferencesPage() {
 
   return (
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      {/* Header */}
       <motion.div variants={fadeUp}>
-        <div className="text-sm text-muted-foreground">Settings / Job Preferences</div>
-        <h1 className="mt-1 text-3xl font-medium">Job preferences</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Tell agents what you&apos;re looking for — they&apos;ll use this to tailor every search and application.
-        </p>
+        <CommandHeader
+          eyebrow="HR SaaS Hero"
+          title="Job Preferences"
+          description="Tell agents what you want. Search, resume tailoring, and outreach use these preferences first."
+        />
       </motion.div>
 
       {isLoading ? (
@@ -269,14 +306,30 @@ export default function ProfilePreferencesPage() {
             </div>
 
             <div>
+              <label className="mb-2 block text-xs text-muted-foreground">Exact years of experience</label>
+              <input
+                type="number"
+                min={0}
+                max={60}
+                value={form.years_experience}
+                onChange={(e) => set("years_experience", e.target.value)}
+                placeholder={form.experience_level === "fresher" ? "0" : "e.g. 3"}
+                className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                Used by job search and application forms. Set 0 for fresher.
+              </p>
+            </div>
+
+            <div>
               <label className="mb-2 block text-xs text-muted-foreground">Job type</label>
               <div className="flex flex-wrap gap-2">
                 {JOB_TYPES.map((jt) => (
                   <PillButton
                     key={jt}
                     label={jt}
-                    active={form.job_type === jt}
-                    onClick={() => set("job_type", jt)}
+                    active={selectedJobTypes.includes(jt)}
+                    onClick={() => set("job_type", toggleCsvValue(form.job_type, jt))}
                   />
                 ))}
               </div>
@@ -289,11 +342,32 @@ export default function ProfilePreferencesPage() {
                   <PillButton
                     key={wm}
                     label={wm}
-                    active={form.work_mode === wm}
-                    onClick={() => set("work_mode", wm)}
+                    active={selectedWorkModes.includes(wm)}
+                    onClick={() => set("work_mode", toggleCsvValue(form.work_mode, wm))}
                   />
                 ))}
               </div>
+            </div>
+
+            {/* Live browser toggle — visible Chromium for autonomous runs */}
+            <div className="rounded-2xl border border-border bg-background/40 p-4">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 rounded border-border accent-primary"
+                  checked={form.prefer_live_browser}
+                  onChange={(e) => set("prefer_live_browser", e.target.checked)}
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-medium">Open a visible browser for autonomous runs</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    When on, the daily search and the &ldquo;Prepare Apply&rdquo; step open a real Chromium window that streams to the
+                    page below. You&rsquo;ll see the agent click and type. When off (default), CareerCraft uses
+                    the fast headless job-board APIs — invisible to you, but no CAPTCHAs and no extra LLM
+                    tokens. You can always force the visible browser for a single run from the job card.
+                  </p>
+                </div>
+              </label>
             </div>
           </motion.div>
 

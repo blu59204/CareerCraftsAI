@@ -17,8 +17,12 @@ const STORAGE_KEY = "theme";
 
 function readSaved(): Theme | null {
   if (typeof window === "undefined") return null;
-  const v = window.localStorage.getItem(STORAGE_KEY);
-  return v === "light" || v === "dark" ? v : null;
+  try {
+    const v = window.localStorage?.getItem(STORAGE_KEY);
+    return v === "light" || v === "dark" ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 function systemTheme(): Theme {
@@ -39,20 +43,28 @@ export function ThemeProvider({
     const saved = readSaved();
     const initial: Theme = saved ?? zoneDefault ?? systemTheme();
     setThemeState(initial);
-    document.documentElement.classList.remove("light", "dark");
-    document.documentElement.classList.add(initial);
   }, [zoneDefault]);
+
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem(STORAGE_KEY, theme);
+    } catch {
+      // Storage can be unavailable in embedded browser contexts.
+    }
+    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.classList.add(theme);
+  }, [theme]);
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t);
-    window.localStorage.setItem(STORAGE_KEY, t);
-    document.documentElement.classList.remove("light", "dark");
-    document.documentElement.classList.add(t);
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setTheme(theme === "dark" ? "light" : "dark");
-  }, [theme, setTheme]);
+    setThemeState((current) => {
+      const domTheme: Theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
+      return (current === "dark" || domTheme === "dark") ? "light" : "dark";
+    });
+  }, []);
 
   const value = useMemo(() => ({ theme, setTheme, toggleTheme }), [theme, setTheme, toggleTheme]);
 

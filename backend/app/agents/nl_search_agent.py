@@ -3,10 +3,9 @@ nl_search_agent.py — NL (Natural Language) Job Search Agent.
 
 Parses plain-language job search queries into structured SearchParameters,
 validates them, and returns a structured interpretation for user confirmation
-before passing the query to the existing Job_Search_Agent via PinchTab.
+before delegating to the existing Job_Search_Agent.
 """
 
-import json
 import logging
 import time
 import uuid
@@ -14,12 +13,13 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.nl_search_prompt import SYSTEM_PROMPT, OUTPUT_SCHEMA, build_user_prompt
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings
-from app.services.pinchtab_service import new_session
 
 logger = logging.getLogger(__name__)
 
@@ -56,59 +56,30 @@ class SearchParameters:
 # Parameter extraction via LLM
 # ---------------------------------------------------------------------------
 
-EXTRACT_PROMPT = """You are a job search query parser. Given a natural language job search query, extract structured parameters.
-
-Return ONLY valid JSON with the following keys (use null for fields not mentioned):
-{{
-  "role_title": "string or null — the job title/role the user is searching for",
-  "seniority": "string or null — e.g. junior, mid, senior, lead, principal, staff",
-  "location": "string or null — city, state, country, or region",
-  "remote_preference": "string or null — remote, hybrid, onsite, or null",
-  "industry": "string or null — industry or company type",
-  "salary_range": [min, max] or null — annual salary range as integers,
-  "company_size": "string or null — startup, mid-size, enterprise, or null",
-  "tech_stack": ["list of technologies mentioned"],
-  "additional_constraints": ["any other preferences or constraints"]
-}}
-
-Query: {query}
-
-JSON:"""
-
-
-def _parse_llm_response(content: str) -> dict:
-    """Parse LLM JSON response, handling markdown code fences."""
-    content = content.strip()
-    if content.startswith("```"):
-        content = content.split("```")[1]
-        if content.startswith("json"):
-            content = content[4:]
-        content = content.strip()
-    return json.loads(content)
-
-
 def extract_parameters(llm: BaseChatModel, query: str) -> SearchParameters:
     """Use LLM to extract structured search parameters from a natural language query."""
-    resp = llm.invoke([HumanMessage(content=EXTRACT_PROMPT.format(query=query))])
-    parsed = _parse_llm_response(resp.content)
-
-    salary_range = None
-    if parsed.get("salary_range") and len(parsed["salary_range"]) == 2:
-        try:
-            salary_range = (int(parsed["salary_range"][0]), int(parsed["salary_range"][1]))
-        except (ValueError, TypeError):
-            salary_range = None
+    parsed = call_llm_json(
+        llm,
+        SYSTEM_PROMPT,
+        build_user_prompt({"query": query}),
+        OUTPUT_SCHEMA,
+    )
+    salary_range = (
+        (parsed.salary_min, parsed.salary_max)
+        if parsed.salary_min is not None and parsed.salary_max is not None
+        else None
+    )
 
     return SearchParameters(
-        role_title=parsed.get("role_title"),
-        seniority=parsed.get("seniority"),
-        location=parsed.get("location"),
-        remote_preference=parsed.get("remote_preference"),
-        industry=parsed.get("industry"),
+        role_title=parsed.titles[0] if parsed.titles else None,
+        seniority=None,
+        location=parsed.locations[0] if parsed.locations else None,
+        remote_preference=parsed.remote,
+        industry=parsed.company_types[0] if parsed.company_types else None,
         salary_range=salary_range,
-        company_size=parsed.get("company_size"),
-        tech_stack=parsed.get("tech_stack") or [],
-        additional_constraints=parsed.get("additional_constraints") or [],
+        company_size=None,
+        tech_stack=parsed.skills,
+        additional_constraints=parsed.exclude,
     )
 
 
@@ -161,24 +132,30 @@ def _log_agent_run(
     duration_ms: int | None = None,
 ) -> None:
     """Log this NL search run to the agent_runs table."""
+    from app.core.event_bus import suppress_terminal_events
+    if suppress_terminal_events.get():
+        return  # The durable worker commits the authoritative run state.
     from app.core.sync_db import _get_sync_factory
     from app.models.db import AgentRun
 
     factory = _get_sync_factory()
     now = datetime.now(timezone.utc)
     with factory() as db:
-        agent_run = AgentRun(
-            id=uuid.UUID(run_id),
-            user_id=user_id,
-            agent_type="nl_job_search",
-            status=status,
-            input={"query": query, "extracted_parameters": params.to_dict()},
-            output={"results_count": result_count} if result_count is not None else None,
-            duration_ms=duration_ms,
-            started_at=now,
-            completed_at=now if status != "running" else None,
-        )
-        db.add(agent_run)
+        run_uuid = uuid.UUID(run_id)
+        agent_run = db.get(AgentRun, run_uuid)
+        if agent_run is None:
+            agent_run = AgentRun(
+                id=run_uuid,
+                user_id=user_id,
+                agent_type="nl_job_search",
+                started_at=now,
+            )
+            db.add(agent_run)
+        agent_run.status = status
+        agent_run.input = {"query": query, "extracted_parameters": params.to_dict()}
+        agent_run.output = {"results_count": result_count} if result_count is not None else None
+        agent_run.duration_ms = duration_ms
+        agent_run.completed_at = now if status != "running" else None
         db.commit()
 
 
@@ -195,7 +172,7 @@ def nl_search_node(state: AgentState) -> AgentState:
     1. Extract parameters from NL query via LLM
     2. Validate (role_title required — reject with 422 equivalent if missing)
     3. Return structured interpretation for user confirmation (HITL gate)
-    4. On approval, pass to Job_Search_Agent via PinchTab
+    4. On approval, scrape live jobs via JobSpy, score, and return matches
     """
     start_ts = time.monotonic()
     session = None
@@ -214,7 +191,7 @@ def nl_search_node(state: AgentState) -> AgentState:
             }
 
         # Get LLM via model router
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
@@ -273,32 +250,19 @@ def nl_search_node(state: AgentState) -> AgentState:
                 ],
             }
 
-        # Step 4: User confirmed — execute search via PinchTab (Job_Search_Agent pattern)
+        # Step 4: User confirmed — scrape live jobs via JobSpy
         search_query = _build_search_query(params)
         location = params.location or "Remote"
 
-        from app.agents.job_search import _extract_jobs_from_text, _score_job
+        from app.agents.job_search import _score_job, _job_listings_to_dicts
         from app.core.sync_db import fetch_user_profile_text
+        from app.services.job_platforms_service import scrape_jobs
 
         user_profile = fetch_user_profile_text(user_id)
         max_results = min(int(ctx.get("max_results", 10)), 25)
 
-        jobs_raw: list[dict] = []
-        try:
-            session = new_session(user_id)
-            url = (
-                f"https://www.linkedin.com/jobs/search/"
-                f"?keywords={search_query.replace(' ', '%20')}"
-                f"&location={location.replace(' ', '%20')}&f_TPR=r86400"
-            )
-            session.navigate(url, block_images=True)
-            time.sleep(2)
-            page_text = session.text()
-            jobs_raw = _extract_jobs_from_text(llm, page_text, max_results)
-        except Exception as browser_exc:
-            logger.warning("PinchTab unavailable (%s) — using fallback", browser_exc)
-            # Fallback: return empty results rather than mock data for NL search
-            jobs_raw = []
+        listings = scrape_jobs(search_query, location, max_results * 2, 72)
+        jobs_raw = _job_listings_to_dicts(listings)
 
         # Score jobs against user profile
         scored = [
@@ -343,7 +307,7 @@ def nl_search_node(state: AgentState) -> AgentState:
 
     except Exception as exc:
         logger.error("NL search agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
     finally:
         if session:
             session.close()

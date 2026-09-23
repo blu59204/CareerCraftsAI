@@ -1,7 +1,13 @@
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.interview_prep_prompt import (
+    OUTPUT_SCHEMA,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+)
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings
@@ -31,16 +37,49 @@ Format your response as JSON with keys:
 Return ONLY valid JSON, no markdown fences."""
 
 
-def interview_prep_agent_node(state: AgentState) -> AgentState:
-    try:
-        import json
+def _fallback_prep(target_role: str, company: str, reason: str) -> dict:
+    return {
+        "type": "interview_prep",
+        "target_role": target_role,
+        "company": company,
+        "behavioral_questions": [
+            "Tell me about a time you shipped work with unclear requirements. Use STAR.",
+            "Describe a conflict with a teammate and how you resolved it.",
+            "Tell me about a time you improved reliability or quality.",
+            "Describe a project where you had to learn fast.",
+            "Tell me about a time you used feedback to improve an outcome.",
+        ],
+        "technical_questions": [
+            f"What systems or tools would you use to deliver strong results as a {target_role}?",
+            "How do you debug a production issue from first signal to fix?",
+            "How do you design code that stays maintainable as requirements change?",
+            "How do you decide between speed and quality under deadline pressure?",
+            "How do you validate that your work solved the user or business problem?",
+        ],
+        "questions_to_ask": [
+            "What are the biggest priorities for this role in the first 90 days?",
+            "How does the team measure success for this role?",
+            "What technical or product challenges should this person be ready to own?",
+        ],
+        "elevator_pitch": (
+            f"I am a practical {target_role} candidate focused on reliable delivery, "
+            "clear collaboration, and learning fast. I like turning ambiguous work into "
+            "shipped outcomes that help users and teams move faster."
+        ),
+        "thinking": f"Fallback interview prep used because live model call failed: {reason}",
+    }
 
+
+def interview_prep_agent_node(state: AgentState) -> AgentState:
+    target_role = "software engineer"
+    company = "the company"
+    try:
         user_id = state["user_id"]
         ctx = state["context"]
         target_role = ctx.get("target_role", ctx.get("role", "software engineer"))
         company = ctx.get("company", "the company")
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
@@ -59,46 +98,39 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             selection_criteria="What are the candidate's strongest stories? Where are the gaps they'll be questioned on?",
         )
 
-        response = llm.invoke([
-            HumanMessage(
-                content=_QUESTIONS_PROMPT.format(
-                    role=target_role,
-                    company=company,
-                    context=context_text,
-                    thinking=thinking,
-                )
-            )
-        ])
+        prep_data = call_llm_json(
+            llm,
+            SYSTEM_PROMPT,
+            build_user_prompt({
+                "role": target_role,
+                "company": company,
+                "research_notes": thinking,
+            }, [context_text]),
+            OUTPUT_SCHEMA,
+        ).model_dump()
 
-        raw = response.content.strip()
-        # Strip markdown fences robustly (handles trailing ```)
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.rstrip("`").strip()
-        try:
-            prep_data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            return {
-                **state,
-                "status": "failed",
-                "error": f"interview_prep_agent: LLM returned non-JSON response: {exc}",
-            }
-
+        pending = {
+            "type": "interview_prep",
+            "target_role": target_role,
+            "company": company,
+            **prep_data,
+        }
         return {
             **state,
-            "status": "completed",
-            "result": {
-                "type": "interview_prep",
-                "target_role": target_role,
-                "company": company,
-                **prep_data,
-            },
+            "status": "awaiting_approval",
+            "pending_action": pending,
+            "result": None,
             "messages": state["messages"] + [
                 AIMessage(content=f"Interview prep ready for {target_role} at {company}.")
             ],
         }
     except Exception as exc:
-        logger.error("Interview prep agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        logger.exception("Interview prep agent failed for user %s", state.get("user_id"))
+        return {
+            **state,
+            "status": "failed",
+            "error": f"Interview prep generation failed: {str(exc)[:200]}",
+            "messages": state["messages"] + [
+                AIMessage(content=f"Interview prep generation failed for {target_role}.")
+            ],
+        }

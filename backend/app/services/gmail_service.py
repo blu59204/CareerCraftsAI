@@ -1,68 +1,143 @@
-import logging
+"""Gmail operations through the Nango credential proxy."""
 
-from langchain_google_community import GmailToolkit
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
+import base64
+from email.message import EmailMessage
+from urllib.parse import urlencode
+
+from app.integrations.exceptions import IntegrationActionError
+from app.services.integration_proxy_service import proxy_request
+
+
+class GmailSendError(RuntimeError):
+    """Raised when Nango or Gmail cannot send an approved message."""
 
 
 class GmailMCPClient:
-    """Gmail operations via langchain-google-community GmailToolkit."""
+    """Compatibility surface for agents; credentials stay exclusively in Nango."""
 
     def __init__(self, user_id: str):
         self.user_id = user_id
-        self._toolkit: GmailToolkit | None = None
-        self._available: bool | None = None
-
-    def _get_toolkit(self) -> GmailToolkit | None:
-        if self._available is False:
-            return None
-        if self._toolkit is None:
-            try:
-                self._toolkit = GmailToolkit()
-                self._available = True
-            except Exception as exc:
-                logger.warning(
-                    "Gmail OAuth credentials not available for user %s: %s",
-                    self.user_id,
-                    exc,
-                )
-                self._available = False
-                return None
-        return self._toolkit
 
     def search_threads(self, query: str, max_results: int = 10) -> list[dict]:
         try:
-            toolkit = self._get_toolkit()
-            if toolkit is None:
-                return []
-            tools = {t.name: t for t in toolkit.get_tools()}
-            search_tool = tools.get("search_gmail")
-            if not search_tool:
-                logger.warning("Gmail search tool not available")
-                return []
-            return search_tool.run({"query": query, "max_results": max_results}) or []
-        except Exception as exc:
-            logger.warning("Gmail search failed for user %s: %s", self.user_id, exc)
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=(
+                    "gmail/v1/users/me/messages?"
+                    f"{urlencode({'q': query, 'maxResults': max_results})}"
+                ),
+            )
+        except Exception:
             return []
+        return result.data.get("messages", []) if isinstance(result.data, dict) else []
 
     def get_thread(self, thread_id: str) -> dict:
         try:
-            toolkit = self._get_toolkit()
-            if toolkit is None:
-                return {}
-            tools = {t.name: t for t in toolkit.get_tools()}
-            return tools["get_gmail_thread"].run({"thread_id": thread_id}) or {}
-        except Exception as exc:
-            logger.warning("Gmail get_thread failed for user %s: %s", self.user_id, exc)
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=f"gmail/v1/users/me/threads/{thread_id}",
+            )
+        except Exception:
             return {}
+        return result.data if isinstance(result.data, dict) else {}
 
     def send_message(self, to: str, subject: str, body: str) -> dict:
-        """Send email. MUST only be called after explicit human approval."""
-        toolkit = self._get_toolkit()
-        if toolkit is None:
-            raise RuntimeError(
-                "Gmail OAuth credentials are not configured. "
-                "Connect Gmail in Settings → Account → Connected accounts."
+        message = EmailMessage()
+        message["To"] = to
+        message["Subject"] = subject
+        message.set_content(body)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode().rstrip("=")
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="POST",
+                path="gmail/v1/users/me/messages/send",
+                json_data={"raw": raw},
             )
-        tools = {t.name: t for t in toolkit.get_tools()}
-        return tools["send_gmail_message"].run({"to": [to], "subject": subject, "message": body})
+        except IntegrationActionError as exc:
+            raise GmailSendError("Gmail rejected the approved message") from exc
+        except Exception as exc:
+            raise GmailSendError("Gmail is not connected through Nango") from exc
+        if not isinstance(result.data, dict):
+            raise GmailSendError("Gmail returned an invalid response")
+        return result.data
+
+    def get_message_metadata(self, message_id: str) -> dict:
+        """Fetch header metadata only (From/Subject/Date/List-Unsubscribe).
+
+        Read path used opportunistically while listing inbox-cleanup
+        candidates, so a failure degrades to `{}` (same pattern as
+        `search_threads`/`get_thread`) rather than raising and aborting the
+        whole list. Gmail's `format=metadata` never includes the message
+        body, but its `snippet` field is a short body preview — stripped
+        here so this method can never surface any message content.
+        """
+        query = urlencode(
+            {
+                "format": "metadata",
+                "metadataHeaders": ["From", "Subject", "Date", "List-Unsubscribe"],
+            },
+            doseq=True,
+        )
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=f"gmail/v1/users/me/messages/{message_id}?{query}",
+            )
+        except Exception:
+            return {}
+        if not isinstance(result.data, dict):
+            return {}
+        data = dict(result.data)
+        data.pop("snippet", None)
+        return data
+
+    def archive_message(self, message_id: str) -> dict:
+        """Remove INBOX label via Gmail's messages.modify.
+
+        Batch cleanup action over a list of already-known message IDs, so —
+        like the read paths above — a single failed ID degrades to `{}`
+        instead of raising and aborting every other message in the batch.
+        """
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="POST",
+                path=f"gmail/v1/users/me/messages/{message_id}/modify",
+                json_data={"removeLabelIds": ["INBOX"]},
+            )
+        except Exception:
+            return {}
+        return result.data if isinstance(result.data, dict) else {}
+
+    def save_draft(self, to: str, subject: str, body: str) -> dict:
+        message = EmailMessage()
+        message["To"] = to
+        message["Subject"] = subject
+        message.set_content(body)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode().rstrip("=")
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="POST",
+                path="gmail/v1/users/me/drafts",
+                json_data={"message": {"raw": raw}},
+            )
+        except IntegrationActionError as exc:
+            raise GmailSendError("Gmail rejected the draft") from exc
+        except Exception as exc:
+            raise GmailSendError("Gmail is not connected through Nango") from exc
+        if not isinstance(result.data, dict):
+            raise GmailSendError("Gmail returned an invalid response")
+        return result.data

@@ -12,7 +12,6 @@ Pure functions (testable without LLM/DB):
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -20,7 +19,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage
+from pydantic import BaseModel, Field, model_validator
 
+from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings, _get_sync_factory
@@ -40,6 +41,23 @@ RATING_LABELS = {
     "good": (51, 75),
     "excellent": (76, 100),
 }
+
+
+class InterviewQuestionsOutput(BaseModel):
+    questions: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_list(cls, value):
+        return {"questions": value} if isinstance(value, list) else value
+
+
+class InterviewEvaluationOutput(BaseModel):
+    clarity: int = Field(default=0, ge=0, le=10)
+    relevance: int = Field(default=0, ge=0, le=10)
+    depth: int = Field(default=0, ge=0, le=10)
+    feedback: str = ""
+    rating: str = ""
 
 _GENERATE_QUESTIONS_PROMPT = """You are an expert interview coach. Generate interview questions for a mock interview session.
 
@@ -147,7 +165,7 @@ def start_session_node(state: AgentState) -> AgentState:
                 ),
             }
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,
@@ -198,23 +216,19 @@ def start_session_node(state: AgentState) -> AgentState:
         )
 
         llm = _build_llm(model_settings)
-        response = llm.invoke([HumanMessage(content=prompt)])
-
-        raw = response.content.strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.rstrip("`").strip()
-
         try:
-            questions = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            questions = call_llm_json(
+                llm,
+                _GENERATE_QUESTIONS_PROMPT,
+                prompt,
+                InterviewQuestionsOutput,
+            ).questions
+        except Exception as exc:
+            logger.warning("Interview coach question JSON parse failed: %s", exc)
             return {
                 **state,
                 "status": "failed",
-                "error": f"interview_coach: LLM returned non-JSON response: {exc}",
+                "error": "Agent failed",
             }
 
         if not isinstance(questions, list) or len(questions) == 0:
@@ -267,7 +281,7 @@ def start_session_node(state: AgentState) -> AgentState:
         }
     except Exception as exc:
         logger.error("interview_coach start_session failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
 
 
 def evaluate_answer_node(state: AgentState) -> AgentState:
@@ -298,7 +312,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
                 ),
             }
 
-        model_settings = fetch_model_settings(user_id)
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             return {
                 **state,
@@ -338,27 +352,33 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
         )
 
         llm = _build_llm(model_settings)
-        response = llm.invoke([HumanMessage(content=prompt)])
-
-        raw = response.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.rstrip("`").strip()
-
         try:
-            evaluation = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            evaluation = call_llm_json(
+                llm,
+                _EVALUATE_ANSWER_PROMPT,
+                prompt,
+                InterviewEvaluationOutput,
+            ).model_dump()
+        except Exception as exc:
+            logger.warning("Interview coach evaluation JSON parse failed: %s", exc)
             return {
                 **state,
                 "status": "failed",
-                "error": f"interview_coach: LLM returned non-JSON evaluation: {exc}",
+                "error": "Agent failed",
             }
 
         # Normalize score to 0-100 range
-        score = max(0, min(100, int(evaluation.get("score", 0))))
+        raw_score = evaluation.get("score")
+        if raw_score is None:
+            raw_score = round(
+                (evaluation.get("clarity", 0) + evaluation.get("relevance", 0) + evaluation.get("depth", 0))
+                / 30
+                * 100
+            )
+        score = max(0, min(100, int(raw_score)))
         tips = evaluation.get("tips", [])
+        if not tips and evaluation.get("feedback"):
+            tips = [evaluation["feedback"]]
         if not tips:
             tips = ["Try to provide more specific examples in your response."]
 
@@ -410,7 +430,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
             "interview_coach evaluate_answer failed for user %s: %s",
             state.get("user_id"), exc,
         )
-        return {**state, "status": "failed", "error": str(exc)}
+        return {**state, "status": "failed", "error": "Agent failed"}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -428,6 +448,9 @@ def _log_agent_run(
     tokens_used: int | None = None,
 ) -> None:
     """Log an agent run to the agent_runs table."""
+    from app.core.event_bus import suppress_terminal_events
+    if suppress_terminal_events.get():
+        return
     from app.models.db import AgentRun
 
     factory = _get_sync_factory()

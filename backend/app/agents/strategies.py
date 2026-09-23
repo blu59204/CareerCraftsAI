@@ -33,6 +33,27 @@ STRATEGIES: dict[str, list[str]] = {
         "role_specific_questions",
         "company_research",
     ],
+    "linkedin_outreach": [
+        "recruiter_priority",
+        "short_personalized_note",
+        "approval_first",
+    ],
+    "email_monitor": [
+        "interview_replies_first",
+        "status_classification",
+        "daily_scan",
+    ],
+    # Auto-apply strategies — ordered most-preferred first.
+    # The harness injects the selected strategy into context["_strategy"] so
+    # form_filler_service can adapt its browser task prompt accordingly.
+    # Learnings from past runs override these defaults: e.g. after 3 Workday
+    # blocks the harness learns "workday:requires_manual" and stops trying.
+    "auto_apply": [
+        "stop_before_submit",        # always enforce HITL — never skip
+        "use_uploaded_resume",       # prefer pre-uploaded resume over file picker
+        "fill_optional_fields",      # fill non-required fields when data is available
+        "retry_with_generic_filler", # fall back to universal filler if portal-specific fails
+    ],
 }
 
 # Canonical mapping: task_type → agent key used in STRATEGIES
@@ -49,6 +70,8 @@ TASK_TO_AGENT: dict[str, str] = {
     "company_research": "company_research",
     "nl_job_search": "nl_search",
     "linkedin_outreach": "linkedin_outreach",
+    "email_monitor": "email_monitor",
+    "auto_apply": "auto_apply",
 }
 
 

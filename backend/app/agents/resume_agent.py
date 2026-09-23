@@ -1,140 +1,157 @@
-import base64
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 
+from app.agents._llm_json import call_llm_json
+from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA as ResumeOutput
+from app.agents.prompts.resume_prompt import SYSTEM_PROMPT as RESUME_JSON_SYSTEM_PROMPT
+from app.agents.prompts.resume_prompt import build_user_prompt as build_resume_json_prompt
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
-from app.core.sync_db import fetch_model_settings, fetch_user_full_name
 from app.services.ats_service import compute_ats_score
-from app.services.pdf_service import generate_resume_pdf, generate_resume_docx
-
+from app.services.pdf_service import generate_resume_pdf
 from app.services.rag_service import retrieve
+from app.services.storage_service import upload_file
 
 logger = logging.getLogger(__name__)
 
-# Step 1: Critical thinking — analyze and select relevant content
-THINKING_PROMPT = """You are a strategic resume consultant. Your job is to THINK critically about \
-which parts of the candidate's background are most relevant to this specific job.
 
-CANDIDATE'S FULL BACKGROUND:
-{context}
+def _persist_resume_document(
+    user_id: str,
+    full_name: str | None,
+    template: str,
+    parsed: "ResumeOutput",
+    jd_text: str,
+    pdf_bytes: bytes,
+) -> str:
+    """Upload the tailored PDF to storage and record a UserDocument row.
 
-JOB DESCRIPTION:
-{jd}
+    Returns the new document id (str). No base64 is ever returned or stored —
+    downloads go through GET /resume/download/{document_id}.
+    """
+    from app.core.sync_db import _get_sync_factory, _to_uuid
+    from app.models.db import UserDocument
+    from app.services.storage_service import delete_file
 
-CRITICAL THINKING TASK:
-1. Identify the top 3-5 requirements from the JD (must-haves)
-2. For each project/experience the candidate has, score its relevance (HIGH/MEDIUM/LOW)
-3. Select ONLY the projects and experiences that are HIGH or MEDIUM relevance
-4. Identify which skills to emphasize and which to omit
-5. Decide the best narrative angle (what story does this resume tell?)
-
-RESPOND IN THIS FORMAT:
-KEY_REQUIREMENTS: <comma-separated top requirements from JD>
-SELECTED_PROJECTS: <list only the project names/roles to INCLUDE>
-OMITTED: <what to leave out and why>
-NARRATIVE: <1 sentence describing the story this resume should tell>
-SKILLS_TO_EMPHASIZE: <comma-separated skills that match JD>
-REASONING: <brief explanation of your selection logic>"""
-
-# Step 2: Write the resume using only selected content
-RESUME_SYSTEM_PROMPT = """You are an ATS-optimized resume writer. Your output must pass automated \
-Applicant Tracking Systems (Greenhouse, Workday, Taleo, iCIMS).
-
-CRITICAL INSTRUCTION: You have been given a THINKING ANALYSIS that tells you which projects \
-and experiences to include. ONLY include what was selected. Do NOT include everything — \
-a focused, relevant resume beats a comprehensive one.
-
-STRICT FORMAT RULES:
-- Single column layout only. NO tables, NO columns, NO text boxes, NO graphics.
-- Use ONLY these section headers (uppercase): SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS, PROJECTS
-- Dates in "Month YYYY" or "MM/YYYY" format (e.g., "Jan 2023 – Present")
-- Bullet points start with strong action verbs, quantify with numbers/percentages
-- Each bullet ≤ 2 lines. Use Google XYZ formula: "Accomplished [X] as measured by [Y], by doing [Z]"
-- Mirror exact keywords and phrases from the job description naturally
-- No headers/footers, no icons, no skill bars, no images
-- Contact info on first line: Full Name, then email | phone | LinkedIn URL
-
-CONTENT RULES:
-- Lead with a 2-3 sentence SUMMARY tailored to the specific role
-- EXPERIENCE: reverse chronological, 3-5 bullets per role — ONLY roles selected in thinking
-- PROJECTS: ONLY include projects marked as relevant in the thinking analysis
-- SKILLS: flat comma-separated list — ONLY skills identified as relevant
-- Quantify achievements wherever possible (%, $, team size, time saved)
-
-Return ONLY the resume text — no commentary, no markdown fences, no ```."""
-
-
-def resume_agent_node(state: AgentState) -> AgentState:
+    storage_path = upload_file(user_id, "resume.pdf", pdf_bytes, "application/pdf")
+    factory = _get_sync_factory()
     try:
-        user_id = state["user_id"]
-        jd_text = state["context"].get("jd_text", "")
+        with factory() as session:
+            doc = UserDocument(
+                user_id=_to_uuid(user_id),
+                doc_type="resume_tailored",
+                filename="resume.pdf",
+                storage_path=storage_path,
+                raw_text=parsed.resume_markdown,
+                ats_score=parsed.ats_score,
+                ats_data={
+                    "keywords_matched": parsed.keywords_matched,
+                    "keywords_missing": parsed.keywords_missing,
+                },
+            )
+            session.add(doc)
+            session.commit()
+            return str(doc.id)
+    except Exception:
+        try:
+            delete_file(storage_path, user_id)
+        except Exception as cleanup_exc:
+            logger.warning("Orphan storage cleanup failed for %s: %s", storage_path, cleanup_exc)
+        raise
 
-        model_settings = fetch_model_settings(user_id)
+
+def _score_parsed_resume(parsed: "ResumeOutput", jd_text: str) -> "ResumeOutput":
+    """Overwrite the self-graded ATS score with the real computed score."""
+    if not jd_text:
+        return parsed
+    ats = compute_ats_score(parsed.resume_markdown, jd_text)
+    parsed.ats_score = ats.composite_score
+    if getattr(ats, "missing_keywords", None):
+        parsed.keywords_missing = list(ats.missing_keywords[:10])
+    return parsed
+
+
+def _resume_pending_action(parsed: "ResumeOutput", pdf_document_id: str | None) -> dict:
+    """Pending/review payload: schema dump + document id. No binary data."""
+    result: dict = parsed.model_dump()
+    result["type"] = "resume_ready"
+    result["pdf_document_id"] = pdf_document_id
+    return result
+
+
+# ── LangGraph node (registered in the orchestrator) ──
+def resume_agent_node(state: AgentState) -> AgentState:
+    """LangGraph node: tailors the resume via prompts/resume_prompt + JSON parsing.
+
+    All prompt text lives in app/agents/prompts/resume_prompt.py. The result
+    equals OUTPUT_SCHEMA.model_dump() + {"pdf_document_id"}. No binary data
+    is placed in state, SSE events, or the DB — the PDF is stored on local
+    disk and downloaded via GET /resume/download/{document_id}.
+    """
+    from app.core.sync_db import fetch_model_settings, fetch_user_full_name
+    from app.core.model_router import _build_llm
+    from app.core.event_bus import emit
+
+    run_id = state["run_id"]
+    user_id = state["user_id"]
+    ctx = state.get("context", {})
+    jd_text = ctx.get("jd_text", ctx.get("job_description", ""))
+    tone = ctx.get("tone", "professional")
+    full_name = None
+    template = ctx.get("template", "modern")
+
+    try:
+        emit(run_id, "thinking", {"step": "start", "message": "Retrieving resume context from RAG..."})
+        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
         full_name = fetch_user_full_name(user_id)
-        template = state["context"].get("template", "modern")
 
+        emit(run_id, "tool_call", {"tool": "rag_retrieve", "input": {"doc_type": "resume", "query_len": len(jd_text)}})
         resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=8)
-        context_text = "\n\n".join(chunk.page_content for chunk in resume_chunks)
+        chunk_texts = [c.page_content if hasattr(c, "page_content") else str(c) for c in resume_chunks]
+        emit(run_id, "tool_result", {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}})
 
         llm = _build_llm(model_settings)
 
-        # ── Step 1: Critical Thinking — select relevant content ──────
-        thinking_response = llm.invoke([
-            SystemMessage(content="You are a strategic resume analyst. Think critically."),
-            HumanMessage(content=THINKING_PROMPT.format(context=context_text, jd=jd_text)),
-        ])
-        thinking_output = thinking_response.content
-
-        # ── Step 2: Write resume using only selected content ─────────
-        response = llm.invoke([
-            SystemMessage(content=RESUME_SYSTEM_PROMPT),
-            HumanMessage(
-                content=(
-                    f"THINKING ANALYSIS (follow this selection):\n{thinking_output}\n\n"
-                    f"CANDIDATE CONTEXT:\n{context_text}\n\n"
-                    f"JOB DESCRIPTION:\n{jd_text}"
-                )
+        emit(run_id, "thinking", {"step": "tailor", "message": "Tailoring resume to job description..."})
+        parsed = call_llm_json(
+            llm,
+            RESUME_JSON_SYSTEM_PROMPT,
+            build_resume_json_prompt(
+                {"jd_text": jd_text, "tone": tone, "template": template},
+                chunk_texts,
             ),
-        ])
-        rewritten_text = response.content
+            ResumeOutput,
+        )
+        parsed = _score_parsed_resume(parsed, jd_text)
 
-        # Generate PDF and DOCX
-        pdf_bytes = generate_resume_pdf(rewritten_text, full_name=full_name, template=template)
-        pdf_b64 = base64.b64encode(pdf_bytes).decode()
-        docx_bytes = generate_resume_docx(rewritten_text, full_name=full_name)
-        docx_b64 = base64.b64encode(docx_bytes).decode()
+        emit(run_id, "thinking", {"step": "pdf", "message": "Generating PDF and storing..."})
+        emit(run_id, "tool_call", {"tool": "pdf_store", "input": {"template": template}})
+        pdf_bytes = generate_resume_pdf(parsed.resume_markdown, full_name=full_name, template=template)
+        try:
+            pdf_document_id = _persist_resume_document(
+                user_id, full_name, template, parsed, jd_text, pdf_bytes
+            )
+        except Exception as se:
+            logger.warning("Resume PDF persist failed, continuing without download: %s", se)
+            pdf_document_id = None
+            parsed.warnings = list(parsed.warnings or []) + ["PDF storage unavailable — preview only."]
+        emit(run_id, "tool_result", {"tool": "pdf_store", "output": {"pdf_document_id": pdf_document_id}})
 
-        # ATS validation
-        ats_result = None
-        if jd_text:
-            ats = compute_ats_score(rewritten_text, jd_text)
-            ats_result = {
-                "composite_score": ats.composite_score,
-                "keyword_score": ats.keyword_score,
-                "readability_score": ats.readability_score,
-                "format_score": ats.format_score,
-                "missing_keywords": ats.missing_keywords[:10],
-                "suggestions": ats.suggestions[:5],
-            }
-
+        pending = _resume_pending_action(parsed, pdf_document_id)
+        emit(run_id, "complete", {"result": pending})
         return {
             **state,
             "status": "awaiting_approval",
-            "pending_action": {
-                "type": "resume_ready",
-                "resume_text": rewritten_text,
-                "pdf_b64": pdf_b64,
-                "docx_b64": docx_b64,
-                "ats_score": ats_result,
-                "thinking": thinking_output,
-            },
-            "messages": state["messages"] + [AIMessage(content=rewritten_text[:200])],
+            "pending_action": pending,
+            "result": pending,
+            "messages": state.get("messages", []) + [AIMessage(content=parsed.resume_markdown[:200])],
         }
     except Exception as exc:
-        logger.error("Resume agent failed for user %s: %s", state.get("user_id"), exc)
-        return {**state, "status": "failed", "error": str(exc)}
+        logger.exception("Resume agent failed for user %s", user_id)
+        return {
+            **state,
+            "status": "failed",
+            "error": f"Resume generation failed: {str(exc)[:200]}",
+        }

@@ -2,12 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, deploy/scalable-sandbox-workflows]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, deploy/scalable-sandbox-workflows]
+  # Protected live-smoke entry point (see the live-smoke job below): only a
+  # manual trigger runs it, never a push or pull_request, since it needs live
+  # deployed-environment secrets and may exercise a real account.
+  workflow_dispatch:
 
 jobs:
-  backend-lint-test:
+  backend-quality:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -15,18 +19,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -c constraints.txt ruff black bandit
+      - name: Install Chromium for adapter tests
+        run: python -m playwright install --with-deps chromium
 
       - name: Lint (ruff)
-        run: ruff check .
+        run: ruff check . --exit-zero
+      - name: Reject new Ruff diagnostics
+        run: python ../scripts/check_changed_python_lint.py
+        env:
+          CI_LINT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
 
       - name: Format check (black)
-        run: black --check .
+        run: python ../scripts/check_changed_python_format.py
 
       - name: Security scan (bandit)
         run: bandit -r app/ -ll -x tests/
@@ -36,10 +48,68 @@ jobs:
         env:
           APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
           DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
-          SUPABASE_URL: "https://x.supabase.co"
-          SUPABASE_SERVICE_KEY: "x"
-          CLERK_SECRET_KEY: "sk_test_x"
           REDIS_URL: "redis://localhost:6379"
+
+  backend-unit-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -c constraints.txt pytest pytest-cov pytest-timeout
+      - name: Install Chromium for adapter tests
+        run: python -m playwright install --with-deps chromium
+      - name: Unit tests
+        run: pytest tests/unit -v --cov=app --cov-report=term-missing
+        env:
+          APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
+          DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
+          REDIS_URL: "redis://localhost:6379"
+
+  backend-workflow-integration-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt -c constraints.txt
+        working-directory: backend
+
+      - name: Start disposable Postgres/Redis/browser containers
+        run: docker compose -p careercraft-workflow-tests -f docker-compose.test.yml up -d postgres redis browser
+
+      - name: Wait for Postgres to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec careercraft-workflow-tests-postgres-1 pg_isready -U workflow_test; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Postgres did not become ready in time" >&2
+          exit 1
+
+      - name: Durable workflow integration tests
+        working-directory: backend
+        run: python -m pytest tests/integration/test_durable_workflows.py -v --timeout=90
+        env:
+          RUN_WORKFLOW_INTEGRATION: "1"
+
+      - name: Tear down disposable containers
+        if: always()
+        run: docker compose -p careercraft-workflow-tests -f docker-compose.test.yml down
 
   frontend-lint-typecheck:
     runs-on: ubuntu-latest
@@ -51,7 +121,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -63,6 +133,104 @@ jobs:
       - name: Type check
         run: npm run type-check
 
+      - name: Build
+        run: npm run build
+
       - name: Security audit
         run: npm audit --audit-level=high
         continue-on-error: true
+
+  worker-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
+  # Cheap, no-credentials-needed guard against e2e test-file syntax/import
+  # breakage (missing fixture, bad import, etc.) on every PR. Collection-only
+  # never touches RUN_LIVE_E2E paths -- see backend/tests/e2e/conftest.py.
+  e2e-collection:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt -c constraints.txt
+
+      - name: Collect E2E suite (no live credentials required)
+        run: pytest tests/e2e --collect-only -q
+        env:
+          APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
+          DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
+          REDIS_URL: "redis://localhost:6379"
+
+  # Protected entry point: only runs on a manual `workflow_dispatch` trigger,
+  # never on push/pull_request (see the `on:` block above), because it needs
+  # live deployed-environment secrets and drives a real signed-in browser
+  # session. RUN_LIVE_E2E / ALLOW_LIVE_SENDS are intentionally never set here
+  # beyond what scripts/run_e2e_tests.sh itself sets (RUN_LIVE_E2E=1) --
+  # ALLOW_LIVE_SENDS stays unset so no email/outreach/application send can be
+  # approved from CI.
+  live-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r requirements.txt -c constraints.txt
+        working-directory: backend
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+        working-directory: backend
+
+      - name: Run live E2E smoke suite
+        run: bash scripts/run_e2e_tests.sh
+        env:
+          TEST_JWT: ${{ secrets.E2E_TEST_JWT }}
+          TEST_EMAIL: ${{ secrets.E2E_TEST_EMAIL }}
+          TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+          WEB_URL: ${{ secrets.E2E_WEB_URL }}
+          API_URL: ${{ secrets.E2E_API_URL }}
+          TEST_OTP_CODE: ${{ secrets.E2E_TEST_OTP_CODE }}
+          HEADLESS: "1"
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-live-smoke-artifacts
+          path: |
+            backend/tests/e2e/screenshots/
+            backend/tests/e2e/videos/
+            backend/tests/e2e/traces/
+            backend/tests/e2e/outputs/
+            backend/tests/e2e/.artifacts/
+            backend/tests/e2e/results.log
+          if-no-files-found: ignore
+          retention-days: 14

@@ -4,37 +4,52 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogOut, Settings, User as UserIcon } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { useClerk, useUser } from "@clerk/nextjs";
+import { apiClient } from "@/lib/api";
+
+interface UserProfile {
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+}
 
 export function UserMenu() {
   const router = useRouter();
-  const supabaseRef = useRef<SupabaseClient | null>(null);
+  const { isLoaded, isSignedIn, user } = useUser();
+  const { signOut } = useClerk();
   const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState<string | null>(null);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const supabase = createClient();
-    supabaseRef.current = supabase;
-    let mounted = true;
-    supabase.auth.getUser().then(({ data }) => {
-      if (!mounted) return;
-      setEmail(data.user?.email ?? null);
-      setAvatarUrl(
-        (data.user?.user_metadata?.avatar_url as string | undefined) ?? null,
-      );
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setEmail(session?.user.email ?? null);
-      setAvatarUrl((session?.user.user_metadata?.avatar_url as string | undefined) ?? null);
-    });
+    let cancelled = false;
+
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      setProfile(null);
+      return;
+    }
+
+    // Backend profile is authoritative; the Clerk user is the fallback while it
+    // loads (or when the backend is unreachable).
+    apiClient
+      .get<UserProfile>("/users/me")
+      .then(({ data }) => {
+        if (!cancelled) setProfile(data);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProfile({
+          email: user?.primaryEmailAddress?.emailAddress ?? "",
+          full_name: user?.fullName ?? null,
+          avatar_url: user?.imageUrl ?? null,
+        });
+      });
+
     return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
+      cancelled = true;
     };
-  }, []);
+  }, [isLoaded, isSignedIn, user]);
 
   useEffect(() => {
     if (!open) return;
@@ -47,16 +62,29 @@ export function UserMenu() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const initials = (email ?? "?").slice(0, 1).toUpperCase();
+  const profileEmail = profile?.email;
+  const clerkEmail = user?.primaryEmailAddress?.emailAddress;
+  const email =
+    profileEmail?.endsWith("@users.noreply.clerk")
+      ? clerkEmail || profileEmail
+      : profileEmail || clerkEmail || null;
+  const displayName = profile?.full_name || user?.fullName || email;
+  const avatarUrl = user?.imageUrl ?? profile?.avatar_url ?? null;
+  const initials = (displayName ?? "?")
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   const handleSignOut = async () => {
     setOpen(false);
-    await supabaseRef.current?.auth.signOut();
+    await signOut();
     router.push("/");
     router.refresh();
   };
 
-  if (!email) return null;
+  if (!isLoaded || !isSignedIn || !email) return null;
 
   return (
     <div ref={menuRef} className="relative">
@@ -64,7 +92,7 @@ export function UserMenu() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Account menu"
-        className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-border bg-primary/10 text-sm font-medium text-primary"
+        className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-border bg-primary/10 text-sm font-medium text-primary shadow-sm transition hover:bg-primary/15"
       >
         {avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -74,8 +102,9 @@ export function UserMenu() {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 top-11 z-50 w-56 overflow-hidden rounded-2xl border border-border bg-card shadow-lg">
+        <div className="absolute right-0 top-11 z-[100] w-64 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur-xl">
           <div className="border-b border-border px-4 py-3 text-sm">
+            <p className="mb-1 truncate font-medium text-foreground">{displayName}</p>
             <p className="truncate text-muted-foreground">{email}</p>
           </div>
           <Link
@@ -95,9 +124,9 @@ export function UserMenu() {
           <button
             type="button"
             onClick={handleSignOut}
-            className="flex w-full items-center gap-2 border-t border-border px-4 py-2 text-sm text-danger hover:bg-secondary"
+            className="flex w-full items-center gap-2 border-t border-border px-4 py-3 text-sm font-medium text-danger hover:bg-danger/10"
           >
-            <LogOut className="h-4 w-4" /> Sign out
+            <LogOut className="h-4 w-4" /> Log out
           </button>
         </div>
       )}

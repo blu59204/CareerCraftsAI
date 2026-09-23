@@ -28,7 +28,7 @@ const TEMPLATES: ResumeTemplate[] = [
     description: "Traditional reverse-chronological format trusted by all ATS systems.",
     atsScore: 99,
     sections: ["Contact", "Summary", "Experience", "Education", "Skills"],
-    accent: "bg-emerald-500",
+    accent: "bg-success",
   },
   {
     id: "minimal",
@@ -36,7 +36,7 @@ const TEMPLATES: ResumeTemplate[] = [
     description: "Clean single-page design for senior candidates with focused content.",
     atsScore: 94,
     sections: ["Contact", "Skills", "Experience", "Education"],
-    accent: "bg-slate-600",
+    accent: "bg-muted-foreground",
   },
 ];
 
@@ -107,7 +107,7 @@ export function ResumeTemplates({ selected, onSelect }: Props) {
               <div className="mt-4 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">{tpl.name}</span>
-                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600">
+                  <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
                     ATS: {tpl.atsScore}%
                   </span>
                 </div>

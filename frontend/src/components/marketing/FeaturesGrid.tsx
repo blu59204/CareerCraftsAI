@@ -40,7 +40,7 @@ const FEATURES = [
 
 export function FeaturesGrid() {
   return (
-    <section id="features" className="bg-background py-28">
+    <section id="features" className="relative overflow-hidden bg-background py-28 text-foreground">
       <div className="mx-auto max-w-6xl px-6">
         <motion.div
           initial="hidden"
@@ -51,19 +51,19 @@ export function FeaturesGrid() {
         >
           <motion.div
             variants={fadeUp}
-            className="text-sm font-medium text-primary"
+            className="inline-flex rounded-full border border-border bg-muted px-3 py-1 text-xs font-medium uppercase tracking-[0.22em] text-muted-foreground"
           >
-            Features
+            AI Automation
           </motion.div>
           <motion.h2
             variants={fadeUp}
-            className="mt-2 text-4xl font-medium text-foreground md:text-5xl"
+            className="mt-5 max-w-3xl text-4xl font-medium leading-tight text-foreground md:text-6xl"
           >
             Everything you need to land your first role.
           </motion.h2>
           <motion.p
             variants={fadeUp}
-            className="mt-4 text-base text-muted-foreground"
+            className="mt-5 max-w-xl text-base leading-8 text-muted-foreground"
           >
             Purpose-built agents handle every step of your job search, from tailoring resumes to drafting follow-ups.
           </motion.p>
@@ -74,7 +74,7 @@ export function FeaturesGrid() {
           whileInView="show"
           viewport={{ once: true, margin: "-60px" }}
           variants={stagger}
-          className="grid gap-6 md:grid-cols-2 lg:grid-cols-3"
+          className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
         >
           {FEATURES.map((f) => (
             <FeatureCard key={f.title} {...f} />
