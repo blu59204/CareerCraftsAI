@@ -42,3 +42,6 @@ def test_call_llm_json_retry_keeps_schema():
     schema_text = json.dumps(OUTPUT_SCHEMA.model_json_schema(), separators=(",", ":"))
     assert schema_text in llm.messages[0][0].content
     assert schema_text in llm.messages[1][-1].content
+    # The retry shows the model its own invalid output so it repairs it.
+    assert isinstance(llm.messages[1][-2], AIMessage)
+    assert llm.messages[1][-2].content == "not json"

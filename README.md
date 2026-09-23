@@ -224,6 +224,8 @@ psql "$PGURL" -f deploy/oracle/postgres-bootstrap.sql
 for f in supabase/migrations/*.sql; do psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
+One error is expected: the last statement of `0009_clerk_to_supabase.sql` creates a signup trigger on Supabase's `auth.users` table, which doesn't exist on plain PostgreSQL. It is safe to ignore, because the API provisions users on their first authenticated request.
+
 ### 3. Start the stack
 
 ```bash
