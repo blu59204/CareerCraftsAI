@@ -19,11 +19,8 @@ import {
   AlertCircle,
   ChevronRight,
   Zap,
-  MailMinus,
   Archive,
-  Tag,
   Inbox,
-  ShieldCheck,
   RefreshCw,
 } from "lucide-react";
 
@@ -237,44 +234,27 @@ function FollowUpStep({
   );
 }
 
-type InboxCategory = "important" | "newsletter" | "promo" | "social";
-
-interface InboxEmail {
+interface InboxCleanupEmail {
   id: string;
   from: string;
   subject: string;
-  preview: string;
-  category: InboxCategory;
   date: string;
-  unsubscribable: boolean;
+  unsubscribe_url: string | null;
 }
 
-const INBOX_EMAILS: InboxEmail[] = [
-  { id: "i1", from: "LinkedIn", subject: "12 new jobs match your preferences", preview: "Remote React roles at top companies", category: "newsletter", date: "Today", unsubscribable: true },
-  { id: "i2", from: "AWS", subject: "Your account: promotional credits available", preview: "$100 in free credits expire soon", category: "promo", date: "Today", unsubscribable: true },
-  { id: "i3", from: "GitHub", subject: "Security alert: new sign-in", preview: "A new device signed into your account", category: "important", date: "Yesterday", unsubscribable: false },
-  { id: "i4", from: "Medium Daily", subject: "Top stories: AI coding tools 2026", preview: "What engineers are saying about…", category: "newsletter", date: "Yesterday", unsubscribable: true },
-  { id: "i5", from: "Stripe", subject: "Your invoice for May 2026", preview: "Invoice #INV-2026-001 is ready", category: "important", date: "2d ago", unsubscribable: false },
-  { id: "i6", from: "Glassdoor", subject: "Don't miss these company reviews", preview: "New reviews for companies you follow", category: "newsletter", date: "3d ago", unsubscribable: true },
-  { id: "i7", from: "Shopify", subject: "Flash sale — 40% off this weekend", preview: "Limited-time offer on premium themes", category: "promo", date: "3d ago", unsubscribable: true },
-  { id: "i8", from: "Twitter/X", subject: "You have new notifications", preview: "3 people mentioned you this week", category: "social", date: "4d ago", unsubscribable: true },
-];
-
-const CATEGORY_COLORS: Record<InboxCategory, string> = {
-  important: "bg-danger/10 text-danger",
-  newsletter: "bg-muted text-muted-foreground",
-  promo: "bg-warning/10 text-warning",
-  social: "bg-success/10 text-success",
-};
-
 function InboxCleanup() {
-  const [emails, setEmails] = useState(INBOX_EMAILS);
+  const qc = useQueryClient();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<InboxCategory | "all">("all");
-  const [cleaning, setCleaning] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
-  const visible = filter === "all" ? emails : emails.filter((e) => e.category === filter);
-  const unsubCount = emails.filter((e) => e.unsubscribable).length;
+  const {
+    data: emails = [],
+    isLoading,
+    isError,
+  } = useQuery<InboxCleanupEmail[]>({
+    queryKey: ["inbox-cleanup"],
+    queryFn: async () => (await apiClient.get("/email/inbox-cleanup")).data,
+  });
 
   const toggle = (id: string) =>
     setSelectedIds((prev) => {
@@ -287,92 +267,62 @@ function InboxCleanup() {
       return next;
     });
 
-  const archiveSelected = () => {
-    setEmails((prev) => prev.filter((e) => !selectedIds.has(e.id)));
-    setSelectedIds(new Set());
-    toast.success(`${selectedIds.size} emails archived`);
+  const archiveSelected = async () => {
+    if (selectedIds.size === 0) return;
+    setArchiving(true);
+    try {
+      const { data } = await apiClient.post<{ archived: number }>("/email/inbox-cleanup/archive", {
+        message_ids: Array.from(selectedIds),
+      });
+      setSelectedIds(new Set());
+      qc.invalidateQueries({ queryKey: ["inbox-cleanup"] });
+      toast.success(`${data.archived} emails archived`);
+    } catch {
+      toast.error("Failed to archive selected emails");
+    } finally {
+      setArchiving(false);
+    }
   };
 
-  const unsubAll = () => {
-    setCleaning(true);
-    setTimeout(() => {
-      setEmails((prev) => prev.filter((e) => !e.unsubscribable));
-      setCleaning(false);
-      toast.success("Unsubscribed from all newsletters and promos");
-    }, 1200);
-  };
-
-  const stats = {
-    total: emails.length,
-    newsletters: emails.filter((e) => e.category === "newsletter").length,
-    promos: emails.filter((e) => e.category === "promo").length,
-  };
+  const stats = { total: emails.length };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2">
-        <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning" />
-        <p className="text-xs text-warning">
-          Preview only — sample data. Live inbox cleanup is not connected yet.
-        </p>
+      <div className="grid grid-cols-1 gap-3">
+        <div className="rounded-2xl border border-border bg-background/50 p-3 text-center">
+          <Inbox className="mx-auto mb-1 h-4 w-4 text-muted-foreground" />
+          <div className="text-lg font-semibold text-foreground">{stats.total}</div>
+          <div className="text-xs text-muted-foreground">Promotions &amp; updates (30d)</div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: "Total", value: stats.total, icon: Inbox },
-          { label: "Newsletters", value: stats.newsletters, icon: MailMinus },
-          { label: "Promos", value: stats.promos, icon: Tag },
-        ].map(({ label, value, icon: Icon }) => (
-          <div key={label} className="rounded-2xl border border-border bg-background/50 p-3 text-center">
-            <Icon className="mx-auto mb-1 h-4 w-4 text-muted-foreground" />
-            <div className="text-lg font-semibold text-foreground">{value}</div>
-            <div className="text-xs text-muted-foreground">{label}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <LiquidGlassButton
-          tone="ghost"
-          size="sm"
-          onClick={unsubAll}
-          disabled={cleaning || unsubCount === 0}
-        >
-          {cleaning ? (
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <ShieldCheck className="h-3.5 w-3.5" />
-          )}
-          Unsubscribe all ({unsubCount})
-        </LiquidGlassButton>
-        {selectedIds.size > 0 && (
-          <LiquidGlassButton tone="ghost" size="sm" onClick={archiveSelected}>
-            <Archive className="h-3.5 w-3.5" />
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <LiquidGlassButton tone="ghost" size="sm" onClick={archiveSelected} disabled={archiving}>
+            {archiving ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Archive className="h-3.5 w-3.5" />
+            )}
             Archive ({selectedIds.size})
           </LiquidGlassButton>
-        )}
-      </div>
-
-      <div className="flex gap-1 flex-wrap">
-        {(["all", "important", "newsletter", "promo", "social"] as const).map((c) => (
-          <button
-            key={c}
-            onClick={() => setFilter(c)}
-            className={cn(
-              "rounded-full px-2.5 py-1 text-xs capitalize transition-colors",
-              filter === c
-                ? "bg-primary/10 text-primary font-medium"
-                : "text-muted-foreground hover:bg-card"
-            )}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
+        </div>
+      )}
 
       <div className="space-y-2">
+        {isLoading && (
+          <div className="rounded-2xl border border-border bg-card/40 p-6 text-center text-sm text-muted-foreground">
+            Loading inbox…
+          </div>
+        )}
+        {isError && (
+          <div className="flex items-center gap-2 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 text-warning" />
+            <p className="text-xs text-warning">Could not load inbox — connect Gmail in Settings.</p>
+          </div>
+        )}
         <AnimatePresence initial={false}>
-          {visible.map((email) => (
+          {emails.map((email) => (
             <motion.div
               key={email.id}
               initial={{ opacity: 0, height: 0 }}
@@ -395,44 +345,28 @@ function InboxCleanup() {
                   className="mt-0.5 h-4 w-4 rounded accent-primary"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-foreground truncate">{email.from}</span>
-                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", CATEGORY_COLORS[email.category])}>
-                      {email.category}
-                    </span>
-                  </div>
+                  <span className="text-xs font-semibold text-foreground truncate block">{email.from}</span>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{email.subject}</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   <span className="text-xs text-muted-foreground">{email.date}</span>
-                  {email.unsubscribable && (
-                    <button
-                      onClick={() => {
-                        setEmails((prev) => prev.filter((e) => e.id !== email.id));
-                        toast.success(`Unsubscribed from ${email.from}`);
-                      }}
-                      className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
-                      title="Unsubscribe"
+                  {email.unsubscribe_url && (
+                    <a
+                      href={email.unsubscribe_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+                      title="Open unsubscribe page"
                     >
-                      <MailMinus className="h-3.5 w-3.5" />
-                    </button>
+                      Open unsubscribe page
+                    </a>
                   )}
-                  <button
-                    onClick={() => {
-                      setEmails((prev) => prev.filter((e) => e.id !== email.id));
-                      toast.success("Email archived");
-                    }}
-                    className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                    title="Archive"
-                  >
-                    <Archive className="h-3.5 w-3.5" />
-                  </button>
                 </div>
               </div>
             </motion.div>
           ))}
         </AnimatePresence>
-        {visible.length === 0 && (
+        {!isLoading && !isError && emails.length === 0 && (
           <div className="rounded-2xl border border-border bg-card/40 p-6 text-center text-sm text-muted-foreground">
             Inbox clean! Nothing to show.
           </div>
@@ -624,9 +558,9 @@ export default function EmailPage() {
       />
 
       {/* 3-column layout */}
-      <motion.div variants={fadeUp} className="flex gap-4">
+      <motion.div variants={fadeUp} className="flex flex-col gap-4 lg:flex-row">
         {/* Left sidebar */}
-        <div className="w-[280px] shrink-0 space-y-4">
+        <div className="w-full space-y-4 lg:w-[280px] lg:shrink-0">
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-success" : "bg-muted-foreground"}`} />
@@ -774,7 +708,7 @@ export default function EmailPage() {
         </div>
 
         {/* Right sidebar */}
-        <div className="w-[280px] shrink-0 space-y-4">
+        <div className="w-full space-y-4 lg:w-[280px] lg:shrink-0">
           <div className="rounded-3xl border border-border bg-card/60 p-4">
             <div className="mb-3 flex items-center gap-2">
               <span className="text-sm font-semibold text-foreground">

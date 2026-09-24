@@ -96,8 +96,9 @@ async def _interview_coach_wrapper(state: AgentState) -> AgentState:
 
 async def _run_agent_safely(agent_fn: Callable, state: AgentState) -> AgentState:
     start = time.time()
-    from app.core.model_router import get_and_reset_tokens
+    from app.core.model_router import begin_token_tracking, get_and_reset_tokens
 
+    begin_token_tracking()
     try:
         if asyncio.iscoroutinefunction(agent_fn):
             result = await agent_fn(state)
@@ -123,7 +124,7 @@ async def _run_agent_safely(agent_fn: Callable, state: AgentState) -> AgentState
         except Exception:
             logger.debug("agent_runs upsert skipped.", exc_info=True)
 
-        return result
+        return {**result, "tokens_used": tokens} if isinstance(result, dict) else result
     except Exception as exc:
         if state.get("context", {}).get("_durable"):
             raise

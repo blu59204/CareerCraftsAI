@@ -23,20 +23,52 @@ LLM_MAX_RETRIES = 2
 # _check_budget_sync/TokenTrackingCallback.
 LLM_MAX_OUTPUT_TOKENS = 8192
 
-import threading
+import contextvars
 
-_agent_token_accumulator: threading.local = threading.local()
+# A mutable box held in a ContextVar, not a threading.local: sync agent nodes
+# run via asyncio.to_thread, which copies the context into the worker thread.
+# The worker mutates the same box the event-loop side reads back, and each
+# concurrent run (its own asyncio task/context) gets an isolated box.
+_agent_token_totals: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar(
+    "agent_token_totals", default=None
+)
+
+
+def begin_token_tracking() -> None:
+    """Start a fresh token counter for the agent run in the current context."""
+    _agent_token_totals.set([0])
 
 
 def _add_tokens(count: int) -> None:
-    current = getattr(_agent_token_accumulator, "total", 0)
-    _agent_token_accumulator.total = current + count
+    box = _agent_token_totals.get()
+    if box is None:
+        box = [0]
+        _agent_token_totals.set(box)
+    box[0] += count
 
 
 def get_and_reset_tokens() -> int:
-    total = getattr(_agent_token_accumulator, "total", 0)
-    _agent_token_accumulator.total = 0
+    box = _agent_token_totals.get()
+    if box is None:
+        return 0
+    total, box[0] = box[0], 0
     return total
+
+
+def _total_tokens(response: LLMResult) -> int:
+    token_usage = (response.llm_output or {}).get("token_usage") or {}
+    total = token_usage.get("total_tokens") or 0
+    if total:
+        return total
+    # Providers/clients that report usage only per message (usage_metadata).
+    try:
+        return sum(
+            (getattr(gen, "message", None) and (gen.message.usage_metadata or {}).get("total_tokens")) or 0
+            for gens in response.generations
+            for gen in gens
+        )
+    except Exception:
+        return 0
 
 
 class TokenTrackingCallback(BaseCallbackHandler):
@@ -47,8 +79,7 @@ class TokenTrackingCallback(BaseCallbackHandler):
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         """Record token usage after each LLM call."""
-        token_usage = response.llm_output.get("token_usage", {}) if response.llm_output else {}
-        total = token_usage.get("total_tokens", 0)
+        total = _total_tokens(response)
         if total > 0:
             _add_tokens(total)
             from app.services.token_budget_service import consume_tokens

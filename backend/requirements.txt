@@ -69,6 +69,7 @@ python-jobspy>=1.1.75
 
 # Playwright (browser automation)
 playwright>=1.44.0
+pytest-playwright>=0.5.0  # provides the playwright/browser_context/page pytest fixtures used by tests/e2e
 agentql>=1.0.0
 
 # browser-use runtime deps (browser-use installed separately via Dockerfile)

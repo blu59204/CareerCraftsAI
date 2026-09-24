@@ -37,8 +37,15 @@ class TestHITLBypassPrevention:
             messages=[], status="running", pending_action=None, result=None, error=None,
         )
         fake_llm = MagicMock()
+        # The agent parses a JSON EmailOutput; a plain-text reply would make the
+        # draft fail before the HITL gate is ever exercised.
         fake_llm.invoke = MagicMock(
-            return_value=MagicMock(content="Subject: Following up\n\nDear R, I want to apply.")
+            return_value=MagicMock(
+                content=(
+                    '{"subject": "Following up", "body": "Dear R, I want to apply.", '
+                    '"intent_detected": "follow_up"}'
+                )
+            )
         )
 
         # NOTE: email_agent binds these names at module top, so patch the

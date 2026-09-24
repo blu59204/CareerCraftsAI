@@ -69,6 +69,57 @@ class GmailMCPClient:
             raise GmailSendError("Gmail returned an invalid response")
         return result.data
 
+    def get_message_metadata(self, message_id: str) -> dict:
+        """Fetch header metadata only (From/Subject/Date/List-Unsubscribe).
+
+        Read path used opportunistically while listing inbox-cleanup
+        candidates, so a failure degrades to `{}` (same pattern as
+        `search_threads`/`get_thread`) rather than raising and aborting the
+        whole list. Gmail's `format=metadata` never includes the message
+        body, but its `snippet` field is a short body preview — stripped
+        here so this method can never surface any message content.
+        """
+        query = urlencode(
+            {
+                "format": "metadata",
+                "metadataHeaders": ["From", "Subject", "Date", "List-Unsubscribe"],
+            },
+            doseq=True,
+        )
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=f"gmail/v1/users/me/messages/{message_id}?{query}",
+            )
+        except Exception:
+            return {}
+        if not isinstance(result.data, dict):
+            return {}
+        data = dict(result.data)
+        data.pop("snippet", None)
+        return data
+
+    def archive_message(self, message_id: str) -> dict:
+        """Remove INBOX label via Gmail's messages.modify.
+
+        Batch cleanup action over a list of already-known message IDs, so —
+        like the read paths above — a single failed ID degrades to `{}`
+        instead of raising and aborting every other message in the batch.
+        """
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="POST",
+                path=f"gmail/v1/users/me/messages/{message_id}/modify",
+                json_data={"removeLabelIds": ["INBOX"]},
+            )
+        except Exception:
+            return {}
+        return result.data if isinstance(result.data, dict) else {}
+
     def save_draft(self, to: str, subject: str, body: str) -> dict:
         message = EmailMessage()
         message["To"] = to

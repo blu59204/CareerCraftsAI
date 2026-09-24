@@ -6,11 +6,14 @@ import { motion } from 'motion/react'
 import { fadeUp, stagger } from '@/lib/motion-variants'
 import { LiquidGlassButton } from '@/components/ui/LiquidGlassButton'
 import { CommandHeader } from '@/components/immersive/CommandHeader'
-import { apiClient } from '@/lib/api'
+import { apiClient, getApiErrorMessage } from '@/lib/api'
+import { startAgentRun, waitForAgentRun } from '@/lib/agent-run'
 import { toast } from 'sonner'
 import { TrendingUp, BarChart3 } from 'lucide-react'
 
-// Matches backend SalaryReport DB model (salary_reports table)
+// Matches the shape we render from the salary_intelligence agent's run
+// output — see backend/app/agents/salary_agent.py (report + negotiation
+// script). `id` is the agent run id, used for the approve/discard actions.
 interface SalaryReport {
   id: string
   p25: number
@@ -28,13 +31,30 @@ export default function SalaryPage() {
   const [offerAmount, setOfferAmount] = useState('')
   const [report, setReport] = useState<SalaryReport | null>(null)
 
-  // Backend runs the agent synchronously then returns {run_id}. The SalaryReport
-  // row shares the run_id as its primary key, so we fetch it by that id.
+  // The agent can run up to 120s server-side, so we start it and poll for a
+  // terminal status instead of holding one long HTTP request open. Data-rich
+  // runs land in "awaiting_approval" (HITL gate on the negotiation script);
+  // "data_unavailable" runs land in "completed" with a flat result.
   const mutation = useMutation({
     mutationFn: async (data: { role: string; company?: string; location?: string; offer_amount?: number }) => {
-      const { data: started } = await apiClient.post<{ run_id: string; status: string }>('/salary/report', data)
-      const { data: full } = await apiClient.get<SalaryReport>(`/salary/report/${started.run_id}`)
-      return full
+      const runId = await startAgentRun('salary_intelligence', data)
+      const run = await waitForAgentRun(runId)
+      if (run.status !== 'completed' && run.status !== 'awaiting_approval') {
+        throw new Error(run.error || `Salary report ${run.status}`)
+      }
+      const output = (run.output ?? {}) as Record<string, unknown>
+      const reportData = (output.report as Record<string, unknown> | undefined) ?? output
+      const script = (output.script as Record<string, unknown> | undefined) ?? null
+      const result: SalaryReport = {
+        id: runId,
+        p25: Number(reportData.p25 ?? 0),
+        p50: Number(reportData.p50 ?? 0),
+        p75: Number(reportData.p75 ?? 0),
+        classification: (reportData.classification as SalaryReport['classification']) ?? null,
+        negotiation_script: script,
+        data_unavailable: Boolean(reportData.data_unavailable),
+      }
+      return result
     },
     onSuccess: (data) => {
       setReport(data)
@@ -44,14 +64,14 @@ export default function SalaryPage() {
         toast.success('Salary report generated')
       }
     },
-    onError: () => toast.error('Failed to generate report'),
+    onError: (error) => toast.error(getApiErrorMessage(error, error instanceof Error ? error.message : 'Failed to generate report')),
   })
 
   const approveMutation = useMutation({
     mutationFn: (reportId: string) =>
       apiClient.post(`/agents/${reportId}/approve`, { approved: true }),
     onSuccess: () => toast.success('Negotiation script approved'),
-    onError: () => toast.error('Approval failed'),
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Approval failed')),
   })
 
   const handleSubmit = (e: React.FormEvent) => {
