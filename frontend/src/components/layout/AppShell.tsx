@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { AppSidebar } from "./AppSidebar";
 import { AppTopbar } from "./AppTopbar";
@@ -17,6 +18,7 @@ function ActiveRunStream() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   if (pathname === "/onboarding") {
     return <>{children}</>;
@@ -27,9 +29,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <ConstellationBackground />
       <ActiveRunStream />
       <div className="app-surface flex min-h-screen">
-        <AppSidebar />
+        <AppSidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <AppTopbar />
+          <AppTopbar onMenuClick={() => setMobileNavOpen(true)} />
           <main className="min-w-0 flex-1 overflow-x-hidden px-6 pb-8 pt-7 md:px-8">{children}</main>
         </div>
       </div>

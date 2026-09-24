@@ -32,7 +32,7 @@ export function MetricOrb({ label, value, icon, href, accent = "primary" }: Metr
       <div className="relative flex items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-muted-foreground">{label}</p>
-          <p className="mt-4 font-display text-5xl leading-none text-foreground">{value}</p>
+          <p className="mt-4 font-command text-5xl font-semibold leading-none text-foreground">{value}</p>
         </div>
         {icon && (
           <div className={cn("glow-primary flex h-11 w-11 items-center justify-center rounded-2xl bg-card/70", accentMap[accent])}>

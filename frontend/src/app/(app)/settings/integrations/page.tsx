@@ -144,7 +144,7 @@ export default function IntegrationsSettingsPage() {
       <SettingsNav />
 
       {connections.isError ? (
-        <p role="alert" className="rounded-xl border border-destructive/40 p-4 text-sm text-destructive">
+        <p role="alert" className="rounded-xl border border-danger/40 p-4 text-sm text-danger">
           Could not load integrations. Try again shortly.
         </p>
       ) : null}
@@ -182,7 +182,7 @@ export default function IntegrationsSettingsPage() {
                   <p className="mt-1 text-xs text-muted-foreground">Connected account: {connection.account_email}</p>
                 ) : null}
                 {accountMismatch ? (
-                  <p role="alert" className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                  <p role="alert" className="mt-1 text-xs text-warning">
                     This Google account does not match your sign-in email ({loginEmail}). It has been disconnected; connect the matching account.
                   </p>
                 ) : null}

@@ -23,20 +23,20 @@ export function PricingCard({ tier }: { tier: PricingTier }) {
       {...cardHover}
       className={`flex flex-col rounded-[1.75rem] border p-8 shadow-[0_24px_90px_hsl(var(--background)/0.22)] backdrop-blur-xl ${
         tier.highlighted
-          ? "border-foreground bg-foreground text-background"
+          ? "border-primary bg-primary text-primary-foreground"
           : "border-border/80 bg-card/70"
       }`}
     >
-      <div className={`text-sm font-medium ${tier.highlighted ? "text-background/65" : "text-muted-foreground"}`}>{tier.name}</div>
+      <div className={`text-sm font-medium ${tier.highlighted ? "text-primary-foreground/65" : "text-muted-foreground"}`}>{tier.name}</div>
       <div className="mt-4 flex items-baseline gap-1">
         <span className="text-5xl font-medium">{tier.price}</span>
-        {tier.cadence && <span className={`text-sm ${tier.highlighted ? "text-background/60" : "text-muted-foreground"}`}>/{tier.cadence}</span>}
+        {tier.cadence && <span className={`text-sm ${tier.highlighted ? "text-primary-foreground/60" : "text-muted-foreground"}`}>/{tier.cadence}</span>}
       </div>
-      <p className={`mt-4 text-sm ${tier.highlighted ? "text-background/70" : "text-muted-foreground"}`}>{tier.description}</p>
+      <p className={`mt-4 text-sm ${tier.highlighted ? "text-primary-foreground/70" : "text-muted-foreground"}`}>{tier.description}</p>
       <ul className="mt-8 space-y-3">
         {tier.features.map((f) => (
           <li key={f} className="flex items-start gap-2 text-sm">
-            <Check className={`mt-0.5 h-4 w-4 ${tier.highlighted ? "text-background" : "text-success"}`} />
+            <Check className={`mt-0.5 h-4 w-4 ${tier.highlighted ? "text-primary-foreground" : "text-success"}`} />
             <span>{f}</span>
           </li>
         ))}
@@ -46,7 +46,10 @@ export function PricingCard({ tier }: { tier: PricingTier }) {
           <LiquidGlassButton
             tone={tier.highlighted ? "primary" : "ghost"}
             size="md"
-            className="w-full"
+            // The highlighted card is already bg-primary — a same-tone button
+            // on top of it disappears with no visible edge. Invert instead:
+            // solid light button reads clearly against the green card.
+            className={tier.highlighted ? "w-full border-primary-foreground bg-primary-foreground text-primary hover:bg-primary-foreground/90" : "w-full"}
           >
             {tier.ctaLabel}
           </LiquidGlassButton>

@@ -10,9 +10,13 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive: "bg-danger text-primary-foreground hover:bg-danger/90",
-        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
+        // `accent` is an inverted-surface token (near-black on light, near-white
+        // on dark) meant for high-contrast CTA chips — using it as a hover state
+        // made every outline/ghost button flip to a jarring black/white block on
+        // hover instead of a subtle highlight.
+        outline: "border border-input bg-background hover:bg-muted hover:text-foreground",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+        ghost: "hover:bg-muted hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

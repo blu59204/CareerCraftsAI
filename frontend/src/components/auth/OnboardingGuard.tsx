@@ -102,7 +102,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex min-h-screen items-center justify-center px-6">
         {error ? (
-          <div className="max-w-sm rounded-2xl border border-destructive/30 bg-card p-5 text-center">
+          <div className="max-w-sm rounded-2xl border border-danger/30 bg-card p-5 text-center">
             <p className="text-sm font-medium text-foreground">{error.message}</p>
             {error.isAuth ? (
               <button

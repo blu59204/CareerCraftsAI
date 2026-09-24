@@ -50,6 +50,8 @@ const config: Config = {
         chrome: ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "SF Pro Display", "Segoe UI", "var(--font-dm-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
         display: ["var(--font-instrument-serif)", "Iowan Old Style", "Georgia", "serif"],
         hero: ["var(--font-playfair)", "Iowan Old Style", "Georgia", "serif"],
+        // Dashboard/software-UI headlines — never serif (design-taste-frontend rule).
+        command: ["var(--font-outfit)", "ui-sans-serif", "system-ui", "sans-serif"],
       },
     },
   },

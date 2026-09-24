@@ -81,7 +81,7 @@ interface SignInPageProps {
 // --- SUB-COMPONENTS ---
 
 const GlassInputWrapper = ({ children }: { children: React.ReactNode }) => (
-  <div className="rounded-2xl border border-border bg-foreground/5 backdrop-blur-sm transition-colors focus-within:border-violet-400/70 focus-within:bg-violet-500/10">
+  <div className="rounded-2xl border border-border bg-foreground/5 backdrop-blur-sm transition-colors focus-within:border-primary/70 focus-within:bg-primary/10">
     {children}
   </div>
 );
@@ -380,7 +380,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                       setMagicLinkMode(false);
                       setResetPasswordMode(true);
                     }}
-                    className="hover:underline text-violet-400 transition-colors"
+                    className="hover:underline text-primary transition-colors"
                   >
                     Reset password
                   </button>
@@ -481,7 +481,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               <button
                 type="button"
                 onClick={() => onModeSwitch?.(isSignUp ? "sign-in" : "sign-up")}
-                className="text-violet-400 hover:underline transition-colors"
+                className="text-primary hover:underline transition-colors"
               >
                 {isSignUp ? "Sign in" : "Create account"}
               </button>

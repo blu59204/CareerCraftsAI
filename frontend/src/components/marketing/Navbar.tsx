@@ -23,13 +23,18 @@ export function MarketingNavbar() {
 
   return (
     <header className="fixed left-0 right-0 top-4 z-40 px-4">
-      <div className="font-chrome mx-auto flex h-12 max-w-5xl items-center justify-between rounded-full border border-white/55 bg-white/[0.045] px-3 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_18px_54px_rgba(0,0,0,0.07)] backdrop-blur-[32px] backdrop-saturate-[210%] dark:border-white/18 dark:bg-black/[0.16] dark:text-[#E1E0CC] sm:px-4">
+      {/* Light-mode tint was 4.5% opacity vs dark mode's 16% — nearly 4x
+          weaker, so it had no visual weight of its own and washed out to
+          whatever was behind it (flat pale blue over a bright photo hero,
+          instead of reading as glass). Raised to hold together regardless
+          of what's underneath. */}
+      <div className="font-chrome mx-auto flex h-12 max-w-5xl items-center justify-between rounded-full border border-white/55 bg-white/40 px-3 text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_18px_54px_rgba(0,0,0,0.07)] backdrop-blur-[32px] backdrop-saturate-[210%] dark:border-white/18 dark:bg-black/[0.16] dark:text-[#E1E0CC] sm:px-4">
         <Link href="/" className="flex items-center gap-2 whitespace-nowrap text-sm font-semibold tracking-[-0.01em]">
           <span className="h-2 w-2 rounded-full bg-primary" />
           <span className="font-semibold sm:hidden">CareerCraft</span>
           <span className="hidden font-semibold sm:inline">CareerCraft AI</span>
         </Link>
-        <nav className="hidden items-center gap-1 rounded-full border border-white/45 bg-white/[0.075] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[26px] backdrop-saturate-[200%] md:flex dark:border-white/12 dark:bg-white/[0.07]">
+        <nav className="hidden items-center gap-1 rounded-full border border-white/45 bg-white/50 p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[26px] backdrop-saturate-[200%] md:flex dark:border-white/12 dark:bg-white/20">
           {NAV.map((n) => (
             <Link
               key={n.href}
@@ -52,7 +57,7 @@ export function MarketingNavbar() {
               </Link>
               <Link
                 href="/register"
-              className="inline-flex h-9 items-center rounded-full bg-foreground px-4 text-sm font-semibold text-background transition hover:scale-[1.02]"
+              className="inline-flex h-9 items-center justify-center rounded-full border border-white/65 bg-white/55 px-4 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_10px_30px_rgba(0,0,0,0.10)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:bg-white/65 dark:border-white/20 dark:bg-black/45 dark:text-[#E1E0CC] dark:hover:bg-black/55"
               >
                 Get Started
               </Link>
@@ -62,7 +67,7 @@ export function MarketingNavbar() {
             <>
               <Link
                 href="/dashboard"
-                className="inline-flex h-9 items-center rounded-full bg-foreground px-4 text-sm font-semibold text-background transition hover:scale-[1.02]"
+                className="inline-flex h-9 items-center justify-center rounded-full border border-white/65 bg-white/55 px-4 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_10px_30px_rgba(0,0,0,0.10)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:bg-white/65 dark:border-white/20 dark:bg-black/45 dark:text-[#E1E0CC] dark:hover:bg-black/55"
               >
                 Dashboard
               </Link>

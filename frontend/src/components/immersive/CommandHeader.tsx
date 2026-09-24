@@ -22,7 +22,7 @@ export function CommandHeader({ eyebrow, title, description, actions, className 
     >
       <div className="max-w-3xl">
         <p className="text-xs uppercase tracking-[0.32em] text-muted-foreground">{eyebrow}</p>
-        <h1 className="mt-3 font-display text-5xl leading-[0.9] tracking-tight text-foreground md:text-7xl">
+        <h1 className="mt-3 font-command text-4xl font-semibold leading-[0.95] tracking-tight text-foreground md:text-5xl">
           <BlurText text={title} />
         </h1>
         {description && (

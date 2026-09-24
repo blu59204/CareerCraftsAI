@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
-import { FileText, Wand2, CloudUpload, ChevronDown, Loader2, Copy, Download } from "lucide-react";
+import { FileText, Wand2, Loader2, Copy, Download } from "lucide-react";
 import { toast } from "sonner";
 import { fadeUp } from "@/lib/motion-variants";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
@@ -32,7 +32,7 @@ export default function CoverLetterPage() {
         run_id: string; status: string; content: string | null; tone: string | null; warnings?: string[];
       }>("/cover-letter/generate", {
         tone: toneMap[tone],
-        jd_text: jd || undefined,
+        jd_text: jd.trim(),
       });
       setWarnings(data.warnings ?? []);
       if (data.content) {
@@ -40,10 +40,17 @@ export default function CoverLetterPage() {
         await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
         toast.success("Cover letter generated");
       } else {
-        toast.error("No cover letter returned — check your AI model settings");
+        toast.error("We couldn’t generate a cover letter. Check your active AI model in Settings and try again.");
       }
-    } catch {
-      toast.error("Generation failed — check your AI model settings");
+    } catch (error: unknown) {
+      const apiError = error as { response?: { status?: number; data?: { detail?: string } } };
+      if (apiError.response?.status === 400) {
+        toast.error("Add a job description before generating your cover letter.");
+      } else if (apiError.response?.status === 504) {
+        toast.error("Cover letter generation timed out. Please try again.");
+      } else {
+        toast.error("We couldn’t generate a cover letter. Check your active AI model in Settings and try again.");
+      }
     } finally {
       setGenerating(false);
     }
@@ -81,12 +88,12 @@ export default function CoverLetterPage() {
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-primary" />
             <span className="font-medium text-sm">Job Description</span>
-            <span className="text-xs text-muted-foreground">(optional but recommended)</span>
+            <span className="text-xs text-muted-foreground">(required)</span>
           </div>
           <textarea
             value={jd}
             onChange={(e) => setJd(e.target.value)}
-            placeholder="Paste the job description here to get a tailored cover letter…"
+            placeholder="Paste the job description here…"
             className="h-32 w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           <div>
@@ -107,7 +114,7 @@ export default function CoverLetterPage() {
               ))}
             </div>
           </div>
-          <LiquidGlassButton tone="primary" size="sm" disabled={generating} onClick={generate}>
+          <LiquidGlassButton tone="primary" size="sm" disabled={generating || !jd.trim()} onClick={generate}>
             {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
             {generating ? "Generating…" : "Generate Cover Letter"}
           </LiquidGlassButton>
@@ -116,7 +123,7 @@ export default function CoverLetterPage() {
         {/* Output */}
         <div className="rounded-3xl border border-border bg-card/60 p-6">
           {warnings.length > 0 && (
-            <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+            <div className="mb-4 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning" role="alert">
               <p className="font-medium">Warnings</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
