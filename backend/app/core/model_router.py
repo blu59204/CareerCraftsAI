@@ -14,6 +14,14 @@ from app.services.llm_proxy_service import get_redaction_callback
 logger = logging.getLogger(__name__)
 LLM_TIMEOUT_SECONDS = 60
 LLM_MAX_RETRIES = 2
+# Left unset, ChatOpenAI omits max_tokens and the provider's own default
+# applies — too small once a reasoning model's hidden reasoning_content
+# shares the same budget as the visible answer, truncating structured JSON
+# output mid-string (observed: ResumeOutput validation failures on deepseek
+# reasoning models). Large enough for a full tailored resume/cover letter
+# plus reasoning overhead; per-user spend is still capped separately by
+# _check_budget_sync/TokenTrackingCallback.
+LLM_MAX_OUTPUT_TOKENS = 8192
 
 import threading
 
@@ -94,6 +102,7 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 api_key=api_key,
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
+                max_tokens=LLM_MAX_OUTPUT_TOKENS,
             )
         case "google":
             from langchain_google_genai import ChatGoogleGenerativeAI
@@ -121,6 +130,7 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 base_url="https://integrate.api.nvidia.com/v1",
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
+                max_tokens=LLM_MAX_OUTPUT_TOKENS,
             )
         case "deepseek":
             from langchain_openai import ChatOpenAI
@@ -131,6 +141,7 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 base_url="https://api.deepseek.com",
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
+                max_tokens=LLM_MAX_OUTPUT_TOKENS,
             )
         case "openrouter":
             # OpenRouter is OpenAI-compatible, so we use the ChatOpenAI
@@ -149,6 +160,7 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 },
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
+                max_tokens=LLM_MAX_OUTPUT_TOKENS,
             )
         case "opencode":
             # OpenCode Zen (https://opencode.ai/zen) is Anomaly's hosted
@@ -180,6 +192,7 @@ def _make_llm(model_settings, api_key: str) -> BaseChatModel:
                 },
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
+                max_tokens=LLM_MAX_OUTPUT_TOKENS,
             )
         case _:
             raise HTTPException(
