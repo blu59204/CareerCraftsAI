@@ -39,7 +39,7 @@ export function HeroA() {
           initial={{ opacity: 0, y: 16, filter: "blur(8px)" }}
           animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
           transition={{ duration: 0.5 }}
-          className="font-chrome mx-auto inline-flex w-fit items-center gap-2 rounded-full border border-white/65 bg-white/[0.07] px-4 py-2 text-xs font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.62),0_10px_30px_rgba(0,0,0,0.08)] backdrop-blur-[26px] backdrop-saturate-[190%] dark:border-white/20 dark:bg-black/[0.12] dark:text-[#E1E0CC]"
+          className="font-chrome mx-auto inline-flex w-fit items-center gap-2 rounded-full border border-white/65 bg-white/50 px-4 py-2 text-xs font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.62),0_10px_30px_rgba(0,0,0,0.08)] backdrop-blur-[26px] backdrop-saturate-[190%] dark:border-white/20 dark:bg-black/40 dark:text-[#E1E0CC]"
         >
           <Sparkles className="h-3.5 w-3.5 text-primary" />
           6 AI agents working for you 24/7
@@ -68,14 +68,14 @@ export function HeroA() {
           className="mt-10 flex items-center justify-center gap-3"
         >
           <Link href={signedIn ? "/dashboard" : "/register"}>
-            <span className="font-chrome group inline-flex h-12 items-center justify-center gap-2 rounded-full border border-white/65 bg-white/[0.07] px-7 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_14px_40px_rgba(0,0,0,0.14)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:gap-3 hover:bg-white/[0.12] dark:border-white/20 dark:bg-black/[0.16] dark:text-[#E1E0CC] dark:hover:bg-black/[0.24] sm:text-base">
+            <span className="font-chrome group inline-flex h-12 items-center justify-center gap-2 rounded-full border border-white/65 bg-white/55 px-7 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_14px_40px_rgba(0,0,0,0.14)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:gap-3 hover:bg-white/65 dark:border-white/20 dark:bg-black/45 dark:text-[#E1E0CC] dark:hover:bg-black/55 sm:text-base">
               <span className="sm:hidden">{signedIn ? "Open app" : "Start free"}</span>
               <span className="hidden sm:inline">{signedIn ? "Open command center" : "Start free"}</span>
               <ArrowUpRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
             </span>
           </Link>
           <Link href="/#demo">
-            <span className="font-chrome inline-flex h-12 items-center justify-center rounded-full border border-white/65 bg-white/[0.08] px-7 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_14px_40px_rgba(0,0,0,0.12)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:bg-white/[0.13] dark:border-white/20 dark:bg-white/[0.06] dark:text-[#E1E0CC] dark:hover:bg-white/[0.11] sm:text-base">
+            <span className="font-chrome inline-flex h-12 items-center justify-center rounded-full border border-white/65 bg-white/55 px-7 text-sm font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.58),0_14px_40px_rgba(0,0,0,0.12)] backdrop-blur-[26px] backdrop-saturate-[190%] transition-all duration-300 hover:bg-white/65 dark:border-white/20 dark:bg-white/20 dark:text-[#E1E0CC] dark:hover:bg-white/30 sm:text-base">
               <span className="sm:hidden">How it works</span>
               <span className="hidden sm:inline">See how it works</span>
             </span>
@@ -95,7 +95,7 @@ export function HeroA() {
           ].map(([Icon, label]) => {
             const TypedIcon = Icon as typeof CheckCircle2;
             return (
-              <span key={label as string} className="font-chrome inline-flex items-center gap-2 rounded-full border border-white/55 bg-white/[0.07] px-3 py-2 text-xs font-semibold text-foreground/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.52),0_8px_24px_rgba(0,0,0,0.10)] backdrop-blur-[24px] backdrop-saturate-[190%] dark:border-white/15 dark:bg-black/[0.12] dark:text-[#DEDBC8]/75">
+              <span key={label as string} className="font-chrome inline-flex items-center gap-2 rounded-full border border-white/55 bg-white/50 px-3 py-2 text-xs font-semibold text-foreground/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.52),0_8px_24px_rgba(0,0,0,0.10)] backdrop-blur-[24px] backdrop-saturate-[190%] dark:border-white/15 dark:bg-black/40 dark:text-[#DEDBC8]/75">
                 <TypedIcon className="h-3.5 w-3.5 text-primary dark:text-[#DEDBC8]" />
                 {label as string}
               </span>

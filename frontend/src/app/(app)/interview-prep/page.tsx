@@ -75,10 +75,13 @@ const DIFFICULTY_CONFIG: Record<Difficulty, { label: string; className: string }
   Hard: { label: "Hard", className: "bg-danger/15 text-danger border-danger/30" },
 };
 
+// Categorical tags (unlike difficulty, which is a real severity signal) —
+// the label text already differentiates them, so a single neutral treatment
+// keeps to one accent color instead of color-coding by category.
 const CATEGORY_CONFIG: Record<Exclude<Category, "All">, string> = {
-  Technical: "bg-primary/15 text-primary border-blue-500/30",
-  Behavioral: "bg-violet-500/15 text-violet-600 border-violet-500/30",
-  "Company-Specific": "bg-warning/15 text-warning border-warning/30",
+  Technical: "bg-muted text-muted-foreground border-border",
+  Behavioral: "bg-muted text-muted-foreground border-border",
+  "Company-Specific": "bg-muted text-muted-foreground border-border",
 };
 
 function ScoreBar({ label, value }: { label: string; value: number }) {
@@ -592,7 +595,7 @@ export default function InterviewPrepPage() {
           {/* RIGHT: prep assistant */}
           <div className="space-y-4">
             {warnings.length > 0 && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+              <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning" role="alert">
                 <p className="font-medium">Warnings</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}

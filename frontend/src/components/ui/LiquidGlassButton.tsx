@@ -9,7 +9,11 @@ const variants = cva(
   {
     variants: {
       tone: {
-        primary: "border-foreground bg-foreground text-background hover:opacity-90 dark:border-primary dark:bg-primary dark:text-primary-foreground",
+        // Previously light mode used bg-foreground (black) while dark mode
+        // correctly used bg-primary (green) — the same "primary" button
+        // rendered two different brand colors depending on theme. Made
+        // consistent across both.
+        primary: "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
         ghost: "border-border bg-card text-foreground hover:bg-muted",
         dark: "border-foreground bg-foreground text-background hover:opacity-90",
       },

@@ -61,7 +61,7 @@ export function BrowserWorkspace({ runId }: { runId: string }) {
         <h3 className="text-sm font-semibold">Isolated browser {frame?.interactive ? "· Your control" : "· Read-only review"}</h3>
         <Button size="sm" variant="outline" onClick={() => void refresh()}>Refresh</Button>
       </div>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {frame && <>
         <p className="break-all text-xs text-muted-foreground">{frame.url}</p>
         <button type="button" className="block w-full overflow-hidden rounded-lg border border-border"

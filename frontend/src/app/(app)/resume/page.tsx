@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Upload, Download, Target, FileText, Wand2, CloudUpload, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import { SuggestionsList } from "@/components/resume/SuggestionsList";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { apiClient } from "@/lib/api";
 import { getResumeInsightData } from "@/lib/resume-insights";
+import { takePendingJd } from "@/lib/job-handoff";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,7 +64,7 @@ interface AgentRun {
   id: string;
   agent_type: string;
   status: "pending" | "running" | "completed" | "failed" | "awaiting_approval";
-  created_at: string;
+  started_at: string;
   pdf_available?: boolean;
   output?: Record<string, unknown>;
 }
@@ -177,7 +178,7 @@ function CoverLetterGenerator({
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-primary" />
             <span className="font-medium text-sm">Job Description</span>
-            <span className="text-xs text-muted-foreground">(optional but recommended)</span>
+            <span className="text-xs text-muted-foreground">(required)</span>
           </div>
           <textarea
             value={jd}
@@ -208,7 +209,7 @@ function CoverLetterGenerator({
           <LiquidGlassButton
             tone="primary"
             size="sm"
-            disabled={generating}
+            disabled={generating || !jd.trim()}
             onClick={onGenerate}
           >
             {generating ? (
@@ -381,7 +382,7 @@ function HistoryTab({ agentRuns, isLoading, onDownload }: HistoryTabProps) {
     pending: "bg-muted text-muted-foreground",
     running: "bg-primary/10 text-primary",
     completed: "bg-success/15 text-success",
-    failed: "bg-destructive/15 text-destructive",
+    failed: "bg-danger/15 text-danger",
     awaiting_approval: "bg-warning/15 text-warning",
   };
 
@@ -395,7 +396,7 @@ function HistoryTab({ agentRuns, isLoading, onDownload }: HistoryTabProps) {
           <div className="space-y-1">
             <div className="text-sm font-medium">Resume Agent Run</div>
             <div className="text-xs text-muted-foreground">
-              {new Date(run.created_at).toLocaleString(undefined, {
+              {new Date(run.started_at).toLocaleString(undefined, {
                 dateStyle: "medium",
                 timeStyle: "short",
               })}
@@ -435,6 +436,18 @@ export default function ResumePage() {
   const [jdText, setJdText] = useState("");
   const [jdPanelOpen, setJdPanelOpen] = useState(true);
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Picks up a job description handed off from the Jobs page's "Tailor
+  // resume for this job" action, so the user lands here with it prefilled.
+  useEffect(() => {
+    const pending = takePendingJd();
+    if (pending?.jdText) {
+      setJdText(pending.jdText);
+      setJdPanelOpen(true);
+      setTab("builder");
+      toast.info(`Job description loaded from ${pending.role} at ${pending.company}`);
+    }
+  }, []);
 
   // Resume upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -508,10 +521,13 @@ export default function ResumePage() {
     mutationFn: async (jdInput: string) => {
       const jd = jdInput.trim();
       if (!jd) throw new Error("Paste the job description before tailoring your resume.");
+      // This call runs the LLM synchronously server-side (no SSE/queue) and
+      // routinely takes 30-60s+ — well past the client's default 30s timeout,
+      // which would abort a request the backend was about to complete.
       const { data } = await apiClient.post("/resume/optimize", {
         jd_text: jd,
         template: selectedTemplate,
-      });
+      }, { timeout: 120_000 });
       return data as OptimizeResult;
     },
     onSuccess: async (data) => {
@@ -652,7 +668,7 @@ export default function ResumePage() {
         tone: string | null;
       }>("/cover-letter/generate", {
         tone: toneMap[coverTone],
-        jd_text: coverJd || undefined,
+        jd_text: coverJd.trim(),
       });
 
       if (data.content) {
@@ -662,8 +678,15 @@ export default function ResumePage() {
       } else {
         toast.error("No cover letter content returned — check model settings");
       }
-    } catch {
-      toast.error("Cover letter generation failed — check model settings");
+    } catch (error: unknown) {
+      const apiError = error as { response?: { status?: number } };
+      if (apiError.response?.status === 400) {
+        toast.error("Add a job description before generating your cover letter.");
+      } else if (apiError.response?.status === 504) {
+        toast.error("Cover letter generation timed out. Please try again.");
+      } else {
+        toast.error("We couldn’t generate a cover letter. Check your active AI model in Settings and try again.");
+      }
     } finally {
       setGenerating(false);
     }
@@ -861,7 +884,7 @@ export default function ResumePage() {
                   </div>
                 )}
 
-                {docsError && <p role="alert" className="text-sm text-destructive">Could not load your resumes. Refresh the page and try again.</p>}
+                {docsError && <p role="alert" className="text-sm text-danger">Could not load your resumes. Refresh the page and try again.</p>}
                 {!primaryDoc && !docsLoading && <p className="text-sm text-muted-foreground">Upload a resume before analyzing or tailoring it.</p>}
 
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -892,7 +915,7 @@ export default function ResumePage() {
                   insightData.score != null ? <AtsScoreRing score={insightData.score} /> : <div className="py-10 text-sm text-muted-foreground">Upload a resume to calculate its score</div>
                 )}
                 {insightData.score != null && <div className="text-xs text-muted-foreground">{insightData.scoreLabel}{activeJobAts ? " for this job" : " · run Analyze match for job-specific results"}</div>}
-                {docsError && <div role="alert" className="mt-3 text-xs text-destructive">Could not load your resume.</div>}
+                {docsError && <div role="alert" className="mt-3 text-xs text-danger">Could not load your resume.</div>}
                 {primaryDoc && (
                   <div className="mt-3 text-xs text-muted-foreground truncate px-2">
                     {primaryDoc.filename}
@@ -919,7 +942,7 @@ export default function ResumePage() {
                 </div>
               )}
               {lastWarnings.length > 0 && (
-                <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+                <div className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning" role="alert">
                   <p className="font-medium">Warnings</p>
                   <ul className="mt-2 list-disc space-y-1 pl-5">
                     {lastWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}

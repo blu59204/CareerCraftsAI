@@ -57,6 +57,7 @@ class ApplicationResponse(BaseModel):
     role: str
     location: str | None
     job_url: str | None
+    jd_text: str | None = None
     match_score: int | None
     status: str
     applied_at: datetime | None

@@ -169,7 +169,8 @@ async def upload_document(
 
     # Trigger ATS scoring in background for resumes
     if doc_type == "resume" and raw_text:
-        asyncio.create_task(_score_resume_background(str(doc.id), str(current_user.id), raw_text))
+        from app.services.queue_service import _spawn_background
+        _spawn_background(_score_resume_background(str(doc.id), str(current_user.id), raw_text))
 
     return DocumentResponse(
         id=doc.id,

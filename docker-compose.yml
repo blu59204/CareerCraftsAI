@@ -154,6 +154,18 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    profiles: ["temporal"]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "127.0.0.1:8233:8080"
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
   temporal-worker:
     build: ./backend
     profiles: ["temporal-worker"]

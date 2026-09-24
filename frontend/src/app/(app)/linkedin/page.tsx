@@ -194,7 +194,7 @@ function StatusChip({ status }: { status: ProfileSection["status"] }) {
       </span>
     );
   if (status === "good")
-    return <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">Good</span>;
+    return <span className="rounded-full bg-success/10 px-2.5 py-0.5 text-xs font-medium text-success">Good</span>;
   return (
     <span className="flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
       <AlertCircle className="h-3 w-3" />Improve

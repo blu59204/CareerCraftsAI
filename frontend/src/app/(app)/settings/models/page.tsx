@@ -451,7 +451,7 @@ export default function SettingsModelsPage() {
                           <CheckCircle className="h-4 w-4 shrink-0 text-success mt-0.5" />
                         )}
                         {testResult === "fail" && (
-                          <XCircle className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
+                          <XCircle className="h-4 w-4 shrink-0 text-danger mt-0.5" />
                         )}
                       </div>
 
@@ -488,7 +488,7 @@ export default function SettingsModelsPage() {
                               deleteModel(m.id);
                             }
                           }}
-                          className="ml-auto flex items-center gap-1 rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-destructive hover:text-destructive transition-colors"
+                          className="ml-auto flex items-center gap-1 rounded-xl border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-danger hover:text-danger transition-colors"
                         >
                           <Trash2 className="h-3 w-3" />
                           Delete

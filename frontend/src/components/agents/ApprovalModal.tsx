@@ -26,7 +26,7 @@ function CharCount({ current, max }: { current: number; max: number }) {
   const pct = Math.min(100, (current / max) * 100);
   return (
     <span
-      className={`text-xs tabular-nums ${pct > 90 ? "text-red-400" : pct > 75 ? "text-yellow-400" : "text-muted-foreground"}`}
+      className={`text-xs tabular-nums ${pct > 90 ? "text-danger" : pct > 75 ? "text-warning" : "text-muted-foreground"}`}
     >
       {current}/{max}
     </span>
@@ -105,7 +105,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
         <div className="space-y-4 py-2">
 
           {warnings.length > 0 && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200" role="alert">
+            <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning" role="alert">
               <p className="font-medium">Warnings</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}

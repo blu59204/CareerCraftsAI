@@ -20,6 +20,7 @@ import {
   PenLine,
 } from "lucide-react";
 import { BrandLinkedin } from "@/components/icons/BrandIcons";
+import { X } from "lucide-react";
 
 const ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
@@ -38,20 +39,36 @@ const ITEMS = [
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  /** Mobile/tablet drawer visibility. Ignored at md+ where the sidebar is always shown. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
+export function AppSidebar({ mobileOpen = false, onMobileClose }: AppSidebarProps) {
   const pathname = usePathname();
-  return (
-    <aside className="hidden h-screen w-72 shrink-0 p-4 md:flex md:flex-col">
-      <div className="glass-panel flex min-h-full flex-col rounded-[32px] px-4 py-5">
-      <Link href="/" prefetch className="mb-8 flex items-center gap-3 px-2 text-base font-semibold">
-        <span className="glow-primary inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-          <Sparkles className="h-4 w-4" />
-        </span>
-        <span>
-          <span className="block font-display text-2xl leading-none">CareerCraft</span>
-          <span className="block text-[10px] uppercase tracking-[0.28em] text-muted-foreground">Command OS</span>
-        </span>
-      </Link>
+
+  const body = (
+    <div className="glass-panel flex min-h-full flex-col rounded-[32px] px-4 py-5">
+      <div className="mb-8 flex items-center justify-between px-2">
+        <Link href="/" prefetch className="flex items-center gap-3 text-base font-semibold">
+          <span className="glow-primary inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+            <Sparkles className="h-4 w-4" />
+          </span>
+          <span>
+            <span className="block font-command text-2xl font-semibold leading-none">CareerCraft</span>
+            <span className="block text-[10px] uppercase tracking-[0.28em] text-muted-foreground">Command OS</span>
+          </span>
+        </Link>
+        <button
+          type="button"
+          onClick={onMobileClose}
+          aria-label="Close navigation"
+          className="rounded-full p-1.5 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground md:hidden"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
       <nav className="flex-1 space-y-1">
         {ITEMS.map((item) => {
           const Icon = item.icon;
@@ -61,6 +78,7 @@ export function AppSidebar() {
               key={item.href}
               href={item.href}
               prefetch
+              onClick={onMobileClose}
               aria-current={active ? "page" : undefined}
               className={`group relative flex items-center gap-3 rounded-2xl px-3 py-2 text-sm transition-colors duration-150 ${
                 active
@@ -88,7 +106,25 @@ export function AppSidebar() {
         <div className="text-xs uppercase tracking-[0.24em] text-primary">Human gate</div>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">Applications and emails still wait for your approval.</p>
       </div>
-      </div>
-    </aside>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop/tablet-landscape: persistent sidebar */}
+      <aside className="hidden h-screen w-72 shrink-0 p-4 md:flex md:flex-col">{body}</aside>
+
+      {/* Mobile/tablet-portrait: slide-in drawer + backdrop */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={onMobileClose}
+            aria-hidden
+          />
+          <aside className="relative h-screen w-72 max-w-[85vw] p-4">{body}</aside>
+        </div>
+      )}
+    </>
   );
 }

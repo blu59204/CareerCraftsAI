@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DM_Sans, Instrument_Serif, Playfair_Display } from "next/font/google";
+import { DM_Sans, Instrument_Serif, Playfair_Display, Outfit } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Providers } from "@/components/layout/Providers";
 import "./globals.css";
@@ -28,6 +28,15 @@ const playfair = Playfair_Display({
   variable: "--font-playfair",
   display: "swap",
 });
+// In-app command-center headlines (CommandHeader, metrics, sidebar wordmark)
+// use this instead of the serif `display`/`hero` faces — serif reads as
+// editorial/marketing, not functional software UI, on those surfaces.
+const outfit = Outfit({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-outfit",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "CareerCraft AI — Apply smarter. Tailor faster.",
@@ -40,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // <SignUp/> or <UserButton/>), so no "Secured by Clerk" badge appears.
     // ClerkProvider only supplies session context to the headless hooks.
     <ClerkProvider signInUrl="/login" signUpUrl="/login">
-      <html lang="en" className={`${dmSans.variable} ${instrumentSerif.variable} ${playfair.variable}`} suppressHydrationWarning>
+      <html lang="en" className={`${dmSans.variable} ${instrumentSerif.variable} ${playfair.variable} ${outfit.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased">
           <Providers>{children}</Providers>
         </body>

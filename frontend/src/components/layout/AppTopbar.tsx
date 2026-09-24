@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Bell, Search, CheckCircle, Briefcase, Mail, Calendar } from "lucide-react";
+import { Bell, Search, CheckCircle, Briefcase, Mail, Calendar, Menu } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +42,7 @@ const NOTIFICATIONS = [
   },
 ];
 
-export function AppTopbar() {
+export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState(NOTIFICATIONS);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -65,6 +65,14 @@ export function AppTopbar() {
 
   return (
     <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-4 overflow-visible rounded-full px-4 md:mx-6">
+      <button
+        type="button"
+        onClick={onMenuClick}
+        aria-label="Open navigation"
+        className="rounded-full p-2 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground md:hidden"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
       <div className="flex max-w-md flex-1 items-center gap-2 rounded-full border border-white/45 bg-white/[0.10] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[20px] dark:border-white/10 dark:bg-black/[0.12]">
         <Search className="h-4 w-4 text-muted-foreground" />
         <input

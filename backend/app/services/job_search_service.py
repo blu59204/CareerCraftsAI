@@ -63,8 +63,17 @@ def _adapter_open_apis(query: str, location: str, max_results: int) -> list[dict
 def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _job_listings_to_dicts
     from app.services.job_platforms_service import scrape_jobs
+    # Left at its default, scrape_jobs hits all 8 JobSpy-supported sites
+    # (including glassdoor/zip_recruiter/bayt/naukri, which reliably 403/406
+    # from this network) sequentially inside PLATFORM_TIMEOUT_SEC — burning
+    # the whole budget on sources that can't succeed and discarding
+    # LinkedIn/Indeed's results when the overall call times out as a result.
+    # Restrict to the two sites that actually return results here.
     return _job_listings_to_dicts(
-        scrape_jobs(search_term=query, location=location, results_wanted=max_results, hours_old=72)
+        scrape_jobs(
+            search_term=query, location=location, results_wanted=max_results,
+            hours_old=72, platforms=["linkedin", "indeed"],
+        )
     )
 
 

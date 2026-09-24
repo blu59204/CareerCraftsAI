@@ -8,7 +8,7 @@ import type { ApplicationItem, AppStage } from "@/components/apps/ApplicationKan
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
-import { Download, ExternalLink, Share2, Sparkles, Clock } from "lucide-react";
+import { Download, ExternalLink, Share2, Inbox } from "lucide-react";
 import { apiClient } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -16,7 +16,7 @@ type AgentRun = {
   id: string;
   agent_type: string;
   status: string;
-  created_at: string;
+  started_at: string;
   output_summary?: string;
 };
 
@@ -26,6 +26,7 @@ export default function ApplicationsPage() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverStage, setDragOverStage] = useState<AppStage | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   const { data: items = [], isLoading } = useQuery<ApplicationItem[]>({
@@ -85,12 +86,7 @@ export default function ApplicationsPage() {
       }
     }
     setDraggedId(null);
-  };
-
-  const getAISuggestion = (stage: AppStage) => {
-    if (stage === "interview") return { label: "Launch Interview Coach", agent: "interview_prep" };
-    if (stage === "offer") return { label: "Launch Salary Agent", agent: "salary_negotiation" };
-    return null;
+    setDragOverStage(null);
   };
 
   const exportToCSV = () => {
@@ -112,7 +108,7 @@ export default function ApplicationsPage() {
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-6">
       <motion.div variants={fadeUp}>
         <CommandHeader
-          eyebrow="Taskora SaaS Hero"
+          eyebrow="Application Pipeline"
           title="Application Tracker"
           description="Track saved, applied, interview, offer, and rejected roles with a clean dashboard workflow."
           actions={
@@ -161,34 +157,49 @@ export default function ApplicationsPage() {
               return (
                 <div
                   key={stage}
-                  onDragOver={handleDragOver}
+                  onDragOver={(e) => {
+                    handleDragOver(e);
+                    setDragOverStage(stage);
+                  }}
+                  onDragLeave={() => setDragOverStage((s) => (s === stage ? null : s))}
                   onDrop={(e) => handleDrop(e, stage)}
-                  className="rounded-3xl border border-border bg-card/40 p-4 transition-colors data-[drag-over]:border-primary"
+                  className={`rounded-3xl border p-4 transition-colors ${
+                    dragOverStage === stage ? "border-primary bg-primary/5" : "border-border bg-card/40"
+                  }`}
                 >
                   <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
                     <span>{label}</span>
                     <span>{colItems.length}</span>
                   </div>
-                  <div className="space-y-3">
-                    {colItems.map((it) => (
-                      <motion.div
-                        key={it.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e as unknown as DragEvent, it.id)}
-                        onClick={() => setSelectedId(it.id)}
-                        className={`w-full cursor-grab rounded-2xl border border-border bg-card p-3 text-left active:cursor-grabbing ${draggedId === it.id ? "opacity-50" : ""}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">{it.company}</span>
-                          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">{it.matchPercent}%</span>
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">{it.role}</div>
-                        {it.nextFollowUp && (
-                          <div className="mt-2 text-[10px] text-warning">Follow up {it.nextFollowUp}</div>
-                        )}
-                      </motion.div>
-                    ))}
-                  </div>
+                  {colItems.length === 0 ? (
+                    <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border/60 py-8 text-center">
+                      <Inbox className="h-4 w-4 text-muted-foreground/50" />
+                      <p className="text-[11px] text-muted-foreground/70">
+                        {stage === "saved" ? "Save a role from Jobs to see it here" : "Drag a card here"}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {colItems.map((it) => (
+                        <motion.div
+                          key={it.id}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e as unknown as DragEvent, it.id)}
+                          onClick={() => setSelectedId(it.id)}
+                          className={`w-full cursor-grab rounded-2xl border border-border bg-card p-3 text-left active:cursor-grabbing ${draggedId === it.id ? "opacity-50" : ""}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium">{it.company}</span>
+                            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">{it.matchPercent}%</span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">{it.role}</div>
+                          {it.nextFollowUp && (
+                            <div className="mt-2 text-[10px] text-warning">Follow up {it.nextFollowUp}</div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -196,72 +207,11 @@ export default function ApplicationsPage() {
         )}
       </motion.div>
 
-      {/* Detail Panel */}
-      {selected && (
-        <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/40 p-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-xl font-medium">{selected.role}</h2>
-              <p className="text-sm text-muted-foreground">{selected.company} · {selected.matchPercent}% match</p>
-            </div>
-            <LiquidGlassButton tone="ghost" size="sm" onClick={() => setSelectedId(null)}>
-              Close
-            </LiquidGlassButton>
-          </div>
-
-          <div className="mt-6 grid gap-6 md:grid-cols-2">
-            {/* AI Next-Action Suggestions */}
-            {getAISuggestion(selected.stage) && (
-              <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-primary">
-                  <Sparkles className="h-4 w-4" /> AI Suggestion
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {selected.stage === "interview" && "Prepare for your interview with AI-powered mock sessions and feedback."}
-                  {selected.stage === "offer" && "Negotiate your offer with data-driven salary insights and talking points."}
-                </p>
-                <LiquidGlassButton
-                  tone="primary"
-                  size="sm"
-                  className="mt-3"
-                  onClick={() => toast.info(`Launching ${getAISuggestion(selected.stage)!.label}…`)}
-                >
-                  <Sparkles className="h-3 w-3" /> {getAISuggestion(selected.stage)!.label}
-                </LiquidGlassButton>
-              </div>
-            )}
-
-            {/* Activity Timeline */}
-            <div className="rounded-2xl border border-border p-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Clock className="h-4 w-4 text-muted-foreground" /> Activity Timeline
-              </div>
-              {activityRuns.length === 0 ? (
-                <p className="mt-3 text-xs text-muted-foreground">No agent activity yet for this application.</p>
-              ) : (
-                <div className="mt-3 space-y-3">
-                  {activityRuns.map((run) => (
-                    <div key={run.id} className="flex gap-3 text-xs">
-                      <div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                      <div>
-                        <span className="font-medium capitalize">{run.agent_type.replace("_", " ")}</span>
-                        <span className="ml-2 text-muted-foreground">{run.status}</span>
-                        {run.output_summary && <p className="mt-0.5 text-muted-foreground">{run.output_summary}</p>}
-                        <p className="mt-0.5 text-muted-foreground/60">{new Date(run.created_at).toLocaleString()}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </motion.div>
-      )}
-
       <ApplicationDrawer
         application={selected}
         open={selected !== null}
         onClose={() => setSelectedId(null)}
+        activityRuns={activityRuns}
       />
     </motion.div>
   );

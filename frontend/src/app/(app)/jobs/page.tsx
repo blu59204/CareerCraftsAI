@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
+import { setPendingJd } from "@/lib/job-handoff";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
@@ -55,6 +57,7 @@ interface SavedJob {
   role: string;
   location: string | null;
   job_url: string | null;
+  jd_text: string | null;
   match_score: number | null;
   status: string;
   applied_at: string | null;
@@ -567,7 +570,15 @@ function MatchBar({ percent }: { percent: number | null }) {
   );
 }
 
-function JobCard({ job, onPrepareApply }: { job: SavedJob; onPrepareApply: (job: SavedJob) => void }) {
+function JobCard({
+  job,
+  onPrepareApply,
+  onOpenDetails,
+}: {
+  job: SavedJob;
+  onPrepareApply: (job: SavedJob) => void;
+  onOpenDetails: (job: SavedJob) => void;
+}) {
   const domain = job.job_url
     ? (() => {
         try {
@@ -581,7 +592,13 @@ function JobCard({ job, onPrepareApply }: { job: SavedJob; onPrepareApply: (job:
   return (
     <motion.div
       variants={fadeUp}
-      className="rounded-3xl border border-border bg-card/60 p-6 hover:shadow-md transition-shadow flex flex-col gap-3"
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenDetails(job)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onOpenDetails(job);
+      }}
+      className="cursor-pointer rounded-3xl border border-border bg-card/60 p-6 hover:shadow-md transition-shadow flex flex-col gap-3"
     >
       <div>
         <div className="text-sm font-semibold text-muted-foreground">{job.company}</div>
@@ -617,7 +634,7 @@ function JobCard({ job, onPrepareApply }: { job: SavedJob; onPrepareApply: (job:
       <MatchBar percent={job.match_score} />
 
       <div className="mt-auto flex gap-2 pt-1">
-        <LiquidGlassButton tone="ghost" size="sm" className="flex-1 gap-1.5">
+        <LiquidGlassButton tone="ghost" size="sm" className="flex-1 gap-1.5" onClick={(e) => e.stopPropagation()}>
           <Bookmark className="h-3.5 w-3.5" />
           Save
         </LiquidGlassButton>
@@ -626,7 +643,8 @@ function JobCard({ job, onPrepareApply }: { job: SavedJob; onPrepareApply: (job:
             tone="primary"
             size="sm"
             className="flex-1 gap-1.5"
-            onClick={() => {
+            onClick={(e) => {
+              e.stopPropagation();
               // Open the real job posting so the user can apply directly...
               if (job.job_url) window.open(job.job_url, "_blank", "noopener,noreferrer");
               // ...and kick off the human-in-the-loop auto-apply prep.
@@ -647,8 +665,113 @@ function JobCard({ job, onPrepareApply }: { job: SavedJob; onPrepareApply: (job:
   );
 }
 
+function JobDetailModal({ job, onClose }: { job: SavedJob; onClose: () => void }) {
+  const router = useRouter();
+
+  const domain = job.job_url
+    ? (() => {
+        try {
+          return new URL(job.job_url).hostname.replace("www.", "");
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+
+  const handleTailorResume = () => {
+    if (!job.jd_text) {
+      toast.error("No job description saved for this listing yet.");
+      return;
+    }
+    setPendingJd({ jdText: job.jd_text, role: job.role, company: job.company });
+    router.push("/resume");
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 16, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.98 }}
+        transition={{ duration: 0.2 }}
+        onClick={(e) => e.stopPropagation()}
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-border bg-card p-6"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-sm font-semibold text-muted-foreground">{job.company}</div>
+            <div className="mt-0.5 text-xl font-medium leading-snug">{job.role}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {job.location && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
+                  <MapPin className="h-3 w-3" />
+                  {job.location}
+                </span>
+              )}
+              {domain && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
+                  <ExternalLink className="h-3 w-3" />
+                  {domain}
+                </span>
+              )}
+              {job.match_score != null && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-medium text-primary">
+                  {job.match_score}% match
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="mt-5 flex-1 overflow-y-auto rounded-2xl border border-border/60 bg-background/40 p-4">
+          {job.jd_text ? (
+            <p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">{job.jd_text}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No description was saved for this listing. Open the original posting to read the full details.
+            </p>
+          )}
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <LiquidGlassButton tone="primary" size="md" className="flex-1 gap-1.5" onClick={handleTailorResume} disabled={!job.jd_text}>
+            <Zap className="h-4 w-4" />
+            Tailor resume for this job
+          </LiquidGlassButton>
+          {job.job_url && (
+            <LiquidGlassButton
+              tone="ghost"
+              size="md"
+              className="gap-1.5"
+              onClick={() => window.open(job.job_url!, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink className="h-4 w-4" />
+              Open original posting
+            </LiquidGlassButton>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 export default function JobsPage() {
   const qc = useQueryClient();
+  const [detailJob, setDetailJob] = useState<SavedJob | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["Full-time"]),
   );
@@ -939,6 +1062,7 @@ export default function JobsPage() {
   }
 
   return (
+    <>
     <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
       <CommandHeader
         eyebrow="Grow AI Talent Platform"
@@ -1164,7 +1288,12 @@ export default function JobsPage() {
           className="grid grid-cols-1 gap-4 lg:grid-cols-2"
         >
           {jobs.map((job) => (
-            <JobCard key={job.id} job={job} onPrepareApply={(selected) => prepareApplyMutation.mutate(selected)} />
+            <JobCard
+              key={job.id}
+              job={job}
+              onPrepareApply={(selected) => prepareApplyMutation.mutate(selected)}
+              onOpenDetails={setDetailJob}
+            />
           ))}
         </motion.div>
       )}
@@ -1190,5 +1319,9 @@ export default function JobsPage() {
         )}
       </motion.div>
     </motion.div>
+    <AnimatePresence>
+      {detailJob && <JobDetailModal job={detailJob} onClose={() => setDetailJob(null)} />}
+    </AnimatePresence>
+    </>
   );
 }

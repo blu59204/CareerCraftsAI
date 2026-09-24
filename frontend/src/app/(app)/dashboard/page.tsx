@@ -18,9 +18,17 @@ import { JobMatchCard } from "@/components/ui/JobMatchCard";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { ApprovalCard } from "@/components/agents/ApprovalCard";
 import { Button } from "@/components/ui/button";
+import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient } from "@/lib/api";
 import { useAgentStore } from "@/store/agentStore";
 import { useRouter } from "next/navigation";
+
+function timeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
 
 interface DashboardStats {
   applications_count: number;
@@ -41,6 +49,7 @@ interface JobApplication {
   role: string;
   match_score: number;
   location: string;
+  job_url: string | null;
 }
 
 interface PendingApproval {
@@ -69,7 +78,7 @@ function MetricCard({
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-border bg-card p-5">
+      <div className="flex-1 p-5">
         <div className="h-3 w-16 rounded bg-muted animate-pulse" />
         <div className="mt-3 h-8 w-12 rounded bg-muted animate-pulse" />
       </div>
@@ -77,20 +86,20 @@ function MetricCard({
   }
 
   return (
-    <div className="group rounded-xl border border-border bg-card p-5 transition-colors hover:border-primary/20">
+    <div className="group flex-1 p-5 transition-colors hover:bg-muted/40">
       <div className="flex items-center justify-between">
         <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
         <span className="text-muted-foreground/60">{icon}</span>
       </div>
       <div className="mt-2 flex items-baseline gap-2">
-        <p className="text-3xl font-semibold tracking-tight text-foreground">{value}</p>
+        <p className="font-command text-3xl font-semibold tracking-tight text-foreground">{value}</p>
         {trend && trend !== "neutral" && (
-          <span className={`text-xs ${trend === "up" ? "text-green-400" : "text-red-400"}`}>
+          <span className={`text-xs ${trend === "up" ? "text-success" : "text-danger"}`}>
             {trend === "up" ? "↑" : "↓"}
           </span>
         )}
       </div>
-      <div className="mt-3 h-1.5 w-full rounded-full bg-muted">
+      <div className="mt-3 h-1 w-full rounded-full bg-muted">
         <div
           className="h-full rounded-full bg-primary transition-all duration-700"
           style={{ width: `${pct}%` }}
@@ -176,14 +185,27 @@ export default function DashboardPage() {
       className="space-y-6"
     >
       {/* Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-4xl font-semibold tracking-tight text-foreground">Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-          </p>
-        </div>
-      </div>
+      <CommandHeader
+        eyebrow="Command Center"
+        title={`${timeGreeting()}.`}
+        description={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {quickActions.map((action) => (
+              <Button
+                key={action.label}
+                variant="outline"
+                size="sm"
+                onClick={() => triggerAgent(action.taskType, action.ctx)}
+                className="gap-2 text-xs"
+              >
+                <action.icon className="h-3.5 w-3.5" />
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        }
+      />
 
       {/* Pending Approvals — HIGH VISIBILITY */}
       {pendingApprovals.length > 0 && (
@@ -218,24 +240,8 @@ export default function DashboardPage() {
         </motion.div>
       )}
 
-      {/* Quick Actions */}
-      <div className="flex flex-wrap gap-2">
-        {quickActions.map((action) => (
-          <Button
-            key={action.label}
-            variant="outline"
-            size="sm"
-            onClick={() => triggerAgent(action.taskType, action.ctx)}
-            className="gap-2 text-xs"
-          >
-            <action.icon className="h-3.5 w-3.5" />
-            {action.label}
-          </Button>
-        ))}
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* KPI strip — one bordered surface, internal dividers instead of four separate cards */}
+      <div className="flex flex-col divide-y divide-border rounded-2xl border border-border bg-card sm:flex-row sm:divide-x sm:divide-y-0">
         <MetricCard
           label="Applications"
           value={isLoading ? "—" : (stats?.applications_count ?? 0)}
@@ -267,24 +273,29 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Resume + Job Matches */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <ResumeScoreCard
-          atsScore={resumeData?.ats_score ?? 0}
-          keywordCoverage={resumeData?.keyword_score ?? 0}
-          missingKeywords={
-            resumeData?.missing_keywords ?? ["TypeScript", "AWS", "Docker", "CI/CD"]
-          }
-        />
-        <JobMatchCard
-          jobs={jobMatches.map((j) => ({
-            id: j.id,
-            company: j.company,
-            role: j.role,
-            matchPercent: j.match_score,
-            location: j.location,
-          }))}
-        />
+      {/* Resume + Job Matches — asymmetric 2:1 anchor tile instead of an even split */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <ResumeScoreCard
+            atsScore={resumeData?.ats_score ?? 0}
+            keywordCoverage={resumeData?.keyword_score ?? 0}
+            missingKeywords={
+              resumeData?.missing_keywords ?? ["TypeScript", "AWS", "Docker", "CI/CD"]
+            }
+          />
+        </div>
+        <div className="lg:col-span-1">
+          <JobMatchCard
+            jobs={jobMatches.map((j) => ({
+              id: j.id,
+              company: j.company,
+              role: j.role,
+              matchPercent: j.match_score,
+              location: j.location,
+              jobUrl: j.job_url,
+            }))}
+          />
+        </div>
       </div>
 
       {/* Recent Agent Runs */}

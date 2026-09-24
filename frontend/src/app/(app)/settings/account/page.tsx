@@ -66,6 +66,41 @@ function getInitials(fullName: string | null | undefined): string {
     .toUpperCase();
 }
 
+// Preset monogram colors — like Google/Slack's default-avatar color picker.
+// Rendered locally via canvas rather than fetched from a hosted avatar
+// service, so there's no external URL that can go stale or 404.
+const AVATAR_PRESETS = [
+  "#1F6F4A", // primary emerald
+  "#2563EB",
+  "#7C3AED",
+  "#DB2777",
+  "#DC2626",
+  "#D97706",
+  "#0891B2",
+  "#4B5563",
+];
+
+async function renderPresetAvatar(color: string, initials: string): Promise<Blob> {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas not supported");
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "600 96px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(initials || "?", size / 2, size / 2 + 6);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("toBlob failed"))), "image/png");
+  });
+}
+
 export default function AccountSettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -80,6 +115,7 @@ export default function AccountSettingsPage() {
   const [weeklyDigest, setWeeklyDigest] = useState(false);
   const [twoFactor, setTwoFactor] = useState(false);
   const [avatarSaving, setAvatarSaving] = useState(false);
+  const [presetPickerOpen, setPresetPickerOpen] = useState(false);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -118,6 +154,39 @@ export default function AccountSettingsPage() {
     externalAccounts.some((account) => account.provider === provider);
   const hasLinkedIn = hasProvider("linkedin_oidc") || hasProvider("linkedin");
   const hasGithub = hasProvider("github");
+  const googleAccount = externalAccounts.find((account) => account.provider === "google");
+  const googlePhotoUrl = googleAccount?.imageUrl || null;
+  const usingGooglePhoto = !!googlePhotoUrl && authUser?.imageUrl === googlePhotoUrl;
+
+  const applyPreset = async (color: string) => {
+    if (!authUser) return;
+    setAvatarSaving(true);
+    try {
+      const blob = await renderPresetAvatar(color, getInitials(user?.full_name || authUser?.fullName));
+      await authUser.setProfileImage({ file: blob });
+      toast.success("Profile photo updated");
+      setPresetPickerOpen(false);
+    } catch {
+      toast.error("Could not update profile photo.");
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
+
+  const applyGooglePhoto = async () => {
+    if (!authUser || !googlePhotoUrl) return;
+    setAvatarSaving(true);
+    try {
+      const res = await fetch(googlePhotoUrl);
+      const blob = await res.blob();
+      await authUser.setProfileImage({ file: blob });
+      toast.success("Using your Google profile photo");
+    } catch {
+      toast.error("Could not fetch your Google photo.");
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
 
   const handleManageAuth = () => {
     toast.info("Sign in with the provider from the login page to link it to this account.");
@@ -224,9 +293,9 @@ export default function AccountSettingsPage() {
                     Verified sign-in email
                   </span>
                 ) : null}
-                <div className="mt-2">
+                <div className="mt-2 flex flex-wrap gap-2">
                   <label className="inline-flex cursor-pointer items-center rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted focus-within:ring-2 focus-within:ring-ring">
-                    {avatarSaving ? "Uploading photo…" : "Change profile photo"}
+                    {avatarSaving ? "Uploading photo…" : "Upload photo"}
                     <input
                       type="file"
                       accept="image/*"
@@ -253,7 +322,42 @@ export default function AccountSettingsPage() {
                       }}
                     />
                   </label>
+                  <button
+                    type="button"
+                    disabled={avatarSaving}
+                    onClick={() => setPresetPickerOpen((v) => !v)}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-60"
+                  >
+                    Choose a preset
+                  </button>
+                  {googlePhotoUrl && !usingGooglePhoto && (
+                    <button
+                      type="button"
+                      disabled={avatarSaving}
+                      onClick={applyGooglePhoto}
+                      className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-60"
+                    >
+                      Use Google photo
+                    </button>
+                  )}
                 </div>
+                {presetPickerOpen && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {AVATAR_PRESETS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        disabled={avatarSaving}
+                        onClick={() => applyPreset(color)}
+                        aria-label={`Use ${color} preset avatar`}
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold text-white ring-2 ring-transparent transition hover:ring-ring disabled:opacity-60"
+                        style={{ backgroundColor: color }}
+                      >
+                        {getInitials(user?.full_name || authUser?.fullName)}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="space-y-4">

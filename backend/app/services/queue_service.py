@@ -13,6 +13,19 @@ except ImportError:
     _BULLMQ_AVAILABLE = False
     logger.warning("bullmq not installed — job-search queue disabled")
 
+# asyncio only holds a weak reference to a task's future — an
+# asyncio.create_task() result that isn't stored anywhere is eligible for
+# GC mid-run, which silently abandons the inline dev-fallback job search
+# (agent_runs row stuck at "running" forever, no error). Keep a strong ref
+# here until the task finishes.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 def _bullmq_connection() -> dict:
     from urllib.parse import urlparse
@@ -218,7 +231,7 @@ async def enqueue_job_search(
     if not _BULLMQ_AVAILABLE:
         if settings.APP_ENV == "development":
             logger.info("Dev mode: running job-search inline (no BullMQ)")
-            asyncio.create_task(_run_job_search_inline(
+            _spawn_background(_run_job_search_inline(
                 user_id, run_id, search_query, location, max_results,
                 live_browser, work_mode, platforms, remote,
             ))
@@ -228,11 +241,17 @@ async def enqueue_job_search(
     try:
         queue = _BullQueue("agent-queue", {"connection": _bullmq_connection()})
         try:
+            # BullMQ's jobId is unique forever, not just while active — once
+            # a job with this id has completed, re-adding the same id is a
+            # silent no-op (the new agent_runs row never gets processed and
+            # stays "running" forever). job_id here is a content hash shared
+            # by every identical repeat search, so it can't double as the
+            # BullMQ id; scope the actual queue id to this attempt instead.
             await queue.add(
                 "job-search",
                 payload,
                 {
-                    "jobId": job_id,
+                    "jobId": f"{job_id}:{run_id}",
                     "attempts": 3,
                     "backoff": {"type": "exponential", "delay": 5000},
                 },
@@ -242,7 +261,7 @@ async def enqueue_job_search(
     except Exception as exc:
         if settings.APP_ENV == "development":
             logger.warning("Dev mode: Redis unavailable (%s) — running job-search inline", exc)
-            asyncio.create_task(_run_job_search_inline(
+            _spawn_background(_run_job_search_inline(
                 user_id, run_id, search_query, location, max_results,
                 live_browser, work_mode, platforms, remote,
             ))

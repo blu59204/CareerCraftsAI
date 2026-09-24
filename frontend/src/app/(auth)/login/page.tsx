@@ -17,26 +17,26 @@ import {
 const TESTIMONIALS: Testimonial[] = [
   {
     avatarSrc: "https://randomuser.me/api/portraits/women/57.jpg",
-    name: "Sarah Chen",
-    handle: "@sarahdigital",
+    name: "Priya Raghunathan",
+    handle: "@priyabuilds",
     text: "Tailored applications in minutes. Landed three interviews the first week.",
   },
   {
     avatarSrc: "https://randomuser.me/api/portraits/men/64.jpg",
-    name: "Marcus Johnson",
-    handle: "@marcustech",
-    text: "The agent rewrote my resume per role. Match scores jumped from 60 to 90.",
+    name: "Tomás Almeida",
+    handle: "@tomas.codes",
+    text: "The agent rewrote my resume per role. Match scores jumped from 58 to 91.",
   },
   {
     avatarSrc: "https://randomuser.me/api/portraits/men/32.jpg",
-    name: "David Martinez",
-    handle: "@davidcreates",
+    name: "Kwame Osei",
+    handle: "@kwame_dev",
     text: "Follow-up emails on autopilot. CareerCraft saved me hours every day.",
   },
 ];
 
-const HERO_IMAGE =
-  "https://images.unsplash.com/photo-1642615835477-d303d7dc9ee9?w=2160&q=80";
+// Unsplash source URLs rot/404 over time — picsum's seeded endpoint is stable.
+const HERO_IMAGE = "https://picsum.photos/seed/careercraft-login/2160/2700";
 
 const DEFAULT_DESTINATION = "/dashboard";
 

@@ -39,7 +39,7 @@ export default function SSOCallbackPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background">
         <div className="max-w-md space-y-4 text-center">
-          <div className="text-destructive text-lg font-semibold">Authentication Error</div>
+          <div className="text-danger text-lg font-semibold">Authentication Error</div>
           <p className="text-sm text-muted-foreground">{error}</p>
           <a
             href="/login"

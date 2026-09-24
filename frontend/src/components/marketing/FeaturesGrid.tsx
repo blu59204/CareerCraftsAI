@@ -10,31 +10,38 @@ const FEATURES = [
     icon: <FileText className="h-5 w-5" />,
     title: "Resume Intelligence",
     description: "ATS scoring, keyword coverage, and bullet rewrites tailored to each job.",
+    // Anchor tile: tall, spans two rows.
+    span: "md:col-span-2 lg:col-span-2 lg:row-span-2",
   },
   {
     icon: <Bot className="h-5 w-5" />,
     title: "AI Orchestrator",
     description: "A supervisor agent routes tasks across Resume, Job, Email, and Follow-up agents.",
+    span: "md:col-span-2 lg:col-span-2",
   },
   {
     icon: <Target className="h-5 w-5" />,
     title: "Job Match",
     description: "Semantic search over LinkedIn, Naukri, and curated boards with match percentages.",
+    span: "lg:col-span-1",
   },
   {
     icon: <KanbanSquare className="h-5 w-5" />,
     title: "Application Tracker",
     description: "Kanban board for every stage: Saved → Applied → Interview → Offer.",
+    span: "lg:col-span-1",
   },
   {
     icon: <Mail className="h-5 w-5" />,
     title: "Email Drafts",
     description: "Gmail-connected agent drafts personalized follow-ups — you stay in control.",
+    span: "md:col-span-2 lg:col-span-2",
   },
   {
     icon: <KeyRound className="h-5 w-5" />,
     title: "BYOK Models",
     description: "OpenAI, Anthropic, Gemini, Groq, Ollama. Your keys, your costs, your privacy.",
+    span: "md:col-span-2 lg:col-span-2",
   },
 ];
 
@@ -74,10 +81,12 @@ export function FeaturesGrid() {
           whileInView="show"
           viewport={{ once: true, margin: "-60px" }}
           variants={stagger}
-          className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
+          className="grid gap-4 md:grid-cols-4 lg:grid-cols-4"
         >
-          {FEATURES.map((f) => (
-            <FeatureCard key={f.title} {...f} />
+          {FEATURES.map(({ span, ...f }) => (
+            <motion.div key={f.title} variants={fadeUp} className={span}>
+              <FeatureCard {...f} className="h-full" />
+            </motion.div>
           ))}
         </motion.div>
       </div>

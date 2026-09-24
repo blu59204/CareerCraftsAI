@@ -8,8 +8,12 @@ http {
   limit_req_zone $binary_remote_addr zone=api:10m rate=60r/m;
   limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
 
-  upstream frontend { server careercraftai-frontend:3000; }
-  upstream backend  { server careercraftai-backend:8000; }
+  # Compose only ever aliases the plain service name (or the full
+  # "<project>-<service>-1" container name) on its network — never
+  # "<project>-<service>" without an instance number. That hostname was
+  # never resolvable, so nginx has been crash-looping on every restart.
+  upstream frontend { server frontend:3000; }
+  upstream backend  { server backend:8000; }
 
   # Local-only HTTP server. Production adds an HTTPS block above this
   # that returns 301 to https://$host$request_uri and listens on 443 with
