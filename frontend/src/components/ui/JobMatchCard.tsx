@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { cardHover } from "@/lib/motion-variants";
 
 type Props = {
-  jobs: { id: string; company: string; role: string; matchPercent: number; location?: string }[];
+  jobs: { id: string; company: string; role: string; matchPercent: number; location?: string; jobUrl?: string | null }[];
 };
 
 export function JobMatchCard({ jobs }: Props) {
@@ -19,20 +19,34 @@ export function JobMatchCard({ jobs }: Props) {
       </div>
       {jobs.length > 0 ? (
         <ul className="mt-4 space-y-3">
-          {jobs.slice(0, 4).map((j) => (
-            <li key={j.id} className="flex items-center justify-between rounded-2xl border border-border/60 bg-card/40 px-4 py-3">
-              <div>
-                <div className="text-sm font-medium">{j.role}</div>
-                <div className="text-xs text-muted-foreground">
-                  {j.company}
-                  {j.location ? ` · ${j.location}` : ""}
+          {jobs.slice(0, 4).map((j) => {
+            const content = (
+              <>
+                <div>
+                  <div className="text-sm font-medium">{j.role}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {j.company}
+                    {j.location ? ` · ${j.location}` : ""}
+                  </div>
                 </div>
-              </div>
-              <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
-                {j.matchPercent}%
-              </span>
-            </li>
-          ))}
+                <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
+                  {j.matchPercent}%
+                </span>
+              </>
+            );
+            const itemClass = "flex items-center justify-between rounded-2xl border border-border/60 bg-card/40 px-4 py-3 transition-colors hover:bg-card/70";
+            return j.jobUrl ? (
+              <li key={j.id}>
+                <a href={j.jobUrl} target="_blank" rel="noopener noreferrer" className={itemClass}>
+                  {content}
+                </a>
+              </li>
+            ) : (
+              <li key={j.id} className={itemClass}>
+                {content}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
