@@ -101,10 +101,10 @@ export default function PrivacyPage() {
             .
           </p>
           <p className="mt-3 text-sm">
-            {/* TODO: replace [Company legal name] and the street-level address with the real
-                registered business name and full address before relying on this page in
-                production. */}
-            [Company legal name], Bangalore, Karnataka, India.
+            {/* Not yet a registered company/LLP — operating as an unregistered business under
+                the trade name "CareerCraft". TODO: add the street-level address, and once
+                incorporated, replace this with the registered entity name and CIN/LLPIN. */}
+            CareerCraft, Bangalore, Karnataka, India.
           </p>
         </section>
       </div>
