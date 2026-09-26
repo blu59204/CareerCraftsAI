@@ -256,7 +256,7 @@ NLSearch delegates to JobSearch, so it dies too.
 **Immediate (production, one command):**
 
 ```bash
-docker compose -f deploy/oracle/compose.yml up -d --force-recreate scheduler temporal-worker
+docker compose -f deploy/oracle-vm/compose.yml up -d --force-recreate scheduler temporal-worker
 ```
 
 `--force-recreate`, **not** `docker restart` — restart reuses the baked env.
