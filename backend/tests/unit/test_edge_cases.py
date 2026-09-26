@@ -206,9 +206,7 @@ class TestJWTEdgeCases:
     def test_valid_token_is_accepted(self, monkeypatch):
         """Baseline: a Clerk RS256 token from the configured issuer must pass."""
         monkeypatch.setattr(settings, "CLERK_ISSUER", "https://real.clerk.accounts.dev")
-        token = _make_jwt(
-            iss="https://real.clerk.accounts.dev", email="user@example.com"
-        )
+        token = _make_jwt(iss="https://real.clerk.accounts.dev", email="user@example.com")
         with _jwks_serving():
             payload = verify_supabase_jwt(token)
         assert payload["sub"] == _CLERK_SUB
@@ -274,9 +272,7 @@ class TestJWTEdgeCases:
         header = _b64(b'{"alg":"HS256","typ":"JWT"}')
         body = _b64(b'{"sub":"' + _CLERK_SUB.encode() + b'","exp":9999999999}')
         signing_input = f"{header}.{body}".encode()
-        sig = hmac.new(
-            _public_pem(_SIGNING_KEY), signing_input, hashlib.sha256
-        ).digest()
+        sig = hmac.new(_public_pem(_SIGNING_KEY), signing_input, hashlib.sha256).digest()
         forged = f"{header}.{body}.{_b64(sig)}"
 
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
@@ -288,12 +284,8 @@ class TestJWTEdgeCases:
         from fastapi import HTTPException
 
         # Build a token without signature using the 'none' algorithm trick
-        header = base64.urlsafe_b64encode(
-            b'{"alg":"none","typ":"JWT"}'
-        ).rstrip(b"=").decode()
-        body = base64.urlsafe_b64encode(
-            b'{"sub":"uid","exp":9999999999}'
-        ).rstrip(b"=").decode()
+        header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+        body = base64.urlsafe_b64encode(b'{"sub":"uid","exp":9999999999}').rstrip(b"=").decode()
         unsigned_token = f"{header}.{body}."
 
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
@@ -361,7 +353,15 @@ class TestConcurrency:
     def test_all_valid_providers_construct_model_settings(self):
         """Every Literal provider value must be constructable — ensures enum list
         is not accidentally out of sync with the schema."""
-        for provider in ("anthropic", "openai", "google", "ollama", "nvidia_nim", "openrouter", "opencode"):
+        for provider in (
+            "anthropic",
+            "openai",
+            "google",
+            "ollama",
+            "nvidia_nim",
+            "openrouter",
+            "opencode",
+        ):
             obj = ModelSettingsCreate(
                 provider=provider,
                 api_key="sk-test-key",
@@ -472,7 +472,7 @@ class TestAPISecurityEdgeCases:
         """Padding a SQL injection to > 200 chars must trigger schema rejection."""
         from app.api.v1.jobs import JobSearchRequest
 
-        injection = ("' OR '1'='1'; DROP TABLE users; --" + " " * 180)
+        injection = "' OR '1'='1'; DROP TABLE users; --" + " " * 180
         assert len(injection) > 200
         with pytest.raises(ValidationError):
             JobSearchRequest(search_query=injection)
@@ -522,54 +522,75 @@ class TestAPISecurityEdgeCases:
 
 
 class TestInternalSecretEnforcement:
-    """The _verify_secret helper in internal.py uses hmac.compare_digest.
-    Wrong / empty secrets must always return 403, never 200 or 500."""
+    """The _verify_secret helper in internal.py uses hmac.compare_digest and
+    checks only INTERNAL_SECRET — never APP_SECRET_KEY, which also encrypts
+    every stored provider credential and must not double as a network-facing
+    bearer token (see pentest finding vuln-0002). Wrong / empty / unconfigured
+    secrets must always return 403, never 200 or 500."""
 
-    def test_correct_secret_is_accepted(self):
-        """_verify_secret must not raise when the correct secret is provided."""
+    def test_correct_secret_is_accepted(self, monkeypatch):
+        """_verify_secret must not raise when the configured INTERNAL_SECRET is sent."""
         from app.api.internal import _verify_secret
 
-        # Should return None without raising
-        result = _verify_secret(x_internal_secret=settings.APP_SECRET_KEY)
+        monkeypatch.setattr(settings, "INTERNAL_SECRET", "a-dedicated-internal-secret")
+        result = _verify_secret(x_internal_secret="a-dedicated-internal-secret")
         assert result is None
 
-    def test_wrong_secret_raises_403(self):
+    def test_app_secret_key_is_no_longer_accepted(self, monkeypatch):
+        """The APP_SECRET_KEY fallback is gone: presenting it must be rejected
+        even while a real INTERNAL_SECRET is configured."""
+        from fastapi import HTTPException
+
+        from app.api.internal import _verify_secret
+
+        monkeypatch.setattr(settings, "INTERNAL_SECRET", "a-dedicated-internal-secret")
+        with pytest.raises(HTTPException) as exc_info:
+            _verify_secret(x_internal_secret=settings.APP_SECRET_KEY)
+        assert exc_info.value.status_code == 403
+
+    def test_unset_internal_secret_fails_closed(self, monkeypatch):
+        """An unconfigured INTERNAL_SECRET must reject every caller — including
+        an empty header, which hmac.compare_digest("", "") would otherwise accept."""
+        from fastapi import HTTPException
+
+        from app.api.internal import _verify_secret
+
+        monkeypatch.setattr(settings, "INTERNAL_SECRET", "")
+        with pytest.raises(HTTPException) as exc_info:
+            _verify_secret(x_internal_secret="")
+        assert exc_info.value.status_code == 403
+
+    def test_wrong_secret_raises_403(self, monkeypatch):
         """A wrong secret must raise HTTPException with status 403."""
         from fastapi import HTTPException
 
         from app.api.internal import _verify_secret
 
+        monkeypatch.setattr(settings, "INTERNAL_SECRET", "a-dedicated-internal-secret")
         with pytest.raises(HTTPException) as exc_info:
             _verify_secret(x_internal_secret="totally-wrong-secret")
         assert exc_info.value.status_code == 403
 
-    def test_empty_secret_raises_403(self):
-        """An empty secret must not match any non-empty key."""
-        from fastapi import HTTPException
-
-        from app.api.internal import _verify_secret
-
-        with pytest.raises(HTTPException) as exc_info:
-            _verify_secret(x_internal_secret="")
-        assert exc_info.value.status_code == 403
-
-    def test_prefix_of_secret_raises_403(self):
+    def test_prefix_of_secret_raises_403(self, monkeypatch):
         """Sending only the first half of the secret must fail — no prefix match."""
         from fastapi import HTTPException
 
         from app.api.internal import _verify_secret
 
-        half = settings.APP_SECRET_KEY[: len(settings.APP_SECRET_KEY) // 2]
+        secret = "a-dedicated-internal-secret"
+        monkeypatch.setattr(settings, "INTERNAL_SECRET", secret)
         with pytest.raises(HTTPException) as exc_info:
-            _verify_secret(x_internal_secret=half)
+            _verify_secret(x_internal_secret=secret[: len(secret) // 2])
         assert exc_info.value.status_code == 403
 
-    def test_secret_with_extra_char_raises_403(self):
+    def test_secret_with_extra_char_raises_403(self, monkeypatch):
         """Appending a character to the correct secret must also fail."""
         from fastapi import HTTPException
 
         from app.api.internal import _verify_secret
 
+        secret = "a-dedicated-internal-secret"
+        monkeypatch.setattr(settings, "INTERNAL_SECRET", secret)
         with pytest.raises(HTTPException) as exc_info:
-            _verify_secret(x_internal_secret=settings.APP_SECRET_KEY + "X")
+            _verify_secret(x_internal_secret=secret + "X")
         assert exc_info.value.status_code == 403

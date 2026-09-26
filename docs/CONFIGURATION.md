@@ -61,6 +61,7 @@ Browser Use needs its own LLM to reason about the page.  Use a local Ollama mode
 |---|---|---|
 | `BROWSER_USE_OLLAMA_MODEL` | `llama3.2` | Ollama model for browser navigation steps (cost-efficient). |
 | `BROWSER_USE_OLLAMA_URL` | *(empty)* | Ollama base URL, e.g. `http://localhost:11434`. Leave empty to use user's BYOK model instead. |
+| `OLLAMA_ALLOWED_HOSTS` | `localhost:11434,127.0.0.1:11434,[::1]:11434` | Comma-separated `host:port` allow-list for the **user-facing** `ollama` BYOK provider's base URL (Settings → AI Models). The server fetches this URL directly, so anything outside this list — including loopback/link-local/metadata addresses reached via a different host string — is rejected at input (CWE-918 hardening). Add your own Ollama host here if it doesn't run on localhost. |
 
 ### Session limits
 

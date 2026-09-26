@@ -15,8 +15,12 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 
 def _verify_secret(x_internal_secret: str = Header(...)) -> None:
-    internal_secret = settings.INTERNAL_SECRET or settings.APP_SECRET_KEY
-    if not hmac.compare_digest(x_internal_secret, internal_secret):
+    # Fail closed: no fallback to APP_SECRET_KEY (that value also encrypts
+    # every stored provider credential, so it must never double as a
+    # network-facing bearer token), and an unset INTERNAL_SECRET must not
+    # match an empty header — hmac.compare_digest("", "") is True.
+    internal_secret = settings.INTERNAL_SECRET
+    if not internal_secret or not hmac.compare_digest(x_internal_secret, internal_secret):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
