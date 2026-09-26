@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, deploy/scalable-sandbox-workflows]
+    branches: [master, main, develop, deploy/scalable-sandbox-workflows]
   pull_request:
-    branches: [main, develop, deploy/scalable-sandbox-workflows]
+    branches: [master, main, develop, deploy/scalable-sandbox-workflows]
   # Protected live-smoke entry point (see the live-smoke job below): only a
   # manual trigger runs it, never a push or pull_request, since it needs live
   # deployed-environment secrets and may exercise a real account.
