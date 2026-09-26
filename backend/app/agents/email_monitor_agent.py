@@ -8,8 +8,9 @@ Reads emails from hiring platforms (LinkedIn, Naukri, Indeed, etc.) and:
 4. Detects recruiter messages → flags for user attention
 5. Triggers follow-up scheduling when appropriate
 
-Runs as a scheduled task (via BullMQ or direct invocation).
+Runs on demand as an agent run (AgentRunWorkflow).
 """
+
 import logging
 import re
 import uuid
@@ -158,9 +159,13 @@ def _classify_notification(notif: dict, llm) -> dict | None:
 
     # Fall back to LLM for ambiguous cases
     try:
-        response = llm.invoke([HumanMessage(
-            content=_CLASSIFY_PROMPT.format(sender=sender, subject=subject, body=body)
-        )])
+        response = llm.invoke(
+            [
+                HumanMessage(
+                    content=_CLASSIFY_PROMPT.format(sender=sender, subject=subject, body=body)
+                )
+            ]
+        )
         text = response.content.strip()
         parts = text.split("|")
         category = parts[0].strip()
@@ -214,9 +219,8 @@ async def run_email_monitor(user_id: str) -> dict:
     )
 
     import asyncio
-    result_state = await asyncio.get_running_loop().run_in_executor(
-        None, email_monitor_node, state
-    )
+
+    result_state = await asyncio.get_running_loop().run_in_executor(None, email_monitor_node, state)
 
     if result_state["status"] != "completed":
         return {"status": "failed", "error": result_state.get("error")}

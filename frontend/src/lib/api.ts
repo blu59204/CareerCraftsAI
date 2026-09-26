@@ -33,9 +33,12 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     // Surface which request failed and the backend's reason (helps diagnose 400/422/500).
+    // Only unexpected server failures are errors; a 4xx or a 503 ("feature
+    // disabled", "workflow engine unavailable") is an answer the UI handles.
     if (typeof window !== "undefined" && error?.response) {
       const { config, response } = error;
-      console.error(
+      const log = response.status >= 500 && response.status !== 503 ? console.error : console.warn;
+      log(
         `API ${config?.method?.toUpperCase?.() ?? "?"} ${config?.url ?? "?"} -> ${response.status}`,
         response.data?.detail ?? response.data,
       );

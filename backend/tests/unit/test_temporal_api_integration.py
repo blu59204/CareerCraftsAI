@@ -1,10 +1,7 @@
 """API-layer Temporal integration: starting AutoApplyWorkflow from
-prepare-apply, and routing approve/cancel through workflow signals for a
-Temporal-backed run. The ownership/job-url/resume checks that run before
-either branch are already covered by test_fixes_e2e.py's
-test_prepare_application_apply_* tests (unchanged — TEMPORAL_ENABLED
-defaults to False, so those tests already prove the BullMQ fallback path
-keeps working untouched).
+prepare-apply, and routing approve/cancel through workflow signals for an
+application run. The ownership/job-url/resume checks that run before are
+covered by test_fixes_e2e.py's test_prepare_application_apply_* tests.
 """
 
 import uuid
@@ -16,7 +13,8 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 
 
 @pytest.mark.asyncio
-async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypatch):
+@pytest.mark.parametrize("mode", ["extension", "server_browser"])
+async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypatch, mode):
     from app.api.v1 import jobs as jobs_module
     from app.workflows.auto_apply import auto_apply_workflow_id
 
@@ -26,24 +24,37 @@ async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypa
     fake_client = MagicMock()
     fake_client.start_workflow = AsyncMock(return_value=MagicMock())
     monkeypatch.setattr(
-        "app.core.temporal_client.get_temporal_client",
+        "app.workflows.starters.get_temporal_client",
         AsyncMock(return_value=fake_client),
     )
+    monkeypatch.setattr(jobs_module.settings, "APPLY_EXECUTION_MODE", mode)
     monkeypatch.setattr(jobs_module, "_await_temporal_run_id", AsyncMock(return_value="run-123"))
 
     result = await jobs_module._start_temporal_auto_apply(user_id, application_id)
 
     expected_id = auto_apply_workflow_id(str(user_id), str(application_id))
     fake_client.start_workflow.assert_awaited_once()
+    intent = fake_client.start_workflow.call_args.args[1]
     call_kwargs = fake_client.start_workflow.call_args.kwargs
     assert call_kwargs["id"] == expected_id
-    assert call_kwargs["execution_timeout"] == timedelta(
-        seconds=jobs_module.settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S
+    assert intent.mode == mode
+    # The run id is chosen up front, so the response never carries the run
+    # of a previous attempt for the same application.
+    assert intent.run_id
+    jobs_module._await_temporal_run_id.assert_awaited_once_with(
+        user_id, application_id, intent.run_id
+    )
+    # The extension flow waits on a person and bounds itself with timers.
+    assert call_kwargs["execution_timeout"] == (
+        None
+        if mode == "extension"
+        else timedelta(seconds=jobs_module.settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S)
     )
     assert result == {
         "run_id": "run-123",
         "workflow_id": expected_id,
         "engine": "temporal",
+        "mode": mode,
         "status": "queued",
     }
 
@@ -69,7 +80,7 @@ async def test_start_temporal_auto_apply_reuses_existing_workflow_on_repeated_st
         )
     )
     monkeypatch.setattr(
-        "app.core.temporal_client.get_temporal_client",
+        "app.workflows.starters.get_temporal_client",
         AsyncMock(return_value=fake_client),
     )
     monkeypatch.setattr(
@@ -80,6 +91,21 @@ async def test_start_temporal_auto_apply_reuses_existing_workflow_on_repeated_st
 
     assert result["status"] == "already_running"
     assert result["run_id"] == "run-existing"
+
+
+@pytest.mark.asyncio
+async def test_start_temporal_auto_apply_answers_503_when_temporal_is_down(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.v1 import jobs as jobs_module
+
+    monkeypatch.setattr(
+        "app.workflows.starters.get_temporal_client",
+        AsyncMock(side_effect=RuntimeError("connection refused")),
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await jobs_module._start_temporal_auto_apply(uuid.uuid4(), uuid.uuid4())
+    assert exc_info.value.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -103,7 +129,7 @@ async def test_approve_signals_temporal_workflow_for_browser_review():
     import app.api.v1.agents as agents_module
 
     with patch(
-        "app.core.temporal_client.get_temporal_client",
+        "app.workflows.starters.get_temporal_client",
         AsyncMock(return_value=fake_client),
     ):
         await agents_module._signal_temporal_approval(run, "browser_review", {})
@@ -135,7 +161,7 @@ async def test_approve_signals_answers_for_application_answers_required():
     import app.api.v1.agents as agents_module
 
     with patch(
-        "app.core.temporal_client.get_temporal_client",
+        "app.workflows.starters.get_temporal_client",
         AsyncMock(return_value=fake_client),
     ):
         await agents_module._signal_temporal_approval(

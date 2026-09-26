@@ -4,7 +4,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.event_bus import stream_events, publish
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
+from temporalio.service import RPCError, RPCStatusCode
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ VALID_TASKS = {
     "auto_apply",
 }
 
+
 class RunRequest(BaseModel):
     task_type: str
     context: dict = Field(default_factory=dict)
@@ -49,6 +51,7 @@ class RunRequest(BaseModel):
     @classmethod
     def reject_secrets(cls, value: dict) -> dict:
         from app.services.workflow_service import validate_context
+
         validate_context(value)
         return value
 
@@ -75,11 +78,14 @@ async def run_agent(
 
     # Serialize admission for this user across all API replicas.
     await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
-    # Concurrent run check
+    # Concurrent run check. Applications waiting in the user's own browser
+    # (extension mode) use no server capacity and can wait for hours, so
+    # they never block other agents.
     active_runs = await db.execute(
         select(AgentRun.id).where(
             AgentRun.user_id == current_user.id,
             AgentRun.status.in_(["queued", "running"]),
+            AgentRun.agent_type != "apply_prepare",
         )
     )
     active_run_ids = [str(run_id) for run_id in active_runs.scalars().all()]
@@ -103,10 +109,19 @@ async def run_agent(
         input={"task_type": payload.task_type, "context": payload.context},
     )
     db.add(agent_run)
-    from app.services.workflow_service import add_task
-    await db.flush()
-    add_task(db, agent_run, "execute", {})
+    # Committed before the workflow starts: its first activity reads the row.
     await db.commit()
+
+    from app.workflows.starters import WorkflowUnavailable, start_agent_run
+
+    try:
+        await start_agent_run(run_id, current_user.id)
+    except WorkflowUnavailable as exc:
+        agent_run.status = "failed"
+        agent_run.output = {"error": "Agent service unavailable — try again shortly"}
+        agent_run.completed_at = datetime.now(UTC)
+        await db.commit()
+        raise HTTPException(status_code=503, detail="Agent service unavailable") from exc
 
     stream_url = str(request.base_url).rstrip("/") + f"/api/v1/agents/{run_id}/stream"
     return {"run_id": run_id, "status": "queued", "stream_url": stream_url}
@@ -170,10 +185,12 @@ async def approve_or_cancel(
         raise HTTPException(status_code=400, detail="Invalid run_id")
 
     res = await db.execute(
-        select(AgentRun).where(
+        select(AgentRun)
+        .where(
             AgentRun.id == run_uuid,
             AgentRun.user_id == current_user.id,
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     run = res.scalar_one_or_none()
     if not run:
@@ -181,18 +198,26 @@ async def approve_or_cancel(
     if run.status != "awaiting_approval":
         raise HTTPException(status_code=400, detail=f"Run is {run.status}, not awaiting_approval")
 
+    # Application runs carry their AutoApplyWorkflow id; every other run is
+    # driven by AgentRunWorkflow "agent-run/{run_id}".
+    apply_workflow_id = (run.input or {}).get("workflow_id")
+    from app.workflows.starters import WorkflowUnavailable, signal_agent_decision
+
     if not payload.approved:
-        if (run.input or {}).get("engine") == "temporal":
-            workflow_id = (run.input or {}).get("workflow_id")
-            if workflow_id:
-                from app.core.temporal_client import get_temporal_client
+        try:
+            if apply_workflow_id:
                 from app.workflows.auto_apply import AutoApplyWorkflow
-                client = await get_temporal_client()
-                handle = client.get_workflow_handle_for(AutoApplyWorkflow.run, workflow_id=workflow_id)
+                from app.workflows.starters import auto_apply_handle
+
+                handle = await auto_apply_handle(apply_workflow_id)
                 await handle.signal(AutoApplyWorkflow.cancel)
+            else:
+                await _signal_if_running(run_id, current_user.id)
+        except WorkflowUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Agent service unavailable") from exc
         run.status = "failed"
         run.output = {"error": "Action cancelled by user"}
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         await db.commit()
         publish(run_id, "error", {"error": "Action cancelled by user"})
         return {"status": "cancelled"}
@@ -206,37 +231,67 @@ async def approve_or_cancel(
         redis_action_type = payload.action_type or ""
 
     from app.services.workflow_service import validate_approval
+
     try:
         continuation = validate_approval(pending, payload.edits or {})
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # A run started via prepare_application_apply's TEMPORAL_ENABLED branch
-    # carries this marker (set by the reserve_application_attempt activity)
-    # — its approval must go through the workflow's signals, never a BullMQ
-    # continuation task, since no WorkflowTask row drives it.
-    if (run.input or {}).get("engine") == "temporal":
-        await _signal_temporal_approval(run, redis_action_type, continuation)
-    else:
-        from app.services.workflow_service import add_task
-        add_task(db, run, "continue", continuation)
+    # Queued before signalling, so the continuation activity can claim it and
+    # a double-click finds the run no longer awaiting approval.
     run.status = "queued"
     run.completed_at = None
     await db.commit()
+    try:
+        if apply_workflow_id:
+            await _signal_temporal_approval(run, redis_action_type, continuation)
+        else:
+            await signal_agent_decision(
+                run_id,
+                current_user.id,
+                True,
+                redis_action_type,
+                continuation,
+            )
+    except (WorkflowUnavailable, RPCError) as exc:
+        logger.error("Approval signal failed for run %s: %s", run_id, exc)
+        run.status = "awaiting_approval"
+        await db.commit()
+        raise HTTPException(
+            status_code=503, detail="Agent service unavailable — try again"
+        ) from exc
     publish(run_id, "approved", {"action_type": redis_action_type})
     return {"status": "queued", "action_type": redis_action_type}
 
 
+async def _signal_if_running(run_id: str, user_id) -> None:
+    """Cancel a run's workflow if it has one; inline-route runs do not."""
+    from app.workflows.agent_run import AgentRunWorkflow, ApprovalDecision, agent_run_workflow_id
+    from app.workflows.starters import _client
+
+    client = await _client()
+    handle = client.get_workflow_handle_for(
+        AgentRunWorkflow.run,
+        workflow_id=agent_run_workflow_id(run_id),
+    )
+    try:
+        await handle.signal(AgentRunWorkflow.decide, ApprovalDecision(approved=False))
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.NOT_FOUND:
+            raise
+
+
 async def _signal_temporal_approval(run: AgentRun, action_type: str, continuation: dict) -> None:
-    from app.core.temporal_client import get_temporal_client
     from app.workflows.auto_apply import AutoApplyWorkflow
+    from app.workflows.starters import auto_apply_handle
 
     workflow_id = (run.input or {}).get("workflow_id")
     if not workflow_id:
-        raise HTTPException(status_code=500, detail="Temporal-backed run is missing its workflow_id")
+        raise HTTPException(
+            status_code=500, detail="Temporal-backed run is missing its workflow_id"
+        )
 
-    client = await get_temporal_client()
-    handle = client.get_workflow_handle_for(AutoApplyWorkflow.run, workflow_id=workflow_id)
+    handle = await auto_apply_handle(workflow_id)
     if action_type == "application_answers_required":
         await handle.signal(AutoApplyWorkflow.provide_answers, continuation.get("answers") or {})
     else:
@@ -275,11 +330,21 @@ async def list_runs(
     q = q.order_by(AgentRun.started_at.desc()).offset(offset).limit(min(limit, 100))
     result = await db.execute(q)
     runs = result.scalars().all()
-    return {"runs": [{"id": str(r.id), "agent_type": r.agent_type, "status": r.status,
-                      "started_at": r.started_at.isoformat() if r.started_at else None,
-                      "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-                      "tokens_used": r.tokens_used, "output": r.output, "duration_ms": r.duration_ms}
-                     for r in runs]}
+    return {
+        "runs": [
+            {
+                "id": str(r.id),
+                "agent_type": r.agent_type,
+                "status": r.status,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "tokens_used": r.tokens_used,
+                "output": r.output,
+                "duration_ms": r.duration_ms,
+            }
+            for r in runs
+        ]
+    }
 
 
 @router.get("/runs/{run_id}")

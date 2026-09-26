@@ -31,6 +31,7 @@ import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
+import { wakeExtension } from "@/lib/extension-bridge";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
 import { useAgentStore } from "@/store/agentStore";
 
@@ -770,6 +771,7 @@ function JobDetailModal({ job, onClose }: { job: SavedJob; onClose: () => void }
 }
 
 export default function JobsPage() {
+  const router = useRouter();
   const qc = useQueryClient();
   const [detailJob, setDetailJob] = useState<SavedJob | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
@@ -955,7 +957,7 @@ export default function JobsPage() {
         const { data } = await apiClient.get("/agents/runs?limit=20");
         const run = ((Array.isArray(data) ? data : data.runs ?? []) as Array<{
           id: string;
-          status: "completed" | "failed" | "running" | "awaiting_approval";
+          status: "queued" | "completed" | "failed" | "running" | "awaiting_approval" | "cancelled" | "expired";
           output?: Record<string, unknown> | null;
         }>)
           .find((item) => item.id === activeRunId);
@@ -964,6 +966,8 @@ export default function JobsPage() {
           run &&
           (run.status === "completed" ||
             run.status === "failed" ||
+            run.status === "cancelled" ||
+            run.status === "expired" ||
             run.status === "awaiting_approval")
         ) {
           if (run.status === "awaiting_approval") {
@@ -992,9 +996,20 @@ export default function JobsPage() {
         initRun(runId);
         setActiveRunId(runId);
       }
-      toast.success("Live apply prep started — review before submitting");
+      if (res.data?.mode === "extension") {
+        // Nudge the extension so the job opens now instead of on its next check.
+        wakeExtension();
+        toast.success("Opening the job in your browser — review it there and press Submit in the CareerCraft panel");
+      } else {
+        toast.success("Live apply prep started — review before submitting");
+      }
     },
-    onError: () => toast.error("Could not start live apply prep"),
+    onError: (error) => {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      toast.error(getApiErrorMessage(error, "Could not start the application"), {
+        action: status === 409 ? { label: "Settings", onClick: () => router.push("/settings/integrations") } : undefined,
+      });
+    },
   });
 
   const avgMatch =
@@ -1069,7 +1084,7 @@ export default function JobsPage() {
         title="Find your next role."
         description="Resume is analyzed first. Confirm fresher/years, target roles, location, and work mode before agents search."
         actions={
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <LiquidGlassButton
             tone={showFilters ? "primary" : "ghost"}
             size="sm"

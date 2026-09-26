@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="premium-command-bg relative min-h-screen overflow-x-hidden bg-background text-foreground">
+    <div className="premium-command-bg relative min-h-screen overflow-x-clip bg-background text-foreground">
       <ConstellationBackground />
       <ActiveRunStream />
       <div className="app-surface flex min-h-screen">

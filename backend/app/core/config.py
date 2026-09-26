@@ -3,6 +3,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -111,25 +113,26 @@ class Settings(BaseSettings):
     AGENT_DEFAULT_TIMEOUT_S: int = 60
     AGENT_MAX_CONCURRENT_PER_USER: int = 2
     AGENT_THINKING_BUDGET_TOKENS: int = 8000
-    WORKFLOW_WORKER_CONCURRENCY: int = Field(default=2, ge=1, le=32)
-    WORKFLOW_QUEUE: str = "workflow-queue"
-    WORKFLOW_DISPATCH_INTERVAL_S: int = Field(default=3, ge=1, le=60)
+    # Upper bound for one agent execution activity (LLM calls + tools).
     WORKFLOW_TASK_TIMEOUT_S: int = Field(default=300, ge=30, le=1800)
+    # How long a run may sit in awaiting_approval before it expires.
+    AGENT_APPROVAL_TIMEOUT_S: int = Field(default=48 * 3600, ge=60, le=14 * 24 * 3600)
 
-    # ── Temporal (feature-flagged durable workflows) ────────────────────
-    # Disabled by default: BullMQ + the WorkflowTask/AgentRun ledger above
-    # remain the execution path for every user until this is explicitly
-    # turned on and proven. Never remove that path while this exists.
-    TEMPORAL_ENABLED: bool = False
+    # ── Temporal (the execution engine for every agent run and schedule) ─
+    # The API starts and signals workflows; `python -m app.temporal_worker`
+    # executes them. Nothing runs unless at least one worker polls
+    # TEMPORAL_TASK_QUEUE.
     TEMPORAL_ADDRESS: str = "localhost:7233"
     TEMPORAL_NAMESPACE: str = "default"
-    TEMPORAL_TASK_QUEUE: str = "careercraft-auto-apply"
+    TEMPORAL_TASK_QUEUE: str = "careercraft"
     # TLS/mTLS — required for Temporal Cloud, optional for a self-hosted dev
     # server. Leave all three empty to connect in plaintext (local dev only).
     TEMPORAL_TLS_CERT_PATH: str = ""
     TEMPORAL_TLS_KEY_PATH: str = ""
     TEMPORAL_TLS_CA_PATH: str = ""
     TEMPORAL_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
+    # Server-browser auto-apply only; the extension flow waits on the user
+    # and is bounded by the EXTENSION_* timeouts below instead.
     TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S: int = Field(default=600, ge=60, le=86_400)
     # Preparation activities (navigate, extract, fill) retry with bounded
     # backoff; the final submit activity never does (max_attempts=1 is set
@@ -137,6 +140,37 @@ class Settings(BaseSettings):
     TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S: int = Field(default=120, ge=10, le=1800)
     TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S: int = Field(default=30, ge=5, le=300)
     TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S: int = Field(default=5, ge=1, le=60)
+    # Recurring jobs registered as Temporal Schedules by the worker at start.
+    TEMPORAL_SCHEDULES_ENABLED: bool = True
+    DAILY_SEARCH_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
+    STATUS_CHECK_INTERVAL_HOURS: int = Field(default=6, ge=1, le=168)
+    MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=30, le=3600)
+
+    # ── Job applications ───────────────────────────────────────────────
+    # "extension": fill and submit in the user's own browser through the
+    # CareerCraft extension (they stay logged in to LinkedIn/Naukri there).
+    # "server_browser": drive an isolated OpenSandbox browser (needs the
+    # OPEN_SANDBOX_* settings below).
+    APPLY_EXECUTION_MODE: Literal["extension", "server_browser"] = "extension"
+    # A task nobody claims in this window expires (extension offline).
+    EXTENSION_TASK_CLAIM_TIMEOUT_S: int = Field(default=24 * 3600, ge=60, le=7 * 24 * 3600)
+    # Once claimed, the user has this long to review and submit.
+    EXTENSION_TASK_COMPLETE_TIMEOUT_S: int = Field(default=2 * 3600, ge=60, le=24 * 3600)
+
+    # ── Decision engine for in-browser choices ─────────────────────────
+    # System One models answer typed questions (choice / score / noul) with
+    # calibrated probabilities in milliseconds — which field is this,
+    # which option matches, is this a confirmation page. "auto" uses Jev
+    # when TYPESAFE_API_KEY is set, else a self-hosted Laya at LAYA_URL,
+    # else the built-in heuristics.
+    DECISION_ENGINE_PROVIDER: Literal["auto", "jev", "laya", "none"] = "auto"
+    DECISION_ENGINE_TIMEOUT_S: float = Field(default=5.0, gt=0, le=60)
+    DECISION_ENGINE_MIN_CONFIDENCE: float = Field(default=0.6, ge=0, le=1)
+    TYPESAFE_API_KEY: str = ""
+    TYPESAFE_BASE_URL: str = "https://api.typesafe.ai"
+    TYPESAFE_MODEL: str = "jev-latest"
+    LAYA_URL: str = ""  # e.g. http://laya:8088 — see deploy/laya
+    LAYA_API_KEY: str = ""
 
     # Nango keeps provider OAuth tokens outside the application database. The
     # secret and webhook signing key are server-only; the public key is only
@@ -198,10 +232,7 @@ class Settings(BaseSettings):
         return self
 
     def validate_temporal_configuration(self) -> None:
-        """Raise a clear startup error for invalid enabled Temporal settings."""
-        if not self.TEMPORAL_ENABLED:
-            return
-
+        """Raise a clear startup error for invalid Temporal settings."""
         problems: list[str] = []
         for name, value in (
             ("TEMPORAL_ADDRESS", self.TEMPORAL_ADDRESS),
@@ -209,7 +240,7 @@ class Settings(BaseSettings):
             ("TEMPORAL_TASK_QUEUE", self.TEMPORAL_TASK_QUEUE),
         ):
             if not value.strip():
-                problems.append(f"{name} must be set when TEMPORAL_ENABLED=true")
+                problems.append(f"{name} must be set")
 
         has_cert = bool(self.TEMPORAL_TLS_CERT_PATH)
         has_key = bool(self.TEMPORAL_TLS_KEY_PATH)

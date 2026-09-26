@@ -72,24 +72,27 @@ CareerCraft AI deploys a harness of specialized AI agents that collaborate to au
 │  FastAPI  (port 8000)                                        │
 │  /agents · /resume · /jobs · /rag · /email · /interview     │
 │  /company · /salary · /cover-letter · /linkedin · /leads    │
+│  /extension (browser extension pairing + tasks)             │
 └────────┬───────────────────────────┬────────────────────────┘
-         │ LangGraph                 │ Redis / BullMQ
+         │ LangGraph                 │ start/signal workflow
 ┌────────▼──────────────┐  ┌─────────▼──────────────────────┐
-│  Agent Harness        │  │  BullMQ Worker  (Node.js)      │
-│  Orchestrator         │  │  Job Search · Follow-Up        │
-│  Resume · LinkedIn    │  │  Daily Search · Status Check   │
-│  Email · FollowUp     │  └────────────────────────────────┘
-│  Cover Letter         │
-│  Interview Coach      │
-│  Company Research     │
-│  Salary · NL Search   │
-│  Auto-Apply Pipeline  │
-│  Email Monitor        │
-└────────┬──────────────┘
-         │
+│  Agent Harness        │  │  Temporal Worker                 │
+│  Orchestrator         │  │  python -m app.temporal_worker   │
+│  Resume · LinkedIn    │  │  AgentRunWorkflow · JobSearch    │
+│  Email · FollowUp     │  │  AutoApply · Followup            │
+│  Cover Letter         │  │  Schedules: daily search,        │
+│  Interview Coach      │  │  maintenance (+ status check     │
+│  Company Research     │  │  in server_browser mode)         │
+│  Salary · NL Search   │  └─────────┬────────────────────────┘
+│  Auto-Apply Pipeline  │            │
+│  Email Monitor        │  ┌─────────▼────────────────────────┐
+└────────┬──────────────┘  │  Temporal Server + UI            │
+         │                 │  (self-hosted, or Temporal Cloud)│
+         │                 └──────────────────────────────────┘
 ┌────────▼──────────────────────────────────────────────────┐
 │  Self-hosted data layer                                    │
-│  PostgreSQL 16 · pgvector · Redis 7 · local doc store     │
+│  PostgreSQL 16 · pgvector · Redis 8 (SSE bus, rate limit,  │
+│  LLM sessions) · local doc store                          │
 └───────────────────────────────────────────────────────────┘
          │
 ┌────────▼──────────────────────────────────────────────────┐
@@ -100,12 +103,31 @@ CareerCraft AI deploys a harness of specialized AI agents that collaborate to au
 ┌────────▼──────────────────────────────────────────────────┐
 │  External Integrations                                     │
 │  Nango (Gmail/Drive) · Hunter · ProxyCurl · Exa · Resend  │
+│  Browser extension (user's own browser) · Decision engine │
+│  (TypeSafe Jev / self-hosted Laya)                        │
 └───────────────────────────────────────────────────────────┘
 ```
 
-**Infrastructure:** Everything runs under Docker Compose on your own host — self-hosted PostgreSQL 16 + pgvector, Redis, and local-disk document storage. Authentication is [Clerk](https://clerk.com); Gmail/Drive access goes through the [Nango](https://nango.dev) credential proxy; durable auto-apply workflows can optionally run on [Temporal](https://temporal.io) (`TEMPORAL_ENABLED`).
+**Infrastructure:** Everything runs under Docker Compose on your own host — self-hosted PostgreSQL 16 + pgvector, Redis, and local-disk document storage. Authentication is [Clerk](https://clerk.com); Gmail/Drive access goes through the [Nango](https://nango.dev) credential proxy; every agent run, job search, application and follow-up executes as a durable [Temporal](https://temporal.io) workflow — the `temporal-worker` service must be running or nothing the API starts makes progress.
 
 > See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system design.
+
+### Applying via the browser extension
+
+By default (`APPLY_EXECUTION_MODE=extension`) job applications are filled and
+submitted in **your own browser**, not on the server. Install the extension
+from `extension/`, connect it under **Settings → Integrations → Browser
+extension**, and when you press Apply the `AutoApplyWorkflow` queues an
+extension task that your browser claims, fills (LinkedIn Easy Apply, Naukri,
+Greenhouse/Lever/Ashby/Workday-style forms), and shows you in a review panel
+— nothing is submitted until you press **Submit**. `server_browser` is the
+legacy mode that drives an isolated sandbox browser on the server instead.
+Ambiguous in-page decisions (which option matches, did this confirm
+submission) are answered by a small "System One" decision engine — TypeSafe
+**Jev** or a self-hosted **Laya** (`deploy/laya/`) — falling back to
+built-in heuristics when neither is configured. See
+[`extension/README.md`](extension/README.md) and
+[`deploy/laya/README.md`](deploy/laya/README.md).
 
 ---
 
@@ -152,10 +174,11 @@ Tracks LLM token usage per user per agent run. Enforces configurable budgets to 
 - Python 3.12 · FastAPI 0.111+ · SQLAlchemy 2.0 async
 - LangGraph 0.2+ · LangChain 0.3+ · langchain-postgres 0.0.17
 - AES-256-GCM API key encryption (PBKDF2 key derivation)
-- Redis 7 + BullMQ 5 · Playwright/Chromium (browser automation)
-- Temporal (optional, durable auto-apply workflows) · Nango (OAuth credential proxy)
+- Redis 8 (SSE pub/sub, rate limiting, LLM sessions) · Playwright/Chromium (browser automation)
+- Temporal (every agent run, job search, application and follow-up runs as a durable workflow) · Nango (OAuth credential proxy)
 - ReportLab 4 (PDF) · PyMuPDF + python-docx (parsing)
 - Hunter.io · ProxyCurl · Exa · Resend integrations
+- Chrome extension (`extension/`) for in-browser applying · decision engine (TypeSafe Jev / self-hosted Laya)
 
 **Frontend**
 - Next.js 16.2.6 App Router · TypeScript 6 · Tailwind CSS 3.4
@@ -209,7 +232,6 @@ PROXYCURL_API_KEY=<proxycurl key for LinkedIn data>
 EXA_API_KEY=<exa.ai key for web search>
 RESEND_API_KEY=<resend.com key for transactional email>
 NANGO_SECRET_KEY=<Nango secret — enables Gmail/Drive integrations>
-TEMPORAL_ENABLED=false   # true to run auto-apply on Temporal
 ```
 
 `.env.example` documents every variable.
@@ -236,6 +258,7 @@ make dev
 |---|---|
 | Frontend | http://localhost:3000 |
 | Backend API docs | http://localhost:8000/docs |
+| Temporal UI | http://localhost:8233 |
 | Redis | localhost:6379 |
 
 ### 4. Add your AI model
@@ -292,14 +315,17 @@ npm run type-check    # tsc --noEmit
 npm run test          # jest
 ```
 
-### Worker only
+### Temporal worker only
 
 ```bash
-cd worker
-npm install
-npm run build
-npm run dev           # ts-node (dev)
+cd backend
+source .venv/bin/activate
+python -m app.temporal_worker    # polls TEMPORAL_TASK_QUEUE (default "careercraft")
 ```
+
+Nothing the API starts (agent runs, job searches, applications, follow-ups)
+makes progress without this process running — check `GET /health` for
+`"temporal": {"workers": 1}`.
 
 > See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
 
@@ -386,10 +412,18 @@ CareerCraftsAI/
 │   │       ├── resend_service.py         # Transactional email
 │   │       ├── integration_proxy_service.py # Nango credential proxy
 │   │       ├── storage_service.py        # Local-disk document storage
-│   │       └── workflow_service.py       # Durable agent runs + approvals
-│   │   ├── workflows/                    # Temporal auto-apply workflow + activities
-│   │   ├── workflow_worker.py            # Durable agent-run worker
-│   │   └── temporal_worker.py            # Temporal worker (optional)
+│   │       ├── extension_service.py      # Extension device pairing + task claiming
+│   │       ├── decision_engine.py        # "System One" typed decisions (Jev/Laya/heuristics)
+│   │       └── scheduled_jobs.py         # Job search/follow-up/status-check logic (called by Temporal activities)
+│   │   ├── workflows/                    # Temporal workflows + activities
+│   │   │   ├── registry.py               # Every workflow/activity the worker hosts
+│   │   │   ├── starters.py               # API-side start/signal helpers (503 if Temporal is down)
+│   │   │   ├── agent_run.py              # AgentRunWorkflow (agent-run/{run_id})
+│   │   │   ├── job_search.py             # JobSearchWorkflow (job-search/{run_id})
+│   │   │   ├── auto_apply.py             # AutoApplyWorkflow (extension + server_browser modes)
+│   │   │   ├── followup.py               # FollowupWorkflow (followup/{application_id}, day 5/12)
+│   │   │   └── scheduled.py              # Temporal Schedules: daily search, maintenance, status check
+│   │   └── temporal_worker.py            # Run with `python -m app.temporal_worker`
 │   └── tests/
 │       ├── unit/                         # mocked, fast CI
 │       ├── security/                     # auth, HITL bypass, input validation
@@ -403,17 +437,15 @@ CareerCraftsAI/
 │   ├── components/                       # UI components + agent stream + approval modal
 │   ├── lib/                              # axios client · agent-run polling · SSE · Clerk token · Nango connect
 │   └── store/                            # Zustand slices (agents, user)
-├── worker/src/
-│   └── processors/
-│       ├── job-search.processor.ts       # Scheduled job search
-│       ├── followup.processor.ts         # Follow-up email scheduling
-│       ├── daily-search.processor.ts     # Daily job discovery
-│       └── status-check.processor.ts    # Application status polling
+├── extension/                             # Chrome extension — applies in the user's own browser
+│   ├── src/background.js                 # pairing, polling, network calls
+│   └── src/content/                      # DOM helpers, review panel, platform drivers
+├── deploy/laya/                           # Self-hosted "System One" decision server (Jev alternative)
 ├── supabase/migrations/                  # 37 SQL migrations (plain PostgreSQL)
 ├── deploy/oracle/                        # Single-VM Compose stack, Nginx, Postgres bootstrap
 ├── scripts/run_e2e_tests.sh              # Live end-to-end runner with preflight checks
 ├── nginx/nginx.conf                      # TLS + security headers
-├── docker-compose.yml                    # Production stack
+├── docker-compose.yml                    # Production stack (backend, temporal-worker, Temporal, Redis, frontend, nginx)
 ├── docker-compose.dev.yml                # Dev stack (hot reload)
 ├── Makefile                              # Top-level dev commands
 └── locustfile.py                         # Load test baseline
@@ -569,7 +601,7 @@ docker compose ps
 curl https://yourdomain.com/health  # → {"status":"ok"}
 ```
 
-For a single small VM, `deploy/oracle/compose.yml` runs the whole stack with host networking: backend, frontend, agent worker, BullMQ scheduler, self-hosted Postgres, Redis, Nginx gateway, the browser sandbox server, and an optional Temporal worker. Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
+For a single small VM, `deploy/oracle/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway, and the OpenSandbox server (`server_browser` apply mode only). The Temporal server itself is a separate stack, `deploy/oracle/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
 
 ### 3. Run migrations
 
@@ -597,8 +629,8 @@ Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 - [ ] Configure Nango Gmail/Drive integration keys and the verified webhook URL
 - [ ] Verify Redis `appendonly yes` is persisting to Docker volume
 - [ ] Set up PostgreSQL backups and connection-pool alerts
-- [ ] When rotating `INTERNAL_SECRET`, recreate `scheduler` and `temporal-worker` too
-- [ ] Add BullBoard (`@bull-board/express`) to worker for queue visibility
+- [ ] When rotating `INTERNAL_SECRET`, recreate `backend` and `temporal-worker` too
+- [ ] Confirm `GET /health` reports `"temporal": {"connected": true, "workers": >=1}`
 - [ ] Set Hunter.io, ProxyCurl, and Exa API keys for full feature coverage
 
 ---

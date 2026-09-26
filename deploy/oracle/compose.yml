@@ -21,7 +21,7 @@ services:
     init: true
     # Uploaded resumes/documents. Supabase Storage is unreachable from this VM
     # for the same reason the database was, so files live on local disk.
-    # Shared with agent-worker, which reads documents during agent runs.
+    # Shared with temporal-worker, which reads documents during agent runs.
     volumes:
       - docstore:/data/documents
     mem_limit: 1500m
@@ -38,11 +38,15 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-  agent-worker:
+  # Executes every workflow (agent runs, job search, applications,
+  # follow-ups) and registers the recurring Schedules. TEMPORAL_ADDRESS in
+  # backend.env points at the Temporal server (deploy/oracle/temporal-compose.yml).
+  # Not profile-gated: without it nothing the API starts ever runs.
+  temporal-worker:
     build: ../../backend
     network_mode: host
     env_file: /opt/careercraft-secrets/backend.env
-    command: python -m app.workflow_worker
+    command: python -m app.temporal_worker
     init: true
     volumes:
       - docstore:/data/documents
@@ -54,39 +58,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-  temporal-worker:
-    build: ../../backend
-    network_mode: host
-    env_file: /opt/careercraft-secrets/backend.env
-    profiles: ["temporal-worker"]
-    command: python -m app.temporal_worker
-    init: true
-    volumes:
-      - docstore:/data/documents
-    mem_limit: 1g
-    cpus: 0.5
-    stop_grace_period: 60s
-    restart: on-failure:5
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-  scheduler:
-    build: ../../worker
-    network_mode: host
-    env_file: /opt/careercraft-secrets/backend.env
-    mem_limit: 256m
-    cpus: 0.25
-    restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-      # worker/src/index.ts calls BACKEND_INTERNAL_URL/internal/health with
-      # INTERNAL_SECRET at process startup and exits(1) on failure -- a
-      # genuinely hard dependency, not just a nice-to-have ordering.
-      backend:
         condition: service_healthy
   frontend:
     build:

@@ -163,21 +163,21 @@ class _ScalarResult:
 
 
 class _WorkflowFakeDB:
-    """Minimal AsyncSession stand-in for workflow_service.execute_task."""
+    """Minimal AsyncSession stand-in for the agent-run activities."""
 
-    def __init__(self, task=None, run=None):
-        self.task = task
+    def __init__(self, run=None):
         self.run = run
         self.commits = 0
 
     async def get(self, model, key, with_for_update=False):
-        from app.models.db import AgentRun, WorkflowTask
+        from app.models.db import AgentRun
 
-        if model is WorkflowTask:
-            return self.task
         if model is AgentRun:
             return self.run
         return None
+
+    async def refresh(self, obj):
+        pass
 
     async def execute(self, *args, **kwargs):
         return _ScalarResult()
@@ -189,85 +189,109 @@ class _WorkflowFakeDB:
         pass
 
 
-def _make_queued_pair(kind="execute"):
-    from app.models.db import AgentRun, WorkflowTask
+def _make_queued_run():
+    from app.models.db import AgentRun
 
-    user_id = uuid.uuid4()
-    run = AgentRun(
-        id=uuid.uuid4(), user_id=user_id, agent_type="auto_apply", status="queued", input={}
+    return AgentRun(
+        id=uuid.uuid4(), user_id=uuid.uuid4(), agent_type="auto_apply", status="queued", input={}
     )
-    task = WorkflowTask(
-        id=uuid.uuid4(), run_id=run.id, user_id=user_id, kind=kind, payload={}, status="pending"
-    )
-    return task, run
+
+
+def _patch_activity_db(monkeypatch, fake):
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    monkeypatch.setattr("app.core.event_bus.publish", lambda *args: None)
 
 
 @pytest.mark.asyncio
-async def test_execute_task_ignores_malformed_id(monkeypatch):
-    import app.services.workflow_service as workflow_service
+async def test_execute_activity_skips_a_run_that_is_no_longer_queued(monkeypatch):
+    from app.workflows import agent_activities
 
-    async def _no_session():
-        raise AssertionError("malformed task id must not touch the database")
-
+    run = _make_queued_run()
+    run.status = "failed"  # cancelled before the workflow got to it
+    _patch_activity_db(monkeypatch, _WorkflowFakeDB(run))
     execute = AsyncMock()
-    continued = AsyncMock()
-    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", _no_session)
-    monkeypatch.setattr(workflow_service, "execute_agent", execute)
-    monkeypatch.setattr(workflow_service, "continue_action", continued)
-    await workflow_service.execute_task("not-a-task-id")
+    monkeypatch.setattr("app.services.workflow_service.execute_agent", execute)
+
+    result = await agent_activities.execute_agent_run_activity({"run_id": str(run.id)})
+
+    assert result == {"status": "failed", "action_type": None}
     execute.assert_not_awaited()
-    continued.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_capacity_retry_does_not_resurrect_cancelled_run(monkeypatch):
-    import app.services.workflow_service as workflow_service
+async def test_capacity_shortage_is_retried_by_temporal_not_recorded(monkeypatch):
+    """No browser capacity is an admission failure before any external
+    action: raise a retryable ApplicationError instead of failing the run."""
+    from temporalio.exceptions import ApplicationError
+
     from app.services.workflow_service import CapacityUnavailable
+    from app.workflows import agent_activities
 
-    task, run = _make_queued_pair("execute")
-    fake = _WorkflowFakeDB(task, run)
-    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
-    monkeypatch.setattr(workflow_service, "publish", lambda *args: None)
+    run = _make_queued_run()
+    fake = _WorkflowFakeDB(run)
+    _patch_activity_db(monkeypatch, fake)
+    monkeypatch.setattr(
+        "app.services.workflow_service.execute_agent",
+        AsyncMock(side_effect=CapacityUnavailable("Browser capacity is occupied")),
+    )
 
-    async def _claim_then_cancel(*args, **kwargs):
-        # The user cancels while the worker is busy downstream.
-        run.status = "failed"
-        raise CapacityUnavailable("Browser capacity is occupied")
+    with pytest.raises(ApplicationError) as exc_info:
+        await agent_activities.execute_agent_run_activity({"run_id": str(run.id)})
 
-    monkeypatch.setattr(workflow_service, "execute_agent", _claim_then_cancel)
-    await workflow_service.execute_task(str(task.id))
-    assert run.status == "failed"
-    assert task.status == "running"  # left for lease recovery to fail closed
-    assert fake.commits == 1  # only the initial claim committed
+    assert exc_info.value.type == "CapacityUnavailable"
+    assert not exc_info.value.non_retryable
+    assert run.status == "running"  # the retry re-claims it
+    assert fake.commits == 1  # only the claim
+
+
+@pytest.mark.asyncio
+async def test_result_never_overwrites_a_run_cancelled_mid_flight(monkeypatch):
+    from app.workflows import agent_activities
+
+    run = _make_queued_run()
+    fake = _WorkflowFakeDB(run)
+    _patch_activity_db(monkeypatch, fake)
+
+    async def _cancelled_while_running(agent_run):
+        agent_run.status = "failed"  # the user cancelled meanwhile
+        return {"status": "completed", "result": {"ok": True}}
+
+    monkeypatch.setattr("app.services.workflow_service.execute_agent", _cancelled_while_running)
+    result = await agent_activities.execute_agent_run_activity({"run_id": str(run.id)})
+
+    assert result["status"] == "failed"
+    assert run.output is None
 
 
 @pytest.mark.asyncio
 async def test_empty_job_search_failure_is_persisted(monkeypatch):
-    import app.services.workflow_service as workflow_service
     from app.agents.job_search import job_search_agent_node
+    from app.workflows import agent_activities
 
-    task, run = _make_queued_pair("execute")
+    run = _make_queued_run()
     run.agent_type = "job_search"
     run.input = {"context": {"titles": [], "search_query": None}}
-    fake = _WorkflowFakeDB(task, run)
-    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
-    monkeypatch.setattr(workflow_service, "publish", lambda *args: None)
+    fake = _WorkflowFakeDB(run)
+    _patch_activity_db(monkeypatch, fake)
 
     async def execute_agent(agent_run):
-        return job_search_agent_node({
-            "user_id": str(agent_run.user_id),
-            "run_id": str(agent_run.id),
-            "task_type": "job_search",
-            "context": agent_run.input["context"],
-            "status": "running",
-        })
+        return job_search_agent_node(
+            {
+                "user_id": str(agent_run.user_id),
+                "run_id": str(agent_run.id),
+                "task_type": "job_search",
+                "context": agent_run.input["context"],
+                "status": "running",
+            }
+        )
 
-    monkeypatch.setattr(workflow_service, "execute_agent", execute_agent)
-    await workflow_service.execute_task(str(task.id))
+    monkeypatch.setattr("app.services.workflow_service.execute_agent", execute_agent)
+    result = await agent_activities.execute_agent_run_activity({"run_id": str(run.id)})
 
+    assert result["status"] == "failed"
     assert run.status == "failed"
     assert run.output["error"] == "missing: titles (or search_query)"
-    assert task.status == "failed"
+    assert run.completed_at is not None
 
 
 @pytest.mark.asyncio
@@ -640,9 +664,13 @@ class _AutoApplyBatchFakeDB:
 
 
 @pytest.mark.asyncio
-async def test_auto_apply_approval_reserves_attempt_per_child(monkeypatch):
+async def test_auto_apply_approval_starts_one_application_workflow_per_job(monkeypatch):
+    """Each approved application becomes its own AutoApplyWorkflow (which
+    reserves the ApplicationAttempt); each email its own AgentRunWorkflow
+    starting at the approved send."""
     import app.services.workflow_service as workflow_service
-    from app.models.db import AgentRun, ApplicationAttempt, WorkflowTask
+    from app.models.db import AgentRun
+    from app.workflows import starters
     from unittest.mock import MagicMock
 
     run = MagicMock()
@@ -655,6 +683,10 @@ async def test_auto_apply_approval_reserves_attempt_per_child(monkeypatch):
 
     fake = _AutoApplyBatchFakeDB(parent, attempt_lookup_results=[None])
     monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    start_apply = AsyncMock(return_value={"workflow_id": "auto-apply/u/j", "status": "queued"})
+    start_run = AsyncMock(return_value="agent-run/x")
+    monkeypatch.setattr(starters, "start_auto_apply", start_apply)
+    monkeypatch.setattr(starters, "start_agent_run", start_run)
 
     pending = {
         "type": "auto_apply_approval",
@@ -663,33 +695,30 @@ async def test_auto_apply_approval_reserves_attempt_per_child(monkeypatch):
                 "action": "apply_browser",
                 "job_url": "https://jobs.example.test/apply",
                 "job_application_id": str(job_application_id),
-                "pdf_document_id": "doc-1",
-                "resume_sha256": "abc123",
-            }
+            },
+            {"action": "send_email", "recipient": "hr@acme.test", "subject": "Hi", "body": "Hello"},
         ],
     }
     result = await workflow_service.continue_action(run, pending)
 
-    assert len(result["result"]["child_run_ids"]) == 1
-    assert result["result"].get("skipped_actions") == []
+    start_apply.assert_awaited_once_with(run.user_id, job_application_id)
+    assert result["result"]["application_workflows"] == ["auto-apply/u/j"]
+    assert result["result"]["skipped_actions"] == []
 
-    attempts = [o for o in fake.added if isinstance(o, ApplicationAttempt)]
-    assert len(attempts) == 1
-    attempt = attempts[0]
-    assert attempt.state == "preparing"
-    assert attempt.job_application_id == job_application_id
-    assert attempt.user_id == run.user_id
-
-    tasks = [o for o in fake.added if isinstance(o, WorkflowTask)]
-    assert len(tasks) == 1
-    assert tasks[0].payload["type"] == "browser_prepare"
-    assert tasks[0].payload["attempt_id"] == str(attempt.id)
+    emails = [o for o in fake.added if isinstance(o, AgentRun)]
+    assert len(emails) == 1 and emails[0].status == "queued"
+    assert result["result"]["child_run_ids"] == [str(emails[0].id)]
+    child_id, user_id = start_run.await_args.args
+    assert (child_id, user_id) == (emails[0].id, run.user_id)
+    assert start_run.await_args.kwargs["initial_continuation"]["type"] == "send_email"
+    assert parent.output["application_workflows"] == ["auto-apply/u/j"]
 
 
 @pytest.mark.asyncio
 async def test_auto_apply_approval_skips_child_with_active_attempt(monkeypatch):
     import app.services.workflow_service as workflow_service
-    from app.models.db import AgentRun, ApplicationAttempt, WorkflowTask
+    from app.models.db import AgentRun, ApplicationAttempt
+    from app.workflows import starters
     from unittest.mock import MagicMock
 
     run = MagicMock()
@@ -708,6 +737,8 @@ async def test_auto_apply_approval_skips_child_with_active_attempt(monkeypatch):
 
     fake = _AutoApplyBatchFakeDB(parent, attempt_lookup_results=[existing_attempt])
     monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    start_apply = AsyncMock()
+    monkeypatch.setattr(starters, "start_auto_apply", start_apply)
 
     pending = {
         "type": "auto_apply_approval",
@@ -716,8 +747,6 @@ async def test_auto_apply_approval_skips_child_with_active_attempt(monkeypatch):
                 "action": "apply_browser",
                 "job_url": "https://jobs.example.test/apply",
                 "job_application_id": str(job_application_id),
-                "pdf_document_id": "doc-1",
-                "resume_sha256": "abc123",
             }
         ],
     }
@@ -728,7 +757,8 @@ async def test_auto_apply_approval_skips_child_with_active_attempt(monkeypatch):
     skipped = result["result"]["skipped_actions"][0]
     assert skipped["job_application_id"] == str(job_application_id)
     assert "submitting" in skipped["reason"]
-    assert not [o for o in fake.added if isinstance(o, (AgentRun, WorkflowTask))]
+    start_apply.assert_not_awaited()
+    assert not fake.added
 
 
 @pytest.mark.asyncio
@@ -1071,22 +1101,25 @@ async def test_submit_click_failure_marks_outcome_unknown_on_attempt(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_recover_expired_tasks_flips_stuck_submitting_attempt(monkeypatch):
-    import app.services.workflow_service as workflow_service
-    from app.models.db import AgentRun, ApplicationAttempt, WorkflowTask
+async def test_maintenance_flips_stuck_submitting_attempt(monkeypatch):
+    """A worker that dies mid-submit leaves the attempt "submitting" and its
+    workflow failed; reconciliation records outcome_unknown (never retries)."""
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import MagicMock
+
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from app.models.db import AgentRun, ApplicationAttempt
+    from app.workflows import job_activities
 
     user_id = uuid.uuid4()
     run = AgentRun(
-        id=uuid.uuid4(), user_id=user_id, agent_type="apply_prepare", status="running", input={}
-    )
-    task = WorkflowTask(
         id=uuid.uuid4(),
-        run_id=run.id,
         user_id=user_id,
-        kind="continue",
-        payload={},
+        agent_type="apply_prepare",
         status="running",
-        lease_until=None,
+        input={"workflow_id": "auto-apply/u/j"},
+        started_at=datetime.now(UTC) - timedelta(hours=1),
     )
     attempt = ApplicationAttempt(
         id=uuid.uuid4(),
@@ -1106,36 +1139,39 @@ async def test_recover_expired_tasks_flips_stuck_submitting_attempt(monkeypatch)
         def all(self):
             return self._items
 
-        def first(self):
-            return self._items[0] if self._items else None
-
-    class _RecoverDB:
-        def __init__(self):
-            self.commits = 0
-
+    class _MaintenanceDB:
         async def execute(self, statement, *a, **k):
-            # First query: expired WorkflowTasks. Second: the stuck attempt.
-            compiled = str(statement)
-            if "workflow_tasks" in compiled.lower():
-                return _ScalarsList([task])
-            return _ScalarsList([attempt])
+            compiled = str(statement).lower()
+            if "from application_attempts" in compiled:
+                return _ScalarsList([attempt])
+            if "from extension_tasks" in compiled:
+                return _ScalarsList([])
+            return _ScalarsList([run])
 
         async def get(self, model, key, with_for_update=False):
-            if model is AgentRun:
-                return run
-            return None
+            return run if model is AgentRun else None
 
         async def commit(self):
-            self.commits += 1
+            pass
 
-    fake = _RecoverDB()
-    monkeypatch.setattr(workflow_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
-    await workflow_service.recover_expired_tasks()
+    handle = MagicMock()
+    handle.describe = AsyncMock(side_effect=RPCError("failed", RPCStatusCode.NOT_FOUND, b""))
+    client = MagicMock()
+    client.get_workflow_handle = MagicMock(return_value=handle)
+    monkeypatch.setattr(
+        "app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(_MaintenanceDB())
+    )
+    monkeypatch.setattr(
+        "app.core.temporal_client.get_temporal_client", AsyncMock(return_value=client)
+    )
+    monkeypatch.setattr("app.core.event_bus.publish", lambda *args: None)
 
-    assert task.status == "failed"
+    await job_activities.maintenance_activity({})
+
+    client.get_workflow_handle.assert_called_once_with("auto-apply/u/j")
     assert run.status == "failed"
     assert attempt.state == "outcome_unknown"
-    assert attempt.last_error == task.error
+    assert "verify the external outcome" in attempt.last_error
 
 
 @pytest.mark.asyncio
@@ -1159,11 +1195,12 @@ async def test_send_approved_email_suppresses_concurrent_duplicate(monkeypatch):
         def __init__(self, value):
             self._value = value
 
-        def scalar_one_or_none(self):
+        def scalar_one(self):
             return self._value
 
     class _EmailFakeDB:
         async def execute(self, *a, **k):
+            # The ON CONFLICT insert is a no-op: the row already exists.
             return _OneRow(already_sending)
 
         async def commit(self):
@@ -1190,20 +1227,31 @@ async def test_send_approved_email_suppresses_concurrent_duplicate(monkeypatch):
 async def test_send_approved_email_success_marks_sent(monkeypatch):
     import app.services.workflow_service as workflow_service
 
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.sql.dml import Insert
+
+    from app.models.db import OutboundMessage
+
     class _OneRow:
-        def scalar_one_or_none(self):
-            return None
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one(self):
+            return self._value
 
     class _EmailFakeDB:
+        """Models the insert-if-absent, then SELECT … FOR UPDATE sequence."""
+
         def __init__(self):
             self.added = None
 
-        async def execute(self, *a, **k):
-            return _OneRow()
-
-        def add(self, obj):
-            obj.id = obj.id or uuid.uuid4()
-            self.added = obj
+        async def execute(self, statement, *a, **k):
+            if isinstance(statement, Insert):
+                values = statement.compile(dialect=postgresql.dialect()).params
+                if self.added is None:
+                    self.added = OutboundMessage(**values)
+                return _OneRow(None)
+            return _OneRow(self.added)
 
         async def flush(self):
             pass

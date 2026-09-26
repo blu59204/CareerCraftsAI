@@ -15,8 +15,9 @@ Ubuntu 22.04 VPS
 ├── Docker Compose
 │   ├── frontend (Next.js, port 3000)
 │   ├── backend (FastAPI, port 8000)
-│   ├── worker (BullMQ Node.js)
-│   └── redis (port 6379)
+│   ├── temporal-worker (python -m app.temporal_worker — runs every workflow)
+│   ├── temporal + temporal-postgres + temporal-ui (self-hosted Temporal server)
+│   └── redis (port 6379 — SSE pub/sub, rate limiting, LLM sessions; no queues)
 │
 └── Supabase Cloud (external)
     ├── PostgreSQL 16 + pgvector
@@ -130,18 +131,29 @@ docker compose ps
 # Check logs
 docker compose logs -f backend
 docker compose logs -f frontend
-docker compose logs -f worker
+docker compose logs -f temporal-worker
 ```
 
 Expected output from `docker compose ps`:
 
 ```
-NAME           STATUS          PORTS
-frontend       Up (healthy)    3000/tcp
-backend        Up (healthy)    8000/tcp
-worker         Up              
-redis          Up (healthy)    6379/tcp
-nginx          Up              0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
+NAME               STATUS          PORTS
+frontend           Up (healthy)    3000/tcp
+backend            Up (healthy)    8000/tcp
+temporal-worker    Up
+temporal           Up (healthy)    127.0.0.1:7233->7233/tcp
+temporal-ui        Up              127.0.0.1:8233->8080/tcp
+temporal-postgres  Up (healthy)
+redis              Up (healthy)    6379/tcp
+nginx              Up              0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
+```
+
+Confirm the worker is actually polling — `docker compose ps` alone only
+shows the container is running, not that it registered with Temporal:
+
+```bash
+curl -s https://yourdomain.com/health | jq .temporal
+# {"connected": true, "workers": 1, "task_queue": "careercraft"}
 ```
 
 ---
@@ -225,18 +237,36 @@ services:
     build: ./backend
     ports: ["8000:8000"]
     env_file: .env
-    depends_on: [redis]
+    depends_on: [redis, temporal]
     healthcheck:
       test: python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
       interval: 30s
 
-  worker:
-    build: ./worker
+  # Runs every workflow and activity (agent runs, job searches, applications,
+  # follow-ups) and registers the recurring Schedules. Not optional — without
+  # it nothing the API starts makes progress.
+  temporal-worker:
+    build: ./backend
+    command: python -m app.temporal_worker
     env_file: .env
-    depends_on: [redis]
+    depends_on: [redis, temporal]
 
+  # Self-hosted Temporal server + its own Postgres + web UI. Can be swapped
+  # for Temporal Cloud by pointing TEMPORAL_ADDRESS(_DOCKER) at it instead.
+  temporal-postgres:
+    image: postgres:16-alpine
+  temporal:
+    image: temporalio/auto-setup:1.24
+    ports: ["127.0.0.1:7233:7233"]
+    depends_on: [temporal-postgres]
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    ports: ["127.0.0.1:8233:8080"]
+    depends_on: [temporal]
+
+  # SSE pub/sub, rate limiting, LLM gateway sessions — not a job queue.
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     ports: ["6379:6379"]
     volumes: [redis_data:/data]
     command: redis-server --appendonly yes
@@ -311,9 +341,10 @@ docker compose ps
 
 # Real-time logs
 docker compose logs -f backend
+docker compose logs -f temporal-worker
 
-# Redis queue depth
-docker compose exec redis redis-cli llen bull:job-search:wait
+# Worker health — is a worker actually polling the task queue?
+curl -s https://yourdomain.com/health | jq .temporal
 
 # Disk usage
 df -h
@@ -329,10 +360,10 @@ docker stats
 For higher load:
 
 1. **Backend:** Increase uvicorn workers: `CMD uvicorn app.main:app --workers 4`
-2. **Worker:** Increase BullMQ concurrency in `worker/src/index.ts` (default: 2 per user)
-3. **Redis:** Move to managed Redis (Upstash, Redis Cloud) for persistence + clustering
+2. **Temporal worker:** Scale `temporal-worker` replicas (`docker compose up -d --scale temporal-worker=3`) — they share the same task queue, so more replicas means more concurrent workflow/activity capacity. Raise `TEMPORAL_WORKER_CONCURRENCY` (max concurrent activities per replica) before adding replicas if a single worker isn't saturated.
+3. **Redis:** Move to managed Redis (Upstash, Redis Cloud) for persistence + clustering. It only carries SSE pub/sub, rate limiting, and LLM sessions here, so it scales independently of workflow throughput.
 4. **Database:** Upgrade Supabase plan for higher connection limits and read replicas
-5. **Browser Use:** Run multiple Browser Use instances on different ports; round-robin in `browser_control_service.py`
+5. **Browser Use:** Run multiple Browser Use instances on different ports; round-robin in `browser_control_service.py` (`server_browser` apply mode only — the extension flow uses no server browser capacity)
 
 ---
 

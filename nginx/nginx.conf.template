@@ -59,6 +59,12 @@ http {
       add_header X-Accel-Buffering no always;
     }
 
+    # API health (the public /status page and deploy checks read it)
+    location = /health {
+      proxy_pass http://backend;
+      proxy_set_header Host $host;
+    }
+
     location /api/ {
       limit_req zone=api burst=20 nodelay;
       proxy_pass http://backend;

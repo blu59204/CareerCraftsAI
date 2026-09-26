@@ -158,7 +158,7 @@ export default function DashboardPage() {
       const docs = data as Array<{
         is_primary: boolean;
         ats_score: number | null;
-        ats_data: { keyword_score?: number; missing_keywords?: string[] } | null;
+        ats_data: { keyword_score?: number | null; missing_keywords?: string[] } | null;
       }>;
       const primary = docs?.find((d) => d.is_primary) ?? docs?.[0];
       return {
@@ -277,11 +277,9 @@ export default function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <ResumeScoreCard
-            atsScore={resumeData?.ats_score ?? 0}
-            keywordCoverage={resumeData?.keyword_score ?? 0}
-            missingKeywords={
-              resumeData?.missing_keywords ?? ["TypeScript", "AWS", "Docker", "CI/CD"]
-            }
+            atsScore={resumeData?.ats_score ?? null}
+            keywordCoverage={resumeData?.keyword_score ?? null}
+            missingKeywords={resumeData?.missing_keywords ?? []}
           />
         </div>
         <div className="lg:col-span-1">

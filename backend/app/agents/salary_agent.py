@@ -2,8 +2,8 @@
 salary_agent.py — Salary Intelligence & Negotiation Assistant.
 
 LangGraph node that:
-1. Queries Exa.ai for real-time salary data
-2. Extracts 25th, 50th, 75th percentile figures
+1. Queries Exa.ai for real-time salary data (keyless web search without a key)
+2. Extracts 25th, 50th, 75th percentile figures, in the currency the sources use
 3. Classifies user's offer against market percentiles
 4. Generates a negotiation script (opening, counter-offer at p75, 2 justifications)
 5. Logs run to agent_runs table
@@ -13,6 +13,7 @@ Requirements: 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8, 3.10
 """
 
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
 from app.core.sync_db import _get_sync_factory, fetch_model_settings
+from app.services import web_research
 from app.services.exa_service import ExaService
 
 logger = logging.getLogger(__name__)
@@ -37,8 +39,10 @@ class NegotiationDraft(BaseModel):
     counter_offer: int = Field(ge=0)
     justifications: list[str] = Field(min_length=2)
 
+
 NEGOTIATION_SYSTEM_PROMPT = """You are a salary negotiation expert. Given the role, company,
 market salary percentiles, and the candidate's offer classification, generate a negotiation script.
+Quote amounts in the currency and notation given (for example ₹38 lakh, $184,000).
 
 The script MUST contain exactly these sections:
 1. "opening" — A confident opening statement for the negotiation conversation
@@ -91,43 +95,125 @@ def classify_offer(offer: int, p25: int, p50: int, p75: int) -> OfferClassificat
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _extract_percentiles(salary_results: list[dict]) -> dict[str, int] | None:
-    """Extract p25, p50, p75 salary figures from Exa search results.
+# Annual figures only; anything outside these bounds is a typo, an hourly
+# rate or a different unit, not a salary.
+_ANNUAL_BOUNDS = {
+    "INR": (100_000, 100_000_000),
+    "USD": (15_000, 2_000_000),
+    "EUR": (12_000, 1_500_000),
+    "GBP": (12_000, 1_500_000),
+}
+_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP"}
+_INR_PREFIX = r"(?:₹|rs\.?|inr)\s*"
+_INR_LAKH = re.compile(
+    rf"(?:{_INR_PREFIX})?(\d{{1,3}}(?:\.\d+)?)\s*(?:l\b|lakhs?\b|lacs?\b|lpa\b)", re.IGNORECASE
+)
+_INR_CRORE = re.compile(
+    rf"(?:{_INR_PREFIX})?(\d{{1,2}}(?:\.\d+)?)\s*(?:cr\b|crores?\b)", re.IGNORECASE
+)
+_INR_PLAIN = re.compile(
+    rf"{_INR_PREFIX}(\d{{1,3}}(?:,\d{{2,3}})+|\d{{5,}})(?!\s*(?:l\b|lakh|lac|lpa|cr))",
+    re.IGNORECASE,
+)
+_FOREIGN = re.compile(r"([$€£])\s?(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*([kKmM]\b)?")
+_HOURLY = re.compile(r"^\s*(?:/\s*h(?:ou)?r|per\s+hour|an\s+hour|hourly)", re.IGNORECASE)
+_MONTHLY = re.compile(r"^\s*(?:/\s*mo(?:nth)?|per\s+month|a\s+month|monthly)", re.IGNORECASE)
 
-    Uses a heuristic approach: look for numeric salary data in result snippets.
-    If extraction fails, returns None indicating data_unavailable.
+
+def _salary_figures(text: str) -> list[tuple[str, int]]:
+    """Annual salary figures quoted in text, as (ISO currency, amount)."""
+    figures: list[tuple[str, int]] = []
+
+    def add(currency: str, amount: float, end: int) -> None:
+        tail = text[end : end + 20]
+        if _HOURLY.match(tail):
+            return
+        if _MONTHLY.match(tail):
+            amount *= 12
+        low, high = _ANNUAL_BOUNDS[currency]
+        if low <= amount <= high:
+            figures.append((currency, int(round(amount))))
+
+    for match in _INR_LAKH.finditer(text):
+        add("INR", float(match.group(1)) * 100_000, match.end())
+    for match in _INR_CRORE.finditer(text):
+        add("INR", float(match.group(1)) * 10_000_000, match.end())
+    for match in _INR_PLAIN.finditer(text):
+        add("INR", float(match.group(1).replace(",", "")), match.end())
+    for match in _FOREIGN.finditer(text):
+        amount = float(match.group(2).replace(",", ""))
+        unit = (match.group(3) or "").lower()
+        amount *= 1_000 if unit == "k" else 1_000_000 if unit == "m" else 1
+        add(_SYMBOLS[match.group(1)], amount, match.end())
+    return figures
+
+
+def _extract_percentiles(salary_results: list[dict]) -> dict | None:
+    """p25/p50/p75 of the salary figures quoted across the results.
+
+    Figures are kept in the currency most of them use (never mixed or
+    converted). Returns None when fewer than three figures are found —
+    reported to the user as data unavailable rather than a guess.
     """
-    import re
-
-    salary_numbers: list[int] = []
-
+    by_currency: dict[str, list[int]] = {}
+    sources: dict[str, set[str]] = {}
     for result in salary_results:
-        text = result.get("text", "") or result.get("snippet", "") or ""
-        # Match salary patterns like $120,000 or $120K or 120000
-        matches = re.findall(r"\$?([\d,]+)(?:\s*[kK])?\s*(?:per\s+year|/yr|annually|salary)?", text)
-        for match in matches:
-            num_str = match.replace(",", "")
-            try:
-                val = int(num_str)
-                # Filter reasonable salary values (20k - 1M)
-                if 20_000 <= val <= 1_000_000:
-                    salary_numbers.append(val)
-                elif 20 <= val <= 1000:
-                    # Could be in thousands (e.g. "120K")
-                    salary_numbers.append(val * 1000)
-            except ValueError:
-                continue
+        text = " ".join(str(result.get(key) or "") for key in ("title", "text", "snippet"))
+        for currency, amount in _salary_figures(text):
+            by_currency.setdefault(currency, []).append(amount)
+            if result.get("url"):
+                sources.setdefault(currency, set()).add(result["url"])
 
+    if not by_currency:
+        return None
+    currency = max(by_currency, key=lambda c: len(by_currency[c]))
+    salary_numbers = sorted(by_currency[currency])
     if len(salary_numbers) < 3:
         return None
 
-    salary_numbers.sort()
     n = len(salary_numbers)
-    p25 = salary_numbers[max(0, n // 4)]
-    p50 = salary_numbers[n // 2]
-    p75 = salary_numbers[min(n - 1, (3 * n) // 4)]
+    return {
+        "p25": salary_numbers[max(0, n // 4)],
+        "p50": salary_numbers[n // 2],
+        "p75": salary_numbers[min(n - 1, (3 * n) // 4)],
+        "currency": currency,
+        "sample_size": n,
+        "sources": sorted(sources.get(currency, set())),
+    }
 
-    return {"p25": p25, "p50": p50, "p75": p75}
+
+def format_amount(amount: int, currency: str) -> str:
+    """Human notation for a salary: ₹38.6 lakh, $184,570, €72,000."""
+    if currency == "INR":
+        if amount >= 10_000_000:
+            return f"₹{amount / 10_000_000:.2f} crore"
+        return f"₹{amount / 100_000:.1f} lakh"
+    symbol = {"USD": "$", "EUR": "€", "GBP": "£"}.get(currency, "")
+    return f"{symbol}{amount:,}"
+
+
+async def _search_salary_sources(role: str, company: str | None, location: str) -> list[dict]:
+    """Salary pages about the role: Exa when configured, else keyless web search.
+
+    Keyless search asks for the company-specific figure first, then the
+    market in that location.
+    """
+    results = await ExaService().search_salary(role, company, location or None)
+    if _extract_percentiles(results):
+        return results
+
+    queries = []
+    if company:
+        queries.append(" ".join(filter(None, [role, "salary", company, location])))
+    queries.append(" ".join(filter(None, [role, "salary", location])))
+    seen = {r.get("url") for r in results}
+    for query in queries:
+        for hit in await web_research.duckduckgo(query, limit=8):
+            if hit["url"] in seen:
+                continue
+            seen.add(hit["url"])
+            results.append({"url": hit["url"], "title": hit["title"], "text": hit["snippet"]})
+    return results
 
 
 def _log_agent_run(
@@ -141,6 +227,7 @@ def _log_agent_run(
 ) -> None:
     """Log run to agent_runs table synchronously (called from thread executor)."""
     from app.core.event_bus import suppress_terminal_events
+
     if suppress_terminal_events.get():
         return
     from app.models.db import AgentRun
@@ -173,6 +260,7 @@ def _generate_negotiation_script(
     p50: int,
     p75: int,
     classification: str,
+    currency: str = "USD",
 ) -> dict:
     """Generate negotiation script using LLM.
 
@@ -181,12 +269,12 @@ def _generate_negotiation_script(
     company_text = f" at {company}" if company else ""
     prompt_content = (
         f"Role: {role}{company_text}\n"
-        f"Market Salary Data:\n"
-        f"  - 25th percentile: ${p25:,}\n"
-        f"  - 50th percentile (median): ${p50:,}\n"
-        f"  - 75th percentile: ${p75:,}\n"
+        f"Market Salary Data (annual, {currency}):\n"
+        f"  - 25th percentile: {format_amount(p25, currency)}\n"
+        f"  - 50th percentile (median): {format_amount(p50, currency)}\n"
+        f"  - 75th percentile: {format_amount(p75, currency)}\n"
         f"Offer classification: {classification}\n"
-        f"Counter-offer target: ${p75:,} (75th percentile)\n\n"
+        f"Counter-offer target: {format_amount(p75, currency)} (75th percentile)\n\n"
         f"Generate the negotiation script."
     )
 
@@ -232,11 +320,11 @@ def salary_report_node(state: AgentState) -> AgentState:
         location = context.get("location", "")
         offer_amount = context.get("offer_amount")
 
-        if not role or not location:
+        if not role:
             return {
                 **state,
                 "status": "failed",
-                "error": "Both 'role' and 'location' are required in context.",
+                "error": "'role' is required in context.",
             }
 
         # Get user's model settings for LLM routing (Requirement 3.7)
@@ -248,12 +336,10 @@ def salary_report_node(state: AgentState) -> AgentState:
                 "error": "No active model settings configured for user.",
             }
 
-        # Query Exa for salary data (Requirement 3.1)
-        exa_service = ExaService()
+        # Query salary sources (Requirement 3.1)
         from app.core.sync_db import run_coro_sync
-        salary_results = run_coro_sync(
-            exa_service.search_salary(role, company, location)
-        )
+
+        salary_results = run_coro_sync(_search_salary_sources(role, company, location))
 
         # Extract percentiles from search results (Requirement 3.2)
         percentiles = _extract_percentiles(salary_results)
@@ -288,6 +374,7 @@ def salary_report_node(state: AgentState) -> AgentState:
             }
 
         p25, p50, p75 = percentiles["p25"], percentiles["p50"], percentiles["p75"]
+        currency = percentiles["currency"]
 
         # Classify offer if provided (Requirement 3.3)
         classification = None
@@ -297,7 +384,7 @@ def salary_report_node(state: AgentState) -> AgentState:
         # Build LLM and generate negotiation script (Requirements 3.4, 3.7)
         llm = _build_llm(model_settings)
         script = _generate_negotiation_script(
-            llm, role, company, p25, p50, p75, classification or "at_market"
+            llm, role, company, p25, p50, p75, classification or "at_market", currency
         )
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -308,7 +395,9 @@ def salary_report_node(state: AgentState) -> AgentState:
             "p75": p75,
             "offer_amount": offer_amount,
             "classification": classification,
-            "data_sources": [r.get("url", "") for r in salary_results[:5]],
+            "currency": currency,
+            "sample_size": percentiles["sample_size"],
+            "data_sources": percentiles["sources"][:8],
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "role": role,
             "company": company,
@@ -341,9 +430,8 @@ def salary_report_node(state: AgentState) -> AgentState:
                 "script": script,
             },
             "result": report,
-            "messages": state["messages"] + [
-                AIMessage(content=f"Salary report generated for {role} in {location}.")
-            ],
+            "messages": state["messages"]
+            + [AIMessage(content=f"Salary report generated for {role} in {location}.")],
         }
 
     except Exception as exc:

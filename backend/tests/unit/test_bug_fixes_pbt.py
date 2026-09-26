@@ -79,28 +79,30 @@ async def test_youtube_returns_empty_without_api_key():
         assert result == []
 
 
-# Property: MODEL_DEFAULTS["anthropic"] is a valid model name
+# Property: the Anthropic provider's first catalog model is a valid model name
 def test_onboarding_model_default():
-    """Verify the Anthropic default model is a real model identifier."""
+    """Verify the Anthropic default model is a real model identifier.
+
+    Onboarding and Settings → AI Models both derive their default from the
+    first model listed for each provider in the shared catalog.
+    """
     # Read the source file and check the constant
     import re
     from pathlib import Path
 
-    onboarding_path = (
+    catalog_path = (
         Path(__file__).resolve().parents[3]
         / "frontend"
         / "src"
-        / "app"
-        / "(app)"
-        / "onboarding"
-        / "page.tsx"
+        / "lib"
+        / "model-providers.ts"
     )
-    if not onboarding_path.exists():
+    if not catalog_path.exists():
         pytest.skip("Frontend source not available")
 
-    content = onboarding_path.read_text(encoding="utf-8")
-    match = re.search(r'anthropic:\s*"([^"]+)"', content)
-    assert match is not None, "Could not find anthropic model default"
+    content = catalog_path.read_text(encoding="utf-8")
+    match = re.search(r'value:\s*"anthropic".*?models:\s*\[\s*"([^"]+)"', content, re.DOTALL)
+    assert match is not None, "Could not find anthropic's default model"
     model_name = match.group(1)
     # Must be a valid Anthropic model identifier (not a marketing name)
     assert "claude" in model_name.lower()

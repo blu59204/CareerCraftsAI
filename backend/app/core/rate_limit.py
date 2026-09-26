@@ -10,9 +10,15 @@ logger = logging.getLogger(__name__)
 def _get_user_or_ip(request: Request) -> str:
     """Extract user ID from JWT for per-user rate limiting, fallback to IP."""
     auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer ccx_"):
+        # Browser-extension device token: limit per paired device.
+        import hashlib
+
+        return "ext:" + hashlib.sha256(auth.encode()).hexdigest()[:16]
     if auth.startswith("Bearer "):
         try:
             import jwt
+
             token = auth.removeprefix("Bearer ").strip()
             payload = jwt.decode(token, options={"verify_signature": False})
             return payload.get("sub", get_remote_address(request))

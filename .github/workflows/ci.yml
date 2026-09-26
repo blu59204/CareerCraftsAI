@@ -140,22 +140,20 @@ jobs:
         run: npm audit --audit-level=high
         continue-on-error: true
 
-  worker-build:
+  extension-check:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: worker
-
+        working-directory: extension
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
-
-      - run: npm ci
-      - run: npm run build
+      - name: Syntax-check extension scripts and manifest
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
 
   # Cheap, no-credentials-needed guard against e2e test-file syntax/import
   # breakage (missing fixture, bad import, etc.) on every PR. Collection-only

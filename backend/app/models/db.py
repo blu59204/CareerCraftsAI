@@ -150,27 +150,54 @@ class CoverLetterVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class WorkflowTask(Base):
-    """Transactional outbox and execution ledger; never exposed through the Data API."""
+class ExtensionDevice(Base):
+    """A browser paired with the CareerCraft extension. Only the token's
+    SHA-256 is stored; the raw token is shown once at pairing time."""
 
-    __tablename__ = "workflow_tasks"
+    __tablename__ = "extension_devices"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True
-    )
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    kind: Mapped[str] = mapped_column(String(30))
-    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
-    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
-    available_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    error: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(String(100), default="Browser")
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExtensionTask(Base):
+    """Work handed to the extension. The Temporal workflow named by
+    workflow_id owns the lifecycle; the extension claims the task and
+    reports progress, which the API relays to that workflow as signals."""
+
+    __tablename__ = "extension_tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("extension_devices.id", ondelete="SET NULL")
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True
+    )
+    job_application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("job_applications.id", ondelete="CASCADE")
+    )
+    workflow_id: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(30), default="apply")
+    status: Mapped[str] = mapped_column(String(30), default="pending")
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class BrowserSession(Base):
@@ -223,11 +250,10 @@ class ApplicationAttempt(Base):
         ForeignKey("agent_runs.id", ondelete="SET NULL")
     )
 
-    # Set only when this attempt is driven by the (feature-flagged) Temporal
-    # path instead of the default BullMQ/WorkflowTask path — both NULL means
-    # BullMQ. workflow_id is the stable "auto-apply/{user_id}/{job_application_id}"
-    # id; temporal_run_id is Temporal's own per-execution run id (changes on
-    # Continue-As-New/retry-as-new-workflow, unlike workflow_id).
+    # workflow_id is the stable "auto-apply/{user_id}/{job_application_id}"
+    # Temporal workflow id that drives this attempt; temporal_run_id is
+    # Temporal's own per-execution run id (changes on Continue-As-New/
+    # retry-as-new-workflow, unlike workflow_id).
     workflow_id: Mapped[str | None] = mapped_column(String, unique=True)
     temporal_run_id: Mapped[str | None] = mapped_column(String)
 

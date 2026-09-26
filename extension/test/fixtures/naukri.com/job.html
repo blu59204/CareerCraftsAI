@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Naukri job (fixture)</title></head>
+<body>
+  <h1>Data Engineer — Globex</h1>
+  <button id="apply-button">Apply</button>
+  <script>
+    window.submits = 0;
+    document.getElementById("apply-button").addEventListener("click", () => {
+      window.submits += 1;
+      const drawer = document.createElement("div");
+      drawer.className = "chatbot_Drawer";
+      drawer.innerHTML = `<p>What is your notice period?</p>
+        <label for="np">Notice period</label><input id="np" name="np" type="text" required>
+        <button id="save">Save</button>`;
+      document.body.appendChild(drawer);
+      drawer.querySelector("#save").addEventListener("click", () => {
+        if (!drawer.querySelector("#np").value) return;
+        drawer.remove();
+        document.body.insertAdjacentHTML("beforeend", "<p>You have successfully applied to Data Engineer</p>");
+      });
+    });
+  </script>
+</body>
+</html>

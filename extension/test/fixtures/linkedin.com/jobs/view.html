@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>LinkedIn Easy Apply (fixture)</title></head>
+<body>
+  <nav class="global-nav">nav</nav>
+  <h1>Platform Engineer — Initech</h1>
+  <button class="jobs-apply-button" aria-label="Easy Apply to Platform Engineer at Initech">Easy Apply</button>
+  <script>
+    window.submits = 0;
+    const steps = [
+      `<label for="em">Email address</label><input id="em" name="em" type="email" required>
+       <label for="ph">Mobile phone number</label><input id="ph" name="ph" type="tel">`,
+      `<label for="yrs">Years of experience with Python *</label>
+       <select id="yrs" name="yrs" required><option value="">Select an option</option><option>1</option><option>3</option><option>5+</option></select>`,
+      `<p>Review your application</p>`,
+    ];
+    let step = 0;
+    function render() {
+      const dialog = document.querySelector("[role=dialog]");
+      const last = step === steps.length - 1;
+      dialog.innerHTML = `<div class="jobs-easy-apply-modal">${steps[step]}
+        <button aria-label="${last ? "Submit application" : step === steps.length - 2 ? "Review your application" : "Continue to next step"}">${last ? "Submit application" : step === steps.length - 2 ? "Review" : "Next"}</button></div>`;
+      dialog.querySelector("button").addEventListener("click", () => {
+        const required = Array.from(dialog.querySelectorAll("[required]"));
+        if (required.some((el) => !el.value)) return;
+        if (last) { window.submits += 1; dialog.innerHTML = "<h2>Your application was sent to Initech</h2>"; return; }
+        step += 1; render();
+      });
+    }
+    document.querySelector(".jobs-apply-button").addEventListener("click", () => {
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      document.body.appendChild(dialog);
+      render();
+    });
+  </script>
+</body>
+</html>

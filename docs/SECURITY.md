@@ -142,7 +142,7 @@ The `/approve` endpoint verifies:
 
 ## Internal Endpoints
 
-The BullMQ worker calls `localhost:8000/internal/*` directly (Docker internal network). These routes are never exposed publicly:
+`/internal/*` (`backend/app/api/internal.py`) are thin, secret-protected wrappers around job-search, follow-up, daily-search and application-status-check logic (`app/services/scheduled_jobs.py`). Nothing calls them automatically: Temporal is what actually decides when this work runs — the `temporal-worker` service invokes the same `scheduled_jobs.py` functions in-process, from Temporal activities, on the Schedules described in `docs/ARCHITECTURE.md` §8. The `/internal/*` routes exist only for an operator to trigger one of these jobs by hand while debugging, and are never exposed publicly:
 
 ```nginx
 location /internal/ {
@@ -150,7 +150,11 @@ location /internal/ {
 }
 ```
 
-Internal routes bypass JWT auth (they use a shared `INTERNAL_SECRET` header) and are only accessible from the `worker` container on the Docker network.
+Every route also requires the `X-Internal-Secret` header to match `INTERNAL_SECRET` (falling back to `APP_SECRET_KEY` if unset), checked with a constant-time comparison — bypassing JWT auth is safe only because both the Nginx block and the secret must be defeated.
+
+### Browser extension device tokens
+
+The Chrome extension (`extension/`) authenticates to `/api/v1/extension/device/*` with a device token instead of the user's Clerk session: a `ccx_`-prefixed random token, generated once when a browser is paired (`POST /extension/pair`) and shown to the user exactly once. Only its SHA-256 hash (`extension_service.hash_token`) is ever stored, as `extension_devices.token_hash`; the plaintext token cannot be recovered from the database. Each paired browser is listed under **Settings → Integrations → Browser extension** and can be revoked independently (`DELETE /extension/devices/{id}`), which is checked on every subsequent device-token request. Requests authenticated with a device token are rate-limited per device, not per user (`core/rate_limit.py` keys on a hash of the `Bearer ccx_…` value), so one compromised or misbehaving browser cannot exhaust another device's or another user's limit.
 
 ---
 

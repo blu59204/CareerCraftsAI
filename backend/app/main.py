@@ -20,6 +20,7 @@ from app.api.v1 import (
     company,
     cover_letter,
     email,
+    extension,
     interview,
     interview_prep,
     integrations,
@@ -105,6 +106,10 @@ from app.core.supabase_auth import verify_token
 async def _jwt_middleware(request: Request, call_next):
     path = request.url.path
     if path in _PUBLIC_PATHS or path.startswith("/internal"):
+        return await call_next(request)
+    # The browser extension authenticates with its own device token, checked
+    # by the extension router's get_device dependency.
+    if path.startswith("/api/v1/extension/device/"):
         return await call_next(request)
     if request.method == "OPTIONS":
         return await call_next(request)
@@ -239,6 +244,7 @@ app.include_router(company.router, prefix="/api/v1")
 app.include_router(linkedin.router, prefix="/api/v1")
 app.include_router(candidate_profile.router, prefix="/api/v1")
 app.include_router(integrations.router, prefix="/api/v1")
+app.include_router(extension.router, prefix="/api/v1")
 app.include_router(memory_router)
 app.include_router(internal.router)
 
@@ -268,16 +274,20 @@ async def health():
     except Exception:
         pgvector_ok = False
     all_ok = bool(db_ok and redis_ok and pgvector_ok)
-    # Reported separately and never folded into all_ok: Temporal is
-    # feature-flagged (TEMPORAL_ENABLED) and optional infrastructure — an
-    # outage or a disabled flag must never make the whole API unavailable.
+    # Temporal is reported but kept out of the 200/503 decision: pages and
+    # read APIs keep working while it is down, and the container healthcheck
+    # must not flap the whole stack on a Temporal restart. "degraded" makes
+    # the outage visible — no server, or no worker polling the task queue,
+    # means agent runs cannot start.
     from app.core.temporal_client import check_temporal_health
 
     temporal = await check_temporal_health()
+    temporal_ok = temporal.get("connected") and temporal.get("workers") != 0
+    status = "error" if not all_ok else ("ok" if temporal_ok else "degraded")
     return JSONResponse(
         status_code=200 if all_ok else 503,
         content={
-            "status": "ok" if all_ok else "error",
+            "status": status,
             "version": app.version,
             "db": "ok" if db_ok else "error",
             "redis": "ok" if redis_ok else "error",

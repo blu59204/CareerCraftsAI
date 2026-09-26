@@ -42,13 +42,11 @@ openai>=1.0.0
 ollama>=0.4.0
 tiktoken>=0.7.0
 
-# Redis & queue
+# Redis (SSE event bus, caches, token budgets)
 redis>=5.0.0
-bullmq>=2.25.0
 
-# Durable workflows (feature-flagged via TEMPORAL_ENABLED — see app/core/config.py;
-# BullMQ above stays the default execution path until Auto Apply has run
-# stably on Temporal, per docs/superpowers/specs Temporal migration plan)
+# Durable workflows — every agent run, job search, application, follow-up
+# and recurring schedule runs on Temporal (app/workflows, app/temporal_worker.py)
 temporalio>=1.33.0
 
 # HTTP
