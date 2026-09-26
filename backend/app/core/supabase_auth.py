@@ -46,6 +46,7 @@ _ALGORITHMS = ["RS256"]
 class ClerkIdentityError(Exception):
     """Clerk could not confirm the user's verified primary email."""
 
+
 # Built lazily by _get_jwks_client(); tests patch this attribute directly.
 _jwks_client: jwt.PyJWKClient | None = None
 
@@ -69,9 +70,7 @@ def _get_jwks_client() -> jwt.PyJWKClient:
     if _jwks_client is None:
         url = _jwks_url()
         if not url:
-            logger.error(
-                "Clerk auth is not configured — set CLERK_JWKS_URL or CLERK_ISSUER"
-            )
+            logger.error("Clerk auth is not configured — set CLERK_JWKS_URL or CLERK_ISSUER")
             raise HTTPException(status_code=401, detail="Authentication not configured")
         _jwks_client = jwt.PyJWKClient(url, cache_keys=True, lifespan=3600)
     return _jwks_client
@@ -148,11 +147,7 @@ async def get_verified_primary_email(
             raise ClerkIdentityError("Clerk primary email is unavailable")
 
         primary = next(
-            (
-                item
-                for item in addresses
-                if isinstance(item, dict) and item.get("id") == primary_id
-            ),
+            (item for item in addresses if isinstance(item, dict) and item.get("id") == primary_id),
             None,
         )
         email = primary.get("email_address") if primary else None
@@ -170,6 +165,52 @@ async def get_verified_primary_email(
             await client.aclose()
 
 
+PLACEHOLDER_EMAIL_DOMAIN = "@users.noreply.clerk"
+
+
+async def fetch_clerk_profile(subject: str) -> dict[str, Any] | None:
+    """Verified email, name and avatar from the Clerk Backend API, or None.
+
+    Clerk session tokens carry no email/name unless the instance adds custom
+    claims, so without this every user was stored with a placeholder email —
+    which then landed in job applications and follow-up emails.
+    """
+    if not settings.CLERK_SECRET_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            email = await get_verified_primary_email(subject, client=client)
+            response = await client.get(
+                f"https://api.clerk.com/v1/users/{quote(subject, safe='')}",
+                headers={"Authorization": f"Bearer {settings.CLERK_SECRET_KEY}"},
+            )
+        data = response.json() if response.status_code == 200 else {}
+    except (ClerkIdentityError, httpx.HTTPError, ValueError) as exc:
+        logger.info("Clerk profile lookup unavailable for %s: %s", subject, exc)
+        return None
+    name = " ".join(p for p in (data.get("first_name"), data.get("last_name")) if p) or None
+    return {"email": email, "full_name": name, "avatar_url": data.get("image_url") or None}
+
+
+async def _repair_placeholder_profile(db: AsyncSession, user: User) -> None:
+    """Replace a placeholder email (and empty name) from Clerk, once."""
+    if not (user.email or "").endswith(PLACEHOLDER_EMAIL_DOMAIN) or not user.supabase_uid:
+        return
+    profile = await fetch_clerk_profile(user.supabase_uid)
+    if not profile:
+        return
+    user.email = profile["email"]
+    user.full_name = user.full_name or profile["full_name"]
+    user.avatar_url = user.avatar_url or profile["avatar_url"]
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Another row already owns that email; keep the placeholder.
+        await db.rollback()
+        logger.warning("Could not repair placeholder email for %s: email in use", user.id)
+    await db.refresh(user)
+
+
 async def delete_clerk_user(subject: str, *, client: httpx.AsyncClient | None = None) -> None:
     """Delete the Clerk user via the Backend API. Best-effort — logs and swallows failures.
 
@@ -177,7 +218,9 @@ async def delete_clerk_user(subject: str, *, client: httpx.AsyncClient | None = 
     by the same Clerk identity signing back in.
     """
     if not settings.CLERK_SECRET_KEY:
-        logger.warning("Skipping Clerk user deletion for %s — CLERK_SECRET_KEY not configured", subject)
+        logger.warning(
+            "Skipping Clerk user deletion for %s — CLERK_SECRET_KEY not configured", subject
+        )
         return
 
     owns_client = client is None
@@ -217,17 +260,13 @@ def _profile_from_payload(payload: dict[str, Any], subject: str) -> dict[str, An
         payload.get("email")
         or payload.get("primary_email_address")
         or meta.get("email")
-        or f"{subject}@users.noreply.clerk"
+        or f"{subject}{PLACEHOLDER_EMAIL_DOMAIN}"
     )
     return {
         "supabase_uid": subject,
         "email": email,
-        "full_name": payload.get("full_name")
-        or payload.get("name")
-        or meta.get("full_name"),
-        "avatar_url": payload.get("image_url")
-        or payload.get("picture")
-        or meta.get("avatar_url"),
+        "full_name": payload.get("full_name") or payload.get("name") or meta.get("full_name"),
+        "avatar_url": payload.get("image_url") or payload.get("picture") or meta.get("avatar_url"),
     }
 
 
@@ -256,14 +295,19 @@ async def get_or_provision_user(
     payload = payload or {}
     user = await _select_by_uid(db, subject)
     if user is not None:
+        await _repair_placeholder_profile(db, user)
         return user
 
     values = _profile_from_payload(payload, subject)
+    if values["email"].endswith(PLACEHOLDER_EMAIL_DOMAIN):
+        profile = await fetch_clerk_profile(subject)
+        if profile:
+            values["email"] = profile["email"]
+            values["full_name"] = values["full_name"] or profile["full_name"]
+            values["avatar_url"] = values["avatar_url"] or profile["avatar_url"]
     try:
         await db.execute(
-            pg_insert(User)
-            .values(**values)
-            .on_conflict_do_nothing(index_elements=["supabase_uid"])
+            pg_insert(User).values(**values).on_conflict_do_nothing(index_elements=["supabase_uid"])
         )
         await db.commit()
     except IntegrityError as exc:

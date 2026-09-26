@@ -133,7 +133,11 @@ def _similarity(a: Any, b: Any) -> float:
     ta, tb = _tokens(a), _tokens(b)
     if not ta or not tb:
         return 0.0
-    return len(ta & tb) / len(ta | tb)
+    overlap = len(ta & tb)
+    # "LinkedIn" vs "LinkedIn Jobs", "No" vs "No, I do not": every word of
+    # one side appears in the other — strong evidence, but short of exact.
+    contained = 0.85 if overlap == min(len(ta), len(tb)) else 0.0
+    return max(overlap / len(ta | tb), contained)
 
 
 def _heuristic(state: Any, question: dict) -> dict:

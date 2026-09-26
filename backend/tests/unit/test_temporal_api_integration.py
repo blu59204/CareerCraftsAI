@@ -38,6 +38,12 @@ async def test_start_temporal_auto_apply_starts_workflow_with_stable_id(monkeypa
     call_kwargs = fake_client.start_workflow.call_args.kwargs
     assert call_kwargs["id"] == expected_id
     assert intent.mode == mode
+    # The run id is chosen up front, so the response never carries the run
+    # of a previous attempt for the same application.
+    assert intent.run_id
+    jobs_module._await_temporal_run_id.assert_awaited_once_with(
+        user_id, application_id, intent.run_id
+    )
     # The extension flow waits on a person and bounds itself with timers.
     assert call_kwargs["execution_timeout"] == (
         None

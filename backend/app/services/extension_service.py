@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -27,6 +28,7 @@ from app.applications.models import ApplicationField
 from app.applications.question_normalizer import normalize_question
 from app.applications.schema_extractor import extract_fields
 from app.models.db import (
+    CandidateAnswer,
     ExtensionDevice,
     ExtensionTask,
     JobApplication,
@@ -216,6 +218,48 @@ def _narrative_generator(user_id: uuid.UUID, task: ExtensionTask, budget: list[i
     return generate
 
 
+def custom_question_key(label: str) -> str:
+    """Stable key for a free-form question ("Why do you want to join us?")
+    that has no canonical rule in question_normalizer."""
+    return "custom." + " ".join(re.findall(r"[a-z0-9]+", label.lower()))[:180]
+
+
+def answer_key(label: str) -> str:
+    return normalize_question(label) or custom_question_key(label)
+
+
+async def _attach_custom_answer_keys(
+    db: AsyncSession, user_id: uuid.UUID, fields: list[ApplicationField]
+) -> None:
+    """Point free-form questions the user already answered at that saved
+    answer. Questions never answered keep no key, so a draft can still be
+    generated for them."""
+    custom = {
+        f.field_id: custom_question_key(f.label)
+        for f in fields
+        if f.label and not normalize_question(f.label)
+    }
+    if not custom:
+        return
+    saved = set(
+        (
+            await db.execute(
+                select(CandidateAnswer.question_key).where(
+                    CandidateAnswer.user_id == user_id,
+                    CandidateAnswer.question_key.in_(set(custom.values())),
+                    CandidateAnswer.approved_by_user.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for field in fields:
+        key = custom.get(field.field_id)
+        if key in saved:
+            field.normalized_key = key
+
+
 async def plan_fields(db: AsyncSession, task: ExtensionTask, raw_fields: list[dict]) -> dict:
     """Resolve an answer for each form field the extension found.
 
@@ -228,6 +272,7 @@ async def plan_fields(db: AsyncSession, task: ExtensionTask, raw_fields: list[di
     user = await db.get(User, task.user_id)
     fields = extract_fields(raw_fields[:MAX_FIELDS])
     fields = [f for f in fields if f.visible and not f.disabled]
+    await _attach_custom_answer_keys(db, task.user_id, fields)
     budget = [MAX_GENERATED_ANSWERS]
     resolved = await resolve_fields(
         db,

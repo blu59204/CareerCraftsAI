@@ -961,10 +961,9 @@ async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UU
         raise HTTPException(status_code=503, detail="Application service unavailable") from exc
 
     # The reserve activity creates the AgentRun row within its own first
-    # (sub-second, no browser involved) step; poll briefly for it rather
-    # than blocking indefinitely — a client that polls again a moment later
-    # still gets a consistent response either way.
-    run_id = await _await_temporal_run_id(user_id, application_id)
+    # (sub-second, no browser involved) step; wait briefly for it so the
+    # client can open the run's event stream right away.
+    run_id = await _await_temporal_run_id(user_id, application_id, started.get("run_id"))
     return {
         "run_id": run_id,
         "workflow_id": started["workflow_id"],
@@ -977,11 +976,24 @@ async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UU
 async def _await_temporal_run_id(
     user_id: uuid.UUID,
     application_id: uuid.UUID,
+    run_id: str | None = None,
     attempts: int = 10,
     delay_s: float = 0.3,
 ) -> str | None:
+    """The run of a just-started workflow is known up front (wait for its
+    row); for an already-running one, read it from the attempt. Never read
+    the attempt for a new workflow: until the reserve activity runs it still
+    points at the previous attempt's run."""
     from app.core.database import AsyncSessionLocal
     from app.models.db import ApplicationAttempt
+
+    if run_id is not None:
+        for _ in range(attempts):
+            async with AsyncSessionLocal() as db:
+                if await db.get(AgentRun, uuid.UUID(run_id)) is not None:
+                    break
+            await asyncio.sleep(delay_s)
+        return run_id
 
     for _ in range(attempts):
         async with AsyncSessionLocal() as db:

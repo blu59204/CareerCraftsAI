@@ -59,6 +59,9 @@ class AutoApplyIntent:
     # then for the user to finish reviewing and submit.
     claim_timeout_s: int = 24 * 3600
     complete_timeout_s: int = 2 * 3600
+    # Chosen by the API so it can return the run id right away; older
+    # callers leave it unset and the workflow picks one.
+    run_id: str | None = None
 
 
 # Extension progress stages (see app/api/v1/extension.py).
@@ -143,7 +146,7 @@ class AutoApplyWorkflow:
             # replay-safe, and generated once here so a retried
             # reserve_application_attempt activity call reuses the exact
             # same run_id instead of orphaning a new AgentRun each retry.
-            run_id = str(workflow.uuid4())
+            run_id = intent.run_id or str(workflow.uuid4())
             return await workflow.execute_activity(
                 reserve_application_attempt,
                 {

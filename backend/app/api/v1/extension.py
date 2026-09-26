@@ -386,13 +386,8 @@ async def save_answer(
     """Remember an answer the user typed in the review panel, so the same
     question is filled automatically next time."""
     from app.applications import profile_service
-    from app.applications.question_normalizer import normalize_question
 
-    key = (
-        body.question_key
-        or normalize_question(body.label)
-        or ("custom." + " ".join(body.label.lower().split())[:180])
-    )
+    key = body.question_key or extension_service.answer_key(body.label)
     await profile_service.save_approved_answer(db, device.user_id, key, body.label, body.value)
     await db.commit()
     return {"question_key": key}

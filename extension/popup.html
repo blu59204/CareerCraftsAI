@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CareerCraft AI</title>
+    <link rel="stylesheet" href="src/popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon32.png" alt="" width="20" height="20" />
+      <h1>CareerCraft AI</h1>
+    </header>
+
+    <section id="pair" hidden>
+      <p class="lead">Connect this browser to your CareerCraft account. You'll apply from here, where you're already signed in to LinkedIn and Naukri.</p>
+      <label for="app-origin">CareerCraft URL</label>
+      <input id="app-origin" type="url" value="http://localhost:3000" autocomplete="off" />
+      <label for="token">Connection code</label>
+      <input id="token" type="password" placeholder="ccx_…" autocomplete="off" />
+      <p class="hint">Get a code in CareerCraft → Settings → Integrations → Browser extension.</p>
+      <button id="connect" class="primary">Connect</button>
+    </section>
+
+    <section id="status" hidden>
+      <p class="connected"><span class="dot"></span><span id="who"></span></p>
+      <div class="card">
+        <p class="label">Current application</p>
+        <p id="task">No applications waiting.</p>
+      </div>
+      <div id="permission" class="card warn" hidden>
+        <p id="permission-text"></p>
+        <button id="grant">Allow on this site</button>
+      </div>
+      <div class="row">
+        <button id="check" class="primary">Check now</button>
+        <button id="disconnect">Disconnect</button>
+      </div>
+      <p class="hint">Nothing is submitted until you press <strong>Submit application</strong> in the review panel on the job page.</p>
+    </section>
+
+    <p id="error" class="error" role="alert" hidden></p>
+    <script type="module" src="src/popup.js"></script>
+  </body>
+</html>

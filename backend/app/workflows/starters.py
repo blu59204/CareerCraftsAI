@@ -123,6 +123,7 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
     from app.workflows.auto_apply import AutoApplyIntent, AutoApplyWorkflow, auto_apply_workflow_id
 
     workflow_id = auto_apply_workflow_id(str(user_id), str(application_id))
+    run_id = str(uuid.uuid4())
     extension = settings.APPLY_EXECUTION_MODE == "extension"
     client = await _client()
     try:
@@ -134,6 +135,7 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
                 mode=settings.APPLY_EXECUTION_MODE,
                 claim_timeout_s=settings.EXTENSION_TASK_CLAIM_TIMEOUT_S,
                 complete_timeout_s=settings.EXTENSION_TASK_COMPLETE_TIMEOUT_S,
+                run_id=run_id,
             ),
             id=workflow_id,
             task_queue=settings.TEMPORAL_TASK_QUEUE,
@@ -151,7 +153,13 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
         status = "queued"
     except WorkflowAlreadyStartedError:
         status = "already_running"
-    return {"workflow_id": workflow_id, "status": status, "mode": settings.APPLY_EXECUTION_MODE}
+        run_id = None  # the running workflow has its own
+    return {
+        "workflow_id": workflow_id,
+        "run_id": run_id,
+        "status": status,
+        "mode": settings.APPLY_EXECUTION_MODE,
+    }
 
 
 async def auto_apply_handle(workflow_id: str) -> WorkflowHandle:
