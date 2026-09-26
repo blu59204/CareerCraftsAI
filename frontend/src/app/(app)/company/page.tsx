@@ -31,6 +31,17 @@ interface CompanyData {
   partial_data?: Record<string, string> | null
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  website: 'overview',
+  news: 'news',
+  tech_stack: 'tech stack',
+  glassdoor: 'employee reviews',
+}
+
+function missingSources(partial: Record<string, string> | null | undefined): string[] {
+  return partial ? Object.keys(partial).map((key) => SOURCE_LABELS[key] ?? key) : []
+}
+
 export default function CompanyResearchPage() {
   const [query, setQuery] = useState('')
   const [company, setCompany] = useState('')
@@ -58,9 +69,9 @@ export default function CompanyResearchPage() {
     },
     onSuccess: (res) => {
       setCompany(res.company_name)
-      const failedSources = res.partial_data ? Object.keys(res.partial_data) : []
+      const failedSources = missingSources(res.partial_data)
       if (failedSources.length) {
-        toast.warning(`Some sources failed: ${failedSources.join(', ')}`)
+        toast.warning(`Nothing found for: ${failedSources.join(', ')}`)
       }
     },
     onError: (error) => toast.error(getApiErrorMessage(error, error instanceof Error ? error.message : 'Research failed')),
@@ -73,7 +84,7 @@ export default function CompanyResearchPage() {
   }
 
   const result = mutation.data || data
-  const failedSources = result?.partial_data ? Object.keys(result.partial_data) : []
+  const failedSources = missingSources(result?.partial_data)
 
   return (
     <div className="space-y-8">
@@ -98,22 +109,9 @@ export default function CompanyResearchPage() {
         }
       />
 
-      <div className="hidden gap-2">
-        <input
-          className="flex-1 rounded-md border bg-background px-3 py-2"
-          placeholder="Enter company name..."
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSearch()}
-        />
-        <LiquidGlassButton onClick={handleSearch} disabled={mutation.isPending}>
-          {mutation.isPending ? 'Researching...' : 'Research'}
-        </LiquidGlassButton>
-      </div>
-
       {result && (
         <motion.div variants={stagger} initial="hidden" animate="show" className="grid gap-5 lg:grid-cols-2">
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground lg:col-span-2">
             <span>Last researched: {new Date(result.researched_at).toLocaleString()}</span>
             <LiquidGlassButton onClick={() => mutation.mutate(true)} disabled={mutation.isPending}>
               Force Refresh
@@ -121,7 +119,7 @@ export default function CompanyResearchPage() {
           </div>
 
           {failedSources.length > 0 && (
-            <p className="text-sm text-warning">Partial data - failed sources: {failedSources.join(', ')}</p>
+            <p className="text-sm text-warning lg:col-span-2">Partial data — nothing found for: {failedSources.join(', ')}</p>
           )}
 
           <motion.section variants={fadeUp} className="glass-panel rounded-3xl p-6 lg:col-span-2">
@@ -136,23 +134,52 @@ export default function CompanyResearchPage() {
 
           <motion.section variants={fadeUp} className="glass-panel rounded-3xl p-6">
             <h2 className="flex items-center gap-2 font-semibold"><Newspaper className="h-4 w-4" /> Recent News</h2>
-            <ul className="mt-1 list-inside list-disc text-sm text-muted-foreground">
-              {result.news_items.map((item, i) => <li key={i}>{item.title || item.snippet || 'Untitled'}</li>)}
-            </ul>
+            {result.news_items.length === 0 ? (
+              <p className="mt-1 text-sm text-muted-foreground">No recent headlines found.</p>
+            ) : (
+              <ul className="mt-2 space-y-2 text-sm">
+                {result.news_items.map((item, i) => {
+                  const meta = [item.snippet, item.published ? new Date(item.published).toLocaleDateString() : '']
+                    .filter((part) => part && part !== 'Invalid Date')
+                    .join(' · ')
+                  return (
+                    <li key={i} className="min-w-0">
+                      {item.url ? (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-words font-medium hover:text-primary hover:underline"
+                        >
+                          {item.title || 'Untitled'}
+                        </a>
+                      ) : (
+                        <span className="break-words font-medium">{item.title || 'Untitled'}</span>
+                      )}
+                      {meta && <p className="truncate text-xs text-muted-foreground">{meta}</p>}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </motion.section>
 
           <motion.section variants={fadeUp} className="glass-panel rounded-3xl p-6">
             <h2 className="flex items-center gap-2 font-semibold"><Code2 className="h-4 w-4" /> Tech Stack</h2>
-            <div className="mt-1 flex flex-wrap gap-2">
-              {result.tech_stack.map((tech, i) => (
-                <span key={i} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium">{tech}</span>
-              ))}
-            </div>
+            {result.tech_stack.length === 0 ? (
+              <p className="mt-1 text-sm text-muted-foreground">No technologies mentioned in public sources.</p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {result.tech_stack.map((tech, i) => (
+                  <span key={i} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium">{tech}</span>
+                ))}
+              </div>
+            )}
           </motion.section>
 
           <motion.section variants={fadeUp} className="glass-panel rounded-3xl p-6">
             <h2 className="font-semibold">Glassdoor Sentiment</h2>
-            <p className="mt-1 text-sm text-muted-foreground">{result.glassdoor_sentiment}</p>
+            <p className="mt-1 text-sm capitalize text-muted-foreground">{result.glassdoor_sentiment}</p>
           </motion.section>
         </motion.div>
       )}
