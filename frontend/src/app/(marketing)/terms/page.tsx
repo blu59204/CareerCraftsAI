@@ -1,8 +1,17 @@
-export const metadata = { title: "Terms of Service — CareerCraft AI" };
+import type { Metadata } from "next";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+
+export const metadata: Metadata = {
+  title: "Terms of Service",
+  description:
+    "The terms governing your use of CareerCraft AI — acceptable use, your account, API keys, and governing law.",
+  alternates: { canonical: "/terms" },
+};
 
 export default function TermsPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
+      <Breadcrumbs trail={[{ name: "Terms of Service", href: "/terms" }]} />
       <div className="mb-3 text-sm font-medium text-primary">Legal</div>
       <h1 className="text-4xl font-medium">Terms of Service</h1>
       <p className="mt-2 text-sm text-muted-foreground">Last updated: September 26, 2026</p>

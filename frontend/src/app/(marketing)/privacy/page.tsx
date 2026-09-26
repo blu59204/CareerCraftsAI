@@ -1,8 +1,17 @@
-export const metadata = { title: "Privacy Policy — CareerCraft AI" };
+import type { Metadata } from "next";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description:
+    "What data CareerCraft AI collects, why, and your rights under India's DPDP Act and similar data-protection laws.",
+  alternates: { canonical: "/privacy" },
+};
 
 export default function PrivacyPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
+      <Breadcrumbs trail={[{ name: "Privacy Policy", href: "/privacy" }]} />
       <div className="mb-3 text-sm font-medium text-primary">Legal</div>
       <h1 className="text-4xl font-medium">Privacy Policy</h1>
       <p className="mt-2 text-sm text-muted-foreground">Last updated: September 26, 2026</p>

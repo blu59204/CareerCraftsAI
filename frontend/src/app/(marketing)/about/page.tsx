@@ -1,8 +1,17 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+
+export const metadata: Metadata = {
+  title: "About",
+  description: "Why CareerCraft AI exists and how its agents help job seekers apply smarter, not just faster.",
+  alternates: { canonical: "/about" },
+};
 
 export default function AboutPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
+      <Breadcrumbs trail={[{ name: "About", href: "/about" }]} />
       <div className="mb-3 text-sm font-medium text-primary">About</div>
       <h1 className="text-4xl font-medium">Built for job seekers.</h1>
       <p className="mt-4 text-lg text-muted-foreground">

@@ -1,0 +1,29 @@
+# CareerCraft AI
+
+> AI job-search copilot for students and freshers. AI agents find real roles,
+> tailor your resume to each job description, draft outreach, and prep you
+> for interviews — you approve every action before anything is sent.
+
+CareerCraft AI is bring-your-own-key: users supply their own API keys for
+their chosen AI provider (OpenAI, Anthropic, Google, or a self-hosted
+Ollama model). No agent applies to a job, sends an email, or submits a form
+without the user's explicit approval first.
+
+## Product
+
+- [Pricing](https://careercraftsai.me/pricing): Free tier plus "Coming soon"
+  Pro and Team plans (not yet purchasable — no billing exists behind them yet).
+- [How it works / Docs](https://careercraftsai.me/docs)
+- [About](https://careercraftsai.me/about)
+
+## Legal
+
+- [Privacy Policy](https://careercraftsai.me/privacy)
+- [Terms of Service](https://careercraftsai.me/terms)
+- [Cookie Policy](https://careercraftsai.me/cookies)
+- [Refund Policy](https://careercraftsai.me/refund)
+
+## Contact
+
+- [Contact page](https://careercraftsai.me/contact)
+- [Status page](https://careercraftsai.me/status)
