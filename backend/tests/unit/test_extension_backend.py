@@ -273,3 +273,16 @@ async def test_pairing_stores_only_a_hash_and_authenticates_the_raw_token():
     assert device.last_seen_at is not None
     # A Clerk JWT or anything else is never treated as a device token.
     assert await extension_service.authenticate(db, "eyJhbGciOiJSUzI1NiJ9.x.y") is None
+
+
+@pytest.mark.asyncio
+async def test_extension_can_revoke_its_own_token():
+    from app.api.v1.extension import device_revoke_self
+
+    device = SimpleNamespace(revoked_at=None)
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    assert await device_revoke_self(device=device, db=db) == {"status": "revoked"}
+    assert device.revoked_at is not None
+    db.commit.assert_awaited_once()

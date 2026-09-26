@@ -2,13 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useUser } from "@clerk/nextjs";
+import axios from "axios";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Link2, RefreshCw, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { BrowserExtensionCard } from "@/components/settings/BrowserExtensionCard";
 import { SettingsNav } from "@/components/settings/SettingsNav";
-import { apiClient } from "@/lib/api";
+import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { openNangoConnectWindow } from "@/lib/nango-connect";
 
 type Provider = "gmail" | "google_drive" | "google_calendar" | "outlook_mail" | "outlook_calendar";
@@ -49,6 +51,8 @@ export default function IntegrationsSettingsPage() {
     queryKey: ["integrations"],
     queryFn: async () => (await apiClient.get<Connection[]>("/integrations")).data,
     refetchInterval: connectingProvider ? 2_000 : false,
+    // 503 means integrations are switched off on this server; retrying won't change that.
+    retry: (failureCount, error) => !(axios.isAxiosError(error) && error.response?.status === 503) && failureCount < 2,
   });
   const loginEmail = authUser?.primaryEmailAddress?.emailAddress ?? null;
   const enforceGmailMatch = loginEmail?.toLowerCase().endsWith("@gmail.com") ?? false;
@@ -125,6 +129,10 @@ export default function IntegrationsSettingsPage() {
     connect.mutate({ provider, popup });
   };
 
+  const integrationsDisabled =
+    connections.isError &&
+    (connections.error as { response?: { status?: number } })?.response?.status === 503;
+
   return (
     <main className="mx-auto w-full max-w-6xl space-y-7 px-4 py-8 sm:px-6">
       <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -132,7 +140,8 @@ export default function IntegrationsSettingsPage() {
           <p className="text-sm text-muted-foreground">Settings / Connected accounts</p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Integrations</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Connect the services CareerCraft can use for approved email, calendar, and document actions.
+            Connect your browser for applications, and the services CareerCraft can use for approved email,
+            calendar, and document actions.
           </p>
         </div>
         <div className="rounded-xl border border-border bg-card/50 px-4 py-3 text-sm">
@@ -143,10 +152,19 @@ export default function IntegrationsSettingsPage() {
 
       <SettingsNav />
 
+      <BrowserExtensionCard />
+
       {connections.isError ? (
-        <p role="alert" className="rounded-xl border border-danger/40 p-4 text-sm text-danger">
-          Could not load integrations. Try again shortly.
-        </p>
+        integrationsDisabled ? (
+          <p className="rounded-xl border border-border bg-card/40 p-4 text-sm text-muted-foreground">
+            {getApiErrorMessage(connections.error, "Email and calendar integrations are not enabled")} on this
+            deployment. Ask your administrator to configure Nango to connect Gmail, Outlook or Drive.
+          </p>
+        ) : (
+          <p role="alert" className="rounded-xl border border-danger/40 p-4 text-sm text-danger">
+            Could not load integrations. Try again shortly.
+          </p>
+        )
       ) : null}
 
       {enforceGmailMatch ? (
@@ -155,6 +173,7 @@ export default function IntegrationsSettingsPage() {
         </p>
       ) : null}
 
+      {integrationsDisabled ? null : (
       <div className="grid gap-4 md:grid-cols-2">
         {PROVIDERS.map((provider) => {
           const connection = byProvider.get(provider.id);
@@ -215,6 +234,7 @@ export default function IntegrationsSettingsPage() {
           );
         })}
       </div>
+      )}
     </main>
   );
 }

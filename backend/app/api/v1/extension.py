@@ -222,6 +222,16 @@ async def device_me(
     }
 
 
+@router.delete("/device/me")
+async def device_revoke_self(
+    device: ExtensionDevice = Depends(get_device), db: AsyncSession = Depends(get_db)
+):
+    """The extension disconnects or re-pairs: retire its own token."""
+    device.revoked_at = datetime.now(UTC)
+    await db.commit()
+    return {"status": "revoked"}
+
+
 @router.post("/device/tasks/claim")
 @limiter.limit("120/minute")
 async def claim_task(

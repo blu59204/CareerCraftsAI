@@ -25,6 +25,19 @@
     const data = event.data;
     if (!data || data.source !== "careercraft-app") return;
 
+    if (data.type === "CAREERCRAFT_PING") {
+      try {
+        post({
+          source: "careercraft-extension",
+          type: "CAREERCRAFT_EXTENSION_READY",
+          version: chrome.runtime.getManifest().version,
+        });
+      } catch (e) {
+        /* extension context gone */
+      }
+      return;
+    }
+
     if (data.type === "CAREERCRAFT_WAKE") {
       try {
         chrome.runtime.sendMessage({ type: "WAKE" });

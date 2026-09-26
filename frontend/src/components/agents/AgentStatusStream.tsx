@@ -12,7 +12,16 @@ const STATUS_COLOR: Record<string, string> = {
   awaiting_approval: "text-warning border-warning/30 bg-warning/10",
   completed: "text-success border-success/30 bg-success/10",
   failed: "text-danger border-danger/30 bg-danger/10",
+  cancelled: "text-muted-foreground border-border bg-muted",
+  expired: "text-muted-foreground border-border bg-muted",
 };
+
+// Progress events (e.g. from the browser extension) carry a readable message.
+function eventText(data: unknown): string {
+  if (typeof data === "string") return data;
+  const message = (data as { message?: unknown } | null)?.message;
+  return typeof message === "string" ? message : JSON.stringify(data);
+}
 
 const STATUS_ICON: Record<string, typeof Clock3> = {
   running: Loader2,
@@ -83,7 +92,7 @@ export function AgentStatusStream({ runId, onApprove, onCancel }: Props) {
         {run.events.map((e, i) => (
           <div key={i} className="mb-2 break-words leading-relaxed">
             <span className="text-muted-foreground">[{e.type}]</span>{" "}
-            {typeof e.data === "string" ? e.data : JSON.stringify(e.data)}
+            {eventText(e.data)}
           </div>
         ))}
         {run.status === "running" && (

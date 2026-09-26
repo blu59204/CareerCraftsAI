@@ -9,7 +9,7 @@ import { apiClient } from "@/lib/api";
  */
 export type AgentRunDetail = {
   id: string;
-  status: "queued" | "running" | "awaiting_approval" | "completed" | "failed" | "expired";
+  status: "queued" | "running" | "awaiting_approval" | "completed" | "failed" | "expired" | "cancelled";
   output: Record<string, unknown> | null;
   error: string | null;
 };
@@ -19,6 +19,7 @@ const TERMINAL_STATUSES: ReadonlyArray<AgentRunDetail["status"]> = [
   "failed",
   "awaiting_approval",
   "expired",
+  "cancelled",
 ];
 
 export async function startAgentRun(taskType: string, context: Record<string, unknown>): Promise<string> {

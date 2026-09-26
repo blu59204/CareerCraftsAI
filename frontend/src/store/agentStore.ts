@@ -16,7 +16,15 @@ interface BrowserFrame {
 
 interface AgentRun {
   runId: string;
-  status: "queued" | "running" | "awaiting_approval" | "completed" | "failed" | "needs_verification";
+  status:
+    | "queued"
+    | "running"
+    | "awaiting_approval"
+    | "completed"
+    | "failed"
+    | "needs_verification"
+    | "cancelled"
+    | "expired";
   events: AgentEvent[];
   pendingAction: Record<string, unknown> | null;
   result: Record<string, unknown> | null;

@@ -82,6 +82,13 @@ async function hasHostPermission(urlString) {
   }
 }
 
+// Retire this browser's token on the server before forgetting it locally,
+// so disconnected or re-paired browsers never pile up as active devices.
+async function revokeCurrentPairing() {
+  const current = await getPairing();
+  if (current) await apiFetch(current, "/extension/device/me", { method: "DELETE" });
+}
+
 // ── Bridge registration (content script on the web-app origin) ─────────
 
 async function syncBridgeRegistration(appOrigin) {
@@ -317,6 +324,8 @@ async function handleMessage(msg, sender) {
       if (!me.ok || !me.data) {
         return { ok: false, error: me.status === 401 ? "Invalid or expired connection code" : "Could not reach CareerCraft AI at that URL" };
       }
+      const previous = await getPairing();
+      if (previous && previous.token !== pairing.token) await revokeCurrentPairing();
       await setPairing(pairing);
       await syncBridgeRegistration(pairing.appOrigin);
       pollOnce();
@@ -337,6 +346,7 @@ async function handleMessage(msg, sender) {
       const pairing = { appOrigin, token: msg.token };
       const me = await apiFetch(pairing, "/extension/device/me");
       if (!me.ok || !me.data) return { ok: false, reason: "invalid_token" };
+      if (current && current.token !== msg.token) await revokeCurrentPairing();
       await setPairing(pairing);
       await syncBridgeRegistration(appOrigin);
       pollOnce();
@@ -344,6 +354,7 @@ async function handleMessage(msg, sender) {
     }
 
     case "CC_DISCONNECT": {
+      await revokeCurrentPairing();
       await clearPairing();
       await clearActiveTask();
       await syncBridgeRegistration(null);
