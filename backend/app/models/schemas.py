@@ -22,6 +22,8 @@ class UserResponse(BaseModel):
     phone: str | None
     linkedin_url: str | None
     onboarding_completed: bool
+    policy_accepted_at: datetime | None
+    policy_version: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

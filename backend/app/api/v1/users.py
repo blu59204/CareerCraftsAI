@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -111,6 +112,34 @@ async def update_profile(
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail="That email is already in use") from exc
+    return current_user
+
+
+# Bumped whenever the Terms of Service or Privacy Policy materially change.
+# Keep in sync with the "Last updated" date on frontend/(marketing)/terms
+# and /privacy — a version bump does not by itself require existing users
+# to re-accept; that decision (and any re-prompt) is a separate, deliberate
+# product call, not something this constant triggers automatically.
+POLICY_VERSION = "2026-09-26"
+
+
+@router.post("/me/consent", response_model=UserResponse)
+async def record_policy_consent(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Record that the signed-in user just agreed to the ToS + Privacy Policy.
+
+    Called once, right after sign-up completes (the checkbox is required to
+    submit the sign-up form, so reaching this call already implies assent —
+    this endpoint's job is only to make that durable with a timestamp and
+    the policy revision in force at the time). Safe to call again: it always
+    overwrites with the current moment and POLICY_VERSION, so a user who
+    re-accepts (e.g. after a version bump) gets the latest record kept.
+    """
+    current_user.policy_accepted_at = datetime.now(UTC)
+    current_user.policy_version = POLICY_VERSION
+    await db.flush()
     return current_user
 
 
@@ -510,7 +539,9 @@ async def change_password(
     _ = (payload, current_user)
     if len(payload.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    raise HTTPException(status_code=400, detail="Password changes are managed by Clerk — use Account Settings")
+    raise HTTPException(
+        status_code=400, detail="Password changes are managed by Clerk — use Account Settings"
+    )
 
 
 @router.delete("/me", status_code=204)
@@ -533,6 +564,7 @@ async def delete_account(
 
     if auth_subject:
         from app.core.supabase_auth import delete_clerk_user
+
         await delete_clerk_user(auth_subject)
 
     logger.info("User account deleted: %s", auth_subject)

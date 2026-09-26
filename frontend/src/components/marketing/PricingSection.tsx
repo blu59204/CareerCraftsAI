@@ -25,6 +25,9 @@ const TIERS: PricingTier[] = [
     ctaHref: "/register?plan=pro",
     ctaLabel: "Go Pro",
     highlighted: true,
+    // Not purchasable yet — no billing is wired up. Remove this flag once
+    // there's a real checkout behind it; see PricingCard's comingSoon prop.
+    comingSoon: true,
   },
   {
     name: "Team",
@@ -33,6 +36,7 @@ const TIERS: PricingTier[] = [
     features: ["Everything in Pro", "Cohort management", "Bulk seats", "Shared templates", "Priority support"],
     ctaHref: "/contact",
     ctaLabel: "Talk to us",
+    comingSoon: true,
   },
 ];
 

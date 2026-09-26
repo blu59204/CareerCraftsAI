@@ -39,3 +39,36 @@ async def test_dashboard_stats_uses_two_db_round_trips(mock_db, mock_user):
             "created_at": "2026-05-30T00:00:00+00:00",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_record_policy_consent_stamps_time_and_version(mock_db, mock_user):
+    from app.api.v1.users import POLICY_VERSION, record_policy_consent
+
+    mock_user.policy_accepted_at = None
+    mock_user.policy_version = None
+
+    response = await record_policy_consent(db=mock_db, current_user=mock_user)
+
+    assert mock_user.policy_accepted_at is not None
+    assert mock_user.policy_version == POLICY_VERSION
+    assert response is mock_user
+    mock_db.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_record_policy_consent_is_idempotent_and_refreshes_timestamp(mock_db, mock_user):
+    """Calling it again (e.g. after a version bump) overwrites with the latest
+    moment and version rather than refusing a second acceptance."""
+    from datetime import UTC, datetime
+
+    from app.api.v1.users import POLICY_VERSION, record_policy_consent
+
+    stale = datetime(2020, 1, 1, tzinfo=UTC)
+    mock_user.policy_accepted_at = stale
+    mock_user.policy_version = "2020-01-01"
+
+    await record_policy_consent(db=mock_db, current_user=mock_user)
+
+    assert mock_user.policy_accepted_at > stale
+    assert mock_user.policy_version == POLICY_VERSION
