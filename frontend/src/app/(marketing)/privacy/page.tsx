@@ -101,9 +101,10 @@ export default function PrivacyPage() {
             .
           </p>
           <p className="mt-3 text-sm">
-            {/* TODO: replace with the real registered business name and address before relying on
-                this page in production. */}
-            [Company legal name and business address to be added here.]
+            {/* TODO: replace [Company legal name] and the street-level address with the real
+                registered business name and full address before relying on this page in
+                production. */}
+            [Company legal name], Bangalore, Karnataka, India.
           </p>
         </section>
       </div>
