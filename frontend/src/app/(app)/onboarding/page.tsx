@@ -9,6 +9,7 @@ import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { OnboardingStepper } from "@/components/onboarding/OnboardingStepper";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { apiClient } from "@/lib/api";
+import { PROVIDERS, type Provider } from "@/lib/model-providers";
 
 interface FormData {
   goal: string;
@@ -18,18 +19,15 @@ interface FormData {
   yearsExperience: string;
   jobTypes: string[];
   workModes: string[];
-  provider: "anthropic" | "openai" | "google" | "ollama" | "nvidia_nim";
+  provider: Provider;
   apiKey: string;
   modelName: string;
 }
 
-const MODEL_DEFAULTS: Record<string, string> = {
-  anthropic: "claude-3-5-sonnet-20241022",
-  openai: "gpt-4o",
-  google: "gemini-1.5-pro",
-  ollama: "llama3.2",
-  nvidia_nim: "meta/llama-3.1-70b-instruct",
-};
+// Each provider's first catalog entry is its suggested model.
+const MODEL_DEFAULTS = Object.fromEntries(
+  PROVIDERS.map((p) => [p.value, p.models[0] ?? ""]),
+) as Record<Provider, string>;
 
 const POPULAR_ROLES = [
   "Software Engineer",
@@ -542,11 +540,11 @@ export default function OnboardingPage() {
               }}
               className="w-full rounded-2xl border border-border bg-background p-3"
             >
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="google">Google</option>
-              <option value="ollama">Ollama (local)</option>
-              <option value="nvidia_nim">NVIDIA NIM</option>
+              {PROVIDERS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
             </select>
           </div>
           <div>
