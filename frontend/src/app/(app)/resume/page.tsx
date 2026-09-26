@@ -25,7 +25,7 @@ interface AtsData {
   missing_keywords: string[];
   suggestions: string[];
   warnings: string[];
-  keyword_score: number;
+  keyword_score: number | null;
   readability_score?: number;
   format_score: number;
 }

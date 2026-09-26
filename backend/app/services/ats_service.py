@@ -8,6 +8,7 @@ Based on parsing rules for Greenhouse, Workday, Taleo, iCIMS (2026).
 
 No external NLP dependencies — uses stdlib re, collections, math only.
 """
+
 import collections
 import math
 import re
@@ -53,23 +54,66 @@ STANDARD_HEADINGS = {
 }
 
 STOP_WORDS = {
-    "the", "and", "for", "with", "that", "this", "have", "from", "are", "will", "you",
-    "our", "they", "were", "been", "has", "had", "his", "her", "its", "their", "there",
-    "what", "when", "which", "who", "can", "may", "should", "would", "could", "also",
-    "into", "than", "then", "some", "just", "about", "over", "each", "but", "not",
-    "all", "more", "out", "one", "two", "new", "get", "use", "per", "via",
+    "the",
+    "and",
+    "for",
+    "with",
+    "that",
+    "this",
+    "have",
+    "from",
+    "are",
+    "will",
+    "you",
+    "our",
+    "they",
+    "were",
+    "been",
+    "has",
+    "had",
+    "his",
+    "her",
+    "its",
+    "their",
+    "there",
+    "what",
+    "when",
+    "which",
+    "who",
+    "can",
+    "may",
+    "should",
+    "would",
+    "could",
+    "also",
+    "into",
+    "than",
+    "then",
+    "some",
+    "just",
+    "about",
+    "over",
+    "each",
+    "but",
+    "not",
+    "all",
+    "more",
+    "out",
+    "one",
+    "two",
+    "new",
+    "get",
+    "use",
+    "per",
+    "via",
 }
 
 # JD section markers for keyword importance ordering
-_TITLE_MARKERS = re.compile(
-    r"(job\s+title|position|role)\s*[:—\-]", re.IGNORECASE
-)
+_TITLE_MARKERS = re.compile(r"(job\s+title|position|role)\s*[:—\-]", re.IGNORECASE)
 _REQUIRED_MARKERS = re.compile(
     r"(required|must\s+have|requirements|qualifications|minimum)", re.IGNORECASE
 )
-_PREFERRED_MARKERS = re.compile(
-    r"(preferred|nice\s+to\s+have|bonus|desired|plus)", re.IGNORECASE
-)
+_PREFERRED_MARKERS = re.compile(r"(preferred|nice\s+to\s+have|bonus|desired|plus)", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +180,7 @@ def compute_flesch_kincaid(text: str) -> tuple[float, float]:
     avg_syllables_per_word = total_syllables / total_words
 
     # Flesch-Kincaid Grade Level formula
-    grade_level = (
-        0.39 * avg_sentence_length + 11.8 * avg_syllables_per_word - 15.59
-    )
+    grade_level = 0.39 * avg_sentence_length + 11.8 * avg_syllables_per_word - 15.59
 
     return round(grade_level, 2), round(avg_sentence_length, 2)
 
@@ -236,15 +278,10 @@ def _check_format_compliance(text: str) -> dict[str, bool]:
     """Check format compliance: contact info, no tables, standard headings."""
     has_contact = bool(
         re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
-        or re.search(
-            r"[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}", text
-        )
+        or re.search(r"[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}", text)
     )
 
-    has_tables = bool(
-        re.search(r"\||\+---", text)
-        or re.search(r"<table", text, re.IGNORECASE)
-    )
+    has_tables = bool(re.search(r"\||\+---", text) or re.search(r"<table", text, re.IGNORECASE))
 
     has_standard_headings = False
     for name, pattern in SECTION_PATTERNS.items():
@@ -282,9 +319,7 @@ def generate_suggestions(score_result: AtsScoreResult) -> list[str]:
     # Keyword-related suggestions
     if score_result.keyword_score < 70 and score_result.missing_keywords:
         top_missing = score_result.missing_keywords[:5]
-        suggestions.append(
-            f"Add missing keywords to your resume: {', '.join(top_missing)}"
-        )
+        suggestions.append(f"Add missing keywords to your resume: {', '.join(top_missing)}")
 
     if score_result.keyword_score < 50:
         suggestions.append(
@@ -308,9 +343,7 @@ def generate_suggestions(score_result: AtsScoreResult) -> list[str]:
 
     # Format compliance suggestions
     if not score_result.format_checks.get("has_contact_info", True):
-        suggestions.append(
-            "Add contact information (email, phone) at the top of your resume"
-        )
+        suggestions.append("Add contact information (email, phone) at the top of your resume")
 
     if not score_result.format_checks.get("no_tables", True):
         suggestions.append(
@@ -352,6 +385,74 @@ def generate_suggestions(score_result: AtsScoreResult) -> list[str]:
 # ---------------------------------------------------------------------------
 # Main scoring function
 # ---------------------------------------------------------------------------
+
+
+def top_resume_keywords(resume_text: str, limit: int = 15) -> list[str]:
+    """The resume's most frequent meaningful terms, most frequent first."""
+    tokens = re.findall(r"\b[a-zA-Z][a-zA-Z+#.]{2,}\b", resume_text.lower())
+    counter = collections.Counter(
+        t
+        for t in tokens
+        if t not in STOP_WORDS
+        # "example.com", "linkedin.com" are contact details, not skills.
+        and ("." not in t.rstrip(".") or t.endswith((".js", ".net")))
+    )
+    return [word.rstrip(".") for word, _ in counter.most_common(limit)]
+
+
+def score_resume_baseline(resume_text: str, target_jd_text: str | None) -> tuple[int, dict]:
+    """Score a resume before it is matched to one specific job.
+
+    With the text of jobs the user saved, keyword coverage is measured
+    against them. Without any, there is nothing honest to measure keywords
+    against: the score covers readability and format only, and
+    ``keyword_score`` is None. Returns (composite score, ats_data).
+    """
+    if target_jd_text and target_jd_text.strip():
+        result = compute_ats_score(resume_text, target_jd_text)
+        return result.composite_score, {
+            "keyword_basis": "saved_jobs",
+            "keyword_score": result.keyword_score,
+            "readability_score": result.readability_score,
+            "format_score": result.format_score,
+            "matched_keywords": result.matched_keywords,
+            "missing_keywords": result.missing_keywords,
+            "suggestions": result.suggestions,
+            "flesch_kincaid": result.flesch_kincaid,
+            "avg_sentence_length": result.avg_sentence_length,
+            "format_checks": result.format_checks,
+        }
+
+    flesch_kincaid, avg_sentence_length = compute_flesch_kincaid(resume_text)
+    readability = _readability_score_from_fk(flesch_kincaid)
+    format_checks = _check_format_compliance(resume_text)
+    format_score = _format_score_from_checks(format_checks)
+    # Same 0.3 : 0.2 weighting as the full composite, rescaled to 100.
+    composite = max(0, min(100, round(readability * 0.6 + format_score * 0.4)))
+    partial = AtsScoreResult(
+        composite_score=composite,
+        keyword_score=100,  # not measured — keeps keyword advice out of the suggestions
+        readability_score=readability,
+        format_score=format_score,
+        matched_keywords=[],
+        missing_keywords=[],
+        suggestions=[],
+        flesch_kincaid=flesch_kincaid,
+        avg_sentence_length=avg_sentence_length,
+        format_checks=format_checks,
+    )
+    return composite, {
+        "keyword_basis": None,
+        "keyword_score": None,
+        "readability_score": readability,
+        "format_score": format_score,
+        "matched_keywords": top_resume_keywords(resume_text),
+        "missing_keywords": [],
+        "suggestions": generate_suggestions(partial),
+        "flesch_kincaid": flesch_kincaid,
+        "avg_sentence_length": avg_sentence_length,
+        "format_checks": format_checks,
+    }
 
 
 def compute_ats_score(resume_text: str, jd_text: str) -> AtsScoreResult:

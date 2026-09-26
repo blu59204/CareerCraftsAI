@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
@@ -41,43 +41,49 @@ class DocumentResponse(BaseModel):
 async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> None:
     """Compute ATS score asynchronously after resume upload.
 
-    user_id is passed explicitly so the update query can scope to the owner —
-    prevents a latent IDOR if the background task is ever called with untrusted input.
+    Keywords are measured against up to three jobs the user saved with a
+    description; with none saved the score covers readability and format
+    only. user_id is passed explicitly so the update query can scope to the
+    owner — prevents a latent IDOR if the background task is ever called
+    with untrusted input.
     """
     try:
-        from app.services.ats_service import compute_ats_score
         from app.core.database import AsyncSessionLocal
-        from app.models.db import UserDocument
+        from app.models.db import JobApplication, UserDocument
+        from app.services.ats_service import score_resume_baseline
 
-        # Background scoring without a JD uses a generic placeholder to get baseline scores
-        generic_jd = (
-            "We are looking for a professional with relevant experience, "
-            "strong skills, education background, and good communication abilities. "
-            "The ideal candidate should have project management capabilities and technical expertise."
-        )
-        result = compute_ats_score(raw_text, generic_jd)
-
+        owner = uuid.UUID(str(user_id))
         async with AsyncSessionLocal() as db:
+            target_jds = (
+                (
+                    await db.execute(
+                        select(JobApplication.jd_text)
+                        .where(
+                            JobApplication.user_id == owner,
+                            func.length(JobApplication.jd_text) > 200,
+                        )
+                        .order_by(
+                            JobApplication.applied_at.desc().nullslast(),
+                            JobApplication.match_score.desc().nullslast(),
+                        )
+                        .limit(3)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            score, ats_data = score_resume_baseline(raw_text, "\n\n".join(target_jds) or None)
+
             res = await db.execute(
                 select(UserDocument).where(
                     UserDocument.id == uuid.UUID(doc_id),
-                    UserDocument.user_id == uuid.UUID(str(user_id)),
+                    UserDocument.user_id == owner,
                 )
             )
             doc = res.scalar_one_or_none()
             if doc:
-                doc.ats_score = result.composite_score
-                doc.ats_data = {
-                    "keyword_score": result.keyword_score,
-                    "readability_score": result.readability_score,
-                    "format_score": result.format_score,
-                    "matched_keywords": result.matched_keywords,
-                    "missing_keywords": result.missing_keywords,
-                    "suggestions": result.suggestions,
-                    "flesch_kincaid": result.flesch_kincaid,
-                    "avg_sentence_length": result.avg_sentence_length,
-                    "format_checks": result.format_checks,
-                }
+                doc.ats_score = score
+                doc.ats_data = ats_data
                 await db.commit()
     except Exception as exc:
         logger.warning("Background ATS scoring failed for doc %s: %s", doc_id, exc)
@@ -202,7 +208,50 @@ async def list_documents(
             )
         query = query.where(UserDocument.doc_type == doc_type)
     result = await db.execute(query)
-    return result.scalars().all()
+    docs = result.scalars().all()
+    await _refresh_stale_resume_scores(db, current_user.id, docs)
+    return docs
+
+
+async def _refresh_stale_resume_scores(db: AsyncSession, user_id, docs) -> None:
+    """Re-score resumes whose keywords were measured against nothing real.
+
+    Covers scores from before keyword_basis existed (they used a generic
+    placeholder JD) and readability-only scores once the user has saved
+    jobs to measure against. Runs in the background; the next load shows it.
+    """
+    from app.core.background import spawn_background
+    from app.models.db import JobApplication
+
+    candidates = [
+        doc
+        for doc in docs
+        if doc.doc_type == "resume"
+        and doc.raw_text
+        and isinstance(doc.ats_data, dict)
+        and doc.ats_data.get("keyword_basis") is None
+    ]
+    if not candidates:
+        return
+    has_saved_jobs = None
+    for doc in candidates:
+        if "keyword_basis" in doc.ats_data:
+            if has_saved_jobs is None:
+                has_saved_jobs = bool(
+                    (
+                        await db.execute(
+                            select(JobApplication.id)
+                            .where(
+                                JobApplication.user_id == user_id,
+                                func.length(JobApplication.jd_text) > 200,
+                            )
+                            .limit(1)
+                        )
+                    ).first()
+                )
+            if not has_saved_jobs:
+                continue
+        spawn_background(_score_resume_background(str(doc.id), str(user_id), doc.raw_text))
 
 
 @router.get("/documents/{document_id}/ats", response_model=dict)
