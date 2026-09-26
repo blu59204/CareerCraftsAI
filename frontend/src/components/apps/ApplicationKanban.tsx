@@ -49,11 +49,11 @@ export function ApplicationKanban({ items, onSelect }: Props) {
                   {...cardHover}
                   className="w-full rounded-2xl border border-border bg-card p-3 text-left"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">{it.company}</span>
-                    <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">{it.matchPercent}%</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-medium">{it.company}</span>
+                    <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">{it.matchPercent}%</span>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{it.role}</div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">{it.role}</div>
                   {it.nextFollowUp && (
                     <div className="mt-2 text-[10px] text-warning">Follow up {it.nextFollowUp}</div>
                   )}

@@ -1069,7 +1069,7 @@ export default function JobsPage() {
         title="Find your next role."
         description="Resume is analyzed first. Confirm fresher/years, target roles, location, and work mode before agents search."
         actions={
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <LiquidGlassButton
             tone={showFilters ? "primary" : "ghost"}
             size="sm"

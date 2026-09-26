@@ -22,19 +22,19 @@ export function JobMatchCard({ jobs }: Props) {
           {jobs.slice(0, 4).map((j) => {
             const content = (
               <>
-                <div>
-                  <div className="text-sm font-medium">{j.role}</div>
-                  <div className="text-xs text-muted-foreground">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{j.role}</div>
+                  <div className="truncate text-xs text-muted-foreground">
                     {j.company}
                     {j.location ? ` · ${j.location}` : ""}
                   </div>
                 </div>
-                <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
+                <span className="shrink-0 rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-primary">
                   {j.matchPercent}%
                 </span>
               </>
             );
-            const itemClass = "flex items-center justify-between rounded-2xl border border-border/60 bg-card/40 px-4 py-3 transition-colors hover:bg-card/70";
+            const itemClass = "flex items-center justify-between gap-2 rounded-2xl border border-border/60 bg-card/40 px-4 py-3 transition-colors hover:bg-card/70";
             return j.jobUrl ? (
               <li key={j.id}>
                 <a href={j.jobUrl} target="_blank" rel="noopener noreferrer" className={itemClass}>

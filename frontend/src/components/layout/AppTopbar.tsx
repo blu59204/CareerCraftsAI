@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Bell, Search, CheckCircle, Briefcase, Mail, Calendar, Menu } from "lucide-react";
+import { Bell, Search, CheckCircle, Briefcase, Mail, Calendar, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +44,7 @@ const NOTIFICATIONS = [
 
 export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [notifications, setNotifications] = useState(NOTIFICATIONS);
   const notifRef = useRef<HTMLDivElement>(null);
 
@@ -64,28 +65,64 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
 
   return (
-    <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-4 overflow-visible rounded-full px-4 md:mx-6">
-      <button
-        type="button"
-        onClick={onMenuClick}
-        aria-label="Open navigation"
-        className="rounded-full p-2 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground md:hidden"
-      >
-        <Menu className="h-5 w-5" />
-      </button>
-      <div className="flex max-w-md flex-1 items-center gap-2 rounded-full border border-white/45 bg-white/[0.10] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[20px] dark:border-white/10 dark:bg-black/[0.12]">
-        <Search className="h-4 w-4 text-muted-foreground" />
+    <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-2 overflow-visible rounded-full px-4 sm:gap-4 md:mx-6">
+      {!mobileSearchOpen && (
+        <button
+          type="button"
+          onClick={onMenuClick}
+          aria-label="Open navigation"
+          className="shrink-0 rounded-full p-2 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground md:hidden"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* Desktop/tablet: full search pill. Hidden on mobile in favor of an icon
+          button — at 390px a flex-1 input with content-sized min-width pushed
+          the notification bell past the pill's rounded border. */}
+      <div className="hidden min-w-0 max-w-md flex-1 items-center gap-2 rounded-full border border-white/45 bg-white/[0.10] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[20px] dark:border-white/10 dark:bg-black/[0.12] sm:flex">
+        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
         <input
           placeholder="Search jobs, applications, agents…"
-          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         />
       </div>
 
-      <span className="hidden items-center gap-1.5 rounded-full border border-white/40 bg-white/[0.10] px-3 py-1.5 text-xs font-medium text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] backdrop-blur-[18px] sm:inline-flex dark:border-white/10 dark:bg-black/[0.12]">
+      {/* Mobile: collapsed search icon that expands into an inline input. */}
+      {mobileSearchOpen ? (
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-white/45 bg-white/[0.10] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[20px] dark:border-white/10 dark:bg-black/[0.12] sm:hidden">
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input
+            autoFocus
+            placeholder="Search…"
+            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <button
+            type="button"
+            onClick={() => setMobileSearchOpen(false)}
+            aria-label="Close search"
+            className="shrink-0 rounded-full p-1 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setMobileSearchOpen(true)}
+          aria-label="Search"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/45 bg-white/[0.10] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.40)] backdrop-blur-[18px] hover:bg-white/[0.16] dark:border-white/10 dark:bg-black/[0.12] dark:hover:bg-white/[0.08] sm:hidden"
+        >
+          <Search className="h-4 w-4" />
+        </button>
+      )}
+
+      <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-white/40 bg-white/[0.10] px-3 py-1.5 text-xs font-medium text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] backdrop-blur-[18px] sm:inline-flex dark:border-white/10 dark:bg-black/[0.12]">
         <span className="signal-dot h-1.5 w-1.5 rounded-full bg-success" />
         Agents online
       </span>
 
+      {!mobileSearchOpen && (
       <div className="ml-auto flex shrink-0 items-center gap-3">
         {/* Notifications */}
         <div ref={notifRef} className="relative">
@@ -165,6 +202,7 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
         <ThemeToggle />
         <UserMenu />
       </div>
+      )}
     </header>
   );
 }

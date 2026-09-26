@@ -790,12 +790,12 @@ export default function ResumePage() {
 
       {/* Tab nav */}
       <motion.div variants={fadeUp}>
-        <div className="flex gap-1 rounded-full border border-border bg-muted/40 p-1 text-sm">
+        <div className="flex gap-1 overflow-x-auto rounded-full border border-border bg-muted/40 p-1 text-sm">
           {(["builder", "templates", "history", "cover-letter"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`rounded-full px-4 py-1.5 capitalize transition-colors ${
+              className={`shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 capitalize transition-colors ${
                 tab === t
                   ? "bg-background shadow-sm text-foreground"
                   : "text-muted-foreground hover:text-foreground"

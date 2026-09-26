@@ -460,7 +460,7 @@ export default function InterviewPrepPage() {
           title="Practice makes perfect."
           description="Generate role-specific questions, rehearse out loud, and turn STAR stories into interview-ready answers."
           actions={
-          <div className="flex shrink-0 flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <span title={aiQuestions.length === 0 ? "Generate an interview plan first" : undefined}>
               <LiquidGlassButton
                 tone="ghost"

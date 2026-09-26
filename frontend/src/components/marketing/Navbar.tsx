@@ -45,8 +45,11 @@ export function MarketingNavbar() {
             </Link>
           ))}
         </nav>
-        <div className="flex items-center gap-3">
-          <ThemeToggle />
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* The 80px-wide switch plus a CTA button and avatar don't fit
+              alongside the logo at 390px — collapse it here; the app itself
+              keeps a theme toggle in the authenticated topbar. */}
+          <ThemeToggle className="hidden sm:flex" />
           {!signedIn && (
             <>
               <Link

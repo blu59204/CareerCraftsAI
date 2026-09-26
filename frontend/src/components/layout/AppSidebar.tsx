@@ -111,8 +111,10 @@ export function AppSidebar({ mobileOpen = false, onMobileClose }: AppSidebarProp
 
   return (
     <>
-      {/* Desktop/tablet-landscape: persistent sidebar */}
-      <aside className="hidden h-screen w-72 shrink-0 p-4 md:flex md:flex-col">{body}</aside>
+      {/* Desktop/tablet-landscape: persistent sidebar. Sticky (not just
+          h-screen) so it stays in view instead of scrolling away once page
+          content is taller than one viewport. */}
+      <aside className="hidden h-screen w-72 shrink-0 self-start p-4 md:sticky md:top-0 md:flex md:flex-col">{body}</aside>
 
       {/* Mobile/tablet-portrait: slide-in drawer + backdrop */}
       {mobileOpen && (

@@ -75,7 +75,7 @@ export default function CoverLetterPage() {
   };
 
   return (
-    <motion.div className="space-y-6 p-6" variants={fadeUp} initial="hidden" animate="visible">
+    <motion.div className="space-y-6" variants={fadeUp} initial="hidden" animate="show">
       <CommandHeader
         eyebrow="AI Writer"
         title="Cover Letter"
