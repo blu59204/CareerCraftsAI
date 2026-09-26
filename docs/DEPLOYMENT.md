@@ -1,5 +1,13 @@
 # Deployment Guide
 
+> **This guide describes a generic VPS + Supabase Cloud topology and is out of
+> date.** Actual production runs on the self-hosted stack in `deploy/oracle/`
+> — self-hosted Postgres (pgvector), no Supabase dependency at all (confirmed:
+> zero code reads any `SUPABASE_*` env var). See `deploy/oracle/compose.yml`
+> and `deploy/oracle/postgres-bootstrap.sql` for the real setup. This file is
+> kept as a reference for the generic/alternate path but needs a full rewrite
+> to stop describing Supabase Cloud as the data layer.
+
 Production deployment uses Docker Compose on a VPS with Supabase Cloud for the managed data layer.
 
 ---

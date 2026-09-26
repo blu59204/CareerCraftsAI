@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.core.supabase_auth import ClerkIdentityError, get_verified_primary_email
+from app.core.clerk_auth import ClerkIdentityError, get_verified_primary_email
 
 
 @pytest.mark.asyncio

@@ -408,7 +408,7 @@ ambiguous outcome becomes `needs_verification`, never an automatic retry.
 
 | Table | Key columns |
 |---|---|
-| `users` | `id, email, supabase_uid, google_id, linkedin_url, *_enc tokens, auto_mode (drafts|auto), onboarding_completed` |
+| `users` | `id, email, clerk_user_id, google_id, linkedin_url, *_enc tokens, auto_mode (drafts|auto), onboarding_completed` |
 | `user_model_settings` | `user_id, provider, api_key_enc (AES-256), model_name, ollama_url, is_active, token_budget` |
 | `user_documents` | `user_id, doc_type, filename, storage_path (/data/documents), raw_text, embedded_at, is_primary, ats_score, ats_data` |
 | `job_applications` | `user_id, company, role, location, job_url, jd_text, match_score, resume_id, cover_letter(_id), status, applied_at, followup_day5/12` |
@@ -429,7 +429,7 @@ ambiguous outcome becomes `needs_verification`, never an automatic retry.
 | `user_preferences` | `user_id (unique), experience_level, years_experience, job_type, work_mode, salary_min/max, target_roles, preferred_locations, prefer_live_browser` |
 | `langchain_pg_embedding` | pgvector store + `idx_langchain_embedding_hnsw` |
 
-RLS on all user tables (`user_id = auth.uid()` / `supabase_uid()` fixes in `0018,0023,0024,0028,0030,0032`); pgvector HNSW fixes in `0007,0025,0032`.
+RLS on all user tables (`user_id = auth.uid()` / `clerk_user_id()` fixes in `0018,0023,0024,0028,0030,0032`); pgvector HNSW fixes in `0007,0025,0032`.
 
 ### Redis (`redis:8-alpine`)
 

@@ -153,7 +153,7 @@ services:
   sandbox-server:
     build:
       context: .
-      dockerfile: OpenSandbox.Dockerfile
+      dockerfile: Dockerfile
     network_mode: host
     env_file: /opt/careercraft-secrets/sandbox.env
     volumes:

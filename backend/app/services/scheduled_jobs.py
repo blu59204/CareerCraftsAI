@@ -359,7 +359,7 @@ async def daily_search(payload: StatusCheckTrigger):
             users = res.scalars().all()
         else:
             res = await db.execute(
-                select(UserModel).where(UserModel.supabase_uid == payload.user_id)
+                select(UserModel).where(UserModel.clerk_user_id == payload.user_id)
             )
             users = res.scalars().all()
 

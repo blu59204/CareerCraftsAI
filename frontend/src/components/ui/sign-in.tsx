@@ -29,13 +29,6 @@ const GoogleIcon = () => (
 
 // --- TYPES ---
 
-export interface Testimonial {
-  avatarSrc: string;
-  name: string;
-  handle: string;
-  text: string;
-}
-
 export type AuthMode = "sign-in" | "sign-up";
 export interface AuthPasswordSubmitData {
   email: string;
@@ -44,6 +37,8 @@ export interface AuthPasswordSubmitData {
   phone?: string;
   headline?: string;
   linkedinUrl?: string;
+  /** Sign-up only: the required "I agree to the Terms and Privacy Policy" checkbox. */
+  agreedToPolicies?: boolean;
 }
 
 export interface AuthResetPasswordData {
@@ -62,7 +57,6 @@ interface SignInPageProps {
   title?: React.ReactNode;
   description?: React.ReactNode;
   heroImageSrc?: string;
-  testimonials?: Testimonial[];
   onPasswordSubmit?: (data: AuthPasswordSubmitData) => Promise<void> | void;
   onGoogleSignIn?: () => void;
   onLinkedInSignIn?: () => void;
@@ -86,20 +80,6 @@ const GlassInputWrapper = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
-const TestimonialCard = ({ testimonial, delay }: { testimonial: Testimonial; delay: string }) => (
-  <div
-    className={`animate-testimonial ${delay} flex w-64 items-start gap-3 rounded-3xl border border-border bg-card/80 p-5 text-card-foreground shadow-lg backdrop-blur-xl`}
-  >
-    {/* eslint-disable-next-line @next/next/no-img-element */}
-    <img src={testimonial.avatarSrc} className="h-10 w-10 object-cover rounded-2xl" alt="avatar" />
-    <div className="text-sm leading-snug">
-      <p className="flex items-center gap-1 font-medium">{testimonial.name}</p>
-      <p className="text-muted-foreground">{testimonial.handle}</p>
-      <p className="mt-1 text-foreground/80">{testimonial.text}</p>
-    </div>
-  </div>
-);
-
 // --- MAIN COMPONENT ---
 
 export const SignInPage: React.FC<SignInPageProps> = ({
@@ -107,7 +87,6 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   title,
   description,
   heroImageSrc,
-  testimonials = [],
   onPasswordSubmit,
   onGoogleSignIn,
   onLinkedInSignIn,
@@ -174,6 +153,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
     const phone = String(formData.get("phone") ?? "").trim();
     const headline = String(formData.get("headline") ?? "").trim();
     const linkedinUrl = String(formData.get("linkedinUrl") ?? "").trim();
+    const agreedToPolicies = formData.get("agreedToPolicies") === "on";
 
     if (resetPasswordMode) {
       await onResetPassword?.({ email, password });
@@ -187,6 +167,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
         phone: phone || undefined,
         headline: headline || undefined,
         linkedinUrl: linkedinUrl || undefined,
+        agreedToPolicies: isSignUp ? agreedToPolicies : undefined,
       });
     }
   };
@@ -225,11 +206,12 @@ export const SignInPage: React.FC<SignInPageProps> = ({
             {verification && (
               <form className="space-y-5" method="post" action="/login" onSubmit={handleVerificationSubmit}>
                 <div className="animate-element animate-delay-300">
-                  <label className="text-sm font-medium text-muted-foreground">
+                  <label htmlFor="verificationCode" className="text-sm font-medium text-muted-foreground">
                     Verification code
                   </label>
                   <GlassInputWrapper>
                     <input
+                      id="verificationCode"
                       value={verificationCode}
                       onChange={(event) => setVerificationCode(event.target.value)}
                       type="text"
@@ -269,9 +251,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               {isSignUp && !resetPasswordMode && (
                 <div className="animate-element animate-delay-300 grid gap-4 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <label className="text-sm font-medium text-muted-foreground">Full name</label>
+                    <label htmlFor="fullName" className="text-sm font-medium text-muted-foreground">Full name</label>
                     <GlassInputWrapper>
                       <input
+                        id="fullName"
                         name="fullName"
                         type="text"
                         required
@@ -282,9 +265,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                     </GlassInputWrapper>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-muted-foreground">Phone</label>
+                    <label htmlFor="phone" className="text-sm font-medium text-muted-foreground">Phone</label>
                     <GlassInputWrapper>
                       <input
+                        id="phone"
                         name="phone"
                         type="tel"
                         required
@@ -295,9 +279,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                     </GlassInputWrapper>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-muted-foreground">Current role</label>
+                    <label htmlFor="headline" className="text-sm font-medium text-muted-foreground">Current role</label>
                     <GlassInputWrapper>
                       <input
+                        id="headline"
                         name="headline"
                         type="text"
                         autoComplete="organization-title"
@@ -307,9 +292,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                     </GlassInputWrapper>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="text-sm font-medium text-muted-foreground">LinkedIn URL</label>
+                    <label htmlFor="linkedinUrl" className="text-sm font-medium text-muted-foreground">LinkedIn URL</label>
                     <GlassInputWrapper>
                       <input
+                        id="linkedinUrl"
                         name="linkedinUrl"
                         type="url"
                         autoComplete="url"
@@ -322,9 +308,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               )}
 
               <div className="animate-element animate-delay-300">
-                <label className="text-sm font-medium text-muted-foreground">Email Address</label>
+                <label htmlFor="email" className="text-sm font-medium text-muted-foreground">Email Address</label>
                 <GlassInputWrapper>
                   <input
+                    id="email"
                     name="email"
                     type="email"
                     required
@@ -337,12 +324,13 @@ export const SignInPage: React.FC<SignInPageProps> = ({
 
               {!magicLinkMode && (
                 <div className="animate-element animate-delay-400">
-                  <label className="text-sm font-medium text-muted-foreground">
+                  <label htmlFor="password" className="text-sm font-medium text-muted-foreground">
                     {resetPasswordMode ? "New password" : "Password"}
                   </label>
                   <GlassInputWrapper>
                     <div className="relative">
                       <input
+                        id="password"
                         name="password"
                         type={showPassword ? "text" : "password"}
                         required
@@ -384,6 +372,29 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                   >
                     Reset password
                   </button>
+                </div>
+              )}
+
+              {isSignUp && (
+                <div className="animate-element animate-delay-500 flex items-start gap-3 text-sm">
+                  <input
+                    id="agreedToPolicies"
+                    name="agreedToPolicies"
+                    type="checkbox"
+                    required
+                    className="custom-checkbox mt-0.5 shrink-0"
+                  />
+                  <label htmlFor="agreedToPolicies" className="cursor-pointer text-foreground/90">
+                    I agree to the{" "}
+                    <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                      Terms of Service
+                    </a>{" "}
+                    and{" "}
+                    <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                      Privacy Policy
+                    </a>
+                    .
+                  </label>
                 </div>
               )}
 
@@ -494,28 +505,15 @@ export const SignInPage: React.FC<SignInPageProps> = ({
         </div>
       </section>
 
-      {/* Right column: hero + testimonials */}
+      {/* Right column: decorative hero image */}
       {heroImageSrc && (
         <section className="hidden md:block flex-1 relative p-4 min-h-[100dvh]">
           <div
             className="animate-slide-right animate-delay-300 absolute inset-4 rounded-3xl bg-cover bg-center"
             style={{ backgroundImage: `url(${heroImageSrc})` }}
+            role="img"
+            aria-label=""
           />
-          {testimonials.length > 0 && (
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4 px-8 w-full justify-center">
-              <TestimonialCard testimonial={testimonials[0]} delay="animate-delay-1000" />
-              {testimonials[1] && (
-                <div className="hidden xl:flex">
-                  <TestimonialCard testimonial={testimonials[1]} delay="animate-delay-1200" />
-                </div>
-              )}
-              {testimonials[2] && (
-                <div className="hidden 2xl:flex">
-                  <TestimonialCard testimonial={testimonials[2]} delay="animate-delay-1400" />
-                </div>
-              )}
-            </div>
-          )}
         </section>
       )}
     </div>

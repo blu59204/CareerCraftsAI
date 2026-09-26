@@ -11,7 +11,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.core.security import decrypt_api_key, encrypt_api_key
-from app.core.supabase_auth import ClerkIdentityError, get_verified_primary_email
+from app.core.clerk_auth import ClerkIdentityError, get_verified_primary_email
 from app.integrations.exceptions import (
     ConnectionNotFoundError,
     IntegrationActionError,
@@ -179,7 +179,7 @@ async def list_connections(
         remote_connections = await gateway.list_connections(user_id=current_user.id)
         login_email = None
         if any(result.provider == "gmail" for result in remote_connections):
-            login_email = await get_verified_primary_email(current_user.supabase_uid)
+            login_email = await get_verified_primary_email(current_user.clerk_user_id)
         connections = [
             await sync_connection(db, user_id=current_user.id, result=result)
             for result in remote_connections

@@ -1,16 +1,12 @@
 """Clerk Auth verification — JWKS-based JWT decode (RS256).
 
-Historical module name: this file used to verify Supabase ES256 tokens. The
-module path and every exported name are kept because routers, middleware and
-tests import them (``verify_token`` / ``verify_auth_jwt`` / ``verify_supabase_jwt``
-are all the same callable).
-
 Clerk signs session tokens with RS256 using keys published at
 ``{CLERK_ISSUER}/.well-known/jwks.json``. The ``sub`` claim is a *text* id such
-as ``user_2abc...`` — not a UUID — and is stored in ``users.supabase_uid``,
+as ``user_2abc...`` — not a UUID — and is stored in ``users.clerk_user_id``,
 which is a TEXT column. The RLS policies in
-``supabase/migrations/0028_clerk_third_party_auth_rls.sql`` match on that exact
-column via ``auth.jwt() ->> 'sub'``, so the column name stays as-is.
+``supabase/migrations/0028_clerk_third_party_auth_rls.sql`` (and renamed by
+``0041_rename_supabase_uid_to_clerk_user_id.sql``) match on that exact column
+via ``auth.jwt() ->> 'sub'``.
 
 The JWKS client is built lazily on first verification, never at import time —
 an unset or unreachable JWKS URL must not break importing the app (or
@@ -194,9 +190,9 @@ async def fetch_clerk_profile(subject: str) -> dict[str, Any] | None:
 
 async def _repair_placeholder_profile(db: AsyncSession, user: User) -> None:
     """Replace a placeholder email (and empty name) from Clerk, once."""
-    if not (user.email or "").endswith(PLACEHOLDER_EMAIL_DOMAIN) or not user.supabase_uid:
+    if not (user.email or "").endswith(PLACEHOLDER_EMAIL_DOMAIN) or not user.clerk_user_id:
         return
-    profile = await fetch_clerk_profile(user.supabase_uid)
+    profile = await fetch_clerk_profile(user.clerk_user_id)
     if not profile:
         return
     user.email = profile["email"]
@@ -263,7 +259,7 @@ def _profile_from_payload(payload: dict[str, Any], subject: str) -> dict[str, An
         or f"{subject}{PLACEHOLDER_EMAIL_DOMAIN}"
     )
     return {
-        "supabase_uid": subject,
+        "clerk_user_id": subject,
         "email": email,
         "full_name": payload.get("full_name") or payload.get("name") or meta.get("full_name"),
         "avatar_url": payload.get("image_url") or payload.get("picture") or meta.get("avatar_url"),
@@ -271,7 +267,7 @@ def _profile_from_payload(payload: dict[str, Any], subject: str) -> dict[str, An
 
 
 async def _select_by_uid(db: AsyncSession, subject: str) -> User | None:
-    result = await db.execute(select(User).where(User.supabase_uid == subject))
+    result = await db.execute(select(User).where(User.clerk_user_id == subject))
     return result.scalars().first()
 
 
@@ -287,7 +283,7 @@ async def get_or_provision_user(
     exist here. So the first authenticated request for a subject provisions it.
 
     Race handling: two concurrent first requests for the same subject both miss
-    the SELECT. The INSERT uses ``ON CONFLICT (supabase_uid) DO NOTHING`` so the
+    the SELECT. The INSERT uses ``ON CONFLICT (clerk_user_id) DO NOTHING`` so the
     loser is a no-op instead of a unique violation, and any other integrity
     error (e.g. the unique ``email`` index) is caught, rolled back, and followed
     by a re-SELECT. Either way both requests end up with the same row.
@@ -307,7 +303,7 @@ async def get_or_provision_user(
             values["avatar_url"] = values["avatar_url"] or profile["avatar_url"]
     try:
         await db.execute(
-            pg_insert(User).values(**values).on_conflict_do_nothing(index_elements=["supabase_uid"])
+            pg_insert(User).values(**values).on_conflict_do_nothing(index_elements=["clerk_user_id"])
         )
         await db.commit()
     except IntegrityError as exc:
@@ -320,13 +316,13 @@ async def get_or_provision_user(
     if user is not None:
         return user
 
-    # Not a supabase_uid race — an existing row already owns this email. Adopt it
-    # only if it has never been bound to an auth subject (pre-Clerk rows);
+    # Not a clerk_user_id race — an existing row already owns this email. Adopt
+    # it only if it has never been bound to an auth subject (pre-Clerk rows);
     # otherwise refuse rather than hand over somebody else's account.
     result = await db.execute(select(User).where(User.email == values["email"]))
     existing = result.scalars().first()
-    if existing is not None and not existing.supabase_uid:
-        existing.supabase_uid = subject
+    if existing is not None and not existing.clerk_user_id:
+        existing.clerk_user_id = subject
         await db.commit()
         await db.refresh(existing)
         logger.info("Bound pre-existing user %s to auth subject %s", existing.id, subject)
@@ -347,6 +343,3 @@ async def get_current_user(
     payload = verify_token(token)
     subject = subject_from_payload(payload)
     return await get_or_provision_user(db, subject, payload)
-
-
-verify_supabase_jwt = verify_token  # alias used by test_edge_cases

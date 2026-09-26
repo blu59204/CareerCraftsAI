@@ -19,7 +19,7 @@ export default function ContactPage() {
     // prefilled email rather than faking a "sent" confirmation.
     const subject = encodeURIComponent(`Contact form — ${name}`);
     const body = encodeURIComponent(`From: ${name} <${email}>\n\n${message}`);
-    window.location.href = `mailto:hello@careercraft.ai?subject=${subject}&body=${body}`;
+    window.location.href = `mailto:hello@careercraftsai.me?subject=${subject}&body=${body}`;
     toast.info("Opening your email client…");
   };
 
@@ -68,8 +68,8 @@ export default function ContactPage() {
 
       <p className="mt-8 text-sm text-muted-foreground">
         Or email us directly at{" "}
-        <a href="mailto:hello@careercraft.ai" className="text-primary hover:underline">
-          hello@careercraft.ai
+        <a href="mailto:hello@careercraftsai.me" className="text-primary hover:underline">
+          hello@careercraftsai.me
         </a>
       </p>
     </div>

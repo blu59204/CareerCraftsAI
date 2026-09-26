@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { AppSidebar } from "./AppSidebar";
 import { AppTopbar } from "./AppTopbar";
 import { ConstellationBackground } from "./ConstellationBackground";
+import { PendingDeletionBanner } from "./PendingDeletionBanner";
 import { useAgentStream } from "@/lib/sse";
 import { useAgentStore } from "@/store/agentStore";
 
@@ -31,6 +32,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="app-surface flex min-h-screen">
         <AppSidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
         <div className="flex min-w-0 flex-1 flex-col">
+          <PendingDeletionBanner />
           <AppTopbar onMenuClick={() => setMobileNavOpen(true)} />
           <main className="min-w-0 flex-1 overflow-x-hidden px-6 pb-8 pt-7 md:px-8">{children}</main>
         </div>

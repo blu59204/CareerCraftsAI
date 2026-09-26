@@ -27,6 +27,8 @@ const COLUMNS: { title: string; links: { href: string; label: string }[] }[] = [
       { href: "/about", label: "About" },
       { href: "/privacy", label: "Privacy" },
       { href: "/terms", label: "Terms" },
+      { href: "/cookies", label: "Cookie Policy" },
+      { href: "/refund", label: "Refund Policy" },
     ],
   },
   {
@@ -52,7 +54,7 @@ export function MarketingFooter() {
               <span className="font-display text-primary">dream role?</span>
             </h2>
             <p className="mt-4 text-base leading-7 text-muted-foreground">
-              Join thousands of job seekers using AI to work smarter, apply faster, and follow up better.
+              Use AI to tailor your resume, match jobs, and follow up — automatically.
             </p>
             <div className="mt-8 flex items-center justify-center gap-3">
               <Link href="/register">

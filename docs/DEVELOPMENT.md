@@ -262,7 +262,7 @@ ALTER TABLE public.applications ADD COLUMN source text;
 -- Enable RLS policy if adding new table
 ALTER TABLE public.new_table ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "users see own rows" ON public.new_table
-  FOR ALL USING ((SELECT id FROM users WHERE supabase_uid = auth.uid()) = user_id);
+  FOR ALL USING ((SELECT id FROM users WHERE clerk_user_id = auth.uid()) = user_id);
 EOF
 
 # Apply

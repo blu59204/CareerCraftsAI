@@ -18,7 +18,7 @@ Optional → `| null`, list → array, dict → Record<string, unknown>. Nothing
 
 ## "Write the migration"
 Here is the SQLAlchemy model diff. Output supabase/migrations/0033_<name>.sql: idempotent (IF NOT EXISTS),
-RLS enable + policies (select/insert/update/delete own rows by supabase_uid via auth.uid()), indexes,
+RLS enable + policies (select/insert/update/delete own rows by clerk_user_id via auth.uid()), indexes,
 and a DOWN section as comments.
 
 ## "Commit message"

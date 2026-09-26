@@ -65,7 +65,7 @@ def test_user(test_db, llm_config):
         user = User(
             email=f"integration-{uuid.uuid4().hex[:10]}@example.com",
             full_name="Priya Sharma",
-            supabase_uid=f"user_integration_{uuid.uuid4().hex[:12]}",
+            clerk_user_id=f"user_integration_{uuid.uuid4().hex[:12]}",
             headline="Senior Python Engineer",
         )
         db.add(user)

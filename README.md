@@ -562,11 +562,11 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 | 0015 | `resume_personas` |
 | 0016 | `linkedin_outreach_queue` |
 | 0017 | `ats_scores` |
-| 0018 | RLS fix for `supabase_uid` |
+| 0018 | RLS fix for `clerk_user_id` |
 | 0019 | LinkedIn credentials + auto mode |
 | 0021 | Google OAuth tokens |
 | 0025, 0032 | HNSW embedding indexes |
-| 0028 | Clerk third-party auth RLS (`users.supabase_uid` holds the Clerk user id) |
+| 0028 | Clerk third-party auth RLS (`users.clerk_user_id` holds the Clerk user id) |
 | 0034 | Application attempts + outbound messages (send idempotency) |
 | 0035 | Candidate profiles + saved form answers |
 | 0036 | Temporal columns on application attempts |

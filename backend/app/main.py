@@ -100,7 +100,7 @@ _PUBLIC_PATHS = {
     "/api/v1/integrations/webhooks/nango",
 }
 
-from app.core.supabase_auth import verify_token
+from app.core.clerk_auth import verify_token
 
 
 async def _jwt_middleware(request: Request, call_next):

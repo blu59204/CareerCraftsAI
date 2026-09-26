@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class UserCreate(BaseModel):
@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
     full_name: str | None = None
     # Auth subject (`sub`). Clerk emits a text id like "user_2abc..." (~32 chars),
     # so this is no longer a fixed-width UUID — only non-empty and bounded.
-    supabase_uid: str = Field(min_length=1, max_length=255)
+    clerk_user_id: str = Field(min_length=1, max_length=255)
 
 
 class UserResponse(BaseModel):
@@ -22,6 +22,11 @@ class UserResponse(BaseModel):
     phone: str | None
     linkedin_url: str | None
     onboarding_completed: bool
+    policy_accepted_at: datetime | None
+    policy_version: str | None
+    deletion_requested_at: datetime | None
+    deletion_scheduled_for: datetime | None
+    deletion_cooldown_until: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -60,11 +65,75 @@ class UserPreferencesResponse(UserPreferencesSchema):
     model_config = {"from_attributes": True}
 
 
+def _ollama_allowlist() -> set[tuple[str, int]]:
+    """Host:port destinations an operator has explicitly permitted for the
+    ``ollama`` provider's base URL. Defaults to the local Ollama daemon only —
+    set OLLAMA_ALLOWED_HOSTS (comma-separated host:port pairs) to permit a
+    self-hosted Ollama on another box (see pentest finding vuln-0001: this
+    field used to be unvalidated free text and could reach loopback,
+    container-bridge and link-local addresses)."""
+    import os
+
+    raw = os.getenv("OLLAMA_ALLOWED_HOSTS", "localhost:11434,127.0.0.1:11434,[::1]:11434")
+    allowed: set[tuple[str, int]] = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if item.startswith("["):
+            host, _, port = item[1:].partition("]:")
+        else:
+            host, _, port = item.rpartition(":")
+        if port.isdigit():
+            allowed.add((host.strip().lower().rstrip("."), int(port)))
+    return allowed
+
+
 class ModelSettingsCreate(BaseModel):
-    provider: Literal["anthropic", "openai", "google", "ollama", "nvidia_nim", "deepseek", "openrouter", "opencode"]
+    provider: Literal[
+        "anthropic",
+        "openai",
+        "google",
+        "ollama",
+        "nvidia_nim",
+        "deepseek",
+        "openrouter",
+        "opencode",
+    ]
     api_key: str = Field(min_length=1, max_length=4096)
     model_name: str
     ollama_url: str | None = None
+
+    @field_validator("ollama_url")
+    @classmethod
+    def _validate_ollama_url(cls, value: str | None) -> str | None:
+        """Reject anything but an operator-allow-listed host:port (CWE-918:
+        the server fetches this URL directly — see vuln-0001)."""
+        if value is None:
+            return value
+        import ipaddress
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("ollama_url must be an absolute http(s) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("ollama_url must not contain credentials")
+        host = parsed.hostname.lower().rstrip(".")
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError as exc:
+            raise ValueError("ollama_url has an invalid port") from exc
+        if (host, port) not in _ollama_allowlist():
+            raise ValueError("ollama_url host is not permitted — add it to OLLAMA_ALLOWED_HOSTS")
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            if ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+                raise ValueError("ollama_url host is not permitted")
+        return value
 
 
 class ModelSettingsResponse(BaseModel):

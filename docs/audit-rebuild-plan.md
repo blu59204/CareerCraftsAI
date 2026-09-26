@@ -175,7 +175,7 @@ from app.agents.auto_apply_pipeline import run_auto_apply_pipeline
 | 0015 | resume_personas | `resume_personas` | VERIFY applied |
 | 0016 | linkedin_outreach_queue | `linkedin_outreach_queue` | VERIFY applied |
 | 0017 | ats_scores | `ats_scores` | VERIFY applied |
-| 0018 | fix_rls_supabase_uid | RLS fix | VERIFY applied |
+| 0018 | fix_rls_clerk_user_id | RLS fix | VERIFY applied |
 | 0019 | linkedin_credentials_auto_mode | Encrypted creds | VERIFY applied |
 | 0020 | fix_frontend_dashboard_schema_drift | Schema alignment | VERIFY applied |
 | 0021 | google_oauth_tokens | OAuth tokens | VERIFY applied |
@@ -196,13 +196,13 @@ from app.agents.auto_apply_pipeline import run_auto_apply_pipeline
 
 **Canonical pattern** (from migration 0028):
 ```sql
-USING (user_id = (SELECT id FROM public.users WHERE supabase_uid = (SELECT auth.jwt() ->> 'sub')))
-WITH CHECK (user_id = (SELECT id FROM public.users WHERE supabase_uid = (SELECT auth.jwt() ->> 'sub')))
+USING (user_id = (SELECT id FROM public.users WHERE clerk_user_id = (SELECT auth.jwt() ->> 'sub')))
+WITH CHECK (user_id = (SELECT id FROM public.users WHERE clerk_user_id = (SELECT auth.jwt() ->> 'sub')))
 ```
 
 | Table | RLS Enabled | Owner Policy | WITH CHECK | Status |
 |---|---|---|---|---|
-| `users` | ✅ | `supabase_uid = auth.jwt()->>'sub'` | ✅ | VERIFY |
+| `users` | ✅ | `clerk_user_id = auth.jwt()->>'sub'` | ✅ | VERIFY |
 | `user_model_settings` | ✅ | ✅ | ✅ | VERIFY |
 | `user_documents` | ✅ | ✅ | ✅ | VERIFY |
 | `job_applications` | ✅ | ✅ | ✅ | VERIFY |

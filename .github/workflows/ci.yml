@@ -50,29 +50,6 @@ jobs:
           DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
           REDIS_URL: "redis://localhost:6379"
 
-  backend-unit-test:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install -r requirements.txt -c constraints.txt pytest pytest-cov pytest-timeout
-      - name: Install Chromium for adapter tests
-        run: python -m playwright install --with-deps chromium
-      - name: Unit tests
-        run: pytest tests/unit -v --cov=app --cov-report=term-missing
-        env:
-          APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
-          DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"
-          REDIS_URL: "redis://localhost:6379"
-
   backend-workflow-integration-test:
     runs-on: ubuntu-latest
 

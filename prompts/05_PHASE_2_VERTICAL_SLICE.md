@@ -12,7 +12,7 @@ READ: frontend/src/middleware.ts, lib/supabase/{client,server,middleware}.ts, li
       app/auth/callback/route.ts, backend/app/core/supabase_auth.py, api/v1/deps.py, api/v1/users.py
 TASK: make GET /api/v1/users/me return the provisioned user for a logged-in browser session. Fix any
       cookie/token mismatch (JWT must be the Supabase access_token, HS256, aud "authenticated").
-VERIFY: log in at localhost:3000 → DevTools Network → /users/me → 200 with {id,email,supabase_uid}.
+VERIFY: log in at localhost:3000 → DevTools Network → /users/me → 200 with {id,email,clerk_user_id}.
 
 ### 2.2 Onboarding guard
 READ: components/auth/OnboardingGuard.tsx, app/(app)/onboarding/page.tsx, api/v1/users.py

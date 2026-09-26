@@ -11,29 +11,8 @@ import {
   type AuthMode,
   type AuthPasswordSubmitData,
   type AuthVerificationState,
-  type Testimonial,
 } from "@/components/ui/sign-in";
-
-const TESTIMONIALS: Testimonial[] = [
-  {
-    avatarSrc: "https://randomuser.me/api/portraits/women/57.jpg",
-    name: "Priya Raghunathan",
-    handle: "@priyabuilds",
-    text: "Tailored applications in minutes. Landed three interviews the first week.",
-  },
-  {
-    avatarSrc: "https://randomuser.me/api/portraits/men/64.jpg",
-    name: "Tomás Almeida",
-    handle: "@tomas.codes",
-    text: "The agent rewrote my resume per role. Match scores jumped from 58 to 91.",
-  },
-  {
-    avatarSrc: "https://randomuser.me/api/portraits/men/32.jpg",
-    name: "Kwame Osei",
-    handle: "@kwame_dev",
-    text: "Follow-up emails on autopilot. CareerCraft saved me hours every day.",
-  },
-];
+import { apiClient } from "@/lib/api";
 
 // Unsplash source URLs rot/404 over time — picsum's seeded endpoint is stable.
 const HERO_IMAGE = "https://picsum.photos/seed/careercraft-login/2160/2700";
@@ -256,6 +235,16 @@ export default function LoginPage() {
 
       if (result.status === "complete") {
         await setSignUpActive({ session: result.createdSessionId });
+        // Records *when* the user agreed and to which policy revision — the
+        // sign-up form's checkbox is `required`, so reaching this point
+        // already implies assent; this just makes it durable server-side.
+        // Best-effort: a failure here must never block the user from
+        // finishing sign-up, since the account already exists.
+        try {
+          await apiClient.post("/users/me/consent");
+        } catch {
+          // Non-fatal — consent can be recorded on a later authenticated request.
+        }
         router.push(destination);
         return;
       }
@@ -287,7 +276,6 @@ export default function LoginPage() {
     <SignInPage
       mode={mode}
       onModeSwitch={handleModeSwitch}
-      testimonials={TESTIMONIALS}
       heroImageSrc={HERO_IMAGE}
       onPasswordSubmit={handlePasswordSubmit}
       onMagicLink={() => {}}

@@ -27,7 +27,7 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String)
     avatar_url: Mapped[str | None] = mapped_column(String)
     google_id: Mapped[str | None] = mapped_column(String, unique=True)
-    supabase_uid: Mapped[str | None] = mapped_column(String, unique=True)
+    clerk_user_id: Mapped[str | None] = mapped_column(String, unique=True)
     phone: Mapped[str | None] = mapped_column(String)
     linkedin_url: Mapped[str | None] = mapped_column(String)
     headline: Mapped[str | None] = mapped_column(String)
@@ -35,6 +35,17 @@ class User(Base):
     linkedin_email_enc: Mapped[str | None] = mapped_column(Text)
     linkedin_password_enc: Mapped[str | None] = mapped_column(Text)
     auto_mode: Mapped[str] = mapped_column(String, default="drafts")  # 'auto' or 'drafts'
+    # When the user clicked "I agree to the Terms of Service and Privacy
+    # Policy" at sign-up, and which policy revision was current then. NULL on
+    # accounts created before this was required — never backfilled.
+    policy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    policy_version: Mapped[str | None] = mapped_column(String(20))
+    # Deletion is a 15-day grace period: requesting it stamps these two;
+    # a maintenance sweep hard-deletes once deletion_scheduled_for passes.
+    # Cancelling clears both and sets a 30-day deletion_cooldown_until.
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     model_settings: Mapped[list["UserModelSettings"]] = relationship(back_populates="user")

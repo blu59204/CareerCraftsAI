@@ -89,7 +89,7 @@ CREATE POLICY "users see own applications"
   ON public.applications
   FOR ALL
   USING (
-    user_id = (SELECT id FROM public.users WHERE supabase_uid = auth.uid())
+    user_id = (SELECT id FROM public.users WHERE clerk_user_id = auth.uid())
   );
 ```
 
