@@ -66,8 +66,28 @@ export default function TermsPage() {
         <section>
           <h2 className="mb-3 text-lg font-medium text-foreground">6. Governing law</h2>
           <p>
-            {/* TODO: fill in the operator's actual jurisdiction before relying on this page. */}
-            [Governing law and jurisdiction to be added here.]
+            These terms are governed by the laws of India. Subject to the arbitration clause
+            below, the courts at Bengaluru, Karnataka have exclusive jurisdiction over any dispute
+            arising from these terms or your use of the platform.
+          </p>
+          <p className="mt-3">
+            As a business operating in India, CareerCraft complies with the Information Technology
+            Act, 2000 and the Information Technology (Reasonable Security Practices and Procedures
+            and Sensitive Personal Data or Information) Rules, 2011 for how sensitive personal
+            data is handled, and with the Digital Personal Data Protection Act, 2023 as its rules
+            come into force in phases. See our{" "}
+            <a href="/privacy" className="text-primary hover:underline">
+              Privacy Policy
+            </a>{" "}
+            for what this means for your data. As a consumer of our services, you're also
+            protected under the Consumer Protection Act, 2019, including its provisions on unfair
+            contract terms.
+          </p>
+          <p className="mt-3">
+            Any dispute we can't resolve informally within 30 days will be referred to and finally
+            resolved by arbitration under the Arbitration and Conciliation Act, 1996, with a sole
+            arbitrator, seated in Bengaluru, in English. This does not limit either party's right
+            to seek injunctive relief from a court where legally necessary.
           </p>
         </section>
 
