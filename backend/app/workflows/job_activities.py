@@ -203,4 +203,15 @@ async def maintenance_activity(params: dict) -> dict:
         except Exception:
             logger.exception("Browser reaper failed")
 
+    try:
+        async with AsyncSessionLocal() as db:
+            from app.services.account_deletion_service import reap_expired_account_deletions
+
+            deleted = await reap_expired_account_deletions(db)
+            await db.commit()
+            if deleted:
+                logger.info("Reaped %d expired account deletion(s)", deleted)
+    except Exception:
+        logger.exception("Account deletion reaper failed")
+
     return {"reconciled": reconciled}

@@ -1,6 +1,7 @@
 """Builds the self-service ZIP export of everything CareerCraft AI stores
 for one user — the DPDP Act, 2023 "right to access" fulfilled without a
 manual support request."""
+
 import io
 import json
 import zipfile

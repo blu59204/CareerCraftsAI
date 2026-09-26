@@ -24,6 +24,9 @@ class UserResponse(BaseModel):
     onboarding_completed: bool
     policy_accepted_at: datetime | None
     policy_version: str | None
+    deletion_requested_at: datetime | None
+    deletion_scheduled_for: datetime | None
+    deletion_cooldown_until: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

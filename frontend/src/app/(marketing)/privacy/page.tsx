@@ -76,8 +76,11 @@ export default function PrivacyPage() {
           <p>
             You can download every record we hold about you at any time from Settings → Account →
             Your data — a ZIP of every table tied to your account, generated on demand, no request
-            needed. You may request deletion of your account and all associated data at any time
-            from Settings → Account → Danger zone.
+            needed. You may request deletion of your account at any time from Settings → Account →
+            Danger zone. Deletion isn't instant: it starts a 15-day grace period, during which your
+            account stays fully usable and you can cancel from that same page (or it's cancelled
+            automatically the next time you open the app after leaving). Once the grace period
+            passes, your account and all associated data are permanently removed.
           </p>
           <p className="mt-3">
             If you're in India, under the Digital Personal Data Protection Act, 2023 you have the

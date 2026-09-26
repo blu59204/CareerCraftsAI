@@ -1,4 +1,5 @@
 """FastAPI dependencies for authentication and database access."""
+
 import logging
 from typing import Annotated
 
@@ -27,6 +28,7 @@ _CONSENT_EXEMPT_PATHS = {
     ("POST", "/api/v1/users/me/consent"),
     ("GET", "/api/v1/users/me/export"),
     ("DELETE", "/api/v1/users/me"),
+    ("POST", "/api/v1/users/me/cancel-deletion"),
 }
 
 
@@ -48,10 +50,14 @@ async def get_current_user(
     auth_subject = subject_from_payload(payload)
     user = await get_or_provision_user(db, auth_subject, payload)
 
-    if user.policy_accepted_at is None and (
-        request.method,
-        request.url.path,
-    ) not in _CONSENT_EXEMPT_PATHS:
+    if (
+        user.policy_accepted_at is None
+        and (
+            request.method,
+            request.url.path,
+        )
+        not in _CONSENT_EXEMPT_PATHS
+    ):
         raise HTTPException(
             status_code=403,
             detail={

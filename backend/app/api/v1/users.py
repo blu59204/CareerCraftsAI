@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -140,6 +140,9 @@ async def record_policy_consent(
     current_user.policy_accepted_at = datetime.now(UTC)
     current_user.policy_version = POLICY_VERSION
     await db.flush()
+    logger.info(
+        "Policy consent recorded: %s (version %s)", current_user.supabase_uid, POLICY_VERSION
+    )
     return current_user
 
 
@@ -155,6 +158,7 @@ async def export_my_data(
 
     archive = await build_user_data_export(db, current_user)
     filename = f"careercraft-data-export-{datetime.now(UTC).date().isoformat()}.zip"
+    logger.info("Data export downloaded: %s (%d bytes)", current_user.supabase_uid, len(archive))
     return Response(
         content=archive,
         media_type="application/zip",
@@ -563,27 +567,61 @@ async def change_password(
     )
 
 
-@router.delete("/me", status_code=204)
-async def delete_account(
+# Requesting deletion starts a grace period before anything is actually
+# removed; cancelling (by the user or automatically on their next visit)
+# starts a cooldown before they can request deletion again.
+DELETION_GRACE_DAYS = 15
+DELETION_COOLDOWN_DAYS = 30
+
+
+@router.delete("/me", response_model=UserResponse)
+async def request_account_deletion(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Permanently delete the user's account.
-
-    Deletes the Clerk user (best-effort) plus the local row. DB cascade
-    removes related records (applications, agent runs, settings). Deleting
-    the Clerk identity too prevents it from re-provisioning a fresh local
-    row the next time that person signs in.
+    """Request account deletion. Nothing is deleted yet: this starts a
+    15-day grace period (deletion_scheduled_for), during which the account
+    stays fully usable and the deletion can be cancelled — from Settings, or
+    automatically the next time this person opens the app after leaving. A
+    maintenance sweep hard-deletes the account once the grace period passes.
     """
-    auth_subject = str(current_user.supabase_uid or "")
+    if (
+        current_user.deletion_cooldown_until
+        and current_user.deletion_cooldown_until > datetime.now(UTC)
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "deletion_cooldown_active",
+                "message": "You cancelled a deletion recently — try again after the cooldown.",
+                "cooldown_until": current_user.deletion_cooldown_until.isoformat(),
+            },
+        )
 
-    # Delete local DB row first (cascade handles related tables)
-    await db.delete(current_user)
+    current_user.deletion_requested_at = datetime.now(UTC)
+    current_user.deletion_scheduled_for = current_user.deletion_requested_at + timedelta(
+        days=DELETION_GRACE_DAYS
+    )
     await db.flush()
+    logger.info("Account deletion requested: %s", current_user.supabase_uid)
+    return current_user
 
-    if auth_subject:
-        from app.core.supabase_auth import delete_clerk_user
 
-        await delete_clerk_user(auth_subject)
+@router.post("/me/cancel-deletion", response_model=UserResponse)
+async def cancel_account_deletion(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cancel a pending account deletion. Starts a 30-day cooldown before
+    deletion can be requested again, to prevent immediate flip-flopping."""
+    if current_user.deletion_requested_at is None:
+        raise HTTPException(status_code=400, detail="No pending deletion to cancel")
 
-    logger.info("User account deleted: %s", auth_subject)
+    current_user.deletion_requested_at = None
+    current_user.deletion_scheduled_for = None
+    current_user.deletion_cooldown_until = datetime.now(UTC) + timedelta(
+        days=DELETION_COOLDOWN_DAYS
+    )
+    await db.flush()
+    logger.info("Account deletion cancelled: %s", current_user.supabase_uid)
+    return current_user

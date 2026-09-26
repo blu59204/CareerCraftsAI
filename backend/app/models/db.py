@@ -40,6 +40,12 @@ class User(Base):
     # accounts created before this was required — never backfilled.
     policy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     policy_version: Mapped[str | None] = mapped_column(String(20))
+    # Deletion is a 15-day grace period: requesting it stamps these two;
+    # a maintenance sweep hard-deletes once deletion_scheduled_for passes.
+    # Cancelling clears both and sets a 30-day deletion_cooldown_until.
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deletion_cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     model_settings: Mapped[list["UserModelSettings"]] = relationship(back_populates="user")

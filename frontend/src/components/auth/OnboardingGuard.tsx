@@ -3,17 +3,25 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, useClerk } from "@clerk/nextjs";
+import { toast } from "sonner";
 import { apiClient } from "@/lib/api";
+import { UserStatusProvider, type UserStatus } from "@/components/auth/UserStatusContext";
 
-interface UserProfile {
-  onboarding_completed: boolean;
-  policy_accepted_at: string | null;
-}
+type UserProfile = UserStatus;
 
 interface GuardError {
   message: string;
   isAuth: boolean;
 }
+
+// Set the moment a pending deletion is first shown in this browser session
+// (from the Settings page, or by this guard) and checked here on every
+// mount. Its absence is what "the user closed and reopened" looks like from
+// the client's side — sessionStorage clears when the tab/browser closes but
+// survives reloads and in-app navigation, which is exactly the boundary we
+// want: navigating around the app while the banner is visible must not
+// auto-cancel the deletion, only actually leaving and coming back should.
+const DELETION_SEEN_KEY = "cc-deletion-seen";
 
 export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -27,6 +35,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const [consenting, setConsenting] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [status, setStatus] = useState<UserStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,7 +78,40 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
         }
         setNeedsConsent(false);
 
-        if (!data.onboarding_completed && pathname !== "/onboarding") {
+        let effectiveData = data;
+        if (data.deletion_requested_at) {
+          let seenThisSession = true;
+          try {
+            seenThisSession = sessionStorage.getItem(DELETION_SEEN_KEY) === "1";
+          } catch {
+            // Storage unavailable — default to NOT auto-cancelling; safer to
+            // just show the banner than to silently cancel on every load.
+            seenThisSession = true;
+          }
+
+          if (!seenThisSession) {
+            try {
+              await apiClient.post("/users/me/cancel-deletion");
+              if (cancelled) return;
+              toast.success("Welcome back — we've cancelled your scheduled account deletion.");
+              effectiveData = {
+                ...data,
+                deletion_requested_at: null,
+                deletion_scheduled_for: null,
+              };
+            } catch {
+              // Non-fatal — they'll see the pending banner and can cancel by hand.
+              try {
+                sessionStorage.setItem(DELETION_SEEN_KEY, "1");
+              } catch {
+                // ignore — nothing more we can do without storage
+              }
+            }
+          }
+        }
+        setStatus(effectiveData);
+
+        if (!effectiveData.onboarding_completed && pathname !== "/onboarding") {
           router.replace("/onboarding");
           return;
         }
@@ -209,5 +251,9 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <UserStatusProvider value={{ status, refresh: () => setRefreshKey((k) => k + 1) }}>
+      {children}
+    </UserStatusProvider>
+  );
 }

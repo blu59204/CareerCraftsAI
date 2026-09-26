@@ -39,6 +39,7 @@ async def test_blocks_access_when_consent_missing_on_non_exempt_path(mock_user, 
         ("POST", "/api/v1/users/me/consent"),
         ("GET", "/api/v1/users/me/export"),
         ("DELETE", "/api/v1/users/me"),
+        ("POST", "/api/v1/users/me/cancel-deletion"),
     ],
 )
 @pytest.mark.asyncio

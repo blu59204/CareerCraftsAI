@@ -24,9 +24,13 @@ export default function TermsPage() {
           <h2 className="mb-3 text-lg font-medium text-foreground">2. Your account</h2>
           <p>
             You are responsible for maintaining the security of your account and credentials. Do
-            not share your API keys or login details with others. You may delete your account at
-            any time from Settings → Account → Danger zone; we may suspend or terminate an account
-            that violates these terms.
+            not share your API keys or login details with others. You may request deletion of your
+            account at any time from Settings → Account → Danger zone — see our{" "}
+            <a href="/privacy" className="text-primary hover:underline">
+              Privacy Policy
+            </a>{" "}
+            for how the 15-day grace period works; we may suspend or terminate an account that
+            violates these terms.
           </p>
         </section>
 

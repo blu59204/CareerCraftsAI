@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { connectGmail } from "@/lib/nango-connect";
 import { useClerk, useUser } from "@clerk/nextjs";
+import { useUserStatus } from "@/components/auth/UserStatusContext";
 
 type Tab = "account" | "security" | "notifications";
 
@@ -27,6 +28,9 @@ interface UserProfile {
   phone: string | null;
   linkedin_url: string | null;
   onboarding_completed: boolean;
+  deletion_requested_at: string | null;
+  deletion_scheduled_for: string | null;
+  deletion_cooldown_until: string | null;
 }
 
 interface ToggleProps {
@@ -108,7 +112,9 @@ export default function AccountSettingsPage() {
   const signInEmail = authUser?.primaryEmailAddress?.emailAddress ?? "";
   const signInEmailVerified = authUser?.primaryEmailAddress?.verification?.status === "verified";
   const { signOut } = useClerk();
+  const { refresh: refreshUserStatus } = useUserStatus();
   const [activeTab, setActiveTab] = useState<Tab>("account");
+  const [deletionActionPending, setDeletionActionPending] = useState(false);
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [agentAlerts, setAgentAlerts] = useState(true);
   const [followUpReminders, setFollowUpReminders] = useState(true);
@@ -591,29 +597,95 @@ export default function AccountSettingsPage() {
               <AlertTriangle className="h-4 w-4" />
               Danger zone
             </div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Once you delete your account, all of your data will be permanently removed. This action
-              cannot be undone.
-            </p>
-            <LiquidGlassButton
-              tone="ghost"
-              size="sm"
-              className="bg-danger text-primary-foreground hover:bg-danger/90 hover:opacity-100"
-              onClick={async () => {
-                if (!confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
-                  return;
-                }
-                try {
-                  await apiClient.delete("/users/me");
-                  toast.success("Account deleted");
-                  window.location.href = "/";
-                } catch {
-                  toast.error("Failed to delete account — please try again or contact support");
-                }
-              }}
-            >
-              Delete my account
-            </LiquidGlassButton>
+            {user?.deletion_requested_at && user.deletion_scheduled_for ? (
+              <>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Your account is scheduled for deletion on{" "}
+                  <strong className="text-foreground">
+                    {new Date(user.deletion_scheduled_for).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </strong>
+                  . You can cancel any time before then.
+                </p>
+                <LiquidGlassButton
+                  tone="ghost"
+                  size="sm"
+                  disabled={deletionActionPending}
+                  onClick={async () => {
+                    setDeletionActionPending(true);
+                    try {
+                      await apiClient.post("/users/me/cancel-deletion");
+                      toast.success("Account deletion cancelled");
+                      queryClient.invalidateQueries({ queryKey: ["me"] });
+                      refreshUserStatus();
+                    } catch {
+                      toast.error("Couldn't cancel deletion — please try again");
+                    } finally {
+                      setDeletionActionPending(false);
+                    }
+                  }}
+                >
+                  {deletionActionPending ? "Cancelling…" : "Cancel deletion"}
+                </LiquidGlassButton>
+              </>
+            ) : (
+              <>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  Deleting your account starts a 15-day grace period — your data isn't removed
+                  immediately, and you can cancel any time before then. If you cancel, you'll need
+                  to wait 30 days before requesting deletion again.
+                </p>
+                <LiquidGlassButton
+                  tone="ghost"
+                  size="sm"
+                  disabled={deletionActionPending}
+                  className="bg-danger text-primary-foreground hover:bg-danger/90 hover:opacity-100"
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        "Delete your account? Your data will be permanently removed after a 15-day grace period, which you can cancel any time before then.",
+                      )
+                    ) {
+                      return;
+                    }
+                    setDeletionActionPending(true);
+                    try {
+                      await apiClient.delete("/users/me");
+                      try {
+                        sessionStorage.setItem("cc-deletion-seen", "1");
+                      } catch {
+                        // ignore — nothing more we can do without storage
+                      }
+                      toast.success("Account deletion scheduled — you can still cancel it below.");
+                      queryClient.invalidateQueries({ queryKey: ["me"] });
+                      refreshUserStatus();
+                    } catch (err) {
+                      const detail = (
+                        err as {
+                          response?: { status?: number; data?: { detail?: { cooldown_until?: string } } };
+                        }
+                      )?.response;
+                      if (detail?.status === 429 && detail.data?.detail?.cooldown_until) {
+                        const until = new Date(detail.data.detail.cooldown_until).toLocaleDateString(
+                          undefined,
+                          { year: "numeric", month: "long", day: "numeric" },
+                        );
+                        toast.error(`You cancelled a deletion recently — try again after ${until}.`);
+                      } else {
+                        toast.error("Failed to delete account — please try again or contact support");
+                      }
+                    } finally {
+                      setDeletionActionPending(false);
+                    }
+                  }}
+                >
+                  {deletionActionPending ? "Scheduling…" : "Delete my account"}
+                </LiquidGlassButton>
+              </>
+            )}
           </motion.div>
         </motion.div>
       )}
