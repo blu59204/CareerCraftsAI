@@ -22,6 +22,29 @@ interface SalaryReport {
   classification: 'below_market' | 'at_market' | 'above_market' | null
   negotiation_script: Record<string, unknown> | null
   data_unavailable: boolean
+  currency: string
+  sample_size: number | null
+  sources: string[]
+}
+
+function formatMoney(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount)
+  } catch {
+    return amount.toLocaleString()
+  }
+}
+
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
 }
 
 export default function SalaryPage() {
@@ -53,6 +76,9 @@ export default function SalaryPage() {
         classification: (reportData.classification as SalaryReport['classification']) ?? null,
         negotiation_script: script,
         data_unavailable: Boolean(reportData.data_unavailable),
+        currency: String(reportData.currency ?? 'USD'),
+        sample_size: typeof reportData.sample_size === 'number' ? reportData.sample_size : null,
+        sources: Array.isArray(reportData.data_sources) ? (reportData.data_sources as string[]) : [],
       }
       return result
     },
@@ -93,14 +119,6 @@ export default function SalaryPage() {
     above_market: 'bg-success/20 text-success border-success/30',
   }
 
-  const formatScript = (script: Record<string, unknown> | null): string => {
-    if (!script) return 'No negotiation script available.'
-    // negotiation_script is a JSON object; render it readably.
-    return Object.entries(script)
-      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-      .join('\n\n')
-  }
-
   return (
     <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-5xl space-y-8">
       <CommandHeader
@@ -134,7 +152,7 @@ export default function SalaryPage() {
         />
         <input
           type="number"
-          placeholder="Offer amount (optional)"
+          placeholder="Your offer, annual (optional)"
           value={offerAmount}
           onChange={e => setOfferAmount(e.target.value)}
           className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
@@ -144,11 +162,25 @@ export default function SalaryPage() {
         </LiquidGlassButton>
       </motion.form>
 
-      {report && (
+      {report?.data_unavailable && (
+        <motion.div variants={fadeUp} className="glass-panel rounded-3xl p-6 text-sm text-muted-foreground">
+          Not enough published salary figures were found for this role. Try a more common title
+          (for example &ldquo;Backend Engineer&rdquo;), add a location, or leave the company out to see the wider market.
+        </motion.div>
+      )}
+
+      {report && !report.data_unavailable && (
         <motion.div variants={fadeUp} className="glass-panel space-y-6 rounded-3xl p-6">
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5" />
-            <h2 className="text-lg font-semibold">Market Percentiles</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5" />
+              <h2 className="text-lg font-semibold">Market Percentiles</h2>
+            </div>
+            {report.sample_size ? (
+              <span className="text-xs text-muted-foreground">
+                Annual, from {report.sample_size} published figures
+              </span>
+            ) : null}
           </div>
 
           <div className="space-y-3">
@@ -156,7 +188,7 @@ export default function SalaryPage() {
               <div key={key} className="space-y-1">
                 <div className="flex justify-between text-sm">
                   <span className="uppercase text-muted-foreground">{key}</span>
-                  <span className="font-mono">${report[key].toLocaleString()}</span>
+                  <span className="font-mono">{formatMoney(report[key], report.currency)}</span>
                 </div>
                 <div className="h-3 rounded-full bg-muted overflow-hidden">
                   <motion.div
@@ -170,6 +202,20 @@ export default function SalaryPage() {
             ))}
           </div>
 
+          {report.sources.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Sources:{' '}
+              {report.sources.map((url, i) => (
+                <span key={url}>
+                  {i > 0 && ', '}
+                  <a href={url} target="_blank" rel="noopener noreferrer" className="hover:text-primary hover:underline">
+                    {hostname(url)}
+                  </a>
+                </span>
+              ))}
+            </p>
+          )}
+
           {report.classification && (
             <div className="flex items-center gap-2">
               <TrendingUp className="h-5 w-5" />
@@ -182,7 +228,28 @@ export default function SalaryPage() {
 
           <div className="space-y-3 rounded-lg border p-4">
             <h3 className="font-semibold">Negotiation Script</h3>
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap">{formatScript(report.negotiation_script)}</p>
+            {report.negotiation_script ? (
+              <div className="space-y-3 text-sm text-muted-foreground">
+                {typeof report.negotiation_script.opening === 'string' && (
+                  <p className="whitespace-pre-wrap">{report.negotiation_script.opening}</p>
+                )}
+                {typeof report.negotiation_script.counter_offer === 'number' && (
+                  <p>
+                    <span className="font-medium text-foreground">Counter-offer: </span>
+                    {formatMoney(report.negotiation_script.counter_offer, report.currency)}
+                  </p>
+                )}
+                {Array.isArray(report.negotiation_script.justifications) && (
+                  <ul className="list-disc space-y-1 pl-5">
+                    {(report.negotiation_script.justifications as unknown[]).map((item, i) => (
+                      <li key={i}>{String(item)}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No negotiation script available.</p>
+            )}
             <div className="flex gap-2 pt-2">
               <LiquidGlassButton
                 onClick={() => approveMutation.mutate(report.id)}
