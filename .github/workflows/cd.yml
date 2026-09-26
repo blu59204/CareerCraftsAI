@@ -26,10 +26,21 @@ jobs:
 
             docker compose pull
             docker compose build --parallel
-            docker compose up -d --no-deps --build backend worker frontend
+            docker compose up -d --build temporal-postgres temporal temporal-ui redis
+            # --remove-orphans retires the old BullMQ worker/agent-worker containers.
+            docker compose up -d --no-deps --build --remove-orphans backend temporal-worker frontend
             docker compose up -d nginx
 
             sleep 10
             curl -f http://localhost:8000/health || (echo "Health check failed" && exit 1)
+            # A reachable Temporal with no worker polling is the "workflows
+            # never run" failure mode — fail the deploy on it.
+            for i in $(seq 1 24); do
+              if curl -s http://localhost:8000/health | grep -q '"workers":[1-9]'; then
+                break
+              fi
+              if [ "$i" = 24 ]; then echo "No Temporal worker is polling the task queue" && exit 1; fi
+              sleep 5
+            done
 
             docker image prune -f

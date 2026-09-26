@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, JobApplication, User, UserDocument, UserPreferences
 from app.schemas.jobs import JobSearchQuerySchema
-from app.services.queue_service import enqueue_job_search
+from app.workflows.starters import WorkflowUnavailable
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 logger = logging.getLogger(__name__)
@@ -42,6 +42,17 @@ class JobSearchRequest(JobSearchQuerySchema):
     job_type: str | None = None
     target_roles: list[str] | None = None
     preferred_locations: list[str] | None = None
+
+
+def make_job_search_id(user_id: str, search_query: str, location: str, max_results: int) -> str:
+    """Content hash of a search — identical repeat clicks reuse the run
+    that is already in flight instead of starting another."""
+    import hashlib
+
+    digest = hashlib.sha256(
+        f"{user_id}:{search_query}:{location}:{max_results}".encode()
+    ).hexdigest()[:16]
+    return f"{user_id}:job_search:{digest}"
 
 
 class JobSearchResponse(BaseModel):
@@ -791,18 +802,13 @@ async def search_jobs(
     # platform" and the page had nothing real to show.
     platforms = payload.platforms or []
 
-    from app.services.queue_service import make_job_search_id
-
     remote = (payload.remote or "").strip() or work_mode or "any"
     stable_job_id = make_job_search_id(
         str(current_user.id), search_query, location, payload.max_results
     )
 
-    # A duplicate request (same query/location/count) hashes to the same
-    # BullMQ job id. Without this check we'd create a brand new AgentRun
-    # here while BullMQ silently reuses the *existing* queued job — whose
-    # payload still carries the first run's id — so the second caller polls
-    # a run id that never gets updated. Reuse the in-flight run instead.
+    # A duplicate request (same query/location/count) reuses the run that is
+    # already in flight rather than starting a second identical search.
     # Locked so two concurrent duplicate requests serialize on this check
     # rather than both slipping past it.
     existing_result = await db.execute(
@@ -840,33 +846,32 @@ async def search_jobs(
         },
     )
     db.add(agent_run)
-    # Commit before publishing to BullMQ (Redis): the worker — or the dev
-    # inline fallback, which opens its own DB session — can pick this job up
-    # and query for the AgentRun almost immediately. It must already be
-    # committed and visible to other connections, not merely flushed inside
-    # this still-open transaction.
+    # Committed before the workflow starts: its activity reads the row.
     await db.commit()
 
+    from app.workflows.starters import start_job_search
+
     try:
-        queue_job_id, queued = await enqueue_job_search(
-            user_id=str(current_user.id),
-            run_id=run_id,
-            search_query=search_query,
-            location=location,
-            max_results=payload.max_results,
-            live_browser=live_browser,
-            work_mode=work_mode,
-            job_id=stable_job_id,
-            platforms=platforms,
-            remote=remote,
+        await start_job_search(
+            run_id,
+            current_user.id,
+            {
+                "search_query": search_query,
+                "location": location,
+                "max_results": payload.max_results,
+                "live_browser": live_browser,
+                "work_mode": work_mode,
+                "platforms": platforms,
+                "remote": remote,
+            },
         )
-    except RuntimeError as exc:
-        logger.warning("Job search enqueue failed for run %s: %s", run_id, exc)
+    except WorkflowUnavailable as exc:
+        logger.warning("Job search start failed for run %s: %s", run_id, exc)
         agent_run.status = "failed"
         agent_run.output = {"error": "Job search service unavailable"}
         await db.commit()
         raise HTTPException(status_code=503, detail="Job search service unavailable") from exc
-    return JobSearchResponse(run_id=run_id, queue_job_id=queue_job_id, queued=queued)
+    return JobSearchResponse(run_id=run_id, queue_job_id=stable_job_id, queued=True)
 
 
 @router.get("/applications", response_model=list[ApplicationResponse])
@@ -924,49 +929,36 @@ async def update_application_status(
     if body.status == "applied":
         if not app.applied_at:
             app.applied_at = datetime.now(timezone.utc)
-        # Mirror the day-5 / day-12 schedule the FollowUp agent enqueues in
-        # BullMQ onto the row, so the tracker and the dashboard can show the
-        # real next-follow-up date instead of nothing.
+        # Shown by the tracker and dashboard; FollowupWorkflow drafts the
+        # emails on these same dates.
         if not app.followup_day5:
             app.followup_day5 = app.applied_at + timedelta(days=5)
         if not app.followup_day12:
             app.followup_day12 = app.applied_at + timedelta(days=12)
+        await db.commit()
+        from app.workflows.starters import start_followups
+
+        try:
+            await start_followups(current_user.id, app.id, app.applied_at)
+        except WorkflowUnavailable:
+            # The status change stands; the follow-ups are a convenience.
+            logger.warning("Could not schedule follow-ups for application %s", app.id)
+        await db.refresh(app)
     return app
 
 
 async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dict:
-    """TEMPORAL_ENABLED path for prepare-apply. Ownership/job-url/resume
-    checks already happened in the caller — this only starts (or reuses)
-    the durable workflow. The workflow's own reserve_application_attempt
-    activity does the state/resume-hash checks and the actual DB
-    reservation, since that logic must be safe under Temporal's
-    at-least-once activity execution regardless of what the caller already
-    checked.
+    """Start (or reuse) the application's AutoApplyWorkflow. Ownership,
+    job-url and resume checks already happened in the caller; the workflow's
+    reserve_application_attempt activity repeats the state checks and makes
+    the reservation, since that must be safe under at-least-once execution.
     """
-    from temporalio.exceptions import WorkflowAlreadyStartedError
+    from app.workflows.starters import start_auto_apply
 
-    from app.core.temporal_client import get_temporal_client
-    from app.workflows.auto_apply import (
-        AutoApplyIntent,
-        AutoApplyWorkflow,
-        auto_apply_workflow_id,
-    )
-
-    workflow_id = auto_apply_workflow_id(str(user_id), str(application_id))
-    client = await get_temporal_client()
     try:
-        await client.start_workflow(
-            AutoApplyWorkflow.run,
-            AutoApplyIntent(user_id=str(user_id), job_application_id=str(application_id)),
-            id=workflow_id,
-            task_queue=settings.TEMPORAL_TASK_QUEUE,
-            execution_timeout=timedelta(seconds=settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S),
-        )
-        status = "queued"
-    except WorkflowAlreadyStartedError:
-        # A repeated start request for the same (user, application) reuses
-        # the already-running workflow instead of creating an orphan.
-        status = "already_running"
+        started = await start_auto_apply(user_id, application_id)
+    except WorkflowUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Application service unavailable") from exc
 
     # The reserve activity creates the AgentRun row within its own first
     # (sub-second, no browser involved) step; poll briefly for it rather
@@ -975,9 +967,10 @@ async def _start_temporal_auto_apply(user_id: uuid.UUID, application_id: uuid.UU
     run_id = await _await_temporal_run_id(user_id, application_id)
     return {
         "run_id": run_id,
-        "workflow_id": workflow_id,
+        "workflow_id": started["workflow_id"],
         "engine": "temporal",
-        "status": status,
+        "mode": started["mode"],
+        "status": started["status"],
     }
 
 
@@ -1015,12 +1008,10 @@ async def prepare_application_apply(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Start the durable browser_prepare -> browser_input -> browser_review
-    workflow for a single application. Preparation, review and approval all
-    go through workflow_service (see agents.py's /agents/{run_id}/approve),
-    the same path application_workflow.run_application_stage already serves
-    for the auto-apply pipeline's batch approval — never a route-owned
-    background task that bypasses the approval ledger.
+    """Start the application's AutoApplyWorkflow. In extension mode the
+    user's own browser fills the form and the user submits from the
+    extension's review panel; in server-browser mode approval goes through
+    /agents/{run_id}/approve. Never a route-owned background task.
     """
     # Locked for the duration of this transaction so a second concurrent
     # prepare-apply call for the same application serializes behind this one
@@ -1046,81 +1037,18 @@ async def prepare_application_apply(
             detail="Attach an approved resume to this application before applying",
         )
 
-    if settings.TEMPORAL_ENABLED:
-        return await _start_temporal_auto_apply(current_user.id, application_id)
+    if settings.APPLY_EXECUTION_MODE == "extension":
+        from app.services.extension_service import has_active_device
 
-    from app.models.db import ApplicationAttempt
-    from app.services.application_workflow import load_resume
-    from app.services.workflow_service import ACTIVE_SUBMISSION_STATES, add_task
-
-    existing = (
-        await db.execute(
-            select(ApplicationAttempt).where(
-                ApplicationAttempt.user_id == current_user.id,
-                ApplicationAttempt.job_application_id == application_id,
+        if not await has_active_device(db, current_user.id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Connect the CareerCraft browser extension first (Settings → Integrations), "
+                    "then stay signed in to the job site in that browser."
+                ),
             )
-        )
-    ).scalar_one_or_none()
-    if existing and existing.state in ACTIVE_SUBMISSION_STATES:
-        raise HTTPException(
-            status_code=409,
-            detail=f"An application attempt is already {existing.state}",
-        )
 
-    try:
-        _, resume_sha256 = await load_resume(current_user.id, str(app.resume_id))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    run_id = uuid.uuid4()
-    agent_run = AgentRun(
-        id=run_id,
-        user_id=current_user.id,
-        agent_type="apply_prepare",
-        status="queued",
-        input={"application_id": str(application_id)},
-    )
-    db.add(agent_run)
-
-    if existing:
-        # Reuse the row the unique constraint forces us to have — reset it
-        # for this new attempt rather than erroring; only submitting/
-        # submitted/verified (checked above) block a new attempt.
-        attempt = existing
-        attempt.state = "preparing"
-        attempt.run_id = run_id
-        attempt.submission_token = None
-        attempt.external_application_id = None
-        attempt.confirmation_url = None
-        attempt.confirmation_text = None
-        attempt.approved_snapshot_hash = None
-        attempt.last_error = None
-        attempt.submitted_at = None
-        attempt.verified_at = None
-    else:
-        attempt = ApplicationAttempt(
-            user_id=current_user.id,
-            job_application_id=application_id,
-            run_id=run_id,
-            state="preparing",
-        )
-        db.add(attempt)
-
-    await db.flush()
-    add_task(
-        db,
-        agent_run,
-        "continue",
-        {
-            "type": "browser_prepare",
-            "attempt_id": str(attempt.id),
-            "job_url": app.job_url,
-            "company": app.company,
-            "role": app.role,
-            "pdf_document_id": str(app.resume_id),
-            "resume_sha256": resume_sha256,
-        },
-    )
+    # Release the row lock before the workflow's reserve activity locks it.
     await db.commit()
-
-    return {"run_id": str(run_id), "status": "queued"}
+    return await _start_temporal_auto_apply(current_user.id, application_id)

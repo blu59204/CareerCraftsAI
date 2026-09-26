@@ -1,11 +1,17 @@
-"""AutoApplyWorkflow — Temporal-backed alternative to the BullMQ/WorkflowTask
-execution path in application_workflow.py + workflow_service.py.
+"""AutoApplyWorkflow — one job application, from reservation to submission.
 
-Feature-flagged via settings.TEMPORAL_ENABLED (see app/core/config.py).
-Both paths share the same ApplicationAttempt idempotency ledger and the same
-run_application_stage implementation (via activities.py) — there is exactly
-one place that actually drives a browser, regardless of which engine
-orchestrates it.
+Two execution modes (settings.APPLY_EXECUTION_MODE):
+
+* "extension" — the application is handed to the user's own browser through
+  the CareerCraft extension (an extension_tasks row). The extension fills
+  the form where the user is already signed in, the user presses Submit in
+  the extension's review panel, and progress arrives as extension_update
+  signals relayed by the API.
+* "server_browser" — an isolated OpenSandbox browser is driven through
+  application_workflow.run_application_stage (via activities.py), with
+  approval signals from the web app.
+
+Both share the ApplicationAttempt idempotency ledger.
 
 Determinism: this module must never do I/O, use real wall-clock time,
 randomness, or threading directly — only temporalio.workflow primitives and
@@ -14,6 +20,7 @@ workflow.execute_activity for anything that touches the outside world. The
 because activities.py imports SQLAlchemy/Playwright-touching modules that
 would otherwise trip Temporal's workflow sandbox.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,6 +36,10 @@ with workflow.unsafe.imports_passed_through():
         run_application_stage_activity,
         schedule_followup_activity,
     )
+    from app.workflows.extension_activities import (
+        create_extension_task_activity,
+        finish_extension_task_activity,
+    )
 
 
 def auto_apply_workflow_id(user_id: str, job_application_id: str) -> str:
@@ -43,6 +54,16 @@ def auto_apply_workflow_id(user_id: str, job_application_id: str) -> str:
 class AutoApplyIntent:
     user_id: str
     job_application_id: str
+    mode: str = "server_browser"  # or "extension"
+    # Extension mode: how long to wait for a browser to pick the task up,
+    # then for the user to finish reviewing and submit.
+    claim_timeout_s: int = 24 * 3600
+    complete_timeout_s: int = 2 * 3600
+
+
+# Extension progress stages (see app/api/v1/extension.py).
+EXTENSION_PROGRESS_STAGES = {"claimed", "filling", "needs_input", "review", "login_required"}
+EXTENSION_TERMINAL_STAGES = {"submitted", "failed", "cancelled"}
 
 
 @dataclass
@@ -57,8 +78,10 @@ class AutoApplyStatus:
 # browser session, a transient page-load failure, etc. are all safe to
 # retry since nothing external has happened yet.
 _PREP_RETRY_POLICY = RetryPolicy(
-    initial_interval=timedelta(seconds=2), backoff_coefficient=2.0,
-    maximum_interval=timedelta(seconds=30), maximum_attempts=5,
+    initial_interval=timedelta(seconds=2),
+    backoff_coefficient=2.0,
+    maximum_interval=timedelta(seconds=30),
+    maximum_attempts=5,
 )
 # The one activity call that can reach the actual Submit click NEVER
 # retries — see run_application_stage's own claim_attempt_for_submit
@@ -79,6 +102,9 @@ class AutoApplyWorkflow:
         self._answers: dict[str, str] = {}
         self._approved = False
         self._cancelled = False
+        self._extension_stage: str | None = None
+        self._extension_outcome: str | None = None
+        self._extension_details: dict = {}
 
     @workflow.signal
     def provide_answers(self, answers: dict[str, str]) -> None:
@@ -92,11 +118,23 @@ class AutoApplyWorkflow:
     def cancel(self) -> None:
         self._cancelled = True
 
+    @workflow.signal
+    def extension_update(self, update: dict) -> None:
+        stage = update.get("stage")
+        if stage in EXTENSION_PROGRESS_STAGES:
+            self._extension_stage = stage
+        elif stage in EXTENSION_TERMINAL_STAGES and self._extension_outcome is None:
+            self._extension_stage = stage
+            self._extension_outcome = stage
+            self._extension_details = update.get("details") or {}
+
     @workflow.query
     def status(self) -> AutoApplyStatus:
         return AutoApplyStatus(
-            state=self._state, pending_action=self._pending_action,
-            result=self._result, error=self._error,
+            state=self._state,
+            pending_action=self._pending_action,
+            result=self._result,
+            error=self._error,
         )
 
     async def _reserve(self, intent: AutoApplyIntent) -> dict | None:
@@ -109,8 +147,10 @@ class AutoApplyWorkflow:
             return await workflow.execute_activity(
                 reserve_application_attempt,
                 {
-                    "user_id": intent.user_id, "job_application_id": intent.job_application_id,
-                    "workflow_id": workflow.info().workflow_id, "run_id": run_id,
+                    "user_id": intent.user_id,
+                    "job_application_id": intent.job_application_id,
+                    "workflow_id": workflow.info().workflow_id,
+                    "run_id": run_id,
                 },
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=_RESERVE_RETRY_POLICY,
@@ -170,11 +210,17 @@ class AutoApplyWorkflow:
         if reserved is None:
             return {"status": "failed", "result": self._result}
 
+        if intent.mode == "extension":
+            return await self._run_in_extension(intent, reserved)
+
         run_id = reserved["run_id"]
         pending: dict = {
-            "type": "browser_prepare", "job_url": reserved["job_url"],
-            "company": reserved["company"], "role": reserved["role"],
-            "attempt_id": reserved["attempt_id"], "pdf_document_id": reserved["pdf_document_id"],
+            "type": "browser_prepare",
+            "job_url": reserved["job_url"],
+            "company": reserved["company"],
+            "role": reserved["role"],
+            "attempt_id": reserved["attempt_id"],
+            "pdf_document_id": reserved["pdf_document_id"],
             "resume_sha256": reserved["resume_sha256"],
         }
 
@@ -207,16 +253,19 @@ class AutoApplyWorkflow:
 
             if action_type == "application_answers_required":
                 self._state = "awaiting_input"
-                self._answers = {}
+                # Cleared after use, never before waiting — see _await_approval.
                 await workflow.wait_condition(lambda: bool(self._answers) or self._cancelled)
                 if self._cancelled:
                     self._state = "cancelled"
                     return {"status": "cancelled", "result": {}}
+                answers, self._answers = dict(self._answers), {}
                 answered = await workflow.execute_activity(
                     apply_answers_and_resume_activity,
                     {
-                        "run_id": run_id, "user_id": intent.user_id,
-                        "answers": dict(self._answers), "fields": action.get("fields", []),
+                        "run_id": run_id,
+                        "user_id": intent.user_id,
+                        "answers": answers,
+                        "fields": action.get("fields", []),
                         "pending": pending,
                     },
                     start_to_close_timeout=timedelta(seconds=120),
@@ -237,16 +286,99 @@ class AutoApplyWorkflow:
             # browser_review (final submit) and browser_input (form still
             # incomplete — e.g. login/verification needed in the live
             # browser) both wait for the same generic approval signal: the
-            # BullMQ path's frontend button ("Continue preparation" /
-            # "Approve final submission") posts to one generic approve
-            # endpoint for every checkpoint type, so Temporal must wait the
-            # same way rather than auto-retrying browser_input on a timer —
-            # anything else would silently change the existing UX contract.
+            # frontend button ("Continue preparation" / "Approve final
+            # submission") posts to one generic approve endpoint for every
+            # checkpoint type, so the workflow waits the same way rather than
+            # auto-retrying browser_input on a timer.
             is_review = action_type == "browser_review"
             self._state = "awaiting_approval" if is_review else "awaiting_browser_input"
-            self._approved = False
+            # The flag is cleared after it is consumed, not before waiting: an
+            # approval processed in the same workflow task as the activity
+            # result must not be wiped out.
             await workflow.wait_condition(lambda: self._approved or self._cancelled)
             if self._cancelled:
                 self._state = "cancelled"
                 return {"status": "cancelled", "result": {}}
+            self._approved = False
             self._state = "submitting" if is_review else "preparing"
+
+    async def _wait(self, condition, timeout_s: int) -> bool:
+        try:
+            await workflow.wait_condition(condition, timeout=timedelta(seconds=timeout_s))
+            return True
+        except TimeoutError:
+            return False
+
+    async def _run_in_extension(self, intent: AutoApplyIntent, reserved: dict) -> dict:
+        """Hand the application to the user's browser and wait for it."""
+        workflow_id = workflow.info().workflow_id
+        task = await workflow.execute_activity(
+            create_extension_task_activity,
+            {
+                "user_id": intent.user_id,
+                "job_application_id": intent.job_application_id,
+                "run_id": reserved["run_id"],
+                "attempt_id": reserved["attempt_id"],
+                "workflow_id": workflow_id,
+                "job_url": reserved["job_url"],
+                "company": reserved["company"],
+                "role": reserved["role"],
+                "pdf_document_id": reserved["pdf_document_id"],
+            },
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_RESERVE_RETRY_POLICY,
+        )
+
+        self._state = "waiting_for_extension"
+        claimed = await self._wait(
+            lambda: self._extension_stage is not None or self._cancelled,
+            intent.claim_timeout_s,
+        )
+        if claimed and not self._cancelled:
+            self._state = "in_browser"
+            await self._wait(
+                lambda: self._extension_outcome is not None or self._cancelled,
+                intent.complete_timeout_s,
+            )
+
+        if self._extension_outcome is not None:
+            outcome = self._extension_outcome
+        elif self._cancelled:
+            outcome = "cancelled"
+        else:
+            outcome = "expired"
+
+        finished = await workflow.execute_activity(
+            finish_extension_task_activity,
+            {
+                "task_id": task["task_id"],
+                "run_id": reserved["run_id"],
+                "attempt_id": reserved["attempt_id"],
+                "user_id": intent.user_id,
+                "job_application_id": intent.job_application_id,
+                "outcome": outcome,
+                "details": self._extension_details,
+            },
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_PREP_RETRY_POLICY,
+        )
+        self._result = {"outcome": outcome}
+        if outcome == "submitted":
+            self._state = "submitted"
+            await workflow.execute_activity(
+                schedule_followup_activity,
+                {
+                    "user_id": intent.user_id,
+                    "job_application_id": intent.job_application_id,
+                    "applied_at": finished.get("applied_at"),
+                },
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_PREP_RETRY_POLICY,
+            )
+            return {"status": "completed", "result": self._result}
+        self._state = outcome
+        if outcome == "failed":
+            self._error = (
+                self._extension_details.get("error") or "Application failed in the browser"
+            )
+        return {"status": outcome, "result": self._result}

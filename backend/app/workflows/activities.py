@@ -1,10 +1,8 @@
 """Temporal activities for AutoApplyWorkflow.
 
-Every activity here is a thin wrapper around code that already exists and is
-already tested on the BullMQ/WorkflowTask path (application_workflow.py,
-workflow_service.py, profile_service.py, followup_agent.py) — there is
-exactly one implementation of "drive a browser through an application form,"
-regardless of which engine (BullMQ or Temporal) is orchestrating it. Activity
+Every activity here is a thin wrapper around application_workflow.py,
+profile_service.py and followup_agent.py — there is exactly one
+implementation of "drive a server-side browser through an application form". Activity
 functions may do real I/O (DB, browser, network); workflow code in
 auto_apply.py must never do so directly, per Temporal's determinism rules.
 
@@ -125,9 +123,8 @@ def _browser_heartbeat_interval_seconds() -> float:
 @activity.defn
 async def reserve_application_attempt(params: dict) -> dict:
     """Reserve (or reuse) the ApplicationAttempt + AgentRun for this
-    workflow. Mirrors jobs.py's prepare_application_apply reservation logic
-    exactly, so a Temporal-backed and a BullMQ-backed apply share one
-    idempotency ledger and one set of guard rails.
+    workflow — the single place an application attempt is reserved, for
+    both the extension and the server-browser modes.
 
     params: {user_id, job_application_id, workflow_id, run_id}. run_id is
     generated once by the caller (the API route or, for a retry driven by
@@ -249,10 +246,8 @@ async def reserve_application_attempt(params: dict) -> dict:
 
 async def _record_stage_result(run_id: str, result: dict) -> dict:
     """Shared by both stage-advancing activities below: write the result
-    into the same AgentRun.status/output shape workflow_service.execute_task
-    already produces for the BullMQ path, and publish the same SSE event —
-    so the existing frontend polling/SSE UI works identically regardless of
-    which engine ran the stage."""
+    into the same AgentRun.status/output shape every other agent run uses,
+    and publish the same SSE event the frontend listens for."""
     from app.core.database import AsyncSessionLocal
     from app.core.event_bus import publish
     from app.models.db import AgentRun
@@ -283,9 +278,8 @@ async def _record_stage_result(run_id: str, result: dict) -> dict:
 
 @activity.defn
 async def run_application_stage_activity(params: dict) -> dict:
-    """Drives one browser_prepare/browser_input/browser_review step via the
-    existing application_workflow.run_application_stage — the same function
-    the BullMQ path calls from workflow_service.continue_action.
+    """Drives one browser_prepare/browser_input/browser_review step via
+    application_workflow.run_application_stage.
 
     params: {run_id, pending}
 
@@ -367,7 +361,8 @@ async def apply_answers_and_resume_activity(params: dict) -> dict:
 
 @activity.defn
 async def schedule_followup_activity(params: dict) -> None:
-    """Only ever called after a confirmed ("verified") submission."""
+    """Only ever called after a confirmed submission. Starts the
+    application's FollowupWorkflow (idempotent per application)."""
     from sqlalchemy import select
 
     from app.agents.followup_agent import schedule_followups
@@ -376,9 +371,13 @@ async def schedule_followup_activity(params: dict) -> None:
 
     user_id = params["user_id"]
     job_application_id = _uuid.UUID(params["job_application_id"])
-    async with AsyncSessionLocal() as db:
-        app_row = (
-            await db.execute(select(JobApplication).where(JobApplication.id == job_application_id))
-        ).scalar_one_or_none()
-        applied_at = app_row.applied_at if app_row else None
+    applied_at = datetime.fromisoformat(params["applied_at"]) if params.get("applied_at") else None
+    if applied_at is None:
+        async with AsyncSessionLocal() as db:
+            app_row = (
+                await db.execute(
+                    select(JobApplication).where(JobApplication.id == job_application_id)
+                )
+            ).scalar_one_or_none()
+            applied_at = app_row.applied_at if app_row else None
     await schedule_followups(user_id, str(job_application_id), applied_at or datetime.now(UTC))

@@ -1,9 +1,10 @@
-"""Unit tests for the queue-first job_search pass.
+"""Unit tests for the job_search pass and its Temporal-started API route.
 
 Search I/O is NEVER called here — every test mocks
 services/job_search_service.search_all_platforms() (or the service adapters).
 The LLM only scores via prompts/job_search_prompt in batches of 20.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -34,17 +35,27 @@ def make_state(**ctx) -> AgentState:
 
 def _job(i: int) -> dict:
     return {
-        "job_id": f"j{i}", "title": f"Backend Engineer {i}", "company": "Acme",
-        "location": "Bengaluru", "remote": "onsite", "salary_text": "",
-        "url": f"https://example.com/j/{i}", "platform": "open_apis",
-        "posted_at": None, "description": "Python APIs",
+        "job_id": f"j{i}",
+        "title": f"Backend Engineer {i}",
+        "company": "Acme",
+        "location": "Bengaluru",
+        "remote": "onsite",
+        "salary_text": "",
+        "url": f"https://example.com/j/{i}",
+        "platform": "open_apis",
+        "posted_at": None,
+        "description": "Python APIs",
     }
 
 
 def _scored_output(jobs: list[dict], score: int = 80) -> JobSearchOutput:
     return JobSearchOutput(
-        matches=[JobMatch(job_id=j["job_id"], score=score, reasons=["fit"],
-                          red_flags=[], missing_skills=[]) for j in jobs],
+        matches=[
+            JobMatch(
+                job_id=j["job_id"], score=score, reasons=["fit"], red_flags=[], missing_skills=[]
+            )
+            for j in jobs
+        ],
         top_pick_id=jobs[0]["job_id"] if jobs else None,
     )
 
@@ -64,7 +75,9 @@ def _node_patches(**overrides):
     defaults.update(overrides)
     return [
         patch.object(js, "fetch_model_settings", return_value=defaults["fetch_model_settings"]),
-        patch.object(js, "fetch_user_profile_text", return_value=defaults["fetch_user_profile_text"]),
+        patch.object(
+            js, "fetch_user_profile_text", return_value=defaults["fetch_user_profile_text"]
+        ),
         patch.object(js, "_build_llm", return_value=defaults["_build_llm"]),
         patch.object(js, "search_all_platforms", return_value=defaults["search_all_platforms"]),
         patch.object(js, "emit"),
@@ -98,13 +111,15 @@ def test_45_postings_all_scored_then_ranked_before_truncation():
     def fake_score(llm, system, human, schema):
         calls.append(human)
         start = len(calls) * js.SCORE_BATCH_SIZE - js.SCORE_BATCH_SIZE
-        batch = jobs[start:start + js.SCORE_BATCH_SIZE]
+        batch = jobs[start : start + js.SCORE_BATCH_SIZE]
         return JobSearchOutput(
             matches=[
                 JobMatch(
                     job_id=j["job_id"],
                     score=99 if j["job_id"] == "j40" else 50,
-                    reasons=["fit"], red_flags=[], missing_skills=[],
+                    reasons=["fit"],
+                    red_flags=[],
+                    missing_skills=[],
                 )
                 for j in batch
             ],
@@ -144,12 +159,15 @@ def test_one_platform_failure_still_returns_others():
     async def go():
         # NOTE: run_one resolves adapters via the _ADAPTERS registry, so
         # patch the registry entries — patching module attrs would miss.
-        with patch.dict(svc._ADAPTERS, {
-            "open_apis": MagicMock(side_effect=Exception("boom")),
-            "jobspy": MagicMock(return_value=[{**_job(0), "platform": "x"}]),
-            "ats": MagicMock(return_value=[]),
-            "remoteok": MagicMock(return_value=[]),
-        }):
+        with patch.dict(
+            svc._ADAPTERS,
+            {
+                "open_apis": MagicMock(side_effect=Exception("boom")),
+                "jobspy": MagicMock(return_value=[{**_job(0), "platform": "x"}]),
+                "ats": MagicMock(return_value=[]),
+                "remoteok": MagicMock(return_value=[]),
+            },
+        ):
             return await svc.search_all_platforms(
                 {"titles": ["Backend"], "locations": [], "max_results": 10},
                 ["open_apis", "jobspy", "ats", "remoteok"],
@@ -197,8 +215,10 @@ def test_search_all_platforms_applies_remote_filter():
 
     async def go():
         query = {
-            "titles": ["Backend"], "locations": ["Remote"],
-            "max_results": 10, "remote": "remote",
+            "titles": ["Backend"],
+            "locations": ["Remote"],
+            "max_results": 10,
+            "remote": "remote",
         }
         with patch.dict(svc._ADAPTERS, {"open_apis": fake_adapter}, clear=True):
             return await svc.search_all_platforms(query, ["open_apis"])
@@ -209,7 +229,7 @@ def test_search_all_platforms_applies_remote_filter():
 
 
 def test_make_job_search_id_is_deterministic():
-    from app.services.queue_service import make_job_search_id
+    from app.api.v1.jobs import make_job_search_id
 
     a = make_job_search_id("u1", "python", "Remote", 10)
     assert a == make_job_search_id("u1", "python", "Remote", 10)
@@ -278,64 +298,76 @@ def _override_auth(monkeypatch):
     return app
 
 
-def test_search_dev_redis_down_inlines_with_warning_and_queued_false(monkeypatch, caplog):
-    import logging
+def test_search_starts_a_job_search_workflow(monkeypatch):
+    from unittest.mock import AsyncMock
 
     from httpx import ASGITransport, AsyncClient
 
-    from app.api.v1 import jobs as jobs_module
+    from app.workflows import starters
 
     app = _override_auth(monkeypatch)
-    monkeypatch.setattr("app.services.queue_service._BULLMQ_AVAILABLE", False)
+    start = AsyncMock(return_value="job-search/x")
+    monkeypatch.setattr(starters, "start_job_search", start)
 
     async def go():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            with caplog.at_level(logging.WARNING, logger="app.services.queue_service"):
-                return await client.post("/api/v1/jobs/search", json={
-                    "titles": ["Backend Engineer"], "locations": ["Bengaluru"],
-                    "platforms": ["indeed"], "max_results": 5,
-                }, headers={"Authorization": "Bearer test-token"})
+            return await client.post(
+                "/api/v1/jobs/search",
+                json={
+                    "titles": ["Backend Engineer"],
+                    "locations": ["Bengaluru"],
+                    "platforms": ["indeed"],
+                    "max_results": 5,
+                },
+                headers={"Authorization": "Bearer test-token"},
+            )
 
     import asyncio as _aio
 
     resp = _aio.run(go())
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["queued"] is False
-    assert body["run_id"]
-    assert "inline" in caplog.text.lower()
+    assert body["queued"] is True
+    run_id, _user_id, params = start.await_args.args
+    assert run_id == body["run_id"]
+    assert params["search_query"] == "Backend Engineer"
+    assert params["platforms"] == ["indeed"]
 
     app.dependency_overrides.clear()
 
 
-def test_search_prod_redis_down_503_never_inline(monkeypatch):
+def test_search_returns_503_when_temporal_is_unreachable(monkeypatch):
+    """No inline fallback and no run left "running" forever: the caller is
+    told the search did not start."""
+    from unittest.mock import AsyncMock
+
     from httpx import ASGITransport, AsyncClient
 
-    from app.api.v1 import jobs as jobs_module
-    from app.core.config import settings
+    from app.workflows import starters
 
     app = _override_auth(monkeypatch)
-    monkeypatch.setattr("app.services.queue_service._BULLMQ_AVAILABLE", False)
-    monkeypatch.setattr(settings, "APP_ENV", "production", raising=False)
-
-    created_tasks: list = []
-    real_create = __import__("asyncio").create_task
     monkeypatch.setattr(
-        "app.services.queue_service.asyncio.create_task",
-        lambda *a, **k: created_tasks.append(a) or MagicMock(),
+        starters,
+        "start_job_search",
+        AsyncMock(side_effect=starters.WorkflowUnavailable("down")),
     )
 
     async def go():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            return await client.post("/api/v1/jobs/search", json={
-                "titles": ["Backend Engineer"], "locations": ["Bengaluru"], "max_results": 5,
-            }, headers={"Authorization": "Bearer test-token"})
+            return await client.post(
+                "/api/v1/jobs/search",
+                json={
+                    "titles": ["Backend Engineer"],
+                    "locations": ["Bengaluru"],
+                    "max_results": 5,
+                },
+                headers={"Authorization": "Bearer test-token"},
+            )
 
     import asyncio as _aio
 
     resp = _aio.run(go())
     assert resp.status_code == 503
-    assert created_tasks == []
 
     app.dependency_overrides.clear()
 
@@ -353,6 +385,7 @@ def test_persist_only_above_threshold_and_idempotent():
             class R:
                 def scalar_one_or_none(inner):
                     return "exists" if self.store.get("seen") else None
+
             return R()
 
         def add(self, row):
@@ -370,10 +403,9 @@ def test_persist_only_above_threshold_and_idempotent():
     store: dict = {}
     # NOTE: _persist_saved_jobs imports _get_sync_factory locally from
     # app.core.sync_db at call time — patch it there, not in job_search.
-    with patch(
-        "app.core.sync_db._get_sync_factory", return_value=lambda: FakeSession(store)
-    ):
+    with patch("app.core.sync_db._get_sync_factory", return_value=lambda: FakeSession(store)):
         from app.agents.job_search import _persist_saved_jobs
+
         jobs = [{**_job(0), "match_score": 90}, {**_job(1), "match_score": 10}]
         assert _persist_saved_jobs("u1", jobs) == 1  # only score>=50, has url
         assert _persist_saved_jobs("u1", jobs) == 0  # second run: idempotent

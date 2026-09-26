@@ -36,6 +36,11 @@ const nextConfig = {
         source: "/api/v1/:path*",
         destination: `${backendUrl}/api/v1/:path*`,
       },
+      // The public /status page reads the API's health from its own origin.
+      {
+        source: "/health",
+        destination: `${backendUrl}/health`,
+      },
     ];
   },
 

@@ -1,10 +1,9 @@
-"""Run with python -m app.temporal_worker. Only meaningful when
-TEMPORAL_ENABLED=true — see app/core/config.py and
-docs/superpowers/specs for the migration this is part of.
+"""Run with `python -m app.temporal_worker`. Scale this service independently.
 
-Mirrors app/workflow_worker.py's structure (the BullMQ worker) so both
-worker processes are operable the same way; this one hosts Temporal
-workflows/activities instead of polling a BullMQ queue.
+This process executes every durable job — agent runs, job searches,
+applications, follow-ups — and registers the recurring Schedules (daily job
+search, maintenance, and in server-browser mode the status check). Nothing
+the API starts makes progress unless at least one of these is running.
 """
 
 import asyncio
@@ -15,38 +14,23 @@ from temporalio.worker import Worker
 
 from app.core.config import settings
 from app.core.temporal_client import get_temporal_client, reset_temporal_client
-from app.workflows.activities import (
-    apply_answers_and_resume_activity,
-    reserve_application_attempt,
-    run_application_stage_activity,
-    schedule_followup_activity,
-)
-from app.workflows.auto_apply import AutoApplyWorkflow
+from app.workflows.registry import ACTIVITIES, WORKFLOWS
+from app.workflows.scheduled import ensure_schedules
 
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    if not settings.TEMPORAL_ENABLED:
-        logger.warning(
-            "TEMPORAL_ENABLED is false — this worker would register with "
-            "Temporal but no workflow will ever be started against it "
-            "until the flag is turned on. Exiting."
-        )
-        return
-
     settings.validate_temporal_configuration()
     client = await get_temporal_client()
+    if settings.TEMPORAL_SCHEDULES_ENABLED:
+        await ensure_schedules(client)
+
     worker = Worker(
         client,
         task_queue=settings.TEMPORAL_TASK_QUEUE,
-        workflows=[AutoApplyWorkflow],
-        activities=[
-            reserve_application_attempt,
-            run_application_stage_activity,
-            apply_answers_and_resume_activity,
-            schedule_followup_activity,
-        ],
+        workflows=WORKFLOWS,
+        activities=ACTIVITIES,
         max_concurrent_activities=settings.TEMPORAL_WORKER_CONCURRENCY,
     )
 

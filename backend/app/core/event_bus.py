@@ -18,13 +18,9 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 suppress_terminal_events: ContextVar[bool] = ContextVar("suppress_terminal_events", default=False)
 
-# Redis channel per TASK 4 spec
-#   agent:{run_id}:events  -> SSE subscriber listens here
-#   agent:{run_id}:queue   -> worker/queue trigger (set by API)
-#
+# Redis channel agent:{run_id}:events — the SSE endpoint subscribes here.
 # We publish from any thread via a dedicated publisher loop+thread.
 _channel_events = lambda run_id: f"agent:{run_id}:events"
-_channel_queue = lambda run_id: f"agent:{run_id}:queue"
 _clock_channel = lambda: f"agent:{'clock'}:events"
 
 
@@ -62,9 +58,7 @@ def _run_publisher_loop() -> None:
             for task in pending:
                 task.cancel()
             if pending:
-                _publisher_loop.run_until_complete(
-                    asyncio.gather(*pending, return_exceptions=True)
-                )
+                _publisher_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
         except Exception:
             pass
         try:
@@ -125,30 +119,6 @@ def emit(run_id: str, event_type: str, data: str | dict) -> None:
     if suppress_terminal_events.get() and event_type in {"complete", "checkpoint", "error"}:
         return  # Durable worker publishes only after its database transaction commits.
     publish(run_id, event_type, data)
-
-
-def get_queue(run_id: str) -> None:
-    """
-    TASK 4 contract: queue key to trigger workers.
-    Existing worker logic may ignore this if it uses BullMQ directly,
-    but we keep the channel publish for correctness.
-    """
-    _ensure_publisher()
-    if _publisher_loop is None or not _publisher_ready.is_set():
-        return
-    # publish a lightweight "queued" message
-    try:
-        asyncio.run_coroutine_threadsafe(
-            _publish_coro(_channel_queue(run_id), json.dumps({"type": "queued", "ts": int(time.time())})),
-            _publisher_loop,
-        )
-    except Exception:
-        pass
-
-
-def remove_queue(run_id: str) -> None:
-    # no-op: channels are ephemeral
-    return
 
 
 async def stream_events(run_id: str, timeout_s: int = 300) -> AsyncIterator[str]:

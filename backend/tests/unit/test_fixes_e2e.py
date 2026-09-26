@@ -20,6 +20,7 @@ Runs against the actual ``app`` package with fakeredis standing in for Redis
 and monkeypatched ``app.core.config.settings.REDIS_URL`` so no live services
 are required.  ``asyncio_mode = auto`` is configured in pyproject / conftest.
 """
+
 import asyncio
 import inspect
 import json
@@ -155,6 +156,7 @@ async def test_concurrent_sync_emits_dont_lose_messages(monkeypatch):
     """5 threads × 20 emit() calls = 100 events.  All must arrive.  Catches
     races in the run_coroutine_threadsafe dispatch path."""
     import threading
+
     fake = fakeredis_aio.FakeRedis(decode_responses=True)
 
     async def _publish_via_fake(run_id, payload):
@@ -324,10 +326,7 @@ def test_dedupe_jobs_keeps_first_by_url():
 
 
 def test_dedupe_jobs_caps_at_max_results():
-    jobs = [
-        {"title": f"J{i}", "company": "X", "job_url": f"https://x.com/{i}"}
-        for i in range(20)
-    ]
+    jobs = [{"title": f"J{i}", "company": "X", "job_url": f"https://x.com/{i}"} for i in range(20)]
     out = _dedupe_jobs(jobs, max_results=5)
     assert len(out) == 5
 
@@ -341,33 +340,59 @@ def test_search_open_job_apis_returns_real_shape(monkeypatch):
     their response shape and emit job_url-bearing listings."""
 
     from app.core import config
+
     monkeypatch.setattr(config.settings, "RAPIDAPI_KEY", "", raising=False)
 
     class _Resp:
         def __init__(self, data):
             self._data = data
+
         def raise_for_status(self):
             pass
+
         def json(self):
             return self._data
 
     remotive_data = [
-        {"position": "Python Developer", "company_name": "Stripe", "url": "https://stripe.com/r/1",
-         "candidate_required_location": "Remote", "description": "FastAPI + Postgres", "tags": ["python"]},
-        {"position": "Frontend Dev", "company_name": "Vercel", "url": "https://vercel.com/r/2",
-         "candidate_required_location": "Remote", "description": "React", "tags": ["react"]},
+        {
+            "position": "Python Developer",
+            "company_name": "Stripe",
+            "url": "https://stripe.com/r/1",
+            "candidate_required_location": "Remote",
+            "description": "FastAPI + Postgres",
+            "tags": ["python"],
+        },
+        {
+            "position": "Frontend Dev",
+            "company_name": "Vercel",
+            "url": "https://vercel.com/r/2",
+            "candidate_required_location": "Remote",
+            "description": "React",
+            "tags": ["react"],
+        },
     ]
     arbeitnow_data = {
         "data": [
-            {"slug": "py1", "title": "Python Engineer", "company_name": "Acme",
-             "url": "https://arbeitnow.com/r/1", "description": "Django", "remote": True,
-             "location": "Berlin"},
+            {
+                "slug": "py1",
+                "title": "Python Engineer",
+                "company_name": "Acme",
+                "url": "https://arbeitnow.com/r/1",
+                "description": "Django",
+                "remote": True,
+                "location": "Berlin",
+            },
         ]
     }
     jobicy_data = {
         "jobList": [
-            {"jobTitle": "Python Dev", "companyName": "PyCo", "url": "https://jobicy.com/r/1",
-             "jobExcerpt": "Flask", "jobGeo": "Remote"},
+            {
+                "jobTitle": "Python Dev",
+                "companyName": "PyCo",
+                "url": "https://jobicy.com/r/1",
+                "jobExcerpt": "Flask",
+                "jobGeo": "Remote",
+            },
         ]
     }
 
@@ -381,6 +406,7 @@ def test_search_open_job_apis_returns_real_shape(monkeypatch):
         return _Resp({})
 
     import httpx
+
     monkeypatch.setattr(httpx.Client, "get", fake_get)
 
     jobs = _search_open_job_apis("python", "Remote", max_results=10)
@@ -427,6 +453,7 @@ def test_browser_frame_payload_uses_base64_screenshot():
     contains ``screenshot_b64`` (base64 PNG) and ``mime`` — not raw bytes
     that the UI can't render."""
     import app.services.browser_control_service as bcs
+
     src = inspect.getsource(bcs)
     assert "screenshot_b64" in src, "browser_control_service must emit screenshot_b64"
     assert "base64.b64encode" in src, "must base64-encode the screenshot bytes"
@@ -440,15 +467,22 @@ def test_frontend_browserframe_renamed_to_screenshot_b64():
     """The Zustand store + AgentStatusStream component must read
     `screenshot_b64` (with `mime` fallback) to render the SSE frame."""
     import pathlib
+
     root = pathlib.Path(r"D:\CareerCraft AI\frontend\src")
     store = (root / "store" / "agentSlice.ts").read_text(encoding="utf-8")
-    component = (root / "components" / "agents" / "AgentStatusStream.tsx").read_text(encoding="utf-8")
+    component = (root / "components" / "agents" / "AgentStatusStream.tsx").read_text(
+        encoding="utf-8"
+    )
     assert "screenshot_b64" in store, "store must declare screenshot_b64"
-    assert "screenshot:" not in store or "screenshot_b64" in store, "store still references raw screenshot"
+    assert (
+        "screenshot:" not in store or "screenshot_b64" in store
+    ), "store still references raw screenshot"
     assert "screenshot_b64" in component, "component must read screenshot_b64"
     assert "screenshot?" not in component, "component still reads raw screenshot?"
     # data: URL must include mime fallback
-    assert "data:${" in component or "data:image/png" in component, "data URL must use mime or PNG default"
+    assert (
+        "data:${" in component or "data:image/png" in component
+    ), "data URL must use mime or PNG default"
 
 
 # -------------------------------------------------------------------
@@ -458,6 +492,7 @@ def test_last_frame_emit_cleaned_up_on_close():
     """Long-lived workers must not leak one dict entry per run.  The
     finally block in run_browser_task should pop the run_id key."""
     import app.services.browser_control_service as bcs
+
     src = inspect.getsource(bcs.run_browser_task)
     assert "_last_frame_emit" in src
     assert "pop" in src
@@ -559,12 +594,12 @@ def test_supabase_migration_adds_column():
 
 
 def test_daily_search_responds_with_visible_browser_count(monkeypatch):
-    """internal.daily_search returns visible_browser_opted_in in the response shape."""
+    """scheduled_jobs.daily_search returns visible_browser_opted_in in the response shape."""
     import inspect
 
-    from app.api import internal
+    from app.services import scheduled_jobs
 
-    src = inspect.getsource(internal.daily_search)
+    src = inspect.getsource(scheduled_jobs.daily_search)
     assert "visible_browser_opted_in" in src
     assert "prefer_live_browser" in src
 
@@ -580,9 +615,7 @@ def test_frontend_store_consumes_screenshot_b64():
 
 def test_frontend_profile_page_has_live_browser_toggle():
     """profile page renders the live browser toggle with PATCH plumbing."""
-    path = Path(
-        r"D:\CareerCraft AI\frontend\src\app\(app)\settings\profile\page.tsx"
-    )
+    path = Path(r"D:\CareerCraft AI\frontend\src\app\(app)\settings\profile\page.tsx")
     assert path.exists()
     text = path.read_text(encoding="utf-8")
     assert "prefer_live_browser" in text
@@ -601,7 +634,7 @@ def test_search_jobs_uses_resolved_live_browser(monkeypatch):
     src = inspect.getsource(jobs_module.search_jobs)
     assert "_resolve_live_browser" in src
     # The route must write the resolved value (not the request value) into the input dict
-    assert "live_browser\": live_browser" in src
+    assert 'live_browser": live_browser' in src
     # And use the resolved value when enqueueing
     assert "live_browser=live_browser" in src
 
@@ -716,12 +749,14 @@ async def test_prepare_application_apply_starts_durable_browser_prepare_task(mon
     app, db = _override_prepare_apply(monkeypatch, app_row)
 
     monkeypatch.setattr(
-        application_workflow, "load_resume",
+        application_workflow,
+        "load_resume",
         AsyncMock(return_value=(b"%PDF-1.4 ...", "deadbeef")),
     )
     added_tasks = []
     monkeypatch.setattr(
-        workflow_service, "add_task",
+        workflow_service,
+        "add_task",
         lambda db_, run, kind, payload: added_tasks.append((run, kind, payload)),
     )
 
@@ -748,7 +783,9 @@ async def test_prepare_application_apply_starts_durable_browser_prepare_task(mon
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("blocking_state", ["submitting", "submitted", "verified"])
-async def test_prepare_application_apply_rejects_active_submission_attempt(monkeypatch, blocking_state):
+async def test_prepare_application_apply_rejects_active_submission_attempt(
+    monkeypatch, blocking_state
+):
     """Task 2: a second prepare-apply call while an attempt is submitting,
     submitted, or verified must be rejected — this is what makes 'the same
     user cannot start another attempt for the same job' hold even before
@@ -768,8 +805,12 @@ async def test_prepare_application_apply_rejects_active_submission_attempt(monke
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("resumable_state", ["preparing", "awaiting_approval", "outcome_unknown", "failed", "cancelled"])
-async def test_prepare_application_apply_reuses_attempt_in_non_blocking_state(monkeypatch, resumable_state):
+@pytest.mark.parametrize(
+    "resumable_state", ["preparing", "awaiting_approval", "outcome_unknown", "failed", "cancelled"]
+)
+async def test_prepare_application_apply_reuses_attempt_in_non_blocking_state(
+    monkeypatch, resumable_state
+):
     """A prior attempt that never reached submitting is reused (reset), not
     rejected — the unique (user_id, job_application_id) constraint forces
     reuse, and nothing here should require a separate 'reset' endpoint."""
@@ -789,12 +830,14 @@ async def test_prepare_application_apply_reuses_attempt_in_non_blocking_state(mo
     app, db = _override_prepare_apply(monkeypatch, app_row, existing_attempt=existing_attempt)
 
     monkeypatch.setattr(
-        application_workflow, "load_resume",
+        application_workflow,
+        "load_resume",
         AsyncMock(return_value=(b"%PDF-1.4 ...", "deadbeef")),
     )
     added_tasks = []
     monkeypatch.setattr(
-        workflow_service, "add_task",
+        workflow_service,
+        "add_task",
         lambda db_, run, kind, payload: added_tasks.append((run, kind, payload)),
     )
 
@@ -806,4 +849,3 @@ async def test_prepare_application_apply_reuses_attempt_in_non_blocking_state(mo
     assert existing_attempt.last_error is None
     assert len(added_tasks) == 1
     assert added_tasks[0][2]["attempt_id"] == str(existing_attempt.id)
-

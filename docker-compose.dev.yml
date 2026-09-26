@@ -22,9 +22,13 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
     depends_on:
       redis:
         condition: service_healthy
+      temporal:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
@@ -33,25 +37,12 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  worker:
-    build: ./worker
-    command: npx nodemon --watch src --ext ts --exec "npx ts-node src/index.ts"
-    volumes:
-      - ./worker/src:/app/src
+  temporal-worker:
+    build: ./backend
+    command: python -m app.temporal_worker
     env_file: .env
     environment:
-      - NODE_ENV=development
-    depends_on:
-      redis:
-        condition: service_healthy
-      backend:
-        condition: service_started
-    restart: unless-stopped
-
-  agent-worker:
-    build: ./backend
-    command: python -m app.workflow_worker
-    env_file: .env
+      TEMPORAL_ADDRESS: temporal:7233
     volumes:
       - ./backend/app:/app/app
     init: true
@@ -59,6 +50,18 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+
+  # Single-container Temporal dev server (in-memory; history is lost on
+  # restart). Web UI on http://localhost:8233.
+  temporal:
+    image: temporalio/temporal:latest
+    command: server start-dev --ip 0.0.0.0
+    ports:
+      - "7233:7233"
+      - "8233:8233"
     restart: unless-stopped
 
   redis:

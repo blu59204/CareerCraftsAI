@@ -1,4 +1,4 @@
-"""Regression tests for backend/app/api/internal.py::check_application_status.
+"""Regression tests for backend/app/services/scheduled_jobs.py::check_application_status.
 
 Covers three bugs:
   1. Tenant isolation — grouping must be by (user_id, platform), never by
@@ -10,13 +10,18 @@ Covers three bugs:
      read those same keys back out (case-insensitively) or well-formed
      responses never produce an update.
 """
+
 import types
 import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.api.internal import StatusCheckTrigger, _parse_status_updates, check_application_status
+from app.services.scheduled_jobs import (
+    StatusCheckTrigger,
+    _parse_status_updates,
+    check_application_status,
+)
 
 
 class _FakeResult:
@@ -69,7 +74,10 @@ class _FakeSessionLocal:
 
 def _make_app(user_id, company, platform_url):
     return types.SimpleNamespace(
-        id=uuid.uuid4(), user_id=user_id, company=company, job_url=platform_url,
+        id=uuid.uuid4(),
+        user_id=user_id,
+        company=company,
+        job_url=platform_url,
         status="applied",
     )
 
@@ -95,17 +103,24 @@ async def test_status_check_never_runs_one_users_group_under_anothers_account():
     browser_calls = []
 
     async def fake_run_browser_task(
-        llm, task, user_id, max_steps=15, live_browser=False, run_id=None,
+        llm,
+        task,
+        user_id,
+        max_steps=15,
+        live_browser=False,
+        run_id=None,
     ):
         browser_calls.append({"llm": llm, "task": task, "user_id": user_id, "run_id": run_id})
         return "NO_UPDATE"
 
-    with patch("app.core.database.AsyncSessionLocal", _FakeSessionLocal(session)), \
-         patch("app.core.model_router.get_llm", AsyncMock(side_effect=fake_get_llm)), \
-         patch(
-             "app.services.browser_control_service.run_browser_task_with_captcha_retry",
-             AsyncMock(side_effect=fake_run_browser_task),
-         ):
+    with (
+        patch("app.core.database.AsyncSessionLocal", _FakeSessionLocal(session)),
+        patch("app.core.model_router.get_llm", AsyncMock(side_effect=fake_get_llm)),
+        patch(
+            "app.services.browser_control_service.run_browser_task_with_captcha_retry",
+            AsyncMock(side_effect=fake_run_browser_task),
+        ),
+    ):
         result = await check_application_status(StatusCheckTrigger(user_id="all"))
 
     assert result["status"] == "ok"
@@ -133,17 +148,24 @@ async def test_status_check_always_passes_a_run_id_to_browser_call():
     browser_calls = []
 
     async def fake_run_browser_task(
-        llm, task, user_id, max_steps=15, live_browser=False, run_id=None,
+        llm,
+        task,
+        user_id,
+        max_steps=15,
+        live_browser=False,
+        run_id=None,
     ):
         browser_calls.append(run_id)
         return "NO_UPDATE"
 
-    with patch("app.core.database.AsyncSessionLocal", _FakeSessionLocal(session)), \
-         patch("app.core.model_router.get_llm", AsyncMock(return_value="llm")), \
-         patch(
-             "app.services.browser_control_service.run_browser_task_with_captcha_retry",
-             AsyncMock(side_effect=fake_run_browser_task),
-         ):
+    with (
+        patch("app.core.database.AsyncSessionLocal", _FakeSessionLocal(session)),
+        patch("app.core.model_router.get_llm", AsyncMock(return_value="llm")),
+        patch(
+            "app.services.browser_control_service.run_browser_task_with_captcha_retry",
+            AsyncMock(side_effect=fake_run_browser_task),
+        ),
+    ):
         await check_application_status(StatusCheckTrigger(user_id="all"))
 
     assert len(browser_calls) == 1

@@ -167,42 +167,19 @@ else
     exit 1
 fi
 
-# ── Step 2e: Detect Stale Worker Secrets (local Docker Compose only) ───────
-# scheduler and temporal-worker fail closed at their own startup: the
-# scheduler calls BACKEND_INTERNAL_URL/internal/health with INTERNAL_SECRET
-# (worker/src/index.ts) and exits(1) on a 401/403, so a stale secret shows up
-# as the container crash-looping (Restarting/Exited), not as a reachable HTTP
-# response. /internal is blocked at the gateway (see deploy/oracle/nginx.conf
-# -- `location /internal { return 404; }`), so it can never be checked
-# through API_URL, including against a real deployment. That leaves the
-# Docker Compose container state as the only observable signal, which only
-# exists when this script runs somewhere with a live local/staging Docker
-# socket -- it is a no-op for a purely remote WEB_URL/API_URL invocation
-# (e.g. certifying an already-deployed host from a laptop with no Docker
-# access to that host).
-
-if command -v docker >/dev/null 2>&1 && docker compose ps >/dev/null 2>&1; then
-    log_info "Checking scheduler/temporal-worker containers for stale-secret crash loops..."
-    STALE_SECRET_SERVICES=""
-    SERVICE_STATES=$(docker compose ps --all --format '{{.Service}} {{.State}}' 2>/dev/null || true)
-    while read -r SVC STATE; do
-        case "$SVC" in
-            scheduler|worker|temporal-worker)
-                case "$STATE" in
-                    restarting|exited)
-                        STALE_SECRET_SERVICES="${STALE_SECRET_SERVICES} ${SVC}(${STATE})"
-                        ;;
-                esac
-                ;;
-        esac
-    done <<< "$SERVICE_STATES"
-    if [ -n "$STALE_SECRET_SERVICES" ]; then
-        log_fail "Recreate scheduler and temporal-worker after secret rotation (unhealthy:${STALE_SECRET_SERVICES})"
-        exit 1
-    fi
-    log_pass "scheduler and temporal-worker containers are up"
+# ── Step 2e: Temporal worker is polling ───────────────────────────────────
+# Every agent run, job search and application executes on the Temporal
+# worker. The API's /health reports how many workers poll the task queue;
+# zero means runs would sit in "queued" forever, so fail fast here.
+HEALTH_URL="${API_URL%/api/v1}/health"
+HEALTH_JSON=$(curl -s --max-time 15 "$HEALTH_URL" 2>/dev/null || echo "")
+if echo "$HEALTH_JSON" | grep -q '"workers":[1-9]'; then
+    log_pass "Temporal worker is polling the task queue"
+elif echo "$HEALTH_JSON" | grep -q '"temporal"'; then
+    log_fail "No Temporal worker is polling (health: $(echo "$HEALTH_JSON" | tr -d '\n' | head -c 300)). Start the temporal-worker service."
+    exit 1
 else
-    log_warn "No local Docker Compose stack detected — skipping the scheduler/temporal-worker stale-secret check (only possible when this script runs with access to the Docker socket of the stack under test)"
+    log_warn "Could not read ${HEALTH_URL} — skipping the Temporal worker check"
 fi
 
 # ── Step 3: Generate Test Fixtures ──────────────────────────────────────────

@@ -167,10 +167,13 @@ async def upload_document(
     db.add(doc)
     await db.flush()
 
-    # Trigger ATS scoring in background for resumes
+    # Trigger ATS scoring in background for resumes. Commit first: the task
+    # updates this row from its own session and must be able to see it.
     if doc_type == "resume" and raw_text:
-        from app.services.queue_service import _spawn_background
-        _spawn_background(_score_resume_background(str(doc.id), str(current_user.id), raw_text))
+        await db.commit()
+        from app.core.background import spawn_background
+
+        spawn_background(_score_resume_background(str(doc.id), str(current_user.id), raw_text))
 
     return DocumentResponse(
         id=doc.id,

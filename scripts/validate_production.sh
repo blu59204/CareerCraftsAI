@@ -115,20 +115,14 @@ else
   warn "Skipping Docker container check (docker/jq not available)"
 fi
 
-# ── 9. BullMQ queue not stuck ─────────────────────────────────
-if [ -n "${DATABASE_URL:-}" ] || command -v redis-cli &> /dev/null; then
-  if command -v redis-cli &> /dev/null; then
-    queue_len=$(redis-cli llen "bull:agent-queue:wait" 2>/dev/null || echo "-1")
-    if [ "${queue_len}" = "-1" ] || [ "${queue_len}" = "" ]; then
-      warn "Could not check BullMQ queue length (Redis unreachable or key format changed)"
-    elif [ "${queue_len}" -lt 100 ]; then
-      pass "BullMQ wait queue length: ${queue_len} (OK, < 100)"
-    else
-      fail "BullMQ wait queue has ${queue_len} items (stuck?)" "Check worker logs"
-    fi
-  else
-    warn "redis-cli not available — skipping BullMQ queue check"
-  fi
+# ── 9. Temporal worker polling ────────────────────────────────
+health_json=$(curl -s --max-time 10 "https://${DOMAIN}/health" 2>/dev/null || echo "")
+if echo "${health_json}" | grep -q '"workers":[1-9]'; then
+  pass "Temporal worker is polling the task queue"
+elif echo "${health_json}" | grep -q '"temporal"'; then
+  fail "No Temporal worker is polling the task queue" "Run: docker compose up -d temporal-worker"
+else
+  warn "Could not read /health — skipping the Temporal worker check"
 fi
 
 # ── 10. pgvector extension enabled ─────────────────────────────
