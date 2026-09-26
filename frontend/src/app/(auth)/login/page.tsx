@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 // `@clerk/nextjs/legacy` exposes the classic custom-flow hooks
 // ({ isLoaded, signIn, setActive }). Nothing here renders Clerk UI.
 import { useSignIn, useSignUp } from "@clerk/nextjs/legacy";
+import { useAuth } from "@clerk/nextjs";
 import type { OAuthStrategy } from "@clerk/nextjs/types";
 import {
   SignInPage,
@@ -42,6 +43,7 @@ function describeError(err: unknown): string {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { isLoaded: authLoaded, isSignedIn } = useAuth();
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
 
@@ -64,6 +66,15 @@ export default function LoginPage() {
     const oauthError = params.get("error");
     if (oauthError) setErrorMessage(decodeURIComponent(oauthError));
   }, []);
+
+  // Already signed in — don't show the sign-in/sign-up form at all, send them
+  // straight to the app instead of making them look at a login page they
+  // can't usefully use.
+  useEffect(() => {
+    if (authLoaded && isSignedIn) {
+      router.replace(destination);
+    }
+  }, [authLoaded, isSignedIn, destination, router]);
 
   const clerkReady = signInLoaded && signUpLoaded && !!signIn && !!signUp;
 
@@ -271,6 +282,16 @@ export default function LoginPage() {
     setErrorMessage(null);
     setInfoMessage(null);
   };
+
+  // Keep the form hidden until we know for sure this visitor is signed out —
+  // avoids a flash of the sign-in form for someone who's about to be redirected.
+  if (!authLoaded || isSignedIn) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <SignInPage
