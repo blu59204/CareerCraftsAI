@@ -5,6 +5,7 @@ it only stamps deletion_scheduled_for. This module is the other half: a
 periodic sweep (called from the maintenance activity) that finds accounts
 past that date and actually deletes them.
 """
+
 import logging
 from datetime import UTC, datetime
 
