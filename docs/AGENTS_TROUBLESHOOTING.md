@@ -1,6 +1,6 @@
 # CareerCraft AI — Agent Troubleshooting Guide
 
-Common failure modes and resolution steps for all 15 agents, Playwright browser automation, Gmail OAuth, RAG, HITL gates, and BullMQ.
+Common failure modes and resolution steps for all 15 agents, Playwright browser automation, Gmail OAuth, RAG, HITL gates, and Temporal.
 
 ---
 
@@ -59,15 +59,19 @@ Common failure modes and resolution steps for all 15 agents, Playwright browser 
 
 ---
 
-## BullMQ & Follow-Ups
+## Temporal & Follow-Ups
+
+Follow-ups are `FollowupWorkflow` durable timers (`workflow.sleep`) firing at
+day 5 and day 12 after `applied_at` — not a cron job or a queue entry.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Follow-up jobs never fire | Worker container not running | `docker compose up worker -d`. Verify `REDIS_URL` matches between backend and worker |
-| Jobs stuck in `waiting` state | Worker concurrency exhausted | Default: 2 concurrent jobs per worker. Increase in `worker/src/index.ts` if needed |
+| Nothing ever runs — agent runs / searches / applications stuck in `queued` | No `temporal-worker` polling the task queue | `curl localhost:8000/health` — look for `"temporal": {"workers": 0}` (overall `status` reads `"degraded"`). `docker compose up -d temporal-worker` then `docker compose logs -f temporal-worker` |
+| Follow-up drafts never appear | `FollowupWorkflow(id="followup/{application_id}")` was never started, or the worker isn't running | Check the Temporal UI for that workflow id. It's started by `schedule_followup_activity` right after a confirmed `submitted` application outcome |
 | Follow-up sent even though recruiter replied | `_has_recruiter_replied()` not checking Gmail | Verify Gmail OAuth is connected for the user. Check `google_access_token_enc` exists in `users` table |
-| `bullmq not installed` warning in dev | Python `bullmq` package missing | `pip install bullmq` (optional — dev mode runs jobs inline) |
-| Daily search not running | Cron scheduler not configured | Verify `AGENT_DEFAULT_TIMEOUT_S` and `DAILY_SEARCH_CRON` env vars. Check `status-check` processor in worker |
+| `WorkflowUnavailable` / `503` starting a run or application | Temporal server unreachable from the API (`workflows/starters.py::_client()`) | Check `TEMPORAL_ADDRESS` (host) / `TEMPORAL_ADDRESS_DOCKER` (containers) and that the `temporal` service is healthy: `docker compose ps temporal` |
+| Daily search / status check / maintenance not running | Schedules not registered | Every worker registers them at start-up (`ensure_schedules`) if `TEMPORAL_SCHEDULES_ENABLED=true`. Check the Temporal UI's Schedules tab for `daily-job-search`, `maintenance`, `application-status-check` (the latter only exists when `APPLY_EXECUTION_MODE=server_browser`) |
+| Two follow-ups or two applications for the same job appear to race | Shouldn't happen — workflow ids (`followup/{application_id}`, `auto-apply/{user_id}/{job_application_id}`) make a duplicate start a no-op | Confirm in the Temporal UI that only one workflow execution exists per id; if not, file a bug — this is a correctness guarantee, not a config knob |
 
 ---
 
@@ -92,7 +96,7 @@ Common failure modes and resolution steps for all 15 agents, Playwright browser 
 
 ### FollowUpAgent
 - **Auto-cancel fires but shouldn't**: `find_recruiter_reply()` searches 30 days of threads. Adjust `window_days` parameter if too aggressive.
-- **Both day-5 and day-12 fire simultaneously**: BullMQ scheduler uses UTC. Check clock synchronization.
+- **Both day-5 and day-12 drafts appear back-to-back**: `FollowupWorkflow` computes each wait as `applied_at + timedelta(days=day) - workflow.now()`; if `applied_at` is missing or already more than 12 days old (e.g. a backfilled application), both waits resolve to zero and both activities run immediately one after the other.
 
 ### InterviewCoachAgent
 - **Session expired after 2 hours**: Redis TTL is 7200s. Increase `setex` expiry in `interview_coach_agent_v2.py`.

@@ -123,7 +123,7 @@ Tune `mem_limit` based on VPS size: 4 GB VPS → `2500m`, 8 GB VPS → `5000m`.
 | Variable | Default | Description |
 |---|---|---|
 | `AGENT_DEFAULT_TIMEOUT_S` | `60` | Default agent run timeout. Overridden per-agent (see AGENTS.md). |
-| `AGENT_MAX_CONCURRENT_PER_USER` | `2` | BullMQ worker concurrency limit per user. |
+| `AGENT_MAX_CONCURRENT_PER_USER` | `2` | Max concurrent agent runs per user. Enforced by `POST /agents/run` itself (`api/v1/agents.py`), which counts the user's `queued`/`running` `agent_runs` rows and returns `429` above this limit — not a Temporal or worker-side concurrency setting. Applications waiting in the user's own browser (extension mode) use no server capacity and are excluded from the count. |
 | `AGENT_THINKING_BUDGET_TOKENS` | `8000` | Extended thinking token budget for Claude. |
 | `RAG_CHUNK_SIZE` | `500` | Document chunk size in tokens. |
 | `RAG_CHUNK_OVERLAP` | `50` | Chunk overlap in tokens. |
@@ -141,17 +141,59 @@ Tune `mem_limit` based on VPS size: 4 GB VPS → `2500m`, 8 GB VPS → `5000m`.
 
 ---
 
-## Worker (BullMQ)
+## Temporal
 
-Set in `worker/.env` or inherited from root `.env`:
+Every agent run, job search, application and follow-up executes as a durable
+Temporal workflow. `python -m app.temporal_worker` (the `temporal-worker`
+service) must have at least one instance running and polling
+`TEMPORAL_TASK_QUEUE`, or `GET /health` reports `status: "degraded"` and
+nothing the API starts makes progress.
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | (shared with backend) | Redis connection for BullMQ. |
-| `BACKEND_INTERNAL_URL` | `http://backend:8000` | Backend URL for internal callbacks. Never public. |
-| `INTERNAL_SECRET` | required | Shared secret for worker → backend internal calls. Set same value on both services. |
-| `DAILY_SEARCH_CRON` | `0 8 * * *` | Cron schedule for daily job search (8am UTC). |
-| `STATUS_CHECK_CRON` | `0 */6 * * *` | Cron for application status polling (every 6h). |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | Temporal server address for host-run processes. |
+| `TEMPORAL_ADDRESS_DOCKER` | `temporal:7233` | Address used inside Docker Compose containers instead of `TEMPORAL_ADDRESS` (so they never resolve their own localhost). Point it at Temporal Cloud to use a managed deployment. |
+| `TEMPORAL_NAMESPACE` | `default` | Temporal namespace. |
+| `TEMPORAL_TASK_QUEUE` | `careercraft` | Task queue the worker polls and the API starts workflows on. |
+| `TEMPORAL_WORKER_CONCURRENCY` | `4` | Max concurrent activities per worker process (`max_concurrent_activities`). Scale further by running more `temporal-worker` replicas. |
+| `WORKFLOW_TASK_TIMEOUT_S` | `300` | Max duration of one agent execute/continue activity. |
+| `AGENT_APPROVAL_TIMEOUT_S` | `172800` (48h) | How long a run may sit at an approval checkpoint before it expires. |
+| `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S` | `600` | Hard execution cap for `server_browser` applications only; the extension flow waits on the user and is bounded by the `EXTENSION_TASK_*` timeouts instead. |
+| `TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S` | `120` | Upper bound for one activity attempt. |
+| `TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S` | `30` | Heartbeat timeout for long-running activities. |
+| `TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S` | `5` | How often a heartbeating activity checks in. |
+| `TEMPORAL_SCHEDULES_ENABLED` | `true` | Whether the worker registers the recurring Schedules at start-up. |
+| `DAILY_SEARCH_INTERVAL_HOURS` | `24` | Interval of the `daily-job-search` Temporal Schedule. |
+| `STATUS_CHECK_INTERVAL_HOURS` | `6` | Interval of the `application-status-check` Schedule — only registered when `APPLY_EXECUTION_MODE=server_browser`. |
+| `MAINTENANCE_INTERVAL_SECONDS` | `60` | Interval of the `maintenance` Schedule (reconciles `agent_runs`, expires stale extension tasks, reaps browser sandboxes). |
+| `TEMPORAL_TLS_CERT_PATH` / `TEMPORAL_TLS_KEY_PATH` / `TEMPORAL_TLS_CA_PATH` | *(empty)* | mTLS certificate paths for Temporal Cloud. Empty connects in plaintext (local dev only). |
+
+---
+
+## Job Applications (extension / decision engine)
+
+| Variable | Default | Description |
+|---|---|---|
+| `APPLY_EXECUTION_MODE` | `extension` | `extension` — fill and submit in the user's own browser via the CareerCraft extension. `server_browser` — legacy mode: drive an isolated OpenSandbox browser server-side. |
+| `EXTENSION_TASK_CLAIM_TIMEOUT_S` | `86400` (24h) | An extension task nobody claims (extension offline) expires after this long. |
+| `EXTENSION_TASK_COMPLETE_TIMEOUT_S` | `7200` (2h) | Once claimed, how long the user has to review and press Submit. |
+| `DECISION_ENGINE_PROVIDER` | `auto` | `auto` (Jev if `TYPESAFE_API_KEY` is set, else Laya if `LAYA_URL` is set, else heuristics), or force `jev` / `laya` / `none`. |
+| `DECISION_ENGINE_TIMEOUT_S` | `5.0` | Timeout for one decision-engine HTTP call. |
+| `DECISION_ENGINE_MIN_CONFIDENCE` | `0.6` | Answers below this confidence are left to the user instead of acted on. |
+| `TYPESAFE_API_KEY` | *(empty)* | TypeSafe Jev API key (hosted "System One" decision model). |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | Jev API base URL. |
+| `TYPESAFE_MODEL` | `jev-latest` | Jev model name. |
+| `LAYA_URL` | *(empty)* | Self-hosted Laya server URL (see `deploy/laya/`), e.g. `http://laya:8088`. |
+| `LAYA_API_KEY` | *(empty)* | Laya API key, if the self-hosted server requires one. |
+| `OPEN_SANDBOX_URL` / `OPEN_SANDBOX_API_KEY` / `OPEN_SANDBOX_CHROME_IMAGE` | *(empty)* / *(empty)* / `careercraft-browser:1` | OpenSandbox lifecycle server — `server_browser` mode only. |
+| `SANDBOX_MAX_ACTIVE` | `4` | Max concurrent sandbox browsers. |
+| `SANDBOX_TTL_SECONDS` | `1800` | Sandbox lifetime before it's reaped. |
+| `SANDBOX_CPU` / `SANDBOX_MEMORY` | `1000m` / `1024Mi` | Per-sandbox resource limits. |
+| `SANDBOX_ALLOWED_DOMAINS` | *(empty)* | Comma-separated domain allowlist for sandbox network egress. Empty fails closed. |
+
+See [`extension/README.md`](../extension/README.md) and
+[`deploy/laya/README.md`](../deploy/laya/README.md) for how the extension
+and the decision engine work end to end.
 
 ---
 

@@ -65,12 +65,21 @@ npm install
 npm run dev
 ```
 
-**Worker only:**
+**Temporal worker only:**
 ```bash
-cd worker
-npm install
-npm run dev
+cd backend
+source .venv/bin/activate
+python -m app.temporal_worker    # polls TEMPORAL_TASK_QUEUE (default "careercraft")
 ```
+Nothing the API starts (agent runs, job searches, applications, follow-ups)
+makes progress without this process running.
+
+**Temporal server (local dev-mode):**
+```bash
+docker run --rm -p 7233:7233 -p 8233:8233 temporalio/temporal:latest server start-dev --ip 0.0.0.0
+```
+Or use `docker compose -f docker-compose.dev.yml up temporal` for the same
+single-container dev server the full stack uses. UI at http://localhost:8233.
 
 **Redis (local):**
 ```bash
@@ -336,15 +345,36 @@ asyncio.run(main())
 
 ### Redis
 
+Redis is only the SSE pub/sub bus, rate-limit counters, and LLM gateway
+sessions here — it holds no job queue.
+
 ```bash
 # Monitor all Redis commands
 docker compose exec redis redis-cli monitor
 
-# View BullMQ queue
-docker compose exec redis redis-cli lrange bull:job-search:wait 0 -1
+# Watch the SSE event channel for one run
+docker compose exec redis redis-cli subscribe "agent:{run_id}:events"
+```
 
-# Check active agent state
-docker compose exec redis redis-cli get "agent:{run_id}:state"
+### Temporal
+
+```bash
+# Confirm a worker is polling the task queue
+curl -s http://localhost:8000/health | jq .temporal
+# {"connected": true, "workers": 1, "task_queue": "careercraft"}
+
+# Tail the worker's logs
+docker compose logs -f temporal-worker
+
+# Open the Temporal UI to inspect a workflow's history
+open http://localhost:8233   # dev; docker-compose.yml exposes it on :8233 too
+
+# Workflow IDs to search for in the UI:
+#   agent-run/{run_id}          — AgentRunWorkflow
+#   job-search/{run_id}         — JobSearchWorkflow
+#   auto-apply/{user_id}/{job_application_id} — AutoApplyWorkflow
+#   followup/{application_id}   — FollowupWorkflow (day-5/day-12 timers)
+#   scheduled/daily-job-search, scheduled/maintenance, scheduled/application-status-check
 ```
 
 ### Frontend SSE
@@ -367,5 +397,5 @@ Open browser DevTools → Network tab → filter by `stream` → inspect EventSt
 **Frontend 401 errors in dev**
 → Check that `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set in `.env` (frontend reads these from Next.js env). Restart the frontend dev server after changing `.env`.
 
-**BullMQ jobs not processing**
-→ Ensure Redis is running (`docker compose ps redis`) and `REDIS_URL` matches the running instance. Check worker logs: `docker compose logs -f worker`.
+**Agent runs / applications / follow-ups stuck in `queued`**
+→ No Temporal worker is polling the task queue. Check `curl localhost:8000/health` for `"temporal": {"workers": 0}` (overall `status` will read `"degraded"`), then `docker compose ps temporal-worker` and `docker compose logs -f temporal-worker`. Also confirm `TEMPORAL_ADDRESS` (host) / `TEMPORAL_ADDRESS_DOCKER` (containers) points at a reachable Temporal server.
