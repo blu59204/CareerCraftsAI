@@ -303,7 +303,9 @@ async def get_or_provision_user(
             values["avatar_url"] = values["avatar_url"] or profile["avatar_url"]
     try:
         await db.execute(
-            pg_insert(User).values(**values).on_conflict_do_nothing(index_elements=["clerk_user_id"])
+            pg_insert(User)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=["clerk_user_id"])
         )
         await db.commit()
     except IntegrityError as exc:

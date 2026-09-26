@@ -1,7 +1,8 @@
 # CareerCraft AI — Complete Architecture
 
-> Verified against codebase: `docker-compose.yml`, `backend/app/main.py`, `backend/app/agents/orchestrator.py`, `backend/app/core/`, `backend/app/services/`, `backend/app/api/v1/`, `backend/app/workflows/`, `extension/`, `deploy/laya/`, `frontend/src/`, `supabase/migrations/`, `nginx/`.
+> Verified against codebase: `deploy/oracle-vm/` (the actual production stack — see `docs/DEPLOYMENT.md`), `backend/app/main.py`, `backend/app/agents/orchestrator.py`, `backend/app/core/`, `backend/app/services/`, `backend/app/api/v1/`, `backend/app/workflows/`, `extension/`, `deploy/laya/`, `frontend/src/`, `supabase/migrations/`.
 > Background jobs (agent runs, job search, applications, follow-ups) run on Temporal, not BullMQ — see §8.
+> The root `docker-compose.yml` and `nginx/` this doc used to reference were a generic/alternate deployment path that was never the one actually used in production — both were retired; `deploy/oracle-vm/` is the only real deployment.
 
 ---
 
@@ -40,7 +41,7 @@ CareerCraft AI/
 ├── nginx/                  # nginx.conf.template, nginx-dev.conf.template
 ├── docker-compose.yml      # frontend, backend, temporal-worker, temporal(+postgres+ui), redis, nginx
 ├── docker-compose.dev.yml / .test.yml
-└── deploy/oracle/ · scripts/
+└── deploy/oracle-vm/ · scripts/
 ```
 
 ---

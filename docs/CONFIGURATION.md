@@ -68,7 +68,7 @@ Browser Use needs its own LLM to reason about the page.  Use a local Ollama mode
 | Variable | Default | Description |
 |---|---|---|
 | `BROWSER_USE_MAX_CONCURRENT_SESSIONS` | `4` | Max simultaneous Chromium sessions. Prevents OOM. Rule of thumb: `floor(VPS_RAM_GB * 1.5)`. 4 GB VPS → 6, 2 GB VPS → 3. |
-| `BROWSER_USE_SESSION_MEM_LIMIT_MB` | `500` | Informational — actual limit set via Docker `mem_limit` in `docker-compose.yml`. |
+| `BROWSER_USE_SESSION_MEM_LIMIT_MB` | `500` | Informational — actual limit set via Docker `mem_limit` in `deploy/oracle-vm/compose.yml`. |
 
 ### Debug screenshots
 
@@ -104,7 +104,13 @@ Do **not** add proxies preemptively — they add cost and latency and are unnece
 
 ### Docker Compose resource configuration
 
-The `backend` service in `docker-compose.yml` sets:
+The settings below describe `APPLY_EXECUTION_MODE=server_browser` (Chromium
+launched directly inside the `backend` container) on a generic Docker Compose
+deployment. That deployment path (root `docker-compose.yml`) was retired —
+the actual production stack (`deploy/oracle-vm/compose.yml`) instead runs
+browser automation through the isolated `sandbox-server` (OpenSandbox)
+service, which doesn't need this container to hold Chromium's memory at all.
+Kept here as reference if `server_browser` mode is ever run directly again:
 
 ```yaml
 mem_limit: 2500m        # total backend container RAM (includes Chromium sessions)

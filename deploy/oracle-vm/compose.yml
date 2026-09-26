@@ -6,7 +6,7 @@
 # that file for the normal multi-VM/local Docker Compose stack.
 #
 # Compose v2 resolves the default .env file relative to THIS file's directory
-# (deploy/oracle/), not the CWD you run `docker compose` from -- confirmed via
+# (deploy/oracle-vm/), not the CWD you run `docker compose` from -- confirmed via
 # `docker compose config` silently defaulting every var to blank despite a
 # correct .env sitting at the repo root. Keep a real .env here (gitignored,
 # NEXT_PUBLIC_API_URL / NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY / CLERK_SECRET_KEY),
@@ -40,7 +40,7 @@ services:
       start_period: 60s
   # Executes every workflow (agent runs, job search, applications,
   # follow-ups) and registers the recurring Schedules. TEMPORAL_ADDRESS in
-  # backend.env points at the Temporal server (deploy/oracle/temporal-compose.yml).
+  # backend.env points at the Temporal server (deploy/oracle-vm/temporal-compose.yml).
   # Not profile-gated: without it nothing the API starts ever runs.
   temporal-worker:
     build: ../../backend

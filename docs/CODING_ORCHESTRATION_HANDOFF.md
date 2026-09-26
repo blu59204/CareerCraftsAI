@@ -68,7 +68,7 @@ new transient systemd unit; it targets 127.0.0.1:18180 and has its inspector at
 `https://platinum-pastime-overdrive.ngrok-free.dev`.
 This URL is NOT a verified working app yet: the application stack is not deployed.
 
-Deployment definitions: `deploy/oracle/compose.yml`, `nginx.conf`,
+Deployment definitions: `deploy/oracle-vm/compose.yml`, `nginx.conf`,
 `OpenSandbox.Dockerfile` (server 0.2.3), `sandbox.toml`. They use separate ports
 18100, 18101, 18179, 18180, 18190. OpenSandbox image compatibility and live network
 policy enforcement still require real verification. Production migration has
