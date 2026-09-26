@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
@@ -141,6 +141,25 @@ async def record_policy_consent(
     current_user.policy_version = POLICY_VERSION
     await db.flush()
     return current_user
+
+
+@router.get("/me/export")
+async def export_my_data(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Download every record tied to your account as a ZIP of JSON files —
+    the self-service DPDP Act 'right to access' request, answered immediately
+    instead of needing a support email."""
+    from app.services.data_export_service import build_user_data_export
+
+    archive = await build_user_data_export(db, current_user)
+    filename = f"careercraft-data-export-{datetime.now(UTC).date().isoformat()}.zip"
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/me/preferences", response_model=UserPreferencesResponse | None)

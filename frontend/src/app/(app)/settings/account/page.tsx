@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { User, Check, Globe, AlertTriangle, LogOut } from "lucide-react";
+import { User, Check, Globe, AlertTriangle, LogOut, Download } from "lucide-react";
 import { BrandGithub } from "@/components/icons/BrandIcons";
 import { toast } from "sonner";
 import { fadeUp, stagger } from "@/lib/motion-variants";
@@ -541,6 +541,48 @@ export default function AccountSettingsPage() {
                 </div>
               </div>
             </div>
+          </motion.div>
+
+          {/* Your data */}
+          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+              <Download className="h-4 w-4" />
+              Your data
+            </div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Download every record CareerCraft AI stores for your account — profile, resumes,
+              applications, agent runs, and more — as a ZIP of JSON files. Encrypted credentials
+              (API keys, saved LinkedIn sign-in) are excluded for your own security.
+            </p>
+            <LiquidGlassButton
+              tone="primary"
+              size="sm"
+              onClick={async () => {
+                try {
+                  const response = await apiClient.get("/users/me/export", {
+                    responseType: "blob",
+                  });
+                  const blob = new Blob([response.data], { type: "application/zip" });
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  const disposition = response.headers["content-disposition"] as
+                    | string
+                    | undefined;
+                  const match = disposition?.match(/filename="?([^"]+)"?/);
+                  a.download = match?.[1] ?? "careercraft-data-export.zip";
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  window.URL.revokeObjectURL(url);
+                  toast.success("Download started");
+                } catch {
+                  toast.error("Failed to export your data — please try again");
+                }
+              }}
+            >
+              Download my data (.zip)
+            </LiquidGlassButton>
           </motion.div>
 
           {/* Danger zone */}

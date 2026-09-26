@@ -74,15 +74,17 @@ export default function PrivacyPage() {
         <section>
           <h2 className="mb-3 text-lg font-medium text-foreground">Your rights</h2>
           <p>
-            You may request deletion of your account and all associated data at any time from
-            Settings → Account → Danger zone.
+            You can download every record we hold about you at any time from Settings → Account →
+            Your data — a ZIP of every table tied to your account, generated on demand, no request
+            needed. You may request deletion of your account and all associated data at any time
+            from Settings → Account → Danger zone.
           </p>
           <p className="mt-3">
             If you're in India, under the Digital Personal Data Protection Act, 2023 you have the
-            right to access a summary of your personal data and the processing we do with it, to
-            correct or update it, to have it erased once it's no longer needed for the purpose you
-            gave it for, and to file a grievance with us — and, if unresolved, with the Data
-            Protection Board of India.
+            right to access a summary of your personal data and the processing we do with it (the
+            download above fulfills this immediately), to correct or update it, to have it erased
+            once it's no longer needed for the purpose you gave it for, and to file a grievance
+            with us — and, if unresolved, with the Data Protection Board of India.
           </p>
           <p className="mt-3">
             If you're in the EEA, UK, or a jurisdiction with similar data-protection law, you also
