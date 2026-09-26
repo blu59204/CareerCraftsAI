@@ -8,11 +8,11 @@ from app.models.db import User
 from app.services.account_deletion_service import reap_expired_account_deletions
 
 
-def _make_user(*, scheduled_for, supabase_uid="user_abc"):
+def _make_user(*, scheduled_for, clerk_user_id="user_abc"):
     return User(
         id=uuid4(),
         email=f"{uuid4()}@example.com",
-        supabase_uid=supabase_uid,
+        clerk_user_id=clerk_user_id,
         deletion_requested_at=scheduled_for - timedelta(days=15) if scheduled_for else None,
         deletion_scheduled_for=scheduled_for,
     )
@@ -34,7 +34,7 @@ async def test_reaps_users_past_their_grace_period():
     db = _db_returning([expired_user])
 
     with patch(
-        "app.core.supabase_auth.delete_clerk_user", AsyncMock(return_value=None)
+        "app.core.clerk_auth.delete_clerk_user", AsyncMock(return_value=None)
     ) as mock_delete_clerk:
         removed = await reap_expired_account_deletions(db)
 
@@ -49,7 +49,7 @@ async def test_continues_reaping_even_if_clerk_deletion_fails():
     db = _db_returning([expired_user])
 
     with patch(
-        "app.core.supabase_auth.delete_clerk_user",
+        "app.core.clerk_auth.delete_clerk_user",
         AsyncMock(side_effect=RuntimeError("Clerk is down")),
     ):
         removed = await reap_expired_account_deletions(db)

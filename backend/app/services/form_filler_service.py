@@ -50,7 +50,7 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
             user_uuid = UUID(str(user_id))
         except ValueError:
             pass
-        criteria = User.supabase_uid == str(user_id)
+        criteria = User.clerk_user_id == str(user_id)
         if user_uuid:
             criteria = (User.id == user_uuid) | criteria
         user = db.execute(select(User).where(criteria)).scalars().first()

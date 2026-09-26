@@ -246,7 +246,7 @@ def _fetch_job_preference_text(user_id: str) -> str:
                 user_uuid = UUID(str(user_id))
             except ValueError:
                 pass
-            criteria = User.supabase_uid == str(user_id)
+            criteria = User.clerk_user_id == str(user_id)
             if user_uuid:
                 criteria = (User.id == user_uuid) | criteria
             user = db.execute(select(User).where(criteria)).scalars().first()

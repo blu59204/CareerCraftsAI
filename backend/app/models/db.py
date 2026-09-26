@@ -27,7 +27,7 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String)
     avatar_url: Mapped[str | None] = mapped_column(String)
     google_id: Mapped[str | None] = mapped_column(String, unique=True)
-    supabase_uid: Mapped[str | None] = mapped_column(String, unique=True)
+    clerk_user_id: Mapped[str | None] = mapped_column(String, unique=True)
     phone: Mapped[str | None] = mapped_column(String)
     linkedin_url: Mapped[str | None] = mapped_column(String)
     headline: Mapped[str | None] = mapped_column(String)

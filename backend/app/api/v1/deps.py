@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.supabase_auth import (
+from app.core.clerk_auth import (
     get_or_provision_user,
     subject_from_payload,
     verify_auth_jwt,
@@ -44,9 +44,9 @@ async def get_current_user(
     token = auth_header.removeprefix("Bearer ").strip()
     payload = verify_auth_jwt(token)
 
-    # Clerk's `sub` is a text id (user_2abc...), stored in users.supabase_uid.
+    # Clerk's `sub` is a text id (user_2abc...), stored in users.clerk_user_id.
     # Provisioning (including the concurrent-first-request race) lives in
-    # app.core.supabase_auth so middleware and routers share one code path.
+    # app.core.clerk_auth so middleware and routers share one code path.
     auth_subject = subject_from_payload(payload)
     user = await get_or_provision_user(db, auth_subject, payload)
 

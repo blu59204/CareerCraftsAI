@@ -141,7 +141,7 @@ async def record_policy_consent(
     current_user.policy_version = POLICY_VERSION
     await db.flush()
     logger.info(
-        "Policy consent recorded: %s (version %s)", current_user.supabase_uid, POLICY_VERSION
+        "Policy consent recorded: %s (version %s)", current_user.clerk_user_id, POLICY_VERSION
     )
     return current_user
 
@@ -158,7 +158,7 @@ async def export_my_data(
 
     archive = await build_user_data_export(db, current_user)
     filename = f"careercraft-data-export-{datetime.now(UTC).date().isoformat()}.zip"
-    logger.info("Data export downloaded: %s (%d bytes)", current_user.supabase_uid, len(archive))
+    logger.info("Data export downloaded: %s (%d bytes)", current_user.clerk_user_id, len(archive))
     return Response(
         content=archive,
         media_type="application/zip",
@@ -603,7 +603,7 @@ async def request_account_deletion(
         days=DELETION_GRACE_DAYS
     )
     await db.flush()
-    logger.info("Account deletion requested: %s", current_user.supabase_uid)
+    logger.info("Account deletion requested: %s", current_user.clerk_user_id)
     return current_user
 
 
@@ -623,5 +623,5 @@ async def cancel_account_deletion(
         days=DELETION_COOLDOWN_DAYS
     )
     await db.flush()
-    logger.info("Account deletion cancelled: %s", current_user.supabase_uid)
+    logger.info("Account deletion cancelled: %s", current_user.clerk_user_id)
     return current_user

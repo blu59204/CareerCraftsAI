@@ -26,7 +26,7 @@ from pydantic import ValidationError
 # conftest bootstraps env vars before any app import, so this is safe.
 from app.core.config import settings
 from app.core.security import decrypt_api_key, encrypt_api_key
-from app.core.supabase_auth import verify_supabase_jwt
+from app.core.clerk_auth import verify_auth_jwt
 from app.models.schemas import ModelSettingsCreate, UserCreate
 
 # Clerk signs session tokens with RS256 against a published JWKS. Generate a
@@ -51,7 +51,7 @@ def _jwks_serving(private_key=_SIGNING_KEY):
     signing_key.key = private_key.public_key()
     client = MagicMock()
     client.get_signing_key_from_jwt.return_value = signing_key
-    with patch("app.core.supabase_auth._jwks_client", client):
+    with patch("app.core.clerk_auth._jwks_client", client):
         yield client
 
 
@@ -127,36 +127,36 @@ class TestInputValidation:
         )
         assert obj.api_key == " "
 
-    def test_supabase_uid_empty_rejected(self):
-        """UserCreate.supabase_uid has min_length=1; an empty subject must fail."""
+    def test_clerk_user_id_empty_rejected(self):
+        """UserCreate.clerk_user_id has min_length=1; an empty subject must fail."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="user@example.com",
-                supabase_uid="",
+                clerk_user_id="",
             )
 
-    def test_supabase_uid_too_long_rejected(self):
-        """UserCreate.supabase_uid has max_length=255; 256 chars must fail."""
+    def test_clerk_user_id_too_long_rejected(self):
+        """UserCreate.clerk_user_id has max_length=255; 256 chars must fail."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="user@example.com",
-                supabase_uid="a" * 256,
+                clerk_user_id="a" * 256,
             )
 
     def test_clerk_text_subject_accepted(self):
         """Clerk subjects are text ids (user_2abc...), not 36-char UUIDs."""
         obj = UserCreate(
             email="user@example.com",
-            supabase_uid="user_2abcDEF3456ghiJKL7890mnoPQ",
+            clerk_user_id="user_2abcDEF3456ghiJKL7890mnoPQ",
         )
-        assert obj.supabase_uid.startswith("user_")
+        assert obj.clerk_user_id.startswith("user_")
 
     def test_email_format_validated(self):
         """UserCreate.email uses EmailStr; a non-email string must raise."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="not-an-email",
-                supabase_uid="00000000-0000-0000-0000-000000000abc",
+                clerk_user_id="00000000-0000-0000-0000-000000000abc",
             )
 
     def test_provider_invalid_value_rejected(self):
@@ -201,14 +201,14 @@ class TestInputValidation:
 
 
 class TestJWTEdgeCases:
-    """verify_supabase_jwt must raise HTTPException(401) for every bad token."""
+    """verify_auth_jwt must raise HTTPException(401) for every bad token."""
 
     def test_valid_token_is_accepted(self, monkeypatch):
         """Baseline: a Clerk RS256 token from the configured issuer must pass."""
         monkeypatch.setattr(settings, "CLERK_ISSUER", "https://real.clerk.accounts.dev")
         token = _make_jwt(iss="https://real.clerk.accounts.dev", email="user@example.com")
         with _jwks_serving():
-            payload = verify_supabase_jwt(token)
+            payload = verify_auth_jwt(token)
         assert payload["sub"] == _CLERK_SUB
         assert payload["iss"] == "https://real.clerk.accounts.dev"
         assert payload["email"] == "user@example.com"
@@ -219,7 +219,7 @@ class TestJWTEdgeCases:
 
         expired_token = _make_jwt(exp_offset=-3600)
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(expired_token)
+            verify_auth_jwt(expired_token)
         assert exc_info.value.status_code == 401
 
     def test_wrong_issuer_returns_401(self, monkeypatch):
@@ -229,7 +229,7 @@ class TestJWTEdgeCases:
         monkeypatch.setattr(settings, "CLERK_ISSUER", "https://real.clerk.accounts.dev")
         token = _make_jwt(iss="https://attacker.clerk.accounts.dev")
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(token)
+            verify_auth_jwt(token)
         assert exc_info.value.status_code == 401
 
     def test_wrong_signing_key_returns_401(self):
@@ -238,7 +238,7 @@ class TestJWTEdgeCases:
 
         token = _make_jwt(key=_OTHER_KEY)
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(token)
+            verify_auth_jwt(token)
         assert exc_info.value.status_code == 401
 
     def test_malformed_token_string_returns_401(self):
@@ -246,7 +246,7 @@ class TestJWTEdgeCases:
         from fastapi import HTTPException
 
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt("not.a.jwt")
+            verify_auth_jwt("not.a.jwt")
         assert exc_info.value.status_code == 401
 
     def test_empty_token_string_returns_401(self):
@@ -254,7 +254,7 @@ class TestJWTEdgeCases:
         from fastapi import HTTPException
 
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt("")
+            verify_auth_jwt("")
         assert exc_info.value.status_code == 401
 
     def test_hs256_token_against_rs256_verifier_returns_401(self):
@@ -276,7 +276,7 @@ class TestJWTEdgeCases:
         forged = f"{header}.{body}.{_b64(sig)}"
 
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(forged)
+            verify_auth_jwt(forged)
         assert exc_info.value.status_code == 401
 
     def test_none_algorithm_token_returns_401(self):
@@ -289,7 +289,7 @@ class TestJWTEdgeCases:
         unsigned_token = f"{header}.{body}."
 
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(unsigned_token)
+            verify_auth_jwt(unsigned_token)
         assert exc_info.value.status_code == 401
 
     def test_missing_sub_claim_returns_401(self):
@@ -298,7 +298,7 @@ class TestJWTEdgeCases:
 
         token = _make_jwt(sub=None)
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(token)
+            verify_auth_jwt(token)
         assert exc_info.value.status_code == 401
 
     def test_missing_exp_claim_returns_401(self):
@@ -307,7 +307,7 @@ class TestJWTEdgeCases:
 
         token = _make_jwt(exp_offset=None)
         with _jwks_serving(), pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(token)
+            verify_auth_jwt(token)
         assert exc_info.value.status_code == 401
 
     def test_unconfigured_clerk_jwks_returns_401(self, monkeypatch):
@@ -316,9 +316,9 @@ class TestJWTEdgeCases:
 
         monkeypatch.setattr(settings, "CLERK_JWKS_URL", "")
         monkeypatch.setattr(settings, "CLERK_ISSUER", "")
-        monkeypatch.setattr("app.core.supabase_auth._jwks_client", None)
+        monkeypatch.setattr("app.core.clerk_auth._jwks_client", None)
         with pytest.raises(HTTPException) as exc_info:
-            verify_supabase_jwt(_make_jwt())
+            verify_auth_jwt(_make_jwt())
         assert exc_info.value.status_code == 401
 
 
@@ -332,12 +332,12 @@ class TestConcurrency:
     serialisation boundary — the layer tested here is pure schema validation,
     not the DB unique constraint (which requires a real DB)."""
 
-    def test_empty_supabase_uid_rejected(self):
-        """supabase_uid='' is shorter than min_length=1 — must fail validation."""
+    def test_empty_clerk_user_id_rejected(self):
+        """clerk_user_id='' is shorter than min_length=1 — must fail validation."""
         with pytest.raises(ValidationError):
             UserCreate(
                 email="a@example.com",
-                supabase_uid="",
+                clerk_user_id="",
             )
 
     def test_second_identical_user_create_payload_is_valid_schema(self):
@@ -346,9 +346,9 @@ class TestConcurrency:
         documents that schema validation does not deduplicate (so the duplicate
         path in the DB layer is reachable and must be handled there)."""
         uid = "00000000-0000-0000-0000-000000000abc"
-        u1 = UserCreate(email="dup@example.com", supabase_uid=uid)
-        u2 = UserCreate(email="dup@example.com", supabase_uid=uid)
-        assert u1.supabase_uid == u2.supabase_uid
+        u1 = UserCreate(email="dup@example.com", clerk_user_id=uid)
+        u2 = UserCreate(email="dup@example.com", clerk_user_id=uid)
+        assert u1.clerk_user_id == u2.clerk_user_id
 
     def test_all_valid_providers_construct_model_settings(self):
         """Every Literal provider value must be constructable — ensures enum list

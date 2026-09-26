@@ -142,7 +142,7 @@ Every new user-data table must have RLS:
 ALTER TABLE public.my_table ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "users see own rows" ON public.my_table
   FOR ALL
-  USING (user_id = (SELECT id FROM public.users WHERE supabase_uid = auth.uid()));
+  USING (user_id = (SELECT id FROM public.users WHERE clerk_user_id = auth.uid()));
 ```
 
 ---

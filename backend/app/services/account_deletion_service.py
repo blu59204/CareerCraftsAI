@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 async def reap_expired_account_deletions(db: AsyncSession) -> int:
     """Hard-delete every account whose grace period has passed. Returns the
     count removed. Callers are expected to commit the session afterward."""
-    from app.core.supabase_auth import delete_clerk_user
+    from app.core.clerk_auth import delete_clerk_user
 
     now = datetime.now(UTC)
     users = (
@@ -38,7 +38,7 @@ async def reap_expired_account_deletions(db: AsyncSession) -> int:
 
     removed = 0
     for user in users:
-        auth_subject = str(user.supabase_uid or "")
+        auth_subject = str(user.clerk_user_id or "")
         await db.delete(user)
         await db.flush()
         if auth_subject:

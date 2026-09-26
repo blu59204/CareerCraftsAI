@@ -10,7 +10,7 @@ class UserCreate(BaseModel):
     full_name: str | None = None
     # Auth subject (`sub`). Clerk emits a text id like "user_2abc..." (~32 chars),
     # so this is no longer a fixed-width UUID — only non-empty and bounded.
-    supabase_uid: str = Field(min_length=1, max_length=255)
+    clerk_user_id: str = Field(min_length=1, max_length=255)
 
 
 class UserResponse(BaseModel):

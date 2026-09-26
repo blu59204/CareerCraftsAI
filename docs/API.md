@@ -827,7 +827,7 @@ Get current user profile.
 ```json
 {
   "id": "uuid",
-  "supabase_uid": "...",
+  "clerk_user_id": "...",
   "email": "user@example.com",
   "full_name": "Alice Smith",
   "avatar_url": "https://...",

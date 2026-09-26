@@ -147,7 +147,7 @@ app/
   api/
     internal.py — worker-only (X-Internal-Secret, blocked at Nginx): run-job-search, run-followup, daily-search, check-status
     v1/
-      deps.py — get_current_user (verify_auth_jwt, auto-provision User by supabase_uid), get_db
+      deps.py — get_current_user (verify_auth_jwt, auto-provision User by clerk_user_id), get_db
       run_utils.py — apply_harness_result()
       agents.py — POST /run {task_type,context} (VALID_TASKS 13), GET /{id}/stream (SSE 300s), POST /{id}/approve, GET /runs
       resume.py — POST /optimize (direct node call, no orchestrator) + GET /download/{id}
@@ -221,7 +221,7 @@ store/
 `job-search.processor.ts`, `followup.processor.ts`, `daily-search.processor.ts`, `status-check.processor.ts` + `index.ts`
 
 ### Supabase (`supabase/migrations/` 32 files)
-0001 users, 0002 model_settings, 0003 documents, 0004 applications, 0005 leads, 0006 agent_runs, 0007 pgvector HNSW, 0008 RLS, 0009 Clerk→Supabase, 0010 user_preferences, 0011 cover_letter_versions, 0012 interview_sessions, 0013 salary_reports, 0014 company_intel, 0015 resume_personas, 0016 linkedin_outreach_queue, 0017 ats_scores, 0018 RLS fix supabase_uid, 0019 linkedin credentials+auto, 0020 dashboard drift, 0021 google oauth tokens, 0022 job_application location, 0023 secure post-RLS, 0024 RLS with check, 0025 hnsw embeddings, 0026 feature+memory tables, 0027 signup metadata, 0028 clerk third-party RLS, 0029 years_experience check, 0030 enable RLS public, 0031 prefer_live_browser, 0032 rls+hnsw fixes
+0001 users, 0002 model_settings, 0003 documents, 0004 applications, 0005 leads, 0006 agent_runs, 0007 pgvector HNSW, 0008 RLS, 0009 Clerk→Supabase, 0010 user_preferences, 0011 cover_letter_versions, 0012 interview_sessions, 0013 salary_reports, 0014 company_intel, 0015 resume_personas, 0016 linkedin_outreach_queue, 0017 ats_scores, 0018 RLS fix clerk_user_id, 0019 linkedin credentials+auto, 0020 dashboard drift, 0021 google oauth tokens, 0022 job_application location, 0023 secure post-RLS, 0024 RLS with check, 0025 hnsw embeddings, 0026 feature+memory tables, 0027 signup metadata, 0028 clerk third-party RLS, 0029 years_experience check, 0030 enable RLS public, 0031 prefer_live_browser, 0032 rls+hnsw fixes
 
 ### Docs (`docs/`)
 `API.md, ARCHITECTURE.md, BACKEND_AUTH_IMPLEMENTATION.md, BROWSER_EXTENSION_PROPOSAL.md, BROWSER_SCALING_ARCHITECTURE.md, CONFIGURATION.md, CONTRIBUTING.md, DATABASE.md, DEPLOYMENT.md, DEVELOPMENT.md, JOB_SEARCH_ANALYSIS.md, JOB_SEARCH_FIX.md, SECURITY.md, AGENTS_TROUBLESHOOTING.md, agent-system-technical-spec.md, audit-rebuild-plan.md` + `superpowers/` phase specs
@@ -328,7 +328,7 @@ store/
 - **Never hardcode model names.** Always use `llm_gateway.py` / `model_router.py` (`get_llm`). Extended thinking only for `claude-3-7-sonnet/claude-sonnet-4/opus-4`, budget `AGENT_THINKING_BUDGET_TOKENS=8000`.
 - **Browser Use human-like delays** (LinkedIn/Naukri ToS risk): navigate 1500-3500ms, fill 300-800ms, click 200-600ms, extract 500-1500ms (config.py). Separate browser context per user. `shm_size 256m`, mem cap.
 - **pgvector HNSW required for prod scale.** Collections `{user_id}_{doc_type}` (resume/achievements/certifications/portfolio/notes), chunk 500/50, top_k 5.
-- **Auth:** Supabase JWT HS256 audience `authenticated`, verified every protected route. Frontend `@supabase/ssr` cookies, middleware refreshes. Backend `SUPABASE_JWT_SECRET` local verify. RLS — users only own data. `on_auth_user_created` trigger auto-provisions `public.users` by `supabase_uid`.
+- **Auth:** Supabase JWT HS256 audience `authenticated`, verified every protected route. Frontend `@supabase/ssr` cookies, middleware refreshes. Backend `SUPABASE_JWT_SECRET` local verify. RLS — users only own data. `on_auth_user_created` trigger auto-provisions `public.users` by `clerk_user_id`.
 - **CORS:** reject `*`, exact origins only. Auto-adds `localhost:3000` when not prod.
 - **No auto-redirect on 401** in `api.ts` or guards — show error + “Log in again” button to avoid dashboard↔login loop. `deduplicatedGet` for concurrent GETs. Sanitize LLM output via DOMPurify allowlist.
 - **Concurrency:** max 2 concurrent runs per user (BullMQ + `AGENT_MAX_CONCURRENT_PER_USER`). Timeouts: auto_apply 300s, job_search/company 120s, cover_letter/salary 90s, resume 60s, interview_coach 30s/turn, default 60s. Token budgets: cover_letter/salary 6000, company 5000, resume 4000, interview 2000/turn, others 3000 (configurable `user_model_settings.token_budget`).
