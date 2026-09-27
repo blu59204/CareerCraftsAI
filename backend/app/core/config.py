@@ -131,6 +131,17 @@ class Settings(BaseSettings):
     TEMPORAL_TLS_KEY_PATH: str = ""
     TEMPORAL_TLS_CA_PATH: str = ""
     TEMPORAL_WORKER_CONCURRENCY: int = Field(default=4, ge=1, le=64)
+    # Notifications run on their own task queues, polled by a separate
+    # notification_worker.py process (can run on a different machine) —
+    # so a notification failure never shares retry scope with, or blocks
+    # the worker capacity of, the job-search/follow-up activity that
+    # triggered it. The email queue additionally gets its own rate limit
+    # below, independent of TEMPORAL_WORKER_CONCURRENCY.
+    TEMPORAL_NOTIFICATION_TASK_QUEUE: str = "careercraft-notifications"
+    TEMPORAL_NOTIFICATION_EMAIL_TASK_QUEUE: str = "careercraft-notifications-email"
+    # Resend's default cap is 10 req/s/team; stay under it to leave headroom
+    # for other API traffic sharing the same team/key.
+    NOTIFICATION_EMAIL_RATE_LIMIT_PER_SECOND: float = Field(default=8.0, gt=0, le=100)
     # Server-browser auto-apply only; the extension flow waits on the user
     # and is bounded by the EXTENSION_* timeouts below instead.
     TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S: int = Field(default=600, ge=60, le=86_400)

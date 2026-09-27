@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -102,9 +102,9 @@ class _FakeFollowupSession:
     """Minimal AsyncSession stand-in: every execute() returns the one
     application row; with_for_update()/where() chains are irrelevant here
     since the fake ignores the statement entirely — except a
-    UserPreferences select (issued by notification_service on a
-    successfully-drafted follow-up), which must not come back as the
-    application stand-in."""
+    UserPreferences select, which must not come back as the application
+    stand-in (kept defensive even though notification creation now runs
+    entirely outside this session, via a mocked start_notification)."""
 
     def __init__(self, application):
         self.application = application
@@ -160,7 +160,7 @@ def _make_application(applied_at=None, status="applied"):
 async def test_run_followup_due_with_no_reply_creates_draft_checkpoint_not_send():
     """A due follow-up with no recruiter reply must produce a draft awaiting
     approval — never send anything itself."""
-    from app.models.db import AgentRun, Notification
+    from app.models.db import AgentRun
     from app.services.scheduled_jobs import FollowupTrigger, run_followup
 
     application = _make_application()
@@ -178,13 +178,13 @@ async def test_run_followup_due_with_no_reply_creates_draft_checkpoint_not_send(
             return_value={"subject": "Checking in", "body": "Hi there"},
         ),
         patch("app.services.scheduled_jobs.emit") as mock_emit,
-        # A drafted follow-up now also creates a notification (and would
-        # spawn a fire-and-forget email task) — close the coroutine instead
-        # of letting it run against this test's fake session.
+        # A drafted follow-up starts its own NotificationWorkflow, entirely
+        # outside this activity's session/retry scope — see
+        # NotificationWorkflow for why. Assert it was asked for, not that it
+        # ran against this test's fake session.
         patch(
-            "app.services.notification_service.spawn_background",
-            MagicMock(side_effect=lambda coro: coro.close()),
-        ),
+            "app.workflows.starters.start_notification", AsyncMock(return_value="notification/1")
+        ) as mock_start_notification,
     ):
         result = await run_followup(
             FollowupTrigger(
@@ -195,21 +195,18 @@ async def test_run_followup_due_with_no_reply_creates_draft_checkpoint_not_send(
         )
 
     assert result["status"] == "awaiting_approval"
-    # One commit for the AgentRun draft, one for the notification created
-    # right after (a logically separate session that this fake collapses
-    # onto the same instance).
-    assert session.commits == 2
-    # The AgentRun draft, plus the notification created right after.
-    assert len(session.added) == 2
-    run = next(obj for obj in session.added if isinstance(obj, AgentRun))
+    assert session.commits == 1  # only the AgentRun draft commit
+    assert len(session.added) == 1
+    run = session.added[0]
+    assert isinstance(run, AgentRun)
     assert run.status == "awaiting_approval"
     assert run.output["type"] == "send_email"
     assert run.output["recipient"] == "hr@acme.com"
     assert run.output["subject"] == "Checking in"
     assert run.output["body"] == "Hi there"
-    notification = next(obj for obj in session.added if isinstance(obj, Notification))
-    assert notification.type == "followup_ready"
-    assert notification.user_id == application.user_id
+    mock_start_notification.assert_called_once()
+    assert mock_start_notification.call_args.kwargs["type"] == "followup_ready"
+    assert mock_start_notification.call_args.args[0] == application.user_id
     mock_emit.assert_called_once()
     emitted_event = mock_emit.call_args.args[1]
     assert emitted_event == "checkpoint"

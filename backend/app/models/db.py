@@ -617,3 +617,37 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="notifications")
+
+
+class NotificationDelivery(Base):
+    """Per-channel delivery ledger for a Notification — the durable,
+    queryable dead-letter record Temporal itself doesn't keep (a workflow
+    that exhausts its retries just fails; history is only visible until
+    namespace retention expires). NotificationWorkflow creates one row per
+    additional channel (currently only "email") and drives it through
+    pending -> sent, or -> dead once the channel's own retry budget is
+    exhausted."""
+
+    __tablename__ = "notification_deliveries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    notification_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("notifications.id", ondelete="CASCADE")
+    )
+    channel: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|sent|dead
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    # Sent as Resend's Idempotency-Key header — stable across retries of the
+    # same delivery so a retried send after a network blip never double-sends.
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'dead')", name="notification_deliveries_status_check"
+        ),
+    )

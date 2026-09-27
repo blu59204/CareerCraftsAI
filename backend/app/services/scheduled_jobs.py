@@ -99,11 +99,14 @@ async def run_job_search(
         emit(payload.run_id, "complete", result_state.get("result") or {})
         saved_count = (result_state.get("result") or {}).get("saved_count", 0)
         if saved_count:
-            from app.services.notification_service import create_notification
+            from app.workflows.starters import start_notification
 
-            async with AsyncSessionLocal() as notif_db:
-                await create_notification(
-                    notif_db,
+            # Fire-and-forget on its own workflow: a Temporal-connectivity or
+            # notification-layer failure here must never fail (and retry)
+            # this activity — that would risk creating a duplicate follow-up
+            # draft elsewhere. See NotificationWorkflow for why.
+            try:
+                await start_notification(
                     uuid.UUID(payload.user_id),
                     type="job_matches",
                     title=(
@@ -113,7 +116,12 @@ async def run_job_search(
                     body=f'Search: "{payload.search_query}" in {payload.location}',
                     link="/jobs",
                 )
-                await notif_db.commit()
+            except Exception:
+                logger.warning(
+                    "Failed to start notification workflow for run %s",
+                    payload.run_id,
+                    exc_info=True,
+                )
     elif result_state["status"] == "awaiting_approval":
         emit(payload.run_id, "checkpoint", result_state.get("pending_action") or {})
     else:
@@ -244,18 +252,24 @@ async def run_followup(
 
     emit(str(run.id), "checkpoint", run.output)
 
-    from app.services.notification_service import create_notification
+    from app.workflows.starters import start_notification
 
-    async with AsyncSessionLocal() as notif_db:
-        await create_notification(
-            notif_db,
+    # Same reasoning as run_job_search above: this must never retry the
+    # follow-up draft above just because the notification layer failed.
+    try:
+        await start_notification(
             uuid.UUID(payload.user_id),
             type="followup_ready",
             title="Follow-up email draft ready for review",
             body=f"{application.company} — {application.role}",
             link=f"/agents/{run.id}",
         )
-        await notif_db.commit()
+    except Exception:
+        logger.warning(
+            "Failed to start notification workflow for application %s",
+            payload.application_id,
+            exc_info=True,
+        )
 
     logger.info(
         "Follow-up day-%d drafted for application %s user %s — awaiting approval (run %s)",

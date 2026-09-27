@@ -29,17 +29,10 @@ async def test_create_notification_skipped_when_gate_preference_off():
     db.add = MagicMock()
     user_id = uuid.uuid4()
 
-    with (
-        patch.object(
-            notification_service,
-            "_get_preferences",
-            AsyncMock(return_value=make_prefs(notify_agent_alerts=False)),
-        ),
-        patch.object(
-            notification_service,
-            "spawn_background",
-            MagicMock(side_effect=lambda coro: coro.close()),
-        ) as mock_spawn,
+    with patch.object(
+        notification_service,
+        "_get_preferences",
+        AsyncMock(return_value=make_prefs(notify_agent_alerts=False)),
     ):
         result = await notification_service.create_notification(
             db, user_id, type="job_matches", title="Found 3 jobs"
@@ -47,24 +40,16 @@ async def test_create_notification_skipped_when_gate_preference_off():
 
     assert result is None
     db.add.assert_not_called()
-    mock_spawn.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_create_notification_creates_when_gate_preference_on():
+async def test_create_notification_creates_pending_email_delivery_when_gate_preference_on():
     db = AsyncMock()
     db.add = MagicMock()
     user_id = uuid.uuid4()
 
-    with (
-        patch.object(
-            notification_service, "_get_preferences", AsyncMock(return_value=make_prefs())
-        ),
-        patch.object(
-            notification_service,
-            "spawn_background",
-            MagicMock(side_effect=lambda coro: coro.close()),
-        ) as mock_spawn,
+    with patch.object(
+        notification_service, "_get_preferences", AsyncMock(return_value=make_prefs())
     ):
         result = await notification_service.create_notification(
             db, user_id, type="job_matches", title="Found 3 jobs", body="details", link="/jobs"
@@ -76,8 +61,13 @@ async def test_create_notification_creates_when_gate_preference_on():
     assert result.title == "Found 3 jobs"
     assert result.body == "details"
     assert result.link == "/jobs"
-    db.add.assert_called_once_with(result)
-    mock_spawn.assert_called_once()
+    # One add() for the Notification, one for its pending email delivery.
+    assert db.add.call_count == 2
+    delivery = db.add.call_args_list[1].args[0]
+    assert delivery.notification_id == result.id
+    assert delivery.channel == "email"
+    assert delivery.status == "pending"
+    assert delivery.idempotency_key == f"notification-email/{result.id}"
 
 
 @pytest.mark.asyncio
@@ -89,46 +79,32 @@ async def test_create_notification_created_when_user_has_no_preferences_row():
     db.add = MagicMock()
     user_id = uuid.uuid4()
 
-    with (
-        patch.object(notification_service, "_get_preferences", AsyncMock(return_value=None)),
-        patch.object(
-            notification_service,
-            "spawn_background",
-            MagicMock(side_effect=lambda coro: coro.close()),
-        ) as mock_spawn,
-    ):
+    with patch.object(notification_service, "_get_preferences", AsyncMock(return_value=None)):
         result = await notification_service.create_notification(
             db, user_id, type="followup_ready", title="Draft ready"
         )
 
     assert result is not None
-    mock_spawn.assert_called_once()
+    assert db.add.call_count == 2  # notification + its pending email delivery
 
 
 @pytest.mark.asyncio
-async def test_create_notification_skips_email_when_notify_email_off():
+async def test_create_notification_skips_email_delivery_when_notify_email_off():
     db = AsyncMock()
     db.add = MagicMock()
     user_id = uuid.uuid4()
 
-    with (
-        patch.object(
-            notification_service,
-            "_get_preferences",
-            AsyncMock(return_value=make_prefs(notify_email=False)),
-        ),
-        patch.object(
-            notification_service,
-            "spawn_background",
-            MagicMock(side_effect=lambda coro: coro.close()),
-        ) as mock_spawn,
+    with patch.object(
+        notification_service,
+        "_get_preferences",
+        AsyncMock(return_value=make_prefs(notify_email=False)),
     ):
         result = await notification_service.create_notification(
             db, user_id, type="job_matches", title="Found 3 jobs"
         )
 
     assert result is not None
-    mock_spawn.assert_not_called()
+    db.add.assert_called_once()  # only the Notification, no delivery row
 
 
 @pytest.mark.asyncio
@@ -137,20 +113,13 @@ async def test_create_notification_ungated_type_always_created_even_if_all_prefs
     db.add = MagicMock()
     user_id = uuid.uuid4()
 
-    with (
-        patch.object(
-            notification_service,
-            "_get_preferences",
-            AsyncMock(
-                return_value=make_prefs(
-                    notify_agent_alerts=False, notify_followup_reminders=False, notify_email=False
-                )
-            ),
-        ),
-        patch.object(
-            notification_service,
-            "spawn_background",
-            MagicMock(side_effect=lambda coro: coro.close()),
+    with patch.object(
+        notification_service,
+        "_get_preferences",
+        AsyncMock(
+            return_value=make_prefs(
+                notify_agent_alerts=False, notify_followup_reminders=False, notify_email=False
+            )
         ),
     ):
         result = await notification_service.create_notification(
@@ -158,6 +127,71 @@ async def test_create_notification_ungated_type_always_created_even_if_all_prefs
         )
 
     assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_get_pending_email_delivery_returns_row():
+    db = AsyncMock()
+    delivery = SimpleNamespace(id=uuid.uuid4(), status="pending")
+    result_mock = MagicMock()
+    result_mock.scalar_one_or_none.return_value = delivery
+    db.execute = AsyncMock(return_value=result_mock)
+
+    result = await notification_service.get_pending_email_delivery(db, uuid.uuid4())
+
+    assert result is delivery
+
+
+@pytest.mark.asyncio
+async def test_mark_delivery_attempt_increments_and_sets_status():
+    db = AsyncMock()
+    delivery = SimpleNamespace(attempts=1, status="pending", last_error=None)
+    db.get = AsyncMock(return_value=delivery)
+
+    await notification_service.mark_delivery_attempt(db, uuid.uuid4(), status="sent", error=None)
+
+    assert delivery.attempts == 2
+    assert delivery.status == "sent"
+    assert delivery.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_mark_delivery_attempt_records_error_on_retryable_failure():
+    db = AsyncMock()
+    delivery = SimpleNamespace(attempts=0, status="pending", last_error=None)
+    db.get = AsyncMock(return_value=delivery)
+
+    await notification_service.mark_delivery_attempt(
+        db, uuid.uuid4(), status="pending", error="Resend rate limit exceeded"
+    )
+
+    assert delivery.attempts == 1
+    assert delivery.status == "pending"
+    assert delivery.last_error == "Resend rate limit exceeded"
+
+
+@pytest.mark.asyncio
+async def test_mark_delivery_dead_sets_status():
+    db = AsyncMock()
+    delivery = SimpleNamespace(status="pending")
+    db.get = AsyncMock(return_value=delivery)
+
+    await notification_service.mark_delivery_dead(db, uuid.uuid4())
+
+    assert delivery.status == "dead"
+
+
+@pytest.mark.asyncio
+async def test_mark_delivery_dead_never_overwrites_a_sent_delivery():
+    """A late-arriving dead-marking activity (e.g. a replayed/duplicate
+    workflow task) must never regress an already-sent delivery to dead."""
+    db = AsyncMock()
+    delivery = SimpleNamespace(status="sent")
+    db.get = AsyncMock(return_value=delivery)
+
+    await notification_service.mark_delivery_dead(db, uuid.uuid4())
+
+    assert delivery.status == "sent"
 
 
 @pytest.mark.asyncio

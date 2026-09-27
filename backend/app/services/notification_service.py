@@ -1,13 +1,18 @@
 """In-app notifications, gated by the user's notify_* preferences.
 
 Every caller creating a notification goes through create_notification() —
-never inserts a Notification row directly — so the preference gate and
-optional email dispatch stay in exactly one place.
+never inserts a Notification row directly — so the preference gate stays in
+exactly one place. Callers that want the notification actually started
+(rather than just persisted, e.g. from an activity that already has a
+Notification-worthy event) should go through
+app.workflows.starters.start_notification instead, which runs
+NotificationWorkflow — this keeps notification creation, and any email
+dispatch, out of the caller's own Temporal retry scope so a notification
+failure can never retry the caller's real work (see NotificationWorkflow).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -15,8 +20,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.background import spawn_background
-from app.models.db import Notification, User, UserPreferences
+from app.models.db import Notification, NotificationDelivery, UserPreferences
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +46,17 @@ async def create_notification(
     body: str | None = None,
     link: str | None = None,
 ) -> Notification | None:
-    """Create an in-app notification, and email it too if the user's
-    notify_email preference and this type's own preference are both on.
+    """Create an in-app notification, and a pending email NotificationDelivery
+    row alongside it if the user's notify_email preference and this type's
+    own preference are both on.
 
     Returns None (and creates nothing) when this type's gating preference is
     explicitly off. Missing preferences (new user, never saved any) default
     to the on-by-default behavior the settings page itself ships with.
+
+    This function only persists rows — it never sends email itself. The
+    email delivery row it creates is picked up and actually sent by
+    send_notification_email_activity, driven by NotificationWorkflow.
     """
     prefs = await _get_preferences(db, user_id)
     gate = _PREFERENCE_GATE.get(type)
@@ -62,28 +71,57 @@ async def create_notification(
 
     should_email = prefs is None or prefs.notify_email is not False
     if should_email:
-        spawn_background(_send_email_best_effort(user_id, title, body))
+        db.add(
+            NotificationDelivery(
+                id=uuid.uuid4(),
+                notification_id=notification.id,
+                channel="email",
+                status="pending",
+                idempotency_key=f"notification-email/{notification.id}",
+            )
+        )
+        await db.flush()
 
     return notification
 
 
-async def _send_email_best_effort(user_id: uuid.UUID, title: str, body: str | None) -> None:
-    """Fire-and-forget: a failed email must never fail notification creation
-    or roll back the caller's transaction. Runs in its own DB session since
-    the caller's session may already be committed/closed by the time this
-    scheduled task actually runs."""
-    from app.core.database import AsyncSessionLocal
-    from app.services.resend_service import send_transactional_email
+async def get_pending_email_delivery(
+    db: AsyncSession, notification_id: uuid.UUID
+) -> NotificationDelivery | None:
+    result = await db.execute(
+        select(NotificationDelivery).where(
+            NotificationDelivery.notification_id == notification_id,
+            NotificationDelivery.channel == "email",
+            NotificationDelivery.status == "pending",
+        )
+    )
+    return result.scalar_one_or_none()
 
-    try:
-        async with AsyncSessionLocal() as session:
-            user = await session.get(User, user_id)
-            if user is None or not user.email:
-                return
-            html = f"<p>{body}</p>" if body else f"<p>{title}</p>"
-            await asyncio.to_thread(send_transactional_email, user.email, title, html)
-    except Exception as exc:
-        logger.warning("Notification email to user %s failed: %s", user_id, exc)
+
+async def mark_delivery_attempt(
+    db: AsyncSession,
+    delivery_id: uuid.UUID,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Record one delivery attempt. status is the delivery's new state
+    ("sent", "pending" for a retryable failure, or "dead" for a terminal
+    one) — the caller (the activity) decides which, this just persists it."""
+    delivery = await db.get(NotificationDelivery, delivery_id)
+    if delivery is None:
+        return
+    delivery.attempts += 1
+    delivery.status = status
+    delivery.last_error = error
+
+
+async def mark_delivery_dead(db: AsyncSession, delivery_id: uuid.UUID) -> None:
+    """Called once Temporal's own retry budget for this delivery's activity
+    is fully exhausted — the durable DLQ marker for operator triage."""
+    delivery = await db.get(NotificationDelivery, delivery_id)
+    if delivery is None or delivery.status == "sent":
+        return
+    delivery.status = "dead"
 
 
 async def list_notifications(

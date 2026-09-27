@@ -176,6 +176,38 @@ async def signal_extension_update(workflow_id: str, update: dict) -> None:
     await handle.signal(AutoApplyWorkflow.extension_update, update)
 
 
+async def start_notification(
+    user_id: uuid.UUID | str,
+    type: str,
+    title: str,
+    body: str | None = None,
+    link: str | None = None,
+) -> str:
+    """Fire-and-forget: start a NotificationWorkflow and return immediately.
+
+    Every call gets a fresh workflow id (each notification is a distinct
+    event, not something to de-duplicate by content) and targets the
+    dedicated notification task queue — so notification creation and email
+    delivery run entirely outside the caller's own Temporal retry scope.
+    Call this instead of notification_service.create_notification directly
+    from any activity that must not retry because a notification failed.
+    """
+    from app.workflows.notification_workflow import NotificationInput, NotificationWorkflow
+
+    workflow_id = f"notification/{uuid.uuid4()}"
+    client = await _client()
+    try:
+        await client.start_workflow(
+            NotificationWorkflow.run,
+            NotificationInput(user_id=str(user_id), type=type, title=title, body=body, link=link),
+            id=workflow_id,
+            task_queue=settings.TEMPORAL_NOTIFICATION_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        pass
+    return workflow_id
+
+
 async def start_followups(
     user_id: uuid.UUID | str,
     application_id: uuid.UUID | str,
