@@ -253,6 +253,13 @@ def _override_auth(monkeypatch):
     monkeypatch.setattr("app.api.v1.deps.verify_auth_jwt", lambda token: payload)
 
     model_row = MagicMock()
+    # get_or_provision_user() runs _repair_placeholder_profile() on whatever
+    # this mock stands in for (both the user row and the model-settings row
+    # share this same object here) — give it a real, non-placeholder email
+    # and clerk_user_id so that guard short-circuits instead of calling out
+    # to the real Clerk API with a MagicMock as the subject.
+    model_row.email = "t@e.com"
+    model_row.clerk_user_id = "00000000-0000-0000-0000-000000000001"
     db = MagicMock()
     db.add = MagicMock()
     calls = {"n": 0}
