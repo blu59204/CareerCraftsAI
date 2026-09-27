@@ -1,4 +1,5 @@
 """Run as root on Oracle for the dedicated CareerCraft deployment only."""
+
 import json
 from pathlib import Path
 import subprocess
@@ -7,11 +8,19 @@ import urllib.request
 directory = Path("/opt/careercraft-secrets")
 if not directory.is_dir():
     raise SystemExit("Dedicated secret directory is missing")
-with urllib.request.urlopen("http://127.0.0.1:14041/api/tunnels", timeout=10) as response:
+with urllib.request.urlopen(
+    "http://127.0.0.1:14041/api/tunnels", timeout=10
+) as response:
     tunnels = json.load(response)["tunnels"]
 origin = next(t["public_url"] for t in tunnels if t["proto"] == "https")
 path = directory / "backend.env"
-lines = [line for line in path.read_text().splitlines() if not line.startswith(("FRONTEND_URL=", "CORS_ORIGINS=", "ALLOWED_ORIGINS=", "NEXT_PUBLIC_APP_URL="))]
+lines = [
+    line
+    for line in path.read_text().splitlines()
+    if not line.startswith(
+        ("FRONTEND_URL=", "CORS_ORIGINS=", "ALLOWED_ORIGINS=", "NEXT_PUBLIC_APP_URL=")
+    )
+]
 for key in ("FRONTEND_URL", "CORS_ORIGINS", "ALLOWED_ORIGINS", "NEXT_PUBLIC_APP_URL"):
     lines.append(f"{key}={json.dumps(origin)}")
 path.write_text("\n".join(lines) + "\n")
