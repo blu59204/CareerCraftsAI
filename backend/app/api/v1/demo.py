@@ -1,9 +1,12 @@
 """Public, unauthenticated job search for the marketing site's demo section.
 
 Hits only the free key-less job-board APIs (Remotive/Arbeitnow/Jobicy) via
-``search_all_platforms(platforms=["open_apis"])`` — no LLM call, no browser
+``search_all_platforms(platforms=["open_apis_keyless"])`` — never the plain
+"open_apis" adapter, which also calls the keyed RapidAPI/Adzuna integrations
+when those credentials happen to be configured. No LLM call, no browser
 automation — so every result is a real, live listing and the endpoint is
-cheap enough to expose to anonymous visitors. Capped at
+cheap enough to expose to anonymous visitors, without ever touching a paid
+third-party quota. Capped at
 ``MAX_DEMO_SEARCHES_PER_IP`` lifetime searches per IP address (tracked in
 Redis, independent of process restarts or multiple backend replicas) so it
 can't be used as a free unauthenticated scraping proxy.
@@ -107,7 +110,11 @@ async def demo_job_search(request: Request, payload: DemoJobSearchRequest):
             "location": payload.location,
             "max_results": DEMO_MAX_RESULTS,
         },
-        platforms=["open_apis"],
+        # "open_apis_keyless" — never the plain "open_apis" adapter, which
+        # also fans out to keyed RapidAPI/Adzuna when those credentials are
+        # configured. This anonymous, per-IP-capped endpoint must never be
+        # able to spend the operator's paid third-party API quota.
+        platforms=["open_apis_keyless"],
         timeout_s=20,
     )
     if warnings:

@@ -64,7 +64,9 @@ async def test_demo_job_search_returns_real_shaped_jobs():
     fake_redis = FakeRedis()
     with (
         patch.object(demo_module, "get_redis", lambda: fake_redis),
-        patch.object(demo_module, "search_all_platforms", return_value=(SAMPLE_JOBS, [])),
+        patch.object(
+            demo_module, "search_all_platforms", return_value=(SAMPLE_JOBS, [])
+        ) as mock_search,
     ):
         async with make_client() as client:
             resp = await client.post(
@@ -78,6 +80,12 @@ async def test_demo_job_search_returns_real_shaped_jobs():
     assert len(body["jobs"]) == 2
     assert body["jobs"][0]["title"] == "Backend Engineer"
     assert body["jobs"][0]["url"] == "https://example.com/jobs/1"
+
+    # Must use the genuinely keyless adapter — never "open_apis", which also
+    # calls paid RapidAPI/Adzuna integrations when those keys are configured.
+    # This anonymous, per-IP-capped endpoint must never touch a paid quota.
+    _, kwargs = mock_search.call_args
+    assert kwargs["platforms"] == ["open_apis_keyless"]
 
 
 @pytest.mark.asyncio

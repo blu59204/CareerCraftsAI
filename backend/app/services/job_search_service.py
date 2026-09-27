@@ -60,6 +60,14 @@ def _adapter_open_apis(query: str, location: str, max_results: int) -> list[dict
     return _search_open_job_apis(query, location, max_results)
 
 
+def _adapter_open_apis_keyless(query: str, location: str, max_results: int) -> list[dict]:
+    """Same sources as "open_apis", minus the keyed RapidAPI/Adzuna branches —
+    for callers (the public demo endpoint) that must never touch a paid
+    third-party quota, regardless of what's configured in this environment."""
+    from app.agents.job_search import _search_open_job_apis
+    return _search_open_job_apis(query, location, max_results, keyless_only=True)
+
+
 def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _job_listings_to_dicts
     from app.services.job_platforms_service import scrape_jobs
@@ -102,6 +110,7 @@ def _adapter_presets(query: str, location: str, max_results: int) -> list[dict]:
 
 _ADAPTERS: dict[str, Callable[[str, str, int], list[dict]]] = {
     "open_apis": _adapter_open_apis,
+    "open_apis_keyless": _adapter_open_apis_keyless,
     "jobspy": _adapter_jobspy,
     "ats": _adapter_ats,
     "remoteok": _adapter_remoteok,

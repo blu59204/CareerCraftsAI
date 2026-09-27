@@ -417,6 +417,51 @@ def test_search_open_job_apis_returns_real_shape(monkeypatch):
         assert j.get("platform") in {"remotive", "arbeitnow", "jobicy"}
 
 
+def test_search_open_job_apis_keyless_only_skips_paid_apis_even_when_configured(monkeypatch):
+    """keyless_only=True must skip RapidAPI/Adzuna even when those operator
+    credentials ARE configured — the public demo endpoint depends on this to
+    never spend a paid third-party quota on anonymous traffic."""
+
+    from app.core import config
+
+    monkeypatch.setattr(config.settings, "RAPIDAPI_KEY", "fake-rapidapi-key", raising=False)
+    monkeypatch.setattr(config.settings, "ADZUNA_APP_ID", "fake-app-id", raising=False)
+    monkeypatch.setattr(config.settings, "ADZUNA_APP_KEY", "fake-app-key", raising=False)
+
+    class _Resp:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._data
+
+    requested_urls: list[str] = []
+
+    def fake_get(self, url, **kwargs):
+        requested_urls.append(url)
+        if "remotive" in url:
+            return _Resp({"jobs": []})
+        if "arbeitnow" in url:
+            return _Resp({"data": []})
+        if "jobicy" in url:
+            return _Resp({"jobList": []})
+        # A paid endpoint being hit at all is the failure this test guards against.
+        return _Resp({"data": [{"job_title": "Should never appear"}], "results": []})
+
+    import httpx
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+
+    jobs = _search_open_job_apis("python", "Remote", max_results=10, keyless_only=True)
+
+    assert not any("rapidapi" in url for url in requested_urls)
+    assert not any("adzuna" in url for url in requested_urls)
+    assert not any(j.get("platform") in {"jsearch", "adzuna"} for j in jobs)
+
+
 # -------------------------------------------------------------------
 # Item #4 — POST /jobs/search returns 409 when no model is configured
 # -------------------------------------------------------------------
