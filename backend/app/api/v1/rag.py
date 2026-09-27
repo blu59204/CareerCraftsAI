@@ -1,6 +1,10 @@
 import asyncio
+import io
 import logging
+import os
+import re
 import uuid
+import zipfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -23,6 +27,45 @@ ALLOWED_CONTENT_TYPES = {
 }
 MAX_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 VALID_DOC_TYPES = {"resume", "jd", "cert", "portfolio", "cover_letter"}
+
+_PDF_MAGIC = b"%PDF-"
+_ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+# Signatures that must never pass as "text/plain" regardless of what the
+# client declares — a security review found the caller-declared Content-Type
+# was trusted outright, letting arbitrary bytes in under a false label.
+_BINARY_MAGICS = (
+    _PDF_MAGIC,
+    *_ZIP_MAGICS,
+    b"MZ",  # Windows PE/EXE
+    b"\x7fELF",
+    b"\xff\xd8\xff",  # JPEG
+    b"\x89PNG",
+    b"GIF8",
+)
+
+
+def _sniff_content_type(content: bytes) -> str | None:
+    """Identify the file's real type from its bytes — never trust the client's declared Content-Type."""
+    if content.startswith(_PDF_MAGIC):
+        return "application/pdf"
+    if content.startswith(_ZIP_MAGICS) and zipfile.is_zipfile(io.BytesIO(content)):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if not content.startswith(_BINARY_MAGICS) and b"\x00" not in content[:8192]:
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return "text/plain"
+    return None
+
+
+def _safe_filename(filename: str | None) -> str:
+    """Strip directory components and unsafe characters — a review found
+    the raw client filename (e.g. ``../../etc/passwd.txt``) was stored and
+    echoed back unchanged."""
+    name = os.path.basename((filename or "upload.bin").replace("\\", "/"))
+    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name).strip(" .")
+    return (name or "upload.bin")[:255]
 
 
 class DocumentResponse(BaseModel):
@@ -105,25 +148,36 @@ async def upload_document(
             status_code=400,
             detail=f"Invalid doc_type. Must be one of: {VALID_DOC_TYPES}",
         )
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail="Only PDF, DOCX, and TXT files are supported",
-        )
-
     content = await file.read()
     if len(content) > MAX_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="File too large — max 10 MB")
 
+    # Validate the file's actual bytes, not the client-declared Content-Type
+    # or filename extension — either can claim anything.
+    sniffed_type = _sniff_content_type(content)
+    if sniffed_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail="Only PDF, DOCX, and TXT files are supported",
+        )
+    safe_filename = _safe_filename(file.filename)
+
     storage_path = upload_file(
         str(current_user.id),
-        file.filename or "upload.bin",
+        safe_filename,
         content,
-        file.content_type or "application/octet-stream",
+        sniffed_type,
     )
-    raw_text = extract_text(content, file.filename or "upload.bin")
+    try:
+        raw_text = extract_text(content, safe_filename)
+    except Exception as exc:
+        logger.warning("Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc)
+        raise HTTPException(
+            status_code=422,
+            detail="Could not read this document — it may be corrupted or not a valid file of its declared type.",
+        ) from exc
     upload_warning: str | None = None
-    if (file.filename or "").lower().endswith(".pdf") and len(raw_text.strip()) < 100:
+    if safe_filename.lower().endswith(".pdf") and len(raw_text.strip()) < 100:
         upload_warning = "Scanned or image-only PDF detected — text extraction yielded little content. Re-upload a text-based PDF for best results."
 
     result = await db.execute(
@@ -144,7 +198,7 @@ async def upload_document(
                 {
                     "user_id": str(current_user.id),
                     "doc_type": doc_type,
-                    "filename": file.filename or "",
+                    "filename": safe_filename,
                 },
                 model_settings,
             )
@@ -164,7 +218,7 @@ async def upload_document(
     doc = UserDocument(
         user_id=current_user.id,
         doc_type=doc_type,
-        filename=file.filename or "upload.bin",
+        filename=safe_filename,
         storage_path=storage_path,
         raw_text=raw_text,
         embedded_at=embedded_at,
