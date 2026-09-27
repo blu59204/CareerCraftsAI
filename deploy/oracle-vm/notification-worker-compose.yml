@@ -1,0 +1,39 @@
+# Notification worker (python -m app.notification_worker), running on this
+# same dedicated box as temporal-compose.yml and nango-compose.yml -- it only
+# needs to reach Temporal, which is local here (127.0.0.1:7233), and this
+# box's own spare RAM (per the deploy conversation: 12GB free) easily covers
+# it; the process itself is I/O-bound (DB + one outbound HTTPS call per
+# email), not CPU or memory heavy.
+#
+# Two prerequisites this introduces, neither satisfied by default today --
+# confirm both before `docker compose up`:
+#   1. Postgres reachability: the app's Postgres lives on the MAIN app VM
+#      (deploy/oracle-vm/compose.yml), bound to 127.0.0.1 only. This worker,
+#      running on a different box, needs a private path to it -- e.g. a
+#      WireGuard/Tailscale link between the two VMs, with postgres.conf's
+#      listen_addresses and pg_hba.conf widened to accept only that private
+#      interface (never 0.0.0.0), and the OS firewall on the main VM opened
+#      to only the notification-worker box's private IP on that port. Do NOT
+#      simply rebind Postgres to the public interface.
+#   2. Temporal port 7233 exposure: confirm this box's firewall still only
+#      allows 7233 in from the main VM's IP (per temporal-compose.yml's own
+#      note) -- this compose file doesn't change that, but it's worth
+#      re-checking since this worker is one more process now depending on it
+#      staying correctly scoped, not just the main VM's temporal-worker.
+#
+# DATABASE_URL/REDIS_URL/TEMPORAL_ADDRESS/RESEND_API_KEY all come from
+# notification-worker.env (gitignored, lives only on this box) -- deliberately
+# a separate file from backend.env on the main VM, since its DATABASE_URL
+# points at the main VM's Postgres over the private link above rather than
+# loopback, and it has no use for that VM's other secrets (Clerk, Nango, etc).
+name: careercraft-notification-worker
+services:
+  notification-worker:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/notification-worker.env
+    command: python -m app.notification_worker
+    init: true
+    mem_limit: 512m
+    cpus: 0.5
+    restart: unless-stopped

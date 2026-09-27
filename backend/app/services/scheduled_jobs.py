@@ -97,6 +97,31 @@ async def run_job_search(
 
     if result_state["status"] == "completed":
         emit(payload.run_id, "complete", result_state.get("result") or {})
+        saved_count = (result_state.get("result") or {}).get("saved_count", 0)
+        if saved_count:
+            from app.workflows.starters import start_notification
+
+            # Fire-and-forget on its own workflow: a Temporal-connectivity or
+            # notification-layer failure here must never fail (and retry)
+            # this activity — that would risk creating a duplicate follow-up
+            # draft elsewhere. See NotificationWorkflow for why.
+            try:
+                await start_notification(
+                    uuid.UUID(payload.user_id),
+                    type="job_matches",
+                    title=(
+                        f"Job Agent found {saved_count} new "
+                        f"match{'es' if saved_count != 1 else ''}"
+                    ),
+                    body=f'Search: "{payload.search_query}" in {payload.location}',
+                    link="/jobs",
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to start notification workflow for run %s",
+                    payload.run_id,
+                    exc_info=True,
+                )
     elif result_state["status"] == "awaiting_approval":
         emit(payload.run_id, "checkpoint", result_state.get("pending_action") or {})
     else:
@@ -226,6 +251,26 @@ async def run_followup(
         await db.commit()
 
     emit(str(run.id), "checkpoint", run.output)
+
+    from app.workflows.starters import start_notification
+
+    # Same reasoning as run_job_search above: this must never retry the
+    # follow-up draft above just because the notification layer failed.
+    try:
+        await start_notification(
+            uuid.UUID(payload.user_id),
+            type="followup_ready",
+            title="Follow-up email draft ready for review",
+            body=f"{application.company} — {application.role}",
+            link=f"/agents/{run.id}",
+        )
+    except Exception:
+        logger.warning(
+            "Failed to start notification workflow for application %s",
+            payload.application_id,
+            exc_info=True,
+        )
+
     logger.info(
         "Follow-up day-%d drafted for application %s user %s — awaiting approval (run %s)",
         payload.day,

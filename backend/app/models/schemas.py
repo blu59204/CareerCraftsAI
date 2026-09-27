@@ -56,6 +56,13 @@ class UserPreferencesSchema(BaseModel):
     # streamed to the UI.  When False (default), the headless job-board
     # API waterfall runs.  Always overridable per-request.
     prefer_live_browser: bool = False
+    # Optional (not plain bool with a default) so a client can PATCH other
+    # preference fields without silently resetting one of these to its
+    # schema default — omitted means "leave the stored value alone".
+    notify_email: bool | None = None
+    notify_agent_alerts: bool | None = None
+    notify_followup_reminders: bool | None = None
+    notify_weekly_digest: bool | None = None
 
 
 class UserPreferencesResponse(UserPreferencesSchema):
@@ -63,6 +70,23 @@ class UserPreferencesResponse(UserPreferencesSchema):
     user_id: uuid.UUID
 
     model_config = {"from_attributes": True}
+
+
+class NotificationResponse(BaseModel):
+    id: uuid.UUID
+    type: str
+    title: str
+    body: str | None = None
+    link: str | None = None
+    read: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationListResponse(BaseModel):
+    notifications: list[NotificationResponse]
+    unread_count: int
 
 
 def _ollama_allowlist() -> set[tuple[str, int]]:

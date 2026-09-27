@@ -2,8 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { Bell, Search, CheckCircle, Briefcase, Mail, Calendar, Menu, X } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Bell, Search, CheckCircle, Briefcase, Mail, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const UserMenu = dynamic(
@@ -11,42 +13,60 @@ const UserMenu = dynamic(
   { ssr: false },
 );
 
-const NOTIFICATIONS = [
-  {
-    id: "1",
-    icon: Briefcase,
-    title: "Job Agent found 3 new matches",
-    time: "2m ago",
-    read: false,
-  },
-  {
-    id: "2",
-    icon: Mail,
-    title: "Follow-up email draft ready for review",
-    time: "1h ago",
-    read: false,
-  },
-  {
-    id: "3",
-    icon: Calendar,
-    title: "Interview scheduled — BetaCorp tomorrow",
-    time: "3h ago",
-    read: true,
-  },
-  {
-    id: "4",
-    icon: CheckCircle,
-    title: "Resume optimization complete",
-    time: "Yesterday",
-    read: true,
-  },
-];
+type Notification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  read: boolean;
+  created_at: string;
+};
+
+type NotificationListResponse = {
+  notifications: Notification[];
+  unread_count: number;
+};
+
+const TYPE_ICON: Record<string, typeof Bell> = {
+  job_matches: Briefcase,
+  followup_ready: Mail,
+};
+
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  return `${days}d ago`;
+}
 
 export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [notifications, setNotifications] = useState(NOTIFICATIONS);
   const notifRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+
+  const { data } = useQuery<NotificationListResponse>({
+    queryKey: ["notifications"],
+    queryFn: async () => (await apiClient.get("/notifications")).data,
+    refetchInterval: 30_000,
+  });
+  const notifications = data?.notifications ?? [];
+  const unreadCount = data?.unread_count ?? 0;
+
+  const markRead = useMutation({
+    mutationFn: async (id: string) => apiClient.patch(`/notifications/${id}/read`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
+  const markAllRead = useMutation({
+    mutationFn: async () => apiClient.post("/notifications/read-all"),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+  });
 
   useEffect(() => {
     if (!notifOpen) return;
@@ -58,11 +78,6 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [notifOpen]);
-
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
-  const markAllRead = () =>
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
 
   return (
     <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-2 overflow-visible rounded-full px-4 sm:gap-4 md:mx-6">
@@ -146,7 +161,7 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
                 <span className="text-sm font-semibold">Notifications</span>
                 {unreadCount > 0 && (
                   <button
-                    onClick={markAllRead}
+                    onClick={() => markAllRead.mutate()}
                     className="text-xs text-primary hover:underline"
                   >
                     Mark all read
@@ -155,15 +170,14 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
               </div>
               <div className="max-h-72 overflow-y-auto">
                 {notifications.map((n) => {
-                  const Icon = n.icon;
+                  const Icon = TYPE_ICON[n.type] ?? CheckCircle;
                   return (
-                    <div
+                    <a
                       key={n.id}
-                      onClick={() =>
-                        setNotifications((prev) =>
-                          prev.map((x) => (x.id === n.id ? { ...x, read: true } : x))
-                        )
-                      }
+                      href={n.link ?? undefined}
+                      onClick={() => {
+                        if (!n.read) markRead.mutate(n.id);
+                      }}
                       className={cn(
                         "flex cursor-pointer items-start gap-3 px-4 py-3 transition-colors hover:bg-secondary",
                         !n.read && "bg-primary/5"
@@ -181,12 +195,14 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
                         <p className={cn("text-xs leading-snug", !n.read && "font-medium")}>
                           {n.title}
                         </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{n.time}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {relativeTime(n.created_at)}
+                        </p>
                       </div>
                       {!n.read && (
                         <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" />
                       )}
-                    </div>
+                    </a>
                   );
                 })}
                 {notifications.length === 0 && (

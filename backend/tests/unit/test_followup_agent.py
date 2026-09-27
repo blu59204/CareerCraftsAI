@@ -101,7 +101,10 @@ class _FakeSingleResult:
 class _FakeFollowupSession:
     """Minimal AsyncSession stand-in: every execute() returns the one
     application row; with_for_update()/where() chains are irrelevant here
-    since the fake ignores the statement entirely."""
+    since the fake ignores the statement entirely — except a
+    UserPreferences select, which must not come back as the application
+    stand-in (kept defensive even though notification creation now runs
+    entirely outside this session, via a mocked start_notification)."""
 
     def __init__(self, application):
         self.application = application
@@ -109,6 +112,11 @@ class _FakeFollowupSession:
         self.commits = 0
 
     async def execute(self, stmt):
+        from app.models.db import UserPreferences
+
+        descriptions = getattr(stmt, "column_descriptions", None) or []
+        if descriptions and descriptions[0].get("entity") is UserPreferences:
+            return _FakeSingleResult(None)
         return _FakeSingleResult(self.application)
 
     def add(self, obj):
@@ -116,6 +124,9 @@ class _FakeFollowupSession:
 
     async def commit(self):
         self.commits += 1
+
+    async def flush(self):
+        pass
 
 
 class _FakeFollowupSessionLocal:
@@ -149,6 +160,7 @@ def _make_application(applied_at=None, status="applied"):
 async def test_run_followup_due_with_no_reply_creates_draft_checkpoint_not_send():
     """A due follow-up with no recruiter reply must produce a draft awaiting
     approval — never send anything itself."""
+    from app.models.db import AgentRun
     from app.services.scheduled_jobs import FollowupTrigger, run_followup
 
     application = _make_application()
@@ -166,6 +178,13 @@ async def test_run_followup_due_with_no_reply_creates_draft_checkpoint_not_send(
             return_value={"subject": "Checking in", "body": "Hi there"},
         ),
         patch("app.services.scheduled_jobs.emit") as mock_emit,
+        # A drafted follow-up starts its own NotificationWorkflow, entirely
+        # outside this activity's session/retry scope — see
+        # NotificationWorkflow for why. Assert it was asked for, not that it
+        # ran against this test's fake session.
+        patch(
+            "app.workflows.starters.start_notification", AsyncMock(return_value="notification/1")
+        ) as mock_start_notification,
     ):
         result = await run_followup(
             FollowupTrigger(
@@ -176,14 +195,18 @@ async def test_run_followup_due_with_no_reply_creates_draft_checkpoint_not_send(
         )
 
     assert result["status"] == "awaiting_approval"
-    assert session.commits == 1
+    assert session.commits == 1  # only the AgentRun draft commit
     assert len(session.added) == 1
     run = session.added[0]
+    assert isinstance(run, AgentRun)
     assert run.status == "awaiting_approval"
     assert run.output["type"] == "send_email"
     assert run.output["recipient"] == "hr@acme.com"
     assert run.output["subject"] == "Checking in"
     assert run.output["body"] == "Hi there"
+    mock_start_notification.assert_called_once()
+    assert mock_start_notification.call_args.kwargs["type"] == "followup_ready"
+    assert mock_start_notification.call_args.args[0] == application.user_id
     mock_emit.assert_called_once()
     emitted_event = mock_emit.call_args.args[1]
     assert emitted_event == "checkpoint"

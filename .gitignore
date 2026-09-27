@@ -24,6 +24,9 @@ dist/
 # Docker
 *.log
 
+# Redis (local/manual runs dump their snapshot into the CWD)
+*.rdb
+
 # OS
 .DS_Store
 Thumbs.db
