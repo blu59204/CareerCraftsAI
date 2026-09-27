@@ -185,9 +185,10 @@ def test_approve_endpoint_rejects_other_users_run():
     from app.api.v1 import agents
 
     source = inspect.getsource(agents.approve_or_cancel)
-    assert (
-        "AgentRun.user_id == current_user.id" in source
-    ), "approve_or_cancel MUST filter by current_user.id — without this, any user can approve any run"
+    assert "AgentRun.user_id == current_user.id" in source, (
+        "approve_or_cancel MUST filter by current_user.id — "
+        "without this, any user can approve any run"
+    )
 
 
 # ---------------------------------------------------------------------------
