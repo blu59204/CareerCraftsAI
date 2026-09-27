@@ -1,5 +1,10 @@
 import axios from "axios";
+import { toast } from "sonner";
 import { getClerkAuthToken } from "@/lib/clerk-token";
+
+// Debounce the toast itself — a burst of concurrent requests hitting the same
+// limit would otherwise stack a toast per request instead of showing one.
+let lastRateLimitToastAt = 0;
 
 const configuredUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 export const API_BASE_URL = configuredUrl.endsWith("/api/v1") ? configuredUrl : `${configuredUrl}/api/v1`;
@@ -42,6 +47,21 @@ apiClient.interceptors.response.use(
         `API ${config?.method?.toUpperCase?.() ?? "?"} ${config?.url ?? "?"} -> ${response.status}`,
         response.data?.detail ?? response.data,
       );
+
+      // The backend rate-limits per user/IP but previously gave no visible
+      // feedback at all — a 429 just failed silently. Surface it once per
+      // 5s window rather than a stacked toast per request in the burst.
+      if (response.status === 429) {
+        const now = Date.now();
+        if (now - lastRateLimitToastAt > 5_000) {
+          lastRateLimitToastAt = now;
+          const retryAfter = Number(response.headers?.["retry-after"]);
+          const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? ` Try again in ${retryAfter}s.` : "";
+          toast.error(`You're doing that too much.${wait}`, {
+            description: "Please slow down and try again shortly.",
+          });
+        }
+      }
     }
     return Promise.reject(error);
   }
