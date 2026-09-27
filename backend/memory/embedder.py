@@ -115,10 +115,20 @@ class MemoryEmbedder:
         return resp.data[0].embedding
 
     async def _google_embed(self, text: str) -> list[float]:
+        # google.generativeai is a synchronous SDK (blocking network call, no
+        # timeout) — this backend runs as a single Uvicorn worker, so calling
+        # it directly inside this async method froze every request on the
+        # process (including health checks) until it returned or hung.
+        # to_thread keeps the blocking call off the event loop.
+        import asyncio
+
         import google.generativeai as genai
 
-        genai.configure(api_key=self.api_key)
-        result = genai.embed_content(model="models/embedding-001", content=text)
+        def _call() -> dict:
+            genai.configure(api_key=self.api_key)
+            return genai.embed_content(model="models/embedding-001", content=text)
+
+        result = await asyncio.to_thread(_call)
         return result["embedding"]
 
     async def _ollama_embed(self, text: str) -> list[float]:
