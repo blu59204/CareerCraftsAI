@@ -38,6 +38,13 @@ interface ToggleProps {
   onToggle: () => void;
 }
 
+interface NotificationPreferences {
+  notify_email: boolean;
+  notify_agent_alerts: boolean;
+  notify_followup_reminders: boolean;
+  notify_weekly_digest: boolean;
+}
+
 function Toggle({ enabled, onToggle }: ToggleProps) {
   return (
     <button
@@ -115,10 +122,29 @@ export default function AccountSettingsPage() {
   const { refresh: refreshUserStatus } = useUserStatus();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [deletionActionPending, setDeletionActionPending] = useState(false);
-  const [emailNotifs, setEmailNotifs] = useState(true);
-  const [agentAlerts, setAgentAlerts] = useState(true);
-  const [followUpReminders, setFollowUpReminders] = useState(true);
-  const [weeklyDigest, setWeeklyDigest] = useState(false);
+  const { data: notifyPrefs } = useQuery<NotificationPreferences>({
+    queryKey: ["preferences"],
+    queryFn: async () => (await apiClient.get("/users/me/preferences")).data ?? {},
+  });
+  const emailNotifs = notifyPrefs?.notify_email ?? true;
+  const agentAlerts = notifyPrefs?.notify_agent_alerts ?? true;
+  const followUpReminders = notifyPrefs?.notify_followup_reminders ?? true;
+  const weeklyDigest = notifyPrefs?.notify_weekly_digest ?? false;
+  const saveNotifyPrefs = useMutation({
+    mutationFn: async (payload: NotificationPreferences) =>
+      apiClient.patch("/users/me/preferences", payload),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["preferences"] }),
+    onError: () => toast.error("Couldn't save notification preferences"),
+  });
+  const toggleNotifyPref = (key: keyof NotificationPreferences) => {
+    const current: NotificationPreferences = {
+      notify_email: emailNotifs,
+      notify_agent_alerts: agentAlerts,
+      notify_followup_reminders: followUpReminders,
+      notify_weekly_digest: weeklyDigest,
+    };
+    saveNotifyPrefs.mutate({ ...current, [key]: !current[key] });
+  };
   const [twoFactor, setTwoFactor] = useState(false);
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [presetPickerOpen, setPresetPickerOpen] = useState(false);
@@ -752,10 +778,10 @@ export default function AccountSettingsPage() {
             <div className="text-sm font-medium">Notification preferences</div>
 
             {[
-              { label: "Email notifications", sub: "Receive updates via email", enabled: emailNotifs, toggle: () => setEmailNotifs((v) => !v) },
-              { label: "Agent completion alerts", sub: "Notify when agents finish running", enabled: agentAlerts, toggle: () => setAgentAlerts((v) => !v) },
-              { label: "Follow-up reminders", sub: "Reminders to follow up with leads", enabled: followUpReminders, toggle: () => setFollowUpReminders((v) => !v) },
-              { label: "Weekly digest", sub: "A weekly summary of your activity", enabled: weeklyDigest, toggle: () => setWeeklyDigest((v) => !v) },
+              { label: "Email notifications", sub: "Receive updates via email", enabled: emailNotifs, toggle: () => toggleNotifyPref("notify_email") },
+              { label: "Agent completion alerts", sub: "Notify when agents finish running", enabled: agentAlerts, toggle: () => toggleNotifyPref("notify_agent_alerts") },
+              { label: "Follow-up reminders", sub: "Reminders to follow up with leads", enabled: followUpReminders, toggle: () => toggleNotifyPref("notify_followup_reminders") },
+              { label: "Weekly digest", sub: "A weekly summary of your activity", enabled: weeklyDigest, toggle: () => toggleNotifyPref("notify_weekly_digest") },
             ].map((item) => (
               <div key={item.label} className="flex items-center justify-between gap-4">
                 <div>

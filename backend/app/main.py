@@ -21,12 +21,13 @@ from app.api.v1 import (
     cover_letter,
     email,
     extension,
+    integrations,
     interview,
     interview_prep,
-    integrations,
     jobs,
     leads,
     linkedin,
+    notifications,
     rag,
     resume,
     salary,
@@ -228,6 +229,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
 app.include_router(resume.router, prefix="/api/v1")
 app.include_router(jobs.router, prefix="/api/v1")
@@ -264,8 +266,9 @@ async def health():
     redis_ok = await check_redis_connection()
     pgvector_ok = False
     try:
-        from app.core.database import engine
         from sqlalchemy import text
+
+        from app.core.database import engine
 
         async with engine.begin() as conn:
             result = await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
