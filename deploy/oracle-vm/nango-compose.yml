@@ -9,7 +9,7 @@ services:
   nango-db:
     image: postgres:16.0-alpine
     network_mode: host
-    # Loopback-only, like the app's own postgres in ../oracle/compose.yml --
+    # Loopback-only, like the app's own postgres in ../oracle-vm/compose.yml --
     # only nango-server on this same host needs to reach it.
     command: postgres -p 19132 -c listen_addresses=127.0.0.1
     env_file: /opt/careercraft-secrets/nango.env

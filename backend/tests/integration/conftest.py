@@ -16,6 +16,7 @@ Every test that uses ``test_model_settings`` is skipped (not failed) when no
 provider is configured, so plain ``pytest tests/integration`` stays green.
 The key is only ever held in memory and, AES-256-GCM encrypted, in the test DB.
 """
+
 from __future__ import annotations
 
 import os
@@ -40,7 +41,9 @@ def llm_config() -> LLMConfig:
     provider = os.environ.get("INTEGRATION_LLM_PROVIDER", "").strip().lower()
     api_key = os.environ.get("INTEGRATION_LLM_API_KEY") or None
     if not provider or (provider != "ollama" and not api_key):
-        pytest.skip("Set INTEGRATION_LLM_PROVIDER and INTEGRATION_LLM_API_KEY to run LLM-backed tests")
+        pytest.skip(
+            "Set INTEGRATION_LLM_PROVIDER and INTEGRATION_LLM_API_KEY to run LLM-backed tests"
+        )
     return LLMConfig(
         provider=provider,
         model=os.environ.get("INTEGRATION_LLM_MODEL", ""),
@@ -94,7 +97,9 @@ def test_model_settings(test_db, test_user, llm_config):
             provider=llm_config.provider,
             model_name=llm_config.model or None,
             api_key_enc=(
-                encrypt_api_key(llm_config.api_key, settings.APP_SECRET_KEY) if llm_config.api_key else None
+                encrypt_api_key(llm_config.api_key, settings.APP_SECRET_KEY)
+                if llm_config.api_key
+                else None
             ),
             ollama_url=llm_config.ollama_url,
             is_active=True,

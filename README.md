@@ -238,11 +238,11 @@ NANGO_SECRET_KEY=<Nango secret — enables Gmail/Drive integrations>
 
 ### 2. Run database migrations
 
-The SQL files in `supabase/migrations/` are plain PostgreSQL (the directory name is historical). Apply `deploy/oracle/postgres-bootstrap.sql` once first — it creates the roles and `auth.*` helper functions the migrations reference — then every migration in filename order:
+The SQL files in `supabase/migrations/` are plain PostgreSQL (the directory name is historical). Apply `deploy/oracle-vm/postgres-bootstrap.sql` once first — it creates the roles and `auth.*` helper functions the migrations reference — then every migration in filename order:
 
 ```bash
 PGURL=postgresql://user:password@host:5432/dbname   # libpq form, not +asyncpg
-psql "$PGURL" -f deploy/oracle/postgres-bootstrap.sql
+psql "$PGURL" -f deploy/oracle-vm/postgres-bootstrap.sql
 for f in supabase/migrations/*.sql; do psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"; done
 ```
 
@@ -442,11 +442,10 @@ CareerCraftsAI/
 │   └── src/content/                      # DOM helpers, review panel, platform drivers
 ├── deploy/laya/                           # Self-hosted "System One" decision server (Jev alternative)
 ├── supabase/migrations/                  # 37 SQL migrations (plain PostgreSQL)
-├── deploy/oracle/                        # Single-VM Compose stack, Nginx, Postgres bootstrap
+├── deploy/oracle-vm/                        # The actual production stack — self-hosted Postgres/Nginx, Compose
 ├── scripts/run_e2e_tests.sh              # Live end-to-end runner with preflight checks
-├── nginx/nginx.conf                      # TLS + security headers
-├── docker-compose.yml                    # Production stack (backend, temporal-worker, Temporal, Redis, frontend, nginx)
-├── docker-compose.dev.yml                # Dev stack (hot reload)
+├── docker-compose.dev.yml                # Local dev stack (hot reload)
+├── docker-compose.test.yml               # Disposable CI integration-test infra (no prod creds/volumes)
 ├── Makefile                              # Top-level dev commands
 └── locustfile.py                         # Load test baseline
 ```
@@ -601,11 +600,11 @@ docker compose ps
 curl https://yourdomain.com/health  # → {"status":"ok"}
 ```
 
-For a single small VM, `deploy/oracle/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway, and the OpenSandbox server (`server_browser` apply mode only). The Temporal server itself is a separate stack, `deploy/oracle/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
+For a single small VM, `deploy/oracle-vm/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway, and the OpenSandbox server (`server_browser` apply mode only). The Temporal server itself is a separate stack, `deploy/oracle-vm/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
 
 ### 3. Run migrations
 
-Apply `deploy/oracle/postgres-bootstrap.sql` and then `supabase/migrations/*.sql` in order, as in [Quick Start step 2](#2-run-database-migrations). The Oracle Compose stack runs the bootstrap automatically on first start.
+Apply `deploy/oracle-vm/postgres-bootstrap.sql` and then `supabase/migrations/*.sql` in order, as in [Quick Start step 2](#2-run-database-migrations). The Oracle Compose stack runs the bootstrap automatically on first start.
 
 ### 4. Configure GitHub Actions secrets
 

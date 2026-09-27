@@ -1,7 +1,7 @@
 """
-Load test baseline for JobAgent AI API.
+Load test baseline for CareerCraft AI's API.
 Run: locust --host=http://localhost:8000 --users=20 --spawn-rate=4 --run-time=30s --headless
-Requires LOAD_TEST_TOKEN env var set to a valid Supabase access token.
+Requires LOAD_TEST_TOKEN env var set to a valid Clerk session token.
 """
 import os
 from locust import HttpUser, task, between

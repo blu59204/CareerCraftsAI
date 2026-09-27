@@ -9,7 +9,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.sync_db import _get_sync_factory, fetch_user_profile_text
-from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
+from app.services.browser_control_service import (
+    run_browser_task_with_captcha_retry as run_browser_task,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class UserFormProfile:
     """All data needed to fill any job application form."""
+
     full_name: str = ""
     first_name: str = ""
     last_name: str = ""
@@ -54,9 +57,13 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
         if user_uuid:
             criteria = (User.id == user_uuid) | criteria
         user = db.execute(select(User).where(criteria)).scalars().first()
-        prefs = db.execute(
-            select(UserPreferences).where(UserPreferences.user_id == user.id)
-        ).scalars().first() if user else None
+        prefs = (
+            db.execute(select(UserPreferences).where(UserPreferences.user_id == user.id))
+            .scalars()
+            .first()
+            if user
+            else None
+        )
 
     resume_text = fetch_user_profile_text(user_id)
     full_name = user.full_name or "" if user else ""
@@ -64,7 +71,9 @@ def build_user_form_profile(user_id: str) -> UserFormProfile:
 
     # Map experience level to years
     exp_level = prefs.experience_level or "" if prefs else ""
-    experience_years = str(prefs.years_experience) if prefs and prefs.years_experience is not None else ""
+    experience_years = (
+        str(prefs.years_experience) if prefs and prefs.years_experience is not None else ""
+    )
 
     return UserFormProfile(
         full_name=full_name,
@@ -154,9 +163,10 @@ def generate_form_answers(
     context = _build_profile_context(profile, job_description)
     fields_text = "\n".join(f"- {f}" for f in form_fields)
 
-    response = llm.invoke([
-        SystemMessage(content=FORM_FILLER_SYSTEM),
-        HumanMessage(content=f"""{context}
+    response = llm.invoke(
+        [
+            SystemMessage(content=FORM_FILLER_SYSTEM),
+            HumanMessage(content=f"""{context}
 
 FORM FIELDS TO FILL:
 {fields_text}
@@ -166,7 +176,8 @@ FIELD: <field label>
 ANSWER: <your answer>
 
 Fill ALL fields listed above."""),
-    ])
+        ]
+    )
 
     # Parse response into dict
     answers = {}
@@ -209,7 +220,9 @@ async def fill_and_submit_form(
         if relevant:
             learning_hint = (
                 "\n\nPAST FORM-FILLING EXPERIENCE (from previous runs):\n"
-                + "\n".join(f"- {l.replace('portal:', '').replace(':', ' → ')}" for l in relevant[:8])
+                + "\n".join(
+                    f"- {l.replace('portal:', '').replace(':', ' → ')}" for l in relevant[:8]
+                )
                 + "\nUse this to adapt: if a portal is marked 'requires_manual', stop early and report REQUIRES_MANUAL."
             )
 
