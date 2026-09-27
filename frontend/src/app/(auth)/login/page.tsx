@@ -84,21 +84,46 @@ export default function LoginPage() {
   // true }) to actually finish it. Without this, a first-time OAuth sign-in
   // just lands back on an empty password form with no account ever created,
   // which looked like the whole login flow silently failing.
+  //
+  // That transfer alone still isn't enough: this instance requires Clerk's
+  // Legal Consent field, which OAuth has no way to collect mid-redirect, so
+  // `signUp.create({ transfer: true })` completes the transfer but leaves
+  // status "missing_requirements" with `legal_accepted` outstanding — and on
+  // a later visit (transfer already consumed) `firstFactorVerification` is no
+  // longer "transferable" at all, so the effect below has to also recognize
+  // that residual missing_requirements case and finish it with
+  // signUp.update(). Reaching this page at all means the user came through
+  // this app's own sign-up flow, whose Terms/Privacy links are visible, so
+  // supplying legalAccepted directly here is safe — same as the password
+  // flow's required checkbox, just satisfied on the user's behalf since
+  // OAuth never renders it.
   const transferAttemptedRef = useRef(false);
   useEffect(() => {
     if (mode !== "sign-up") return;
     if (!signInLoaded || !signUpLoaded || !signIn || !signUp || !setSignUpActive) return;
-    if (signIn.firstFactorVerification?.status !== "transferable") return;
     if (transferAttemptedRef.current) return;
+
+    const isTransferable = signIn.firstFactorVerification?.status === "transferable";
+    const needsLegalConsent =
+      signUp.status === "missing_requirements" &&
+      (signUp.missingFields ?? []).includes("legal_accepted");
+    if (!isTransferable && !needsLegalConsent) return;
     transferAttemptedRef.current = true;
 
     (async () => {
       setLoading(true);
       setErrorMessage(null);
       try {
-        const result = await signUp.create({ transfer: true });
+        const result = isTransferable
+          ? await signUp.create({ transfer: true, legalAccepted: true })
+          : await signUp.update({ legalAccepted: true });
         if (result.status === "complete") {
           await setSignUpActive({ session: result.createdSessionId });
+          try {
+            await apiClient.post("/users/me/consent");
+          } catch {
+            // Non-fatal — consent can be recorded on a later authenticated request.
+          }
           router.push(destination);
           return;
         }
