@@ -1,4 +1,12 @@
-export const metadata = { title: "Cookie Policy — CareerCraft AI" };
+import type { Metadata } from "next";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+
+export const metadata: Metadata = {
+  title: "Cookie Policy",
+  description:
+    "What cookies CareerCraft AI actually sets (just one: the sign-in session cookie) and why no consent banner is required for it.",
+  alternates: { canonical: "/cookies" },
+};
 
 const COOKIES = [
   {
@@ -12,6 +20,7 @@ const COOKIES = [
 export default function CookiesPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
+      <Breadcrumbs trail={[{ name: "Cookie Policy", href: "/cookies" }]} />
       <div className="mb-3 text-sm font-medium text-primary">Legal</div>
       <h1 className="text-4xl font-medium">Cookie Policy</h1>
       <p className="mt-2 text-sm text-muted-foreground">Last updated: September 26, 2026</p>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { DM_Sans, Instrument_Serif, Playfair_Display, Outfit } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Providers } from "@/components/layout/Providers";
+import { JsonLd } from "@/components/seo/JsonLd";
 import "./globals.css";
 
 // Inter was downloaded on every page load but never used: it sat only as a
@@ -38,9 +39,53 @@ const outfit = Outfit({
   display: "swap",
 });
 
+const SITE_URL = "https://careercraftsai.me";
+const SITE_NAME = "CareerCraft AI";
+const SITE_DESCRIPTION =
+  "AI job-search copilot for students and freshers. Tailor resumes, match jobs, and follow up — automatically.";
+const DEFAULT_TITLE = "CareerCraft AI — Apply smarter. Tailor faster.";
+
 export const metadata: Metadata = {
-  title: "CareerCraft AI — Apply smarter. Tailor faster.",
-  description: "AI job-search copilot for students and freshers.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: DEFAULT_TITLE,
+    template: `%s — ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: SITE_NAME,
+    url: SITE_URL,
+    title: DEFAULT_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: DEFAULT_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+};
+
+// Omits `address` and `sameAs` — no public street address exists yet (see
+// the Privacy Policy's contact section) and no verified social profiles
+// exist either. Fabricating either would be worse than leaving them out.
+const ORGANIZATION_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: SITE_NAME,
+  url: SITE_URL,
+  logo: `${SITE_URL}/icon.svg`,
+  description: SITE_DESCRIPTION,
+};
+
+const WEBSITE_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: SITE_NAME,
+  url: SITE_URL,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -51,6 +96,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <ClerkProvider signInUrl="/login" signUpUrl="/login">
       <html lang="en" className={`${dmSans.variable} ${instrumentSerif.variable} ${playfair.variable} ${outfit.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased">
+          <JsonLd data={ORGANIZATION_JSON_LD} />
+          <JsonLd data={WEBSITE_JSON_LD} />
           <Providers>{children}</Providers>
         </body>
       </html>
