@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 // `@clerk/nextjs/legacy` exposes the classic custom-flow hooks
 // ({ isLoaded, signIn, setActive }). Nothing here renders Clerk UI.
 import { useSignIn, useSignUp } from "@clerk/nextjs/legacy";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useSession } from "@clerk/nextjs";
 import type { OAuthStrategy } from "@clerk/nextjs/types";
 import {
   SignInPage,
@@ -44,6 +44,7 @@ function describeError(err: unknown): string {
 export default function LoginPage() {
   const router = useRouter();
   const { isLoaded: authLoaded, isSignedIn } = useAuth();
+  const { session } = useSession();
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
 
@@ -70,11 +71,22 @@ export default function LoginPage() {
   // Already signed in — don't show the sign-in/sign-up form at all, send them
   // straight to the app instead of making them look at a login page they
   // can't usefully use.
+  //
+  // A session can also exist but be merely "pending" (Clerk session tasks,
+  // e.g. instance-required MFA enrollment) — isSignedIn is false in that
+  // state, so without this check the user fell through to the sign-in form,
+  // where every signIn/signUp call fails with "You're already signed in"
+  // and they're stuck. Route pending sessions to /session-task instead.
   useEffect(() => {
-    if (authLoaded && isSignedIn) {
+    if (!authLoaded) return;
+    if (session?.currentTask) {
+      router.replace("/session-task");
+      return;
+    }
+    if (isSignedIn) {
       router.replace(destination);
     }
-  }, [authLoaded, isSignedIn, destination, router]);
+  }, [authLoaded, isSignedIn, session, destination, router]);
 
   // OAuth "account transfer": /sso-callback sends a brand-new Google/GitHub/
   // LinkedIn identity (no matching CareerCraft account) here via
@@ -349,7 +361,7 @@ export default function LoginPage() {
 
   // Keep the form hidden until we know for sure this visitor is signed out —
   // avoids a flash of the sign-in form for someone who's about to be redirected.
-  if (!authLoaded || isSignedIn) {
+  if (!authLoaded || isSignedIn || session?.currentTask) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
