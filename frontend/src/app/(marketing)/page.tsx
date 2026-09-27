@@ -2,6 +2,7 @@ import { HeroA } from "@/components/marketing/HeroA";
 import { MarqueeRow } from "@/components/marketing/MarqueeRow";
 import { HeroB } from "@/components/marketing/HeroB";
 import { HowItWorks } from "@/components/marketing/HowItWorks";
+import { DemoSection } from "@/components/marketing/DemoSection";
 import { FeaturesGrid } from "@/components/marketing/FeaturesGrid";
 import { PricingSection } from "@/components/marketing/PricingSection";
 import { FaqAccordion } from "@/components/marketing/FaqAccordion";
@@ -23,6 +24,7 @@ export default function Home() {
       <MarqueeRow items={CHIPS} doubleRow />
       <HeroB />
       <HowItWorks />
+      <DemoSection />
       <FeaturesGrid />
       <PricingSection />
       <section className="bg-muted/30 py-20">

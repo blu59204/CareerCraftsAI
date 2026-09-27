@@ -1545,11 +1545,18 @@ def _search_via_search_presets(query: str, location: str, max_results: int) -> l
 
 
 
-def _search_open_job_apis(query: str, location: str, max_results: int) -> list[dict]:
+def _search_open_job_apis(
+    query: str, location: str, max_results: int, keyless_only: bool = False
+) -> list[dict]:
     """Real job listings from free, key-less JSON APIs (Remotive, Arbeitnow, Jobicy).
 
     Every returned job carries a real `job_url` apply link. Reliable and fast —
     no scraping, no rate-limited search engines. This is the primary source.
+
+    Set ``keyless_only=True`` to unconditionally skip the keyed RapidAPI/Adzuna
+    branches below even when those credentials are configured — used by the
+    public, unauthenticated demo endpoint so anonymous traffic can never
+    consume the operator's paid third-party API quota.
     """
     jobs: list[dict] = []
     q = (query or "").strip()
@@ -1566,7 +1573,7 @@ def _search_open_job_apis(query: str, location: str, max_results: int) -> list[d
                       headers={"User-Agent": "Mozilla/5.0 (CareerCraft)"}) as client:
         # 0a) JSearch (RapidAPI) — aggregates Google for Jobs / LinkedIn / Indeed /
         # Naukri. Best coverage incl. India. Real apply links. Used when key is set.
-        if app_settings.RAPIDAPI_KEY:
+        if not keyless_only and app_settings.RAPIDAPI_KEY:
             try:
                 jq = q or first_term
                 if location and location.lower() != "any":
@@ -1595,7 +1602,7 @@ def _search_open_job_apis(query: str, location: str, max_results: int) -> list[d
                 logger.warning("JSearch API failed: %s", exc)
 
         # 0b) Adzuna — free key, strong India coverage. Country code in path.
-        if app_settings.ADZUNA_APP_ID and app_settings.ADZUNA_APP_KEY:
+        if not keyless_only and app_settings.ADZUNA_APP_ID and app_settings.ADZUNA_APP_KEY:
             try:
                 country = "in" if (location or "").lower() in ("", "any", "india") else "gb"
                 r = client.get(

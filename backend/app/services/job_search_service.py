@@ -12,8 +12,16 @@ PLATFORM_TIMEOUT_SEC = 25
 
 # Canonical normalized job keys returned to agents.
 JOB_KEYS = (
-    "job_id", "title", "company", "location", "remote", "salary_text",
-    "url", "platform", "posted_at", "description",
+    "job_id",
+    "title",
+    "company",
+    "location",
+    "remote",
+    "salary_text",
+    "url",
+    "platform",
+    "posted_at",
+    "description",
 )
 
 
@@ -55,14 +63,26 @@ def _dedupe(jobs: list[dict]) -> list[dict]:
 
 # ── Platform adapters (all sync, run in threads; lazy imports avoid cycles) ──
 
+
 def _adapter_open_apis(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _search_open_job_apis
+
     return _search_open_job_apis(query, location, max_results)
+
+
+def _adapter_open_apis_keyless(query: str, location: str, max_results: int) -> list[dict]:
+    """Same sources as "open_apis", minus the keyed RapidAPI/Adzuna branches —
+    for callers (the public demo endpoint) that must never touch a paid
+    third-party quota, regardless of what's configured in this environment."""
+    from app.agents.job_search import _search_open_job_apis
+
+    return _search_open_job_apis(query, location, max_results, keyless_only=True)
 
 
 def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _job_listings_to_dicts
     from app.services.job_platforms_service import scrape_jobs
+
     # Left at its default, scrape_jobs hits all 8 JobSpy-supported sites
     # (including glassdoor/zip_recruiter/bayt/naukri, which reliably 403/406
     # from this network) sequentially inside PLATFORM_TIMEOUT_SEC — burning
@@ -71,25 +91,31 @@ def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
     # Restrict to the two sites that actually return results here.
     return _job_listings_to_dicts(
         scrape_jobs(
-            search_term=query, location=location, results_wanted=max_results,
-            hours_old=72, platforms=["linkedin", "indeed"],
+            search_term=query,
+            location=location,
+            results_wanted=max_results,
+            hours_old=72,
+            platforms=["linkedin", "indeed"],
         )
     )
 
 
 def _adapter_ats(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _search_public_ats_jobs
+
     return _search_public_ats_jobs(query, location, max_results, "")
 
 
 def _adapter_remoteok(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _search_remoteok_jobs
+
     return _search_remoteok_jobs(query, max_results)
 
 
 def _adapter_searxng(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _search_searxng_jobs
     from app.core.config import settings
+
     if not settings.SEARXNG_URL:
         return []
     return _search_searxng_jobs(query, location, max_results)
@@ -97,11 +123,13 @@ def _adapter_searxng(query: str, location: str, max_results: int) -> list[dict]:
 
 def _adapter_presets(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _search_via_search_presets
+
     return _search_via_search_presets(query, location, max_results)
 
 
 _ADAPTERS: dict[str, Callable[[str, str, int], list[dict]]] = {
     "open_apis": _adapter_open_apis,
+    "open_apis_keyless": _adapter_open_apis_keyless,
     "jobspy": _adapter_jobspy,
     "ats": _adapter_ats,
     "remoteok": _adapter_remoteok,
@@ -132,9 +160,11 @@ async def search_all_platforms(
         warnings — this function never raises for source errors.
     """
     titles = query.get("titles") or []
-    locations = query.get("locations") or (
-        [str(query["location"])] if query.get("location") else []
-    ) or ["Remote"]
+    locations = (
+        query.get("locations")
+        or ([str(query["location"])] if query.get("location") else [])
+        or ["Remote"]
+    )
     max_results = int(query.get("max_results", 10))
     remote = str(query.get("remote") or "").strip().lower()
     q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))

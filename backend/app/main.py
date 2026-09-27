@@ -19,6 +19,7 @@ from app.api.v1 import (
     candidate_profile,
     company,
     cover_letter,
+    demo,
     email,
     extension,
     integrations,
@@ -100,6 +101,10 @@ _PUBLIC_PATHS = {
     "/openapi.json",
     "/internal",
     "/api/v1/integrations/webhooks/nango",
+    # Public marketing-site demo: intentionally unauthenticated, gated
+    # instead by a per-IP lifetime search cap (see app/api/v1/demo.py).
+    "/api/v1/demo/job-search",
+    "/api/v1/demo/job-search/quota",
 }
 
 
@@ -229,6 +234,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(users.router, prefix="/api/v1")
+app.include_router(demo.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
 app.include_router(resume.router, prefix="/api/v1")
