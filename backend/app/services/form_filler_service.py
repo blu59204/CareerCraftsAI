@@ -216,12 +216,12 @@ async def fill_and_submit_form(
     # Build harness learning hint — surfaces portal outcomes to the browser agent
     learning_hint = ""
     if past_learnings:
-        relevant = [l for l in past_learnings if "portal:" in l]
+        relevant = [line for line in past_learnings if "portal:" in line]
         if relevant:
             learning_hint = (
                 "\n\nPAST FORM-FILLING EXPERIENCE (from previous runs):\n"
                 + "\n".join(
-                    f"- {l.replace('portal:', '').replace(':', ' → ')}" for l in relevant[:8]
+                    f"- {line.replace('portal:', '').replace(':', ' → ')}" for line in relevant[:8]
                 )
                 + "\nUse this to adapt: if a portal is marked 'requires_manual', stop early and report REQUIRES_MANUAL."
             )
