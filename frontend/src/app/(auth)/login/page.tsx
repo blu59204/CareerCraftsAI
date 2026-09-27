@@ -85,56 +85,60 @@ export default function LoginPage() {
   // just lands back on an empty password form with no account ever created,
   // which looked like the whole login flow silently failing.
   //
-  // That transfer alone still isn't enough: this instance requires Clerk's
-  // Legal Consent field, which OAuth has no way to collect mid-redirect, so
-  // `signUp.create({ transfer: true })` completes the transfer but leaves
-  // status "missing_requirements" with `legal_accepted` outstanding — and on
-  // a later visit (transfer already consumed) `firstFactorVerification` is no
-  // longer "transferable" at all, so the effect below has to also recognize
-  // that residual missing_requirements case and finish it with
-  // signUp.update(). Reaching this page at all means the user came through
-  // this app's own sign-up flow, whose Terms/Privacy links are visible, so
-  // supplying legalAccepted directly here is safe — same as the password
-  // flow's required checkbox, just satisfied on the user's behalf since
-  // OAuth never renders it.
-  const transferAttemptedRef = useRef(false);
+  // That transfer also needs Clerk's Legal Consent field, which OAuth has no
+  // way to collect mid-redirect — and on a later visit (transfer already
+  // consumed) `firstFactorVerification` is no longer "transferable" at all,
+  // leaving the sign-up stuck at status "missing_requirements" needing
+  // `legal_accepted` with nothing to retry it. Neither case may be completed
+  // on the user's behalf: this effect only *detects* the condition and shows
+  // an explicit consent screen (oauthConsentPending below); legalAccepted is
+  // sent only from handleOAuthConsentConfirm, after the user checks the box.
+  const transferDetectedRef = useRef(false);
+  const oauthTransferableRef = useRef(false);
+  const [oauthConsentPending, setOauthConsentPending] = useState(false);
+  const [oauthConsentChecked, setOauthConsentChecked] = useState(false);
+
   useEffect(() => {
     if (mode !== "sign-up") return;
-    if (!signInLoaded || !signUpLoaded || !signIn || !signUp || !setSignUpActive) return;
-    if (transferAttemptedRef.current) return;
+    if (!signInLoaded || !signUpLoaded || !signIn || !signUp) return;
+    if (transferDetectedRef.current) return;
 
     const isTransferable = signIn.firstFactorVerification?.status === "transferable";
     const needsLegalConsent =
       signUp.status === "missing_requirements" &&
       (signUp.missingFields ?? []).includes("legal_accepted");
     if (!isTransferable && !needsLegalConsent) return;
-    transferAttemptedRef.current = true;
 
-    (async () => {
-      setLoading(true);
-      setErrorMessage(null);
-      try {
-        const result = isTransferable
-          ? await signUp.create({ transfer: true, legalAccepted: true })
-          : await signUp.update({ legalAccepted: true });
-        if (result.status === "complete") {
-          await setSignUpActive({ session: result.createdSessionId });
-          try {
-            await apiClient.post("/users/me/consent");
-          } catch {
-            // Non-fatal — consent can be recorded on a later authenticated request.
-          }
-          router.push(destination);
-          return;
+    transferDetectedRef.current = true;
+    oauthTransferableRef.current = isTransferable;
+    setOauthConsentPending(true);
+  }, [mode, signInLoaded, signUpLoaded, signIn, signUp]);
+
+  const handleOAuthConsentConfirm = async () => {
+    if (!signUp || !setSignUpActive || !oauthConsentChecked) return;
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const result = oauthTransferableRef.current
+        ? await signUp.create({ transfer: true, legalAccepted: true })
+        : await signUp.update({ legalAccepted: true });
+      if (result.status === "complete") {
+        await setSignUpActive({ session: result.createdSessionId });
+        try {
+          await apiClient.post("/users/me/consent");
+        } catch {
+          // Non-fatal — consent can be recorded on a later authenticated request.
         }
-        setErrorMessage(`Could not finish creating your account (${result.status}).`);
-      } catch (err) {
-        setErrorMessage(describeError(err));
-      } finally {
-        setLoading(false);
+        router.push(destination);
+        return;
       }
-    })();
-  }, [mode, signInLoaded, signUpLoaded, signIn, signUp, setSignUpActive, destination, router]);
+      setErrorMessage(`Could not finish creating your account (${result.status}).`);
+    } catch (err) {
+      setErrorMessage(describeError(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const clerkReady = signInLoaded && signUpLoaded && !!signIn && !!signUp;
 
@@ -350,6 +354,62 @@ export default function LoginPage() {
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
+    );
+  }
+
+  // A brand-new OAuth identity has no equivalent of the password flow's
+  // required Terms/Privacy checkbox, so collect the same affirmative consent
+  // here before the account is ever created — legalAccepted is only sent
+  // from handleOAuthConsentConfirm, never automatically.
+  if (oauthConsentPending) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background px-6">
+        <div className="w-full max-w-sm space-y-6 text-center">
+          <h1 className="text-2xl font-semibold text-foreground">One more step</h1>
+          <p className="text-sm text-muted-foreground">
+            Review and accept our policies to finish creating your account.
+          </p>
+          {errorMessage && <p className="text-sm text-danger">{errorMessage}</p>}
+          <label className="flex items-start justify-center gap-3 text-left text-sm text-foreground/90">
+            <input
+              id="oauthAgreedToPolicies"
+              type="checkbox"
+              checked={oauthConsentChecked}
+              onChange={(event) => setOauthConsentChecked(event.target.checked)}
+              className="custom-checkbox mt-0.5 shrink-0"
+            />
+            <span>
+              I agree to the{" "}
+              <a
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                Terms of Service
+              </a>{" "}
+              and{" "}
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                Privacy Policy
+              </a>
+              .
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={handleOAuthConsentConfirm}
+            disabled={!oauthConsentChecked || loading}
+            className="w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+          >
+            {loading ? "Please wait…" : "Accept & continue"}
+          </button>
+        </div>
+      </main>
     );
   }
 
