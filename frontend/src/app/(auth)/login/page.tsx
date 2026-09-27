@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 // `@clerk/nextjs/legacy` exposes the classic custom-flow hooks
 // ({ isLoaded, signIn, setActive }). Nothing here renders Clerk UI.
@@ -75,6 +75,41 @@ export default function LoginPage() {
       router.replace(destination);
     }
   }, [authLoaded, isSignedIn, destination, router]);
+
+  // OAuth "account transfer": /sso-callback sends a brand-new Google/GitHub/
+  // LinkedIn identity (no matching CareerCraft account) here via
+  // continueSignUpUrl. Clerk marks the in-progress signIn's first factor
+  // verification "transferable" but does NOT itself create the account —
+  // the app has to notice that status and call signUp.create({ transfer:
+  // true }) to actually finish it. Without this, a first-time OAuth sign-in
+  // just lands back on an empty password form with no account ever created,
+  // which looked like the whole login flow silently failing.
+  const transferAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (mode !== "sign-up") return;
+    if (!signInLoaded || !signUpLoaded || !signIn || !signUp || !setSignUpActive) return;
+    if (signIn.firstFactorVerification?.status !== "transferable") return;
+    if (transferAttemptedRef.current) return;
+    transferAttemptedRef.current = true;
+
+    (async () => {
+      setLoading(true);
+      setErrorMessage(null);
+      try {
+        const result = await signUp.create({ transfer: true });
+        if (result.status === "complete") {
+          await setSignUpActive({ session: result.createdSessionId });
+          router.push(destination);
+          return;
+        }
+        setErrorMessage(`Could not finish creating your account (${result.status}).`);
+      } catch (err) {
+        setErrorMessage(describeError(err));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [mode, signInLoaded, signUpLoaded, signIn, signUp, setSignUpActive, destination, router]);
 
   const clerkReady = signInLoaded && signUpLoaded && !!signIn && !!signUp;
 
