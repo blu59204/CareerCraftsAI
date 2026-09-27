@@ -54,7 +54,7 @@ export function MarketingNavbar() {
             <>
               <Link
                 href="/login"
-                className="text-sm text-muted-foreground hover:text-foreground"
+                className="text-sm text-foreground/70 hover:text-foreground dark:text-[#E1E0CC]/72 dark:hover:text-[#E1E0CC]"
               >
                 Log in
               </Link>
