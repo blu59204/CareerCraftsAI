@@ -1,14 +1,9 @@
 # Deployment Guide
 
-> **This guide describes a generic VPS + Supabase Cloud topology and is out of
-> date.** Actual production runs on the self-hosted stack in `deploy/oracle/`
-> — self-hosted Postgres (pgvector), no Supabase dependency at all (confirmed:
-> zero code reads any `SUPABASE_*` env var). See `deploy/oracle/compose.yml`
-> and `deploy/oracle/postgres-bootstrap.sql` for the real setup. This file is
-> kept as a reference for the generic/alternate path but needs a full rewrite
-> to stop describing Supabase Cloud as the data layer.
-
-Production deployment uses Docker Compose on a VPS with Supabase Cloud for the managed data layer.
+Production runs on a single self-hosted Oracle Cloud "Always Free" ARM VM.
+There is no Supabase Cloud dependency anywhere in this setup — Postgres,
+auth verification, and everything else self-hosted or reached via each
+service's own API (Clerk, the user's own AI provider, etc.).
 
 ---
 
@@ -16,387 +11,162 @@ Production deployment uses Docker Compose on a VPS with Supabase Cloud for the m
 
 ```
 Internet
-    │ HTTPS (443)
+    │
     ▼
-Ubuntu 22.04 VPS
-├── Nginx (TLS termination, reverse proxy)
-├── Docker Compose
-│   ├── frontend (Next.js, port 3000)
-│   ├── backend (FastAPI, port 8000)
-│   ├── temporal-worker (python -m app.temporal_worker — runs every workflow)
-│   ├── temporal + temporal-postgres + temporal-ui (self-hosted Temporal server)
-│   └── redis (port 6379 — SSE pub/sub, rate limiting, LLM sessions; no queues)
-│
-└── Supabase Cloud (external)
-    ├── PostgreSQL 16 + pgvector
-    ├── Auth
-    └── Storage
+ngrok tunnel (configure_runtime.py + a systemd unit set this up;
+              forwards to 127.0.0.1:18180)
+    │
+    ▼
+Oracle Cloud "Always Free" ARM VM  (network_mode: host throughout —
+                                     the VM has no IPv6 route, and
+                                     Supabase's managed Postgres/Storage
+                                     were IPv6-only from here)
+├── gateway (nginx, loopback :18180)
+│     /api/v1/* → backend :18100
+│     everything else → frontend :18101
+├── careercraft-isolated  (deploy/oracle-vm/compose.yml)
+│   ├── backend           (FastAPI, :18100)
+│   ├── frontend           (Next.js, :18101)
+│   ├── temporal-worker    (python -m app.temporal_worker — runs every workflow)
+│   ├── postgres           (pgvector/pgvector:pg16, :18132 — self-hosted DB)
+│   ├── redis              (SSE pub/sub, rate limiting, LLM sessions — no queues)
+│   └── sandbox-server     (OpenSandbox — isolated browser execution)
+├── nango-isolated  (deploy/oracle-vm/nango-compose.yml)
+│   └── self-hosted Nango — Gmail/Drive OAuth broker, :191xx range
+└── temporal-isolated  (deploy/oracle-vm/temporal-compose.yml)
+    └── self-hosted Temporal server + its own Postgres + Web UI,
+        stock ports (7233 frontend, 6933–6939 cluster membership — the
+        cluster-membership ports and temporal-postgres must never be
+        reachable beyond loopback)
 ```
+
+All three compose projects currently share this one VM "for now" — the
+naming (`*-isolated`) anticipates splitting them onto separate boxes later
+if load requires it; nothing about the current setup requires that split
+today.
 
 ---
 
 ## Prerequisites
 
-- Ubuntu 22.04 LTS VPS (minimum: 2 vCPU, 4GB RAM, 40GB SSD)
-- Domain name pointed at the VPS IP
-- Docker + Docker Compose installed
-- Supabase project created (free tier works for dev/staging)
+- An Oracle Cloud "Always Free" ARM VM (or equivalent — nothing here is
+  Oracle-specific beyond the free-tier sizing and the lack of an IPv6 route)
+- Docker + the Docker Compose plugin
+- The `/opt/careercraft-secrets/` directory, containing (all gitignored,
+  root-owned, `chmod 600`):
+  - `backend.env` — `DATABASE_URL`, `REDIS_URL`, `CLERK_SECRET_KEY`,
+    `INTERNAL_SECRET`, `APP_SECRET_KEY`, third-party API keys, etc.
+  - `public.env` — `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
+    (frontend build args — see the note in `deploy/oracle-vm/compose.yml`
+    about why these are passed as build `args`, not runtime env, and never
+    merged into `backend.env`)
+  - `postgres.env`, `redis.conf`, `sandbox.env`, `nango.env`, `temporal.env`
+  - `ngrok.yml` — used by the systemd unit `configure_runtime.py` writes
 
 ---
 
-## 1. Initial Server Setup
+## 1. Clone and check out the code
 
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-
-# Install Docker Compose plugin
-sudo apt install docker-compose-plugin
-
-# Install Certbot
-sudo apt install certbot python3-certbot-nginx -y
-
-# Install Supabase CLI
-curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz | tar xz
-sudo mv supabase /usr/local/bin/
+cd ~/CareerCraftsAI   # wherever the checkout lives on the VM
+git checkout master
+git pull origin master
 ```
 
 ---
 
-## 2. Clone and Configure
+## 2. Apply pending database migrations
+
+There is no migration-runner wired up yet — migrations are applied by hand,
+directly against the self-hosted Postgres, before deploying code that
+depends on them:
 
 ```bash
-mkdir -p /opt/careercraft
-cd /opt/careercraft
-git clone https://github.com/blu59204/CareerCraftsAI.git .
-cp .env.example .env
+sudo docker exec careercraft-isolated-postgres-1 \
+  psql -p 18132 -U careercraft \
+  -c "<the ALTER TABLE / CREATE ... from the new migration file in supabase/migrations/>"
 ```
 
-Edit `.env` with production values:
+Check `supabase/migrations/` for any file newer than what's already been
+applied. This is a real gap worth closing eventually (a proper migration
+runner, or at minimum a script that applies every unapplied file in order)
+— tracked as follow-up work, not blocking day-to-day deploys.
+
+---
+
+## 3. Rebuild and restart the changed services
 
 ```bash
-# App
-APP_ENV=production
-APP_SECRET_KEY=<openssl rand -hex 32>
-
-# Supabase
-DATABASE_URL=postgresql+asyncpg://postgres:[password]@db.[project].supabase.co:5432/postgres
-SUPABASE_URL=https://[project].supabase.co
-SUPABASE_SERVICE_KEY=<service_role key from Supabase dashboard>
-NEXT_PUBLIC_SUPABASE_URL=https://[project].supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key from Supabase dashboard>
-SUPABASE_JWT_SECRET=<JWT secret from Supabase Settings → API>
-
-# Redis (internal Docker network)
-REDIS_URL=redis://redis:6379
-
-# External APIs
-HUNTER_API_KEY=<hunter.io>
-PROXYCURL_API_KEY=<proxycurl>
-EXA_API_KEY=<exa.ai>
-RESEND_API_KEY=<resend.com>
-
-# Frontend
-NEXT_PUBLIC_APP_URL=https://yourdomain.com
-NEXT_PUBLIC_API_URL=https://yourdomain.com/api
+cd deploy/oracle-vm
+sudo docker compose build backend frontend temporal-worker
+sudo docker compose up -d backend frontend temporal-worker
 ```
+
+Only rebuild the services whose code actually changed — rebuilding
+`postgres`/`redis`/`gateway`/`sandbox-server` is never needed for an
+application code change.
+
+**Important:** `NEXT_PUBLIC_*` variables (the Clerk publishable key,
+`NEXT_PUBLIC_API_URL`, etc.) are baked into the frontend's JS bundle at
+**build time** via Docker build `args` — editing `/opt/careercraft-secrets/
+public.env` and merely `docker restart`-ing the frontend container does
+**not** pick up the change. A rebuild (`docker compose build frontend`) is
+required whenever any `NEXT_PUBLIC_*` value changes.
 
 ---
 
-## 3. TLS Setup
+## 4. Verify
 
 ```bash
-# Obtain SSL certificate
-certbot --nginx -d yourdomain.com --email your@email.com --agree-tos --non-interactive
-
-# Update Nginx config with domain
-sed -i 's/${DOMAIN}/yourdomain.com/g' nginx/nginx.conf
+sudo docker compose ps
+curl -s http://127.0.0.1:18180/health | python3 -m json.tool
 ```
+
+Expect `"status":"ok"`, `"db":"ok"`, `"redis":"ok"`, and
+`"temporal":{"connected":true,"workers":<N>,...}`. A `workers` count of 0
+means `temporal-worker` isn't actually registered even if the container
+shows `Up` — `docker compose ps` alone doesn't catch that.
 
 ---
 
-## 4. Run Database Migrations
+## Secrets rotation (e.g. switching Clerk from a development to a
+## production instance)
 
-```bash
-supabase db push --db-url "$DATABASE_URL"
-```
-
----
-
-## 5. Start the Stack
-
-```bash
-# Build and start all services
-docker compose up -d --build
-
-# Verify all services are healthy
-docker compose ps
-
-# Check logs
-docker compose logs -f backend
-docker compose logs -f frontend
-docker compose logs -f temporal-worker
-```
-
-Expected output from `docker compose ps`:
-
-```
-NAME               STATUS          PORTS
-frontend           Up (healthy)    3000/tcp
-backend            Up (healthy)    8000/tcp
-temporal-worker    Up
-temporal           Up (healthy)    127.0.0.1:7233->7233/tcp
-temporal-ui        Up              127.0.0.1:8233->8080/tcp
-temporal-postgres  Up (healthy)
-redis              Up (healthy)    6379/tcp
-nginx              Up              0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
-```
-
-Confirm the worker is actually polling — `docker compose ps` alone only
-shows the container is running, not that it registered with Temporal:
-
-```bash
-curl -s https://yourdomain.com/health | jq .temporal
-# {"connected": true, "workers": 1, "task_queue": "careercraft"}
-```
-
----
-
-## 6. Verify Health
-
-```bash
-# Backend health
-curl https://yourdomain.com/health
-# → {"status":"ok","version":"1.0.0"}
-
-# Frontend
-curl -s -o /dev/null -w "%{http_code}" https://yourdomain.com
-# → 200
-```
-
----
-
-## 7. Configure Supabase Auth
-
-In the Supabase dashboard (Authentication → Providers):
-
-1. **Google OAuth**
-   - Enable Google provider
-   - Add `https://yourdomain.com/auth/callback` as allowed redirect URL
-   - Google sign-in scopes: `email`, `profile` (Gmail and Drive authorization is configured in Nango).
-
-2. **GitHub OAuth**
-   - Enable GitHub provider
-   - Add `https://yourdomain.com/auth/callback` as allowed redirect URL
-
-3. **LinkedIn (OIDC)**
-   - Enable LinkedIn OIDC provider
-   - Add `https://yourdomain.com/auth/callback` as allowed redirect URL
-
-In Authentication → URL Configuration:
-- Site URL: `https://yourdomain.com`
-- Redirect URLs: `https://yourdomain.com/auth/callback`
-
----
-
-## 8. Configure GitHub Actions CI/CD
-
-Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
-
-Add these secrets in GitHub → Settings → Secrets:
-
-| Secret | Value |
-|---|---|
-| `VPS_HOST` | Your server IP or hostname |
-| `VPS_USER` | SSH user (e.g. `ubuntu`) |
-| `VPS_SSH_KEY` | Private key content (from `~/.ssh/id_rsa`) |
-| `VPS_DEPLOY_PATH` | `/opt/careercraft` |
-
-The CD workflow:
-1. SSH into VPS
-2. `git pull origin main`
-3. `docker compose up -d --build`
-4. `docker compose exec backend alembic upgrade head` (if migrations added)
-
----
-
-## Docker Services Reference
-
-### docker-compose.yml
-
-```yaml
-services:
-  frontend:
-    build: ./frontend
-    ports: ["3000:3000"]
-    environment:
-      - NEXT_PUBLIC_SUPABASE_URL
-      - NEXT_PUBLIC_SUPABASE_ANON_KEY
-      - NEXT_PUBLIC_API_URL
-    healthcheck:
-      test: wget -qO- http://localhost:3000/health || exit 1
-      interval: 30s
-
-  backend:
-    build: ./backend
-    ports: ["8000:8000"]
-    env_file: .env
-    depends_on: [redis, temporal]
-    healthcheck:
-      test: python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
-      interval: 30s
-
-  # Runs every workflow and activity (agent runs, job searches, applications,
-  # follow-ups) and registers the recurring Schedules. Not optional — without
-  # it nothing the API starts makes progress.
-  temporal-worker:
-    build: ./backend
-    command: python -m app.temporal_worker
-    env_file: .env
-    depends_on: [redis, temporal]
-
-  # Self-hosted Temporal server + its own Postgres + web UI. Can be swapped
-  # for Temporal Cloud by pointing TEMPORAL_ADDRESS(_DOCKER) at it instead.
-  temporal-postgres:
-    image: postgres:16-alpine
-  temporal:
-    image: temporalio/auto-setup:1.24
-    ports: ["127.0.0.1:7233:7233"]
-    depends_on: [temporal-postgres]
-  temporal-ui:
-    image: temporalio/ui:2.31.2
-    ports: ["127.0.0.1:8233:8080"]
-    depends_on: [temporal]
-
-  # SSE pub/sub, rate limiting, LLM gateway sessions — not a job queue.
-  redis:
-    image: redis:8-alpine
-    ports: ["6379:6379"]
-    volumes: [redis_data:/data]
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: redis-cli ping
-      interval: 10s
-
-  nginx:
-    image: nginx:alpine
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    depends_on: [frontend, backend]
-```
-
----
-
-## Nginx Configuration
-
-Key Nginx behaviors:
-
-```nginx
-# Rate limiting zones
-limit_req_zone $binary_remote_addr zone=api:10m rate=60r/m;
-limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
-
-# SSE proxy (no buffering, long timeout)
-location ~* /api/v1/agents/.*/stream {
-    proxy_pass http://backend;
-    proxy_buffering off;
-    proxy_read_timeout 300s;
-    proxy_set_header Connection '';
-    chunked_transfer_encoding on;
-}
-
-# Block internal routes
-location /internal/ {
-    return 404;
-}
-
-# Security headers
-add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-add_header X-Frame-Options DENY always;
-add_header X-Content-Type-Options nosniff always;
-add_header Content-Security-Policy "default-src 'self' ..." always;
-```
-
----
-
-## Production Checklist
-
-Before going live:
-
-- [ ] `APP_ENV=production` set (disables `/docs` and debug logging)
-- [ ] `APP_SECRET_KEY` is 32+ random bytes (generated with `openssl rand -hex 32`)
-- [ ] Supabase Auth redirect URLs include your production domain
-- [ ] Nango Gmail/Drive provider keys and webhook secret are configured
-- [ ] Redis `appendonly yes` enabled (data persists across restarts)
-- [ ] HNSW index migration run after first document upload
-- [ ] SSL certificate auto-renewal configured: `certbot renew --dry-run`
-- [ ] Supabase connection pool size set appropriately (10–20 for small deployments)
-- [ ] GitHub Actions secrets set for CI/CD
-
----
-
-## Monitoring
-
-```bash
-# Service status
-docker compose ps
-
-# Real-time logs
-docker compose logs -f backend
-docker compose logs -f temporal-worker
-
-# Worker health — is a worker actually polling the task queue?
-curl -s https://yourdomain.com/health | jq .temporal
-
-# Disk usage
-df -h
-
-# Container resource usage
-docker stats
-```
-
----
-
-## Scaling
-
-For higher load:
-
-1. **Backend:** Increase uvicorn workers: `CMD uvicorn app.main:app --workers 4`
-2. **Temporal worker:** Scale `temporal-worker` replicas (`docker compose up -d --scale temporal-worker=3`) — they share the same task queue, so more replicas means more concurrent workflow/activity capacity. Raise `TEMPORAL_WORKER_CONCURRENCY` (max concurrent activities per replica) before adding replicas if a single worker isn't saturated.
-3. **Redis:** Move to managed Redis (Upstash, Redis Cloud) for persistence + clustering. It only carries SSE pub/sub, rate limiting, and LLM sessions here, so it scales independently of workflow throughput.
-4. **Database:** Upgrade Supabase plan for higher connection limits and read replicas
-5. **Browser Use:** Run multiple Browser Use instances on different ports; round-robin in `browser_control_service.py` (`server_browser` apply mode only — the extension flow uses no server browser capacity)
-
----
-
-## Backups
-
-Supabase handles PostgreSQL backups automatically on paid plans. For the free tier:
-
-```bash
-# Manual Postgres backup
-pg_dump "$DATABASE_URL" > backup_$(date +%Y%m%d).sql
-
-# Redis backup (snapshot already enabled with appendonly yes)
-docker compose exec redis redis-cli bgsave
-```
+1. Edit the relevant `.env` file under `/opt/careercraft-secrets/` directly
+   (`sudo sed -i` or a text editor over SSH — these files are never in git)
+2. Rebuild + restart whichever service reads that variable (see the
+   `NEXT_PUBLIC_*` build-time note above — this is the most common way a
+   key rotation silently fails to take effect)
+3. Verify with a scoped, secret-safe check before trusting it, e.g.:
+   ```bash
+   sudo bash -c "grep -o '^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=\"pk_[a-z]*' /opt/careercraft-secrets/public.env"
+   ```
 
 ---
 
 ## Rollback
 
 ```bash
-# Roll back to previous image
-docker compose pull
-git checkout <previous-commit>
-docker compose up -d --build
-
-# Roll back database migration (run the down migration manually)
-psql "$DATABASE_URL" -f supabase/migrations/rollback/XXXX_rollback.sql
+cd ~/CareerCraftsAI
+git checkout <previous-commit-or-tag>
+cd deploy/oracle-vm
+sudo docker compose build backend frontend temporal-worker
+sudo docker compose up -d backend frontend temporal-worker
 ```
+
+There is no automated down-migration path — a schema change that needs
+rolling back requires writing and running the inverse SQL by hand, the same
+way the forward migration was applied in step 2 above.
+
+---
+
+## Known gaps (not yet solved, worth knowing about)
+
+- **No CI/CD auto-deploy.** Deploys are manual (`git pull` + rebuild on the
+  VM directly), not triggered by merging to `master`.
+- **No migration runner.** See step 2 above.
+- **ngrok as the public ingress** is unusual for a permanent production
+  setup (normally used for temporary/dev tunneling) — the comments in
+  `deploy/oracle-vm/nango-compose.yml` describe the current one-VM layout as
+  "for now," suggesting this is understood to be a transitional setup, not
+  the intended long-term architecture.

@@ -32,6 +32,7 @@ from app.api.v1 import (
     salary,
     users,
 )
+from app.core.clerk_auth import verify_token
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from memory.routes import router as memory_router
@@ -99,8 +100,6 @@ _PUBLIC_PATHS = {
     "/internal",
     "/api/v1/integrations/webhooks/nango",
 }
-
-from app.core.clerk_auth import verify_token
 
 
 async def _jwt_middleware(request: Request, call_next):

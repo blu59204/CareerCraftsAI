@@ -1,8 +1,17 @@
-export const metadata = { title: "Refund Policy — CareerCraft AI" };
+import type { Metadata } from "next";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+
+export const metadata: Metadata = {
+  title: "Refund Policy",
+  description:
+    "How refunds work for CareerCraft AI's paid plans, including the current status: no paid plan can be purchased yet.",
+  alternates: { canonical: "/refund" },
+};
 
 export default function RefundPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
+      <Breadcrumbs trail={[{ name: "Refund Policy", href: "/refund" }]} />
       <div className="mb-3 text-sm font-medium text-primary">Legal</div>
       <h1 className="text-4xl font-medium">Refund Policy</h1>
       <p className="mt-2 text-sm text-muted-foreground">Last updated: September 26, 2026</p>

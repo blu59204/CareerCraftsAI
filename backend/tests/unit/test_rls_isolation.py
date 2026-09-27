@@ -2,7 +2,7 @@
 
 Isolation model:
   - Backend connects as the table owner via SQLAlchemy — this bypasses all
-    Postgres RLS policies by design (see deploy/oracle/postgres-bootstrap.sql).
+    Postgres RLS policies by design (see deploy/oracle-vm/postgres-bootstrap.sql).
   - User isolation is enforced ENTIRELY at the application layer:
       1. Every authenticated endpoint filters by current_user.id in WHERE clauses.
       2. pgvector collections are namespaced by user_id in the collection name.
@@ -21,11 +21,11 @@ Bugs caught:
   2. pgvector collection_name namespacing — verified user_id is embedded in every
      collection name so no cross-user retrieval is possible through the LangChain API.
 """
+
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # 1. _score_resume_background now includes user_id in WHERE clause
@@ -60,12 +60,21 @@ async def test_score_resume_background_filters_by_user_id():
     # AsyncSessionLocal is a lazy import inside the function
     with (
         patch("app.core.database.AsyncSessionLocal", return_value=mock_db),
-        patch("app.services.ats_service.compute_ats_score", return_value=MagicMock(
-            composite_score=75, keyword_score=80, readability_score=70,
-            format_score=72, matched_keywords=[], missing_keywords=[],
-            suggestions=[], flesch_kincaid=None, avg_sentence_length=None,
-            format_checks={}
-        )),
+        patch(
+            "app.services.ats_service.compute_ats_score",
+            return_value=MagicMock(
+                composite_score=75,
+                keyword_score=80,
+                readability_score=70,
+                format_score=72,
+                matched_keywords=[],
+                missing_keywords=[],
+                suggestions=[],
+                flesch_kincaid=None,
+                avg_sentence_length=None,
+                format_checks={},
+            ),
+        ),
     ):
         await _score_resume_background(doc_id, user_id, "resume text")
 
@@ -82,12 +91,12 @@ async def test_score_resume_background_signature_requires_user_id():
 
     sig = inspect.signature(_score_resume_background)
     params = list(sig.parameters.keys())
-    assert "user_id" in params, (
-        f"_score_resume_background missing user_id param. Current params: {params}"
-    )
-    assert params.index("user_id") < params.index("raw_text"), (
-        "user_id must appear before raw_text in the signature"
-    )
+    assert (
+        "user_id" in params
+    ), f"_score_resume_background missing user_id param. Current params: {params}"
+    assert params.index("user_id") < params.index(
+        "raw_text"
+    ), "user_id must appear before raw_text in the signature"
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +140,9 @@ def test_collection_name_different_providers_are_isolated():
     uid = "00000000-0000-0000-0000-000000000001"
     openai_coll = collection_name(uid, "resume", "openai")
     google_coll = collection_name(uid, "resume", "google")
-    assert openai_coll != google_coll, (
-        "OpenAI (1536-d) and Google (768-d) collections must be separate to avoid dimension mismatch"
-    )
+    assert (
+        openai_coll != google_coll
+    ), "OpenAI (1536-d) and Google (768-d) collections must be separate to avoid dimension mismatch"
 
 
 def test_cross_user_collection_names_never_collide():
@@ -162,12 +171,12 @@ def test_stream_endpoint_rejects_other_users_run():
 
     source = inspect.getsource(agents.stream_agent)
     # Both conditions must appear in the where clause
-    assert "AgentRun.id ==" in source or "AgentRun.id ==" in source.replace("run_uuid", "run_id"), (
-        "stream_agent must filter by run_id"
-    )
-    assert "AgentRun.user_id == current_user.id" in source, (
-        "stream_agent MUST filter by current_user.id — without this, any user can stream any run"
-    )
+    assert "AgentRun.id ==" in source or "AgentRun.id ==" in source.replace(
+        "run_uuid", "run_id"
+    ), "stream_agent must filter by run_id"
+    assert (
+        "AgentRun.user_id == current_user.id" in source
+    ), "stream_agent MUST filter by current_user.id — without this, any user can stream any run"
 
 
 def test_approve_endpoint_rejects_other_users_run():
@@ -177,7 +186,8 @@ def test_approve_endpoint_rejects_other_users_run():
 
     source = inspect.getsource(agents.approve_or_cancel)
     assert "AgentRun.user_id == current_user.id" in source, (
-        "approve_or_cancel MUST filter by current_user.id — without this, any user can approve any run"
+        "approve_or_cancel MUST filter by current_user.id — "
+        "without this, any user can approve any run"
     )
 
 
@@ -199,7 +209,9 @@ def test_hnsw_migration_file_exists_and_contains_index():
     content = migration.read_text()
     assert "hnsw" in content.lower(), "Migration must contain HNSW index creation"
     assert "langchain_pg_embedding" in content, "Migration must target langchain_pg_embedding table"
-    assert "vector_cosine_ops" in content, "Migration must use cosine ops to match LangChain retrieval"
+    assert (
+        "vector_cosine_ops" in content
+    ), "Migration must use cosine ops to match LangChain retrieval"
     assert "CREATE INDEX IF NOT EXISTS" in content, "Migration must be idempotent (IF NOT EXISTS)"
 
 

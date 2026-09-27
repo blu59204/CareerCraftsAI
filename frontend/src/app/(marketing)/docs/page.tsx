@@ -1,6 +1,13 @@
 import Link from "next/link";
 
-export const metadata = { title: "Documentation — CareerCraft AI" };
+import type { Metadata } from "next";
+import { Breadcrumbs } from "@/components/seo/Breadcrumbs";
+
+export const metadata: Metadata = {
+  title: "Documentation",
+  description: "How to get started with CareerCraft AI's agents, from your first resume upload to your first application.",
+  alternates: { canonical: "/docs" },
+};
 
 const SECTIONS = [
   {
@@ -24,6 +31,7 @@ const SECTIONS = [
 export default function DocsPage() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-24">
+      <Breadcrumbs trail={[{ name: "Documentation", href: "/docs" }]} />
       <div className="mb-3 text-sm font-medium text-primary">Documentation</div>
       <h1 className="text-4xl font-medium">Get up and running.</h1>
       <p className="mt-4 text-lg text-muted-foreground">
