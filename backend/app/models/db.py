@@ -56,6 +56,7 @@ class User(Base):
     preferences: Mapped["UserPreferences | None"] = relationship(
         back_populates="user", uselist=False
     )
+    notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
 
 
 class UserModelSettings(Base):
@@ -575,9 +576,44 @@ class UserPreferences(Base):
     prefer_live_browser: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Notification channel toggles — surfaced in Settings → Notifications.
+    notify_email: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    notify_agent_alerts: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    notify_followup_reminders: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    notify_weekly_digest: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
     user: Mapped["User"] = relationship(back_populates="preferences")
+
+
+class Notification(Base):
+    """In-app notification for a user — the bell dropdown in AppTopbar reads
+    these. Created by notification_service.create_notification(); never
+    written to directly so the notify_* preference gate and optional email
+    dispatch stay in one place."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # Free-form, not a DB enum — new types don't need a migration. Known
+    # values today: "job_matches", "followup_ready".
+    type: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text)
+    link: Mapped[str | None] = mapped_column(String(500))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="notifications")

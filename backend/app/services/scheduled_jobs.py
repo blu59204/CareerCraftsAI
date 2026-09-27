@@ -97,6 +97,23 @@ async def run_job_search(
 
     if result_state["status"] == "completed":
         emit(payload.run_id, "complete", result_state.get("result") or {})
+        saved_count = (result_state.get("result") or {}).get("saved_count", 0)
+        if saved_count:
+            from app.services.notification_service import create_notification
+
+            async with AsyncSessionLocal() as notif_db:
+                await create_notification(
+                    notif_db,
+                    uuid.UUID(payload.user_id),
+                    type="job_matches",
+                    title=(
+                        f"Job Agent found {saved_count} new "
+                        f"match{'es' if saved_count != 1 else ''}"
+                    ),
+                    body=f'Search: "{payload.search_query}" in {payload.location}',
+                    link="/jobs",
+                )
+                await notif_db.commit()
     elif result_state["status"] == "awaiting_approval":
         emit(payload.run_id, "checkpoint", result_state.get("pending_action") or {})
     else:
@@ -226,6 +243,20 @@ async def run_followup(
         await db.commit()
 
     emit(str(run.id), "checkpoint", run.output)
+
+    from app.services.notification_service import create_notification
+
+    async with AsyncSessionLocal() as notif_db:
+        await create_notification(
+            notif_db,
+            uuid.UUID(payload.user_id),
+            type="followup_ready",
+            title="Follow-up email draft ready for review",
+            body=f"{application.company} — {application.role}",
+            link=f"/agents/{run.id}",
+        )
+        await notif_db.commit()
+
     logger.info(
         "Follow-up day-%d drafted for application %s user %s — awaiting approval (run %s)",
         payload.day,
