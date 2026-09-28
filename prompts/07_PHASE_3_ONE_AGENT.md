@@ -1,6 +1,6 @@
 # PHASE 3 — MAKE ONE AGENT WORK (repeat this file once per agent, fresh chat each time)
 
-> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+> **Note:** background jobs run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8.
 
 ## Fill in before pasting
 AGENT_NAME = <resume | job_search | cover_letter | company_research | salary | linkedin | interview_prep |
@@ -54,13 +54,13 @@ Mock get_llm to return a fake that outputs valid OUTPUT_SCHEMA JSON; mock servic
 POST /agents/run {task_type, context} with real key → stream → complete. Paste the SSE log if anything is off.
 
 ## Agent-specific notes
-- job_search: search happens via services (jobspy / platform services), LLM only scores. Enqueue via BullMQ for >1 platform; inline allowed only when Redis unavailable in dev. Persist JobApplication(saved).
+- job_search: search happens via services (jobspy / platform services), LLM only scores. Start JobSearchWorkflow on Temporal (app/workflows/starters.py). Persist JobApplication(saved).
 - company_research: check company_intel cache (7 days) BEFORE any search; cite sources by index.
 - salary: pull data points from company_intel + search services; if <3 points, still return with low confidence.
 - interview_coach: stateful per session (interview_sessions table); ASK and EVALUATE are two calls.
 - nl_search: after parsing, call run_job_search with structured context — do not duplicate search logic.
 - email / linkedin_outreach: ALWAYS end with _hitl_checkpoint("send_email"|"send_message", {draft...}). /approve then calls gmail_service / outreach service. Test that no send happens before approval.
-- followup: not a graph node. schedule_followups(application_id) enqueues BullMQ delayed jobs (5d, 12d); processor calls /internal/run-followup → drafts → HITL → user approves in UI. Cancel when email_monitor labels a reply for that application.
+- followup: not a graph node. schedule_followups(application_id) starts FollowupWorkflow (5d, 12d timers); draft_followup_activity drafts → HITL → user approves in UI. Cancel when email_monitor labels a reply for that application.
 - email_monitor: runs from status-check every 6h; writes action items; never sends.
 - auto_apply: pipeline, not a single LLM call. Order: fetch JD → resume_optimize → cover_letter → ATS → CHECKPOINT 1 "review_documents" → browser fill via form_filler (auto_apply_prompt maps fields; any NEEDS_HUMAN → CHECKPOINT) → CHECKPOINT 2 "submit_application" → submit → JobApplication(applied) → schedule_followups(). Browser max_steps 25, human-like delays from settings, screenshot on every step to browser_debug when BROWSER_DEBUG_SCREENSHOTS. Resume the pipeline from redis agent:{run_id}:pending after each approval — never restart from step 1.
 

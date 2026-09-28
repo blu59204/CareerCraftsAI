@@ -1,6 +1,6 @@
 # PHASE 6 — SCALE & RELIABILITY (one prompt per item)
 
-> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+> **Note:** background jobs run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8.
 
 6.1 Timeouts everywhere: every agent node wrapped with asyncio.wait_for using AGENT_TIMEOUTS; every httpx
     client timeout=20; every LLM call timeout via model kwargs; browser step timeout 30s. On timeout → error
@@ -8,7 +8,7 @@
 6.2 Retries: LLM 2 retries with exponential backoff on 429/5xx (not on 4xx); search providers fall through
     the provider list (Tavily → Brave → SerpAPI → DDG → Searxng); never retry sends.
 6.3 Concurrency: enforce AGENT_MAX_CONCURRENT_PER_USER=2 with a redis counter (INCR/EXPIRE) at /agents/run →
-    429 with retry_after. BullMQ concurrency per queue set in worker.
+    429 with retry_after. Worker concurrency via TEMPORAL_WORKER_CONCURRENCY.
 6.4 Token budgets: TokenTrackingCallback writes tokens_used; check_budget before each LLM call → 429
     "budget exceeded" event; per-user monthly cap from user_model_settings.token_budget.
 6.5 Caching: CachingLLM 1h for company_research/salary/interview_prep only; company_intel 7d; never cache
@@ -18,10 +18,9 @@
     run, memory guard psutil; screenshots to browser_debug volume only in debug mode.
 6.8 Observability: request_id in every log line and every SSE event payload; structured JSON logs
     (LOG_LEVEL from settings); agent_runs stores duration_ms, tokens_used, strategy_used, error; /health
-    adds queue depth (BullMQ waiting/active/failed counts) and last-successful-cron timestamps.
-6.9 BullBoard: add worker/src/board.ts serving @bull-board/api + express on :3010, bound to 127.0.0.1 only,
-    behind Nginx basic-auth at /admin/queues. Never public.
-6.10 Dead-letter + idempotency: failed BullMQ jobs → `failed` queue with attempts=3, backoff exponential 30s;
+    adds queue depth (Temporal task-queue pollers) and last-successful-cron timestamps.
+6.9 Temporal UI for workflow visibility: loopback only, behind Nginx basic-auth. Never public.
+6.10 Dead-letter + idempotency: Temporal retry policies (bounded attempts, exponential backoff);
      jobId = f"{user_id}:{task_type}:{hash(context)}" so duplicate clicks don't double-run; followup jobs
      keyed by application_id so cancel-on-reply is `queue.remove(jobId)`.
 6.11 Graceful shutdown: backend lifespan closes redis pool + engine; worker handles SIGTERM → wait for active

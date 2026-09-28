@@ -1,5 +1,5 @@
 -- Feature-flagged Temporal support (TEMPORAL_ENABLED) — both columns stay
--- NULL for every attempt driven by the default BullMQ/WorkflowTask path.
+-- NULL for every attempt driven by the pre-Temporal WorkflowTask path.
 ALTER TABLE public.application_attempts
     ADD COLUMN workflow_id text UNIQUE,
     ADD COLUMN temporal_run_id text;

@@ -43,7 +43,7 @@ Before each commit: git diff --cached | findstr /i "sk- api_key= secret= passwor
 [ ] certbot cert issued; TLS 1.2/1.3 only; security headers present (curl -I)
 [ ] /health 200 all ok from outside; SSE works through Nginx (proxy_buffering off, read timeout ≥ 300s)
 [ ] GH secrets VPS_HOST/VPS_USER/VPS_SSH_KEY; ci.yml green on main; cd.yml dry run
-[ ] Smoke: real account → resume slice → one HITL agent (email draft → approve) → BullBoard shows jobs
+[ ] Smoke: real account → resume slice → one HITL agent (email draft → approve) → Temporal UI shows the workflow
 [ ] Rollback plan written: `docker compose down; git checkout <prev-tag>; docker compose up -d`; tag each deploy
 
 ## 7.5 Release tagging

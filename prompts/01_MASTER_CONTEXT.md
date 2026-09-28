@@ -14,7 +14,7 @@ Currently: NOTHING works end-to-end. We are making it work one slice at a time.
 - Frontend: Next.js 16.2.6 (App Router), React 19, TypeScript 6 strict, Tailwind 3.4, Zustand 5, TanStack Query 5,
   @supabase/ssr, axios, Radix UI, motion. Path alias @/* -> src/*.
 - Worker: Temporal only — `python -m app.temporal_worker` (backend/app/workflows/: AgentRun, JobSearch, AutoApply,
-  Followup workflows + Schedules for daily search, maintenance, status check). No Node worker, no BullMQ.
+  Followup workflows + Schedules for daily search, maintenance, status check). No Node worker and no Redis job queue.
 - DB/Auth: Supabase (Postgres 16 + pgvector + Auth + Storage). 32 migrations in supabase/migrations/. RLS on.
 - Infra: Docker Compose (docker-compose.yml prod, docker-compose.dev.yml dev), Nginx, GitHub Actions.
 - OS: Windows 11, PowerShell 5.1. Repo root: D:\CareerCraft AI (git branch master).

@@ -4,7 +4,7 @@
 **Scope:** All 15 LangGraph agents, Playwright browser control, AutoApplyPipeline, HITL gates
 **Status:** AUDIT — comparing requested architecture vs actual implementation
 
-> **Updated 2026-09-28:** background execution moved from BullMQ to Temporal (PR #10). §5.4 and §6 below describe the Temporal implementation; `docs/ARCHITECTURE.md` §8 is the authoritative reference.
+> **Updated 2026-09-28:** background execution moved to Temporal (PR #10). §5.4 and §6 below describe the Temporal implementation; `docs/ARCHITECTURE.md` §8 is the authoritative reference.
 
 ---
 
@@ -336,14 +336,6 @@ the `application-status-check` Schedule checks portal status via the browser, no
 
 Overlap policy `SKIP`. Worker: task queue `TEMPORAL_TASK_QUEUE` (`careercraft`), `max_concurrent_activities=TEMPORAL_WORKER_CONCURRENCY` (4). Per-user admission (2 concurrent runs) is enforced by `POST /agents/run`.
 
----|---|
-| Queue name | `agent-queue` |
-| Connection | Redis (`REDIS_URL`) |
-| Concurrency | 2 workers |
-| Rate limit | 10 jobs/min |
-| Scheduler | `upsertJobScheduler` for `status-check` (6h), `daily-search` (24h) |
-| removeOnComplete | count: 1000 |
-| removeOnFail | count: 5000 |
 
 ---
 

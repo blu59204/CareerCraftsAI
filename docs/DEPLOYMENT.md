@@ -156,11 +156,10 @@ production:
 5. **Retire the old queue workers** on any host that predates the Temporal
    migration: stop and remove the Node `worker` and Python `agent-worker`
    containers (`docker compose up -d --remove-orphans` does this for
-   services no longer in the compose file). Redis stays — it backs the SSE
+   services no longer in the compose file), and delete the old queue's
+   leftover Redis keys once no old worker is running. Redis stays — it backs the SSE
    event bus, the public demo's per-IP quota, LLM gateway sessions, token
    budgets and caches (slowapi limits are in-process).
-   Any `bull:*` keys left in Redis are inert; delete them only after
-   confirming no old worker is running.
 6. **Verify** with `/health` (step 4 above) and, to run a job by hand,
    `temporal schedule trigger --schedule-id daily-job-search`.
 

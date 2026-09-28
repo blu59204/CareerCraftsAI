@@ -33,7 +33,7 @@ PHASE 3  → 06_AGENT_SYSTEM_PROMPTS.md       Install the 15 system prompts into
             linkedin_outreach → auto_apply (last, hardest, 2 HITL checkpoints)
 PHASE 4  → 08_PHASE_4_FRONTEND_WIRING.md    Repeat per page, wire to the now-working endpoints.
 PHASE 5  → 09_TESTING.md                    Fill test gaps, fix count drift, CI green.
-PHASE 6  → 11_SCALE_RELIABILITY.md          Timeouts, retries, HNSW, budgets, BullBoard, load test.
+PHASE 6  → 11_SCALE_RELIABILITY.md          Timeouts, retries, HNSW, budgets, Temporal UI, load test.
 PHASE 7  → 12_DOCS_AND_GIT.md               Docs, git rebase, clean commits, deploy checklist.
 
 ## Definition of "done" for any task
