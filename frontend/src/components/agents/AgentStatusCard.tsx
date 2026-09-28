@@ -31,15 +31,26 @@ const STATUS_ICONS: Record<AgentRunStatus, typeof Clock3> = {
   needs_verification: SearchCheck,
 };
 
+const AGENT_LABELS: Record<string, string> = {
+  resume_optimize: "Resume Optimization",
+  linkedin_optimize: "LinkedIn Optimization",
+  nl_job_search: "Natural Language Job Search",
+  apply_prepare: "Application Preparation",
+};
+
+function displayName(value: string) {
+  return AGENT_LABELS[value] ?? value.replace(/_/g, " ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
 
 type Props = {
-  agentName: string;
+  agentType: string;
   status: AgentRunStatus;
   latestMessage?: string;
   startedAt?: string;
 };
 
-export function AgentStatusCard({ agentName, status, latestMessage, startedAt }: Props) {
+export function AgentStatusCard({ agentType, status, latestMessage, startedAt }: Props) {
   const normalizedStatus: AgentRunStatus = STATUS_ICONS[status] ? status : "queued";
   const StatusIcon = STATUS_ICONS[normalizedStatus];
   return (
@@ -50,9 +61,9 @@ export function AgentStatusCard({ agentName, status, latestMessage, startedAt }:
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <div className="truncate text-sm font-medium">{agentName}</div>
+            <div className="truncate text-sm font-medium">{displayName(agentType)}</div>
             <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${STATUS_STYLES[normalizedStatus]}`}>
-              {normalizedStatus.replace("_", " ")}
+              {displayName(normalizedStatus)}
             </span>
           </div>
           {latestMessage && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{latestMessage}</p>}

@@ -309,7 +309,7 @@ export default function DashboardPage() {
             {stats.recent_agent_runs.map((run) => (
               <AgentStatusCard
                 key={run.id}
-                agentName={run.agent_type}
+                agentType={run.agent_type}
                 status={
                   run.status === "completed"
                     ? "succeeded"
