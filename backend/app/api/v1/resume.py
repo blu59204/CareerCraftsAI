@@ -151,12 +151,26 @@ async def download_pdf(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        pdf_bytes = download_file(doc.storage_path, str(current_user.id))
-    except PermissionError:
-        raise HTTPException(status_code=404, detail="Document not found")
-    except RuntimeError:
-        raise HTTPException(status_code=502, detail="Storage download failed")
+    pdf_bytes = None
+    if doc.doc_type == "resume_tailored" and doc.raw_text:
+        from app.services.pdf_service import generate_resume_pdf
+
+        template = (doc.ats_data or {}).get("template", "modern")
+        if template not in ("modern", "classic", "technical"):
+            template = "modern"
+        try:
+            pdf_bytes = generate_resume_pdf(
+                doc.raw_text, full_name=current_user.full_name or "", template=template
+            )
+        except Exception:
+            logger.exception("Resume re-render failed for document %s", document_id)
+    if pdf_bytes is None:
+        try:
+            pdf_bytes = download_file(doc.storage_path, str(current_user.id))
+        except PermissionError:
+            raise HTTPException(status_code=404, detail="Document not found")
+        except RuntimeError:
+            raise HTTPException(status_code=502, detail="Storage download failed")
 
     return Response(
         content=pdf_bytes,

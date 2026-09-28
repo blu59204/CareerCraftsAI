@@ -44,6 +44,7 @@ def _persist_resume_document(
                 raw_text=parsed.resume_markdown,
                 ats_score=parsed.ats_score,
                 ats_data={
+                    "template": template,
                     "keywords_matched": parsed.keywords_matched,
                     "keywords_missing": parsed.keywords_missing,
                 },
