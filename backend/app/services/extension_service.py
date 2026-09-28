@@ -14,11 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
+import json
 import logging
 import re
 import secrets
 import uuid
+import zipfile
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -342,3 +346,30 @@ async def plan_fields(db: AsyncSession, task: ExtensionTask, raw_fields: list[di
         p["field_id"] for p in plan if p["required"] and p["value"] in (None, "")
     ]
     return {"fields": plan, "unresolved_required": unresolved_required}
+
+
+# ── Download package ───────────────────────────────────────────────────
+
+# The repository's extension/ folder. In Docker it is mounted read-only at
+# /extension (deploy/oracle-vm/compose.yml), which is the same relative
+# location: /app/app/services/ -> /extension.
+EXTENSION_DIR = Path(__file__).resolve().parents[3] / "extension"
+_PACKAGE_ROOT = "careercraft-extension"
+_EXCLUDED_DIRS = {"test", "node_modules", "__pycache__"}
+
+
+def package_extension(root: Path = EXTENSION_DIR) -> tuple[str, bytes]:
+    """Zip the unpacked extension for "Load unpacked". Returns (version, zip
+    bytes); everything sits under one top-level folder so unzipping gives
+    the folder to select. Raises FileNotFoundError if it is not deployed."""
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root)
+            if not path.is_file() or any(
+                part in _EXCLUDED_DIRS or part.startswith(".") for part in relative.parts
+            ):
+                continue
+            archive.write(path, f"{_PACKAGE_ROOT}/{relative.as_posix()}")
+    return str(manifest.get("version", "0")), buffer.getvalue()

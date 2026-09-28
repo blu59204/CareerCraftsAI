@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CareerCraft AI — Apply Assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fills and submits job applications in your own browser, under your review, using your CareerCraft AI profile and saved answers.",
   "icons": {
     "16": "icons/icon16.png",
@@ -31,6 +31,8 @@
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*",
+    "https://www.careercraftsai.me/*",
+    "https://careercraftsai.me/*",
     "https://www.linkedin.com/*",
     "https://*.naukri.com/*",
     "https://www.naukri.com/*",
@@ -50,7 +52,9 @@
     {
       "matches": [
         "http://localhost/*",
-        "http://127.0.0.1/*"
+        "http://127.0.0.1/*",
+        "https://careercraftsai.me/*",
+        "https://www.careercraftsai.me/*"
       ],
       "js": [
         "src/content/bridge.js"

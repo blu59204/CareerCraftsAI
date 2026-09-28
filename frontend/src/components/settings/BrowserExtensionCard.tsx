@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, MonitorSmartphone, Puzzle, Unplug } from "lucide-react";
+import { Check, Copy, Download, MonitorSmartphone, Puzzle, Unplug } from "lucide-react";
 import { toast } from "sonner";
 
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { detectExtension, pairExtension } from "@/lib/extension-bridge";
@@ -35,11 +36,42 @@ function lastSeen(value: string | null): string {
   return `Seen ${new Date(value).toLocaleDateString()}`;
 }
 
+function SetupSteps() {
+  const steps = [
+    <>Unzip the downloaded file. You get a folder named <code>careercraft-extension</code>.</>,
+    <>
+      Open <code>chrome://extensions</code> (Edge: <code>edge://extensions</code>, Brave:{" "}
+      <code>brave://extensions</code>) in a new tab and turn on <strong>Developer mode</strong>.
+    </>,
+    <>
+      Click <strong>Load unpacked</strong> and select the <code>careercraft-extension</code> folder (the one that
+      contains <code>manifest.json</code>).
+    </>,
+    <>Pin <strong>CareerCraft AI — Apply Assistant</strong> from the puzzle icon in the toolbar.</>,
+    <>
+      Reload this CareerCraft page, then click <strong>Connect this browser</strong>. The site pairs with the
+      extension automatically.
+    </>,
+  ];
+  return (
+    <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:text-foreground [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_code]:text-foreground">
+      {steps.map((step, index) => (
+        <li key={index}>{step}</li>
+      ))}
+      <li className="list-none pt-1 text-xs">
+        Chrome 110 or newer. To update later, download again, replace the folder and press the reload icon on the
+        extension in <code>chrome://extensions</code>.
+      </li>
+    </ol>
+  );
+}
+
 export function BrowserExtensionCard() {
   const queryClient = useQueryClient();
   const [installedVersion, setInstalledVersion] = useState<string | null | undefined>(undefined);
   const [code, setCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
 
   useEffect(() => {
     detectExtension().then(setInstalledVersion);
@@ -76,6 +108,23 @@ export function BrowserExtensionCard() {
     onError: (error) => toast.error(getApiErrorMessage(error, "Could not disconnect that browser")),
   });
 
+  const download = useMutation({
+    mutationFn: async () => apiClient.get("/extension/download", { responseType: "blob" }),
+    onSuccess: (response) => {
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: "application/zip" }));
+      const match = (response.headers["content-disposition"] as string | undefined)?.match(/filename="?([^"]+)"?/);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = match?.[1] ?? "careercraft-extension.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      setSetupOpen(true);
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, "Could not download the extension")),
+  });
+
   async function copyCode() {
     if (!code) return;
     await navigator.clipboard.writeText(code);
@@ -101,27 +150,61 @@ export function BrowserExtensionCard() {
               ? "Checking this browser…"
               : installedVersion
                 ? `Extension installed in this browser (v${installedVersion}).`
-                : "Extension not detected in this browser. Load extension/ from the CareerCraft repository (chrome://extensions → Developer mode → Load unpacked), or connect it with a code."}
+                : "Extension not detected in this browser. Download it and follow the setup steps below."}
           </p>
         </div>
-        <LiquidGlassButton
-          tone="primary"
-          size="sm"
-          className="shrink-0"
-          disabled={pair.isPending}
-          onClick={() => pair.mutate()}
-        >
-          <MonitorSmartphone className="mr-2 h-4 w-4" />
-          {pair.isPending ? "Connecting…" : installedVersion ? "Connect this browser" : "Get a connection code"}
-        </LiquidGlassButton>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <LiquidGlassButton
+            tone="ghost"
+            size="sm"
+            disabled={download.isPending}
+            onClick={() => download.mutate()}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {download.isPending ? "Preparing…" : "Download extension"}
+          </LiquidGlassButton>
+          <LiquidGlassButton
+            tone="primary"
+            size="sm"
+            disabled={pair.isPending || installedVersion === undefined}
+            onClick={() => installedVersion ? pair.mutate() : window.location.reload()}
+          >
+            <MonitorSmartphone className="mr-2 h-4 w-4" />
+            {pair.isPending ? "Connecting…" : installedVersion ? "Connect this browser" : "Reload to connect"}
+          </LiquidGlassButton>
+        </div>
       </div>
+
+      {installedVersion !== undefined ? (
+        <details className="group mt-4 rounded-xl border border-border bg-background/40 p-4" open={!installedVersion}>
+          <summary className="cursor-pointer text-sm font-medium">How to install and connect the extension</summary>
+          <div className="mt-3">
+            <SetupSteps />
+          </div>
+        </details>
+      ) : null}
+
+      <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Set up the CareerCraft extension</DialogTitle>
+            <DialogDescription>Your download has started. Install it in this browser in a few steps.</DialogDescription>
+          </DialogHeader>
+          <SetupSteps />
+          <div className="flex justify-end">
+            <LiquidGlassButton tone="primary" size="sm" onClick={() => setSetupOpen(false)}>
+              Done
+            </LiquidGlassButton>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {code ? (
         <div className="mt-4 rounded-xl border border-warning/40 bg-warning/10 p-4">
           <p className="text-sm font-medium">Paste this code in the extension popup</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Open the CareerCraft extension, enter {typeof window !== "undefined" ? window.location.origin : "this site"} as the
-            URL and this code. It is shown only once.
+            Automatic connection did not finish. Open the extension popup and paste this code. Use this site's
+            address in the URL field if the popup asks for it. This code is shown only once.
           </p>
           <div className="mt-3 flex min-w-0 items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-background px-3 py-2 text-xs">

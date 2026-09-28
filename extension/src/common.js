@@ -5,6 +5,10 @@
 export const STATIC_HOST_ORIGINS = [
   "http://localhost",
   "http://127.0.0.1",
+  // The hosted CareerCraft app: lets the page detect and pair the extension
+  // on first install, without a connection code or a permission prompt.
+  "https://careercraftsai.me",
+  "https://www.careercraftsai.me",
   "https://www.linkedin.com",
   "https://*.naukri.com",
   "https://www.naukri.com",

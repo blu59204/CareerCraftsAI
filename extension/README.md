@@ -9,20 +9,23 @@ extension's review panel. Nothing is submitted before that.
 
 ## Install (unpacked, for now)
 
-1. Open `chrome://extensions` and turn on **Developer mode**.
-2. Click **Load unpacked** and pick this `extension/` folder.
+1. In CareerCraft open **Settings → Integrations → Browser extension** and
+   click **Download extension**, then unzip it (you get a
+   `careercraft-extension` folder). From a checkout you can use this
+   `extension/` folder directly.
+2. Open `chrome://extensions`, turn on **Developer mode**, click
+   **Load unpacked** and pick that folder.
 3. Pin **CareerCraft AI — Apply Assistant** to the toolbar.
 
 Chrome 110 or newer (Edge and Brave work too).
 
 ## Connect it to your account
 
-1. In CareerCraft open **Settings → Integrations → Browser extension** and
-   click **Connect this browser**. When CareerCraft runs on `localhost` the
-   extension picks the connection up by itself.
-2. Otherwise copy the connection code (`ccx_…`), open the extension popup,
-   enter your CareerCraft URL and the code, and press **Connect**. Chrome
-   asks once for permission to talk to your CareerCraft site.
+1. Reload the CareerCraft page after loading the extension.
+2. In **Settings → Integrations → Browser extension**, click **Connect this
+   browser**. The hosted site and localhost pair automatically.
+3. For other CareerCraft deployments, connect from the extension popup with a
+   connection code. Chrome asks once for permission to talk to that site.
 
 Each connected browser appears in Settings, where you can revoke it. The
 code is shown once and only its hash is stored on the server.

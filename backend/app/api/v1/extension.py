@@ -67,6 +67,27 @@ async def pair(
     return {"device_id": str(device.id), "name": device.name, "token": token}
 
 
+@router.get("/download")
+@limiter.limit("10/minute")
+async def download_extension(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """The unpacked extension as a zip, for chrome://extensions → Load unpacked."""
+    try:
+        version, content = await asyncio.to_thread(extension_service.package_extension)
+    except FileNotFoundError as exc:
+        logger.error("Extension package unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail="Extension download is not available") from exc
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="careercraft-extension-v{version}.zip"'
+        },
+    )
+
+
 @router.get("/devices")
 async def list_devices(
     db: AsyncSession = Depends(get_db),

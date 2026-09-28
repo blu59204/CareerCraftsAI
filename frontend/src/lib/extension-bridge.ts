@@ -1,8 +1,8 @@
 /**
  * Talks to the CareerCraft browser extension through window.postMessage.
  * The extension's bridge content script runs on this origin once the
- * extension is installed (always on localhost; on other origins after the
- * first pairing from its popup).
+ * extension is installed (on the hosted site and localhost; on other origins
+ * after the first pairing from its popup).
  */
 
 const APP = "careercraft-app";

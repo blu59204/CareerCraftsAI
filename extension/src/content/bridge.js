@@ -1,6 +1,6 @@
 // CareerCraft AI — bridge between the web app and the extension.
-// Registered dynamically (chrome.scripting.registerContentScripts) for the
-// paired app origin only, after pairing succeeds. Classic script.
+// Runs on the hosted site at install time. Other app origins register it
+// dynamically after pairing. Classic script.
 (function () {
   if (window.__ccBridgeLoaded) return;
   window.__ccBridgeLoaded = true;

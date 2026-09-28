@@ -24,6 +24,8 @@ services:
     # Shared with temporal-worker, which reads documents during agent runs.
     volumes:
       - docstore:/data/documents
+      # Served as a zip by GET /api/v1/extension/download.
+      - ../../extension:/extension:ro
     mem_limit: 1500m
     cpus: 0.5
     restart: unless-stopped
