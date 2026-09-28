@@ -15,6 +15,7 @@ NEVER submit without user approval — this is enforced at the form_filler
 level (submit=False) AND by the task prompt wording, giving two independent
 guardrails against accidental submission.
 """
+
 import asyncio
 import logging
 import secrets
@@ -133,13 +134,17 @@ async def apply_to_any_portal(
 
     # status == "ready_for_review" — emit HITL checkpoint
     if run_id:
-        emit(run_id, "checkpoint", {
-            "type": "apply_review",
-            "portal": portal,
-            "job_url": job_url,
-            "message": f"Application form filled on {portal}. Review and approve to submit.",
-            "form_summary": message[:500],
-        })
+        emit(
+            run_id,
+            "checkpoint",
+            {
+                "type": "apply_review",
+                "portal": portal,
+                "job_url": job_url,
+                "message": f"Application form filled on {portal}. Review and approve to submit.",
+                "form_summary": message[:500],
+            },
+        )
 
     return ApplyResult(portal.lower(), job_url, "draft_saved", message)
 
@@ -149,42 +154,59 @@ async def apply_to_any_portal(
 
 
 async def apply_linkedin(
-    llm: BaseChatModel, user_id: str, job_url: str,
-    resume_path: str | None = None, run_id: str | None = None,
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    resume_path: str | None = None,
+    run_id: str | None = None,
 ) -> ApplyResult:
     return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_naukri(
-    llm: BaseChatModel, user_id: str, job_url: str,
-    resume_path: str | None = None, run_id: str | None = None,
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    resume_path: str | None = None,
+    run_id: str | None = None,
 ) -> ApplyResult:
     return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_instahyre(
-    llm: BaseChatModel, user_id: str, job_url: str,
-    message: str = "", run_id: str | None = None,
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    message: str = "",
+    run_id: str | None = None,
 ) -> ApplyResult:
     return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id)
 
 
 async def apply_indeed(
-    llm: BaseChatModel, user_id: str, job_url: str,
-    resume_path: str | None = None, run_id: str | None = None,
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    resume_path: str | None = None,
+    run_id: str | None = None,
 ) -> ApplyResult:
     return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_foundit(
-    llm: BaseChatModel, user_id: str, job_url: str,
-    resume_path: str | None = None, run_id: str | None = None,
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
+    resume_path: str | None = None,
+    run_id: str | None = None,
 ) -> ApplyResult:
     return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id, resume_path=resume_path)
 
 
 async def apply_cutshort(
-    llm: BaseChatModel, user_id: str, job_url: str,
+    llm: BaseChatModel,
+    user_id: str,
+    job_url: str,
     run_id: str | None = None,
 ) -> ApplyResult:
     return await apply_to_any_portal(llm, user_id, job_url, run_id=run_id)
@@ -220,7 +242,9 @@ async def apply_to_job(
     company career page, job board not listed) work without any changes.
     """
     return await apply_to_any_portal(
-        llm, user_id, job_url,
+        llm,
+        user_id,
+        job_url,
         run_id=run_id,
         resume_path=resume_path,
         cover_letter=cover_letter,

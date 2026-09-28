@@ -187,5 +187,3 @@ def _extract_company_regex(text: str) -> str:
         if match:
             return match.group(1).strip()
     return "UNKNOWN"
-
-

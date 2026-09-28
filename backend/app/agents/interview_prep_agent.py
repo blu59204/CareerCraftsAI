@@ -15,6 +15,7 @@ from app.services.rag_service import retrieve
 
 logger = logging.getLogger(__name__)
 
+
 def interview_prep_agent_node(state: AgentState) -> AgentState:
     target_role = "software engineer"
     company = "the company"
@@ -29,12 +30,15 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             raise ValueError("No active model settings configured for user")
 
         chunks = retrieve(user_id, "resume", target_role, model_settings, k=5)
-        context_text = "\n".join(c.page_content for c in chunks) if chunks else "No resume context available."
+        context_text = (
+            "\n".join(c.page_content for c in chunks) if chunks else "No resume context available."
+        )
 
         llm = _build_llm(model_settings)
 
         # ── Think: What are the candidate's strengths/gaps for this role ──
         from app.agents.thinking import think_and_select
+
         thinking = think_and_select(
             llm=llm,
             task_description=f"Prepare interview for {target_role} at {company}",
@@ -46,11 +50,14 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
         prep_data = call_llm_json(
             llm,
             SYSTEM_PROMPT,
-            build_user_prompt({
-                "role": target_role,
-                "company": company,
-                "research_notes": thinking,
-            }, [context_text]),
+            build_user_prompt(
+                {
+                    "role": target_role,
+                    "company": company,
+                    "research_notes": thinking,
+                },
+                [context_text],
+            ),
             OUTPUT_SCHEMA,
         ).model_dump()
 
@@ -65,9 +72,8 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             "status": "awaiting_approval",
             "pending_action": pending,
             "result": None,
-            "messages": state["messages"] + [
-                AIMessage(content=f"Interview prep ready for {target_role} at {company}.")
-            ],
+            "messages": state["messages"]
+            + [AIMessage(content=f"Interview prep ready for {target_role} at {company}.")],
         }
     except Exception as exc:
         logger.exception("Interview prep agent failed for user %s", state.get("user_id"))
@@ -75,7 +81,6 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             **state,
             "status": "failed",
             "error": f"Interview prep generation failed: {str(exc)[:200]}",
-            "messages": state["messages"] + [
-                AIMessage(content=f"Interview prep generation failed for {target_role}.")
-            ],
+            "messages": state["messages"]
+            + [AIMessage(content=f"Interview prep generation failed for {target_role}.")],
         }

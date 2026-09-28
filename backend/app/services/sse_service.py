@@ -48,11 +48,14 @@ class SSEPublisher:
         await self._publish("checkpoint", {"action_type": action_type, "details": details})
 
     async def complete(self, result: dict, tokens_used: int, duration_ms: int) -> None:
-        await self._publish("complete", {
-            "result": result, "tokens_used": tokens_used, "duration_ms": duration_ms,
-        })
+        await self._publish(
+            "complete",
+            {
+                "result": result,
+                "tokens_used": tokens_used,
+                "duration_ms": duration_ms,
+            },
+        )
 
     async def error(self, message: str) -> None:
         await self._publish("error", {"message": message})
-
-

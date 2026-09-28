@@ -342,5 +342,3 @@ async def plan_fields(db: AsyncSession, task: ExtensionTask, raw_fields: list[di
         p["field_id"] for p in plan if p["required"] and p["value"] in (None, "")
     ]
     return {"fields": plan, "unresolved_required": unresolved_required}
-
-

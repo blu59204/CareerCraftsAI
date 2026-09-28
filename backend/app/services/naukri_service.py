@@ -20,6 +20,7 @@ Anti-detection trigger: if CAPTCHA block rate exceeds 20% over any rolling
 Browserbase) — see CONFIGURATION.md for env vars.  Do not add proxies
 preemptively.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,6 +45,7 @@ NAUKRI_BASE_URL = "https://www.naukri.com"
 # Human-like delay helpers (values from config, not hardcoded)
 # ---------------------------------------------------------------------------
 
+
 async def _delay_navigate() -> None:
     """Pause after a page navigation."""
     lo = settings.BROWSER_DELAY_NAVIGATE_MIN_MS / 1000
@@ -62,10 +64,11 @@ async def _delay_extract() -> None:
 # Data types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class NaukriApplyResult:
     job_url: str
-    status: str   # "ready_for_review" | "requires_manual" | "failed"
+    status: str  # "ready_for_review" | "requires_manual" | "failed"
     filled_fields: list[str]
     message: str
 
@@ -73,6 +76,7 @@ class NaukriApplyResult:
 # ---------------------------------------------------------------------------
 # Job Search — navigate Naukri, extract listings
 # ---------------------------------------------------------------------------
+
 
 def _parse_naukri_results(raw: str, query: str, location: str) -> list[JobListing]:
     """Parse the pipe-delimited extraction output into JobListing objects."""
@@ -96,14 +100,16 @@ def _parse_naukri_results(raw: str, query: str, location: str) -> list[JobListin
             # Normalise relative URLs
             if job_url and not job_url.startswith("http"):
                 job_url = NAUKRI_BASE_URL + job_url
-            jobs.append(JobListing(
-                title=title,
-                company=parts.get("COMPANY", "Unknown"),
-                location=parts.get("LOCATION", location),
-                description=f"{parts.get('EXP', '')} {parts.get('DESC', '')}".strip()[:2000],
-                job_url=job_url or NAUKRI_BASE_URL,
-                platform="naukri",
-            ))
+            jobs.append(
+                JobListing(
+                    title=title,
+                    company=parts.get("COMPANY", "Unknown"),
+                    location=parts.get("LOCATION", location),
+                    description=f"{parts.get('EXP', '')} {parts.get('DESC', '')}".strip()[:2000],
+                    job_url=job_url or NAUKRI_BASE_URL,
+                    platform="naukri",
+                )
+            )
         except Exception as exc:
             logger.debug("Skipping unparsable Naukri job line: %s", exc)
     return jobs
@@ -161,16 +167,23 @@ async def apply_naukri_with_hitl(
     )
 
     log_browser_action(
-        run_id=run_id, action="navigate", url=job_url,
+        run_id=run_id,
+        action="navigate",
+        url=job_url,
         detail="naukri_apply: starting form fill",
     )
 
     try:
         await _delay_navigate()
-        with BrowserActionTimer(run_id=run_id, action="fill", url=job_url,
-                                detail="naukri_apply form fill"):
+        with BrowserActionTimer(
+            run_id=run_id, action="fill", url=job_url, detail="naukri_apply form fill"
+        ):
             raw = await run_browser_task_with_captcha_retry(
-                llm, task, user_id, max_steps=25, run_id=run_id,
+                llm,
+                task,
+                user_id,
+                max_steps=25,
+                run_id=run_id,
             )
         await _delay_extract()
 
@@ -178,8 +191,9 @@ async def apply_naukri_with_hitl(
         upper = result_text.upper()
 
         if "REQUIRES_MANUAL" in upper:
-            log_browser_action(run_id=run_id, action="fill", url=job_url,
-                               detail="requires_manual", success=False)
+            log_browser_action(
+                run_id=run_id, action="fill", url=job_url, detail="requires_manual", success=False
+            )
             return NaukriApplyResult(
                 job_url=job_url,
                 status="requires_manual",
@@ -203,19 +217,25 @@ async def apply_naukri_with_hitl(
                 filled.append(line.lstrip("-•* "))
 
         log_browser_action(
-            run_id=run_id, action="fill", url=job_url,
+            run_id=run_id,
+            action="fill",
+            url=job_url,
             detail=f"ready_for_review: filled {len(filled)} fields",
         )
 
         # Emit HITL checkpoint event — orchestrator watches for this to set
         # state["status"] = "awaiting_approval" and pause the run.
         if run_id:
-            emit(run_id, "checkpoint", {
-                "type": "naukri_apply_review",
-                "job_url": job_url,
-                "filled_fields": filled,
-                "message": "Application form filled. Review and approve to submit.",
-            })
+            emit(
+                run_id,
+                "checkpoint",
+                {
+                    "type": "naukri_apply_review",
+                    "job_url": job_url,
+                    "filled_fields": filled,
+                    "message": "Application form filled. Review and approve to submit.",
+                },
+            )
 
         return NaukriApplyResult(
             job_url=job_url,
@@ -225,8 +245,9 @@ async def apply_naukri_with_hitl(
         )
 
     except Exception as exc:
-        log_browser_action(run_id=run_id, action="error", url=job_url,
-                           detail=f"apply failed: {exc}", success=False)
+        log_browser_action(
+            run_id=run_id, action="error", url=job_url, detail=f"apply failed: {exc}", success=False
+        )
         logger.error("Naukri apply failed for user %s job %s: %s", user_id, job_url, exc)
         return NaukriApplyResult(
             job_url=job_url,

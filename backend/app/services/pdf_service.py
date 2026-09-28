@@ -4,6 +4,7 @@ ATS-safe PDF resume generation.
 Three templates (classic, modern, technical), all single-column.
 Compatible with Taleo, Workday, Greenhouse, iCIMS.
 """
+
 import io
 import logging
 import re
@@ -39,68 +40,129 @@ def _build_styles(template: Template) -> dict:
 
     if template == "classic":
         name_style = ParagraphStyle(
-            "Name", parent=base["Normal"], fontName="Times-Bold",
-            fontSize=16, spaceAfter=4, alignment=TA_CENTER,
+            "Name",
+            parent=base["Normal"],
+            fontName="Times-Bold",
+            fontSize=16,
+            spaceAfter=4,
+            alignment=TA_CENTER,
         )
         contact_style = ParagraphStyle(
-            "Contact", parent=base["Normal"], fontName="Times-Roman",
-            fontSize=10, spaceAfter=2, alignment=TA_CENTER,
+            "Contact",
+            parent=base["Normal"],
+            fontName="Times-Roman",
+            fontSize=10,
+            spaceAfter=2,
+            alignment=TA_CENTER,
         )
         section_style = ParagraphStyle(
-            "Section", parent=base["Normal"], fontName="Times-Bold",
-            fontSize=11, spaceBefore=10, spaceAfter=4, underline=True,
+            "Section",
+            parent=base["Normal"],
+            fontName="Times-Bold",
+            fontSize=11,
+            spaceBefore=10,
+            spaceAfter=4,
+            underline=True,
         )
         body_style = ParagraphStyle(
-            "Body", parent=base["Normal"], fontName="Times-Roman",
-            fontSize=10, leading=14, spaceAfter=2,
+            "Body",
+            parent=base["Normal"],
+            fontName="Times-Roman",
+            fontSize=10,
+            leading=14,
+            spaceAfter=2,
         )
         bullet_style = ParagraphStyle(
-            "Bullet", parent=base["Normal"], fontName="Times-Roman",
-            fontSize=10, leading=14, leftIndent=12, spaceAfter=2,
+            "Bullet",
+            parent=base["Normal"],
+            fontName="Times-Roman",
+            fontSize=10,
+            leading=14,
+            leftIndent=12,
+            spaceAfter=2,
         )
 
     elif template == "technical":
         name_style = ParagraphStyle(
-            "Name", parent=base["Normal"], fontName="Helvetica-Bold",
-            fontSize=15, spaceAfter=4,
+            "Name",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=15,
+            spaceAfter=4,
         )
         contact_style = ParagraphStyle(
-            "Contact", parent=base["Normal"], fontName="Helvetica",
-            fontSize=10, spaceAfter=2,
+            "Contact",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            spaceAfter=2,
         )
         section_style = ParagraphStyle(
-            "Section", parent=base["Normal"], fontName="Helvetica-Bold",
-            fontSize=10, spaceBefore=8, spaceAfter=3, textTransform="uppercase",
+            "Section",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            spaceBefore=8,
+            spaceAfter=3,
+            textTransform="uppercase",
         )
         body_style = ParagraphStyle(
-            "Body", parent=base["Normal"], fontName="Helvetica",
-            fontSize=10, leading=13, spaceAfter=1,
+            "Body",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            leading=13,
+            spaceAfter=1,
         )
         bullet_style = ParagraphStyle(
-            "Bullet", parent=base["Normal"], fontName="Courier",
-            fontSize=9, leading=13, leftIndent=12, spaceAfter=1,
+            "Bullet",
+            parent=base["Normal"],
+            fontName="Courier",
+            fontSize=9,
+            leading=13,
+            leftIndent=12,
+            spaceAfter=1,
         )
 
     else:  # modern (default)
         name_style = ParagraphStyle(
-            "Name", parent=base["Normal"], fontName="Helvetica-Bold",
-            fontSize=16, spaceAfter=4,
+            "Name",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=16,
+            spaceAfter=4,
         )
         contact_style = ParagraphStyle(
-            "Contact", parent=base["Normal"], fontName="Helvetica",
-            fontSize=10, spaceAfter=2,
+            "Contact",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10,
+            spaceAfter=2,
         )
         section_style = ParagraphStyle(
-            "Section", parent=base["Normal"], fontName="Helvetica-Bold",
-            fontSize=11, spaceBefore=10, spaceAfter=4,
+            "Section",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            spaceBefore=10,
+            spaceAfter=4,
         )
         body_style = ParagraphStyle(
-            "Body", parent=base["Normal"], fontName="Helvetica",
-            fontSize=10.5, leading=15, spaceAfter=2,
+            "Body",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=15,
+            spaceAfter=2,
         )
         bullet_style = ParagraphStyle(
-            "Bullet", parent=base["Normal"], fontName="Helvetica",
-            fontSize=10.5, leading=15, leftIndent=12, spaceAfter=2,
+            "Bullet",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=15,
+            leftIndent=12,
+            spaceAfter=2,
         )
 
     return {
@@ -126,11 +188,7 @@ def _is_section_header(line: str) -> bool:
 
 
 def _is_contact_line(line: str) -> bool:
-    return bool(
-        _EMAIL_RE.search(line)
-        or _PHONE_RE.search(line)
-        or _LINKEDIN_RE.search(line)
-    )
+    return bool(_EMAIL_RE.search(line) or _PHONE_RE.search(line) or _LINKEDIN_RE.search(line))
 
 
 def _is_bullet_line(line: str) -> bool:
@@ -181,9 +239,7 @@ def generate_resume_pdf(
 
         if _is_section_header(stripped):
             if use_hr:
-                story.append(
-                    HRFlowable(width="100%", thickness=0.5, color="black", spaceAfter=2)
-                )
+                story.append(HRFlowable(width="100%", thickness=0.5, color="black", spaceAfter=2))
             story.append(Paragraph(_escape(stripped), styles["section"]))
             continue
 
@@ -199,6 +255,3 @@ def generate_resume_pdf(
 
     doc.build(story)
     return buffer.getvalue()
-
-
-

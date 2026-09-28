@@ -7,6 +7,7 @@ Platforms: Naukri, Foundit, Instahyre, Cutshort, Hirect, Internshala,
 Uses browser-use (AI-driven Playwright) to scrape job listings from platforms
 that JobSpy doesn't support natively.
 """
+
 import asyncio
 import logging
 import secrets
@@ -15,7 +16,9 @@ from urllib.parse import quote_plus
 from langchain_core.language_models import BaseChatModel
 
 from app.core.event_bus import emit
-from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
+from app.services.browser_control_service import (
+    run_browser_task_with_captcha_retry as run_browser_task,
+)
 from app.services.job_platforms_service import JobListing
 
 logger = logging.getLogger(__name__)
@@ -145,14 +148,16 @@ def _parse_extraction_result(raw_text: str, platform: str) -> list[JobListing]:
                     parts[key.strip().upper()] = val.strip()
 
             if parts.get("TITLE"):
-                jobs.append(JobListing(
-                    title=parts.get("TITLE", ""),
-                    company=parts.get("COMPANY", "Unknown"),
-                    location=parts.get("LOCATION", ""),
-                    description=parts.get("DESC", "")[:2000],
-                    job_url=parts.get("URL", ""),
-                    platform=platform,
-                ))
+                jobs.append(
+                    JobListing(
+                        title=parts.get("TITLE", ""),
+                        company=parts.get("COMPANY", "Unknown"),
+                        location=parts.get("LOCATION", ""),
+                        description=parts.get("DESC", "")[:2000],
+                        job_url=parts.get("URL", ""),
+                        platform=platform,
+                    )
+                )
         except Exception as exc:
             logger.debug("Skipping unparsable %s job line: %s", platform, exc)
             continue
@@ -202,12 +207,16 @@ async def _search_google_jobs_playwright(
     user_dir.mkdir(parents=True, exist_ok=True)
 
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "navigate",
-            "mode": "visible" if live_browser else "headless",
-            "url": url,
-            "task": "Search Google Jobs with Playwright",
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "navigate",
+                "mode": "visible" if live_browser else "headless",
+                "url": url,
+                "task": "Search Google Jobs with Playwright",
+            },
+        )
 
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
@@ -236,7 +245,11 @@ async def _search_google_jobs_playwright(
                     jobs.append(job)
 
             if run_id:
-                emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
+                emit(
+                    run_id,
+                    "browser",
+                    {"phase": "extracted", "source": "google_jobs", "count": len(jobs)},
+                )
             if live_browser:
                 await page.wait_for_timeout(5000)
             return jobs
@@ -336,12 +349,16 @@ async def search_google_jobs(
     )
 
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "navigate",
-            "mode": "visible" if live_browser else "headless",
-            "url": url,
-            "task": "Search Google Jobs for real-time job listings",
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "navigate",
+                "mode": "visible" if live_browser else "headless",
+                "url": url,
+                "task": "Search Google Jobs for real-time job listings",
+            },
+        )
 
     try:
         await _human_delay()
@@ -352,7 +369,11 @@ async def search_google_jobs(
         )
         jobs = _parse_extraction_result(raw_text, "google_jobs")
         if run_id:
-            emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
+            emit(
+                run_id,
+                "browser",
+                {"phase": "extracted", "source": "google_jobs", "count": len(jobs)},
+            )
         return jobs
     except Exception as exc:
         logger.error("Google Jobs search failed: %s", exc)

@@ -48,5 +48,3 @@ def decrypt_api_key(encrypted: str, app_secret: str) -> str:
     except Exception as exc:
         raise ValueError("Decryption failed — ciphertext corrupted or wrong key") from exc
     return plaintext.decode()
-
-

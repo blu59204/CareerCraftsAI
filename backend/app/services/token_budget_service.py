@@ -6,6 +6,7 @@ Raises TokenBudgetExceeded when user exceeds their daily limit.
 
 Default: 500,000 tokens/day (adjustable per user tier).
 """
+
 import logging
 from datetime import date
 
@@ -23,9 +24,7 @@ _redis: aioredis.Redis | None = None
 async def _get_redis() -> aioredis.Redis:
     global _redis
     if _redis is None:
-        _redis = aioredis.from_url(
-            settings.REDIS_URL, encoding="utf-8", decode_responses=True
-        )
+        _redis = aioredis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
     return _redis
 
 
@@ -70,5 +69,3 @@ async def consume_tokens(user_id: str, tokens: int, limit: int = DEFAULT_DAILY_L
         raise TokenBudgetExceeded(user_id, new_total, limit)
 
     return new_total
-
-
