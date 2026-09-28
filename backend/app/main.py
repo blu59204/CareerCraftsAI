@@ -99,13 +99,17 @@ _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
 }
+_API_CSP = "default-src 'none'; frame-ancestors 'none'"
+# Swagger UI / ReDoc (non-production only) load scripts and styles from a CDN.
+_DOCS_PATHS = ("/docs", "/redoc")
 
 
 async def _security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers.update(_SECURITY_HEADERS)
+    if not request.url.path.startswith(_DOCS_PATHS):
+        response.headers["Content-Security-Policy"] = _API_CSP
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response

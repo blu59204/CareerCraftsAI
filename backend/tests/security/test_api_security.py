@@ -188,3 +188,12 @@ async def test_liveness_probe_is_public_and_sets_security_headers():
     assert resp.headers["X-Frame-Options"] == "DENY"
     assert "frame-ancestors 'none'" in resp.headers["Content-Security-Policy"]
     assert "Strict-Transport-Security" not in resp.headers  # plain http in tests
+
+
+@pytest.mark.asyncio
+async def test_docs_pages_skip_the_api_csp():
+    """Swagger UI loads from a CDN; the API's default-src 'none' would blank it."""
+    async with make_client() as client:
+        resp = await client.get("/docs")
+    assert "Content-Security-Policy" not in resp.headers
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
