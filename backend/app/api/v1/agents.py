@@ -17,7 +17,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.event_bus import stream_events, publish
 from app.core.rate_limit import limiter
-from app.models.db import AgentRun, User
+from app.models.db import AgentRun, ApplicationAttempt, User
 from temporalio.service import RPCError, RPCStatusCode
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -204,6 +204,18 @@ async def approve_or_cancel(
     from app.workflows.starters import WorkflowUnavailable, signal_agent_decision
 
     if not payload.approved:
+        # The workflow only records cancellation in memory; close the attempt row
+        # too, so claim_attempt_for_submit can never claim a rejected attempt.
+        attempt_id = (run.output or {}).get("attempt_id")
+        if attempt_id:
+            try:
+                attempt_uuid = uuid.UUID(str(attempt_id))
+            except (ValueError, TypeError, AttributeError):
+                attempt_uuid = None
+            if attempt_uuid:
+                attempt = await db.get(ApplicationAttempt, attempt_uuid, with_for_update=True)
+                if attempt and attempt.run_id == run.id and attempt.state == "awaiting_approval":
+                    attempt.state = "cancelled"
         try:
             if apply_workflow_id:
                 from app.workflows.auto_apply import AutoApplyWorkflow
