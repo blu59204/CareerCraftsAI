@@ -6,6 +6,7 @@ the hood) to perform tasks on LinkedIn, Gmail, job boards, and any website —
 just like a human would. A persistent per-user profile keeps cookies/logins
 across runs. browser-use is the sole browser-control engine.
 """
+
 import asyncio
 import base64
 import logging
@@ -20,13 +21,15 @@ from langchain_core.language_models import BaseChatModel
 
 from app.core.config import settings
 from app.core.event_bus import emit
-from app.services.browser_logger import BrowserActionTimer, log_browser_action, save_debug_screenshot
+from app.services.browser_logger import log_browser_action, save_debug_screenshot
 
 logger = logging.getLogger(__name__)
 _RANDOM = secrets.SystemRandom()
 
 # Persistent browser data directory — cookies survive restarts
-BROWSER_DATA_DIR = Path(settings.BASE_DIR if hasattr(settings, "BASE_DIR") else ".") / ".browser_data"
+BROWSER_DATA_DIR = (
+    Path(settings.BASE_DIR if hasattr(settings, "BASE_DIR") else ".") / ".browser_data"
+)
 
 # browser_use is imported lazily inside functions so the module loads cleanly
 # in test environments that don't have Chromium/Playwright installed.
@@ -57,11 +60,24 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 # Strings that look like a CAPTCHA / WAF / anti-bot block page.
 _CAPTCHA_MARKERS: tuple[str, ...] = (
-    "captcha", "unusual traffic", "are you a human", "verify you are",
-    "access denied", "rate limit", "too many requests", "bot detection",
-    "please complete the security check", "are you a robot",
-    "checking your browser", "cloudflare", "perimeterx", "datadome",
-    "incapsula", "distil", "akamai", "just a moment",
+    "captcha",
+    "unusual traffic",
+    "are you a human",
+    "verify you are",
+    "access denied",
+    "rate limit",
+    "too many requests",
+    "bot detection",
+    "please complete the security check",
+    "are you a robot",
+    "checking your browser",
+    "cloudflare",
+    "perimeterx",
+    "datadome",
+    "incapsula",
+    "distil",
+    "akamai",
+    "just a moment",
 )
 
 # How many times to retry a browser task that hit a CAPTCHA.
@@ -120,24 +136,35 @@ async def run_browser_task_with_captcha_retry(
     for attempt in range(_CAPTCHA_MAX_RETRIES + 1):
         try:
             result = await run_browser_task(
-                llm, task, user_id,
-                max_steps=max_steps, live_browser=live_browser, run_id=run_id,
+                llm,
+                task,
+                user_id,
+                max_steps=max_steps,
+                live_browser=live_browser,
+                run_id=run_id,
             )
             if _looks_like_captcha(result):
                 logger.warning(
                     "Browser task for run=%s attempt=%s returned CAPTCHA-like text; will retry",
-                    run_id, attempt,
+                    run_id,
+                    attempt,
                 )
                 if run_id:
-                    emit(run_id, "browser", {
-                        "phase": "captcha_detected",
-                        "attempt": attempt,
-                        "max_retries": _CAPTCHA_MAX_RETRIES,
-                    })
+                    emit(
+                        run_id,
+                        "browser",
+                        {
+                            "phase": "captcha_detected",
+                            "attempt": attempt,
+                            "max_retries": _CAPTCHA_MAX_RETRIES,
+                        },
+                    )
                 # Optional: try to solve the CAPTCHA via 2Captcha/CapSolver.
                 # Skipped silently when no CAPTCHA_API_KEY is set.
                 solution = await _maybe_solve_captcha(
-                    result, run_id=run_id, attempt=attempt,
+                    result,
+                    run_id=run_id,
+                    attempt=attempt,
                 )
                 # Force a clean fingerprint for the next attempt by giving
                 # browser-use a unique user_data_dir suffix per attempt.
@@ -156,7 +183,9 @@ async def run_browser_task_with_captcha_retry(
             if attempt < _CAPTCHA_MAX_RETRIES:
                 logger.warning(
                     "Browser task for run=%s attempt=%s failed: %s; retrying",
-                    run_id, attempt, exc,
+                    run_id,
+                    attempt,
+                    exc,
                 )
                 await asyncio.sleep(_CAPTCHA_BACKOFF_S * (attempt + 1))
                 continue
@@ -185,8 +214,7 @@ async def run_browser_task_with_captcha_retry(
 # ---------------------------------------------------------------------------
 
 _CAPTCHA_SITEKEY_RE = re.compile(
-    r'data-sitekey=["\']([\w_-]+)["\']|'
-    r'sitekey["\']?\s*[:=]\s*["\']?([\w_-]+)["\']?',
+    r'data-sitekey=["\']([\w_-]+)["\']|' r'sitekey["\']?\s*[:=]\s*["\']?([\w_-]+)["\']?',
     re.IGNORECASE,
 )
 
@@ -220,12 +248,16 @@ async def _maybe_solve_captcha(
         logger.debug("CAPTCHA detected but no sitekey found in result; skipping solver")
         return None
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "captcha_solving",
-            "provider": provider,
-            "site_key": site_key[:12] + "…",
-            "attempt": attempt,
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "captcha_solving",
+                "provider": provider,
+                "site_key": site_key[:12] + "…",
+                "attempt": attempt,
+            },
+        )
     if provider == "capsolver":
         return await _solve_with_capsolver(site_key, run_id=run_id)
     # default: 2captcha
@@ -272,10 +304,14 @@ async def _solve_with_2captcha(site_key: str, run_id: str | None) -> str | None:
                 if data.get("status") == 1:
                     token = data.get("request", "")
                     if run_id:
-                        emit(run_id, "browser", {
-                            "phase": "captcha_solved",
-                            "provider": "2captcha",
-                        })
+                        emit(
+                            run_id,
+                            "browser",
+                            {
+                                "phase": "captcha_solved",
+                                "provider": "2captcha",
+                            },
+                        )
                     return token
                 if "CAPCHA_NOT_READY" not in str(data.get("request", "")):
                     logger.warning("2Captcha poll error: %s", data)
@@ -322,10 +358,14 @@ async def _solve_with_capsolver(site_key: str, run_id: str | None) -> str | None
                 if status == "ready":
                     token = (data.get("solution") or {}).get("gRecaptchaResponse", "")
                     if run_id:
-                        emit(run_id, "browser", {
-                            "phase": "captcha_solved",
-                            "provider": "capsolver",
-                        })
+                        emit(
+                            run_id,
+                            "browser",
+                            {
+                                "phase": "captcha_solved",
+                                "provider": "capsolver",
+                            },
+                        )
                     return token
                 if status == "failed":
                     logger.warning("CapSolver task failed: %s", data)
@@ -414,11 +454,15 @@ async def run_browser_task(
     log_browser_action(run_id=run_id, action="navigate", url="", detail=f"task_start: {task[:120]}")
 
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "starting",
-            "mode": "visible" if live_browser else "headless",
-            "task": task[:240],
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "starting",
+                "mode": "visible" if live_browser else "headless",
+                "task": task[:240],
+            },
+        )
 
     sem = _get_semaphore()
     async with sem:
@@ -431,6 +475,7 @@ async def run_browser_task(
             if not run_id:
                 raise ValueError("A durable run ID is required for sandbox browser tasks")
             from app.services.sandbox_service import acquire_session, OpenSandboxProvider
+
             session = await acquire_session(user_id, run_id)
             cdp_url, cdp_headers = await OpenSandboxProvider().cdp(session.sandbox_id)
             browser = Browser(cdp_url=cdp_url, headers=cdp_headers, keep_alive=True)
@@ -462,13 +507,17 @@ async def run_browser_task(
             _last_frame_emit[run_id] = now
             try:
                 b64 = shot if isinstance(shot, str) else base64.b64encode(shot).decode("ascii")
-                emit(run_id, "browser_frame", {
-                    "step": n_steps,
-                    "url": current_url,
-                    "title": getattr(browser_state_summary, "title", "") or "",
-                    "screenshot_b64": b64,
-                    "mime": "image/png",
-                })
+                emit(
+                    run_id,
+                    "browser_frame",
+                    {
+                        "step": n_steps,
+                        "url": current_url,
+                        "title": getattr(browser_state_summary, "title", "") or "",
+                        "screenshot_b64": b64,
+                        "mime": "image/png",
+                    },
+                )
             except Exception:
                 pass
 
@@ -489,8 +538,10 @@ async def run_browser_task(
             if not final:
                 raise RuntimeError("Browser stopped without a verified result")
             log_browser_action(
-                run_id=run_id, action="extract",
-                detail=f"completed: {str(final)[:120]}", duration_ms=duration_ms,
+                run_id=run_id,
+                action="extract",
+                detail=f"completed: {str(final)[:120]}",
+                duration_ms=duration_ms,
             )
             if run_id:
                 emit(run_id, "browser", {"phase": "completed", "result": str(final)[:500]})
@@ -536,11 +587,15 @@ async def linkedin_login(
     del llm  # Login must not route credentials through an LLM.
 
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "login_starting",
-            "mode": "visible" if live_browser else "headless",
-            "site": "linkedin",
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "login_starting",
+                "mode": "visible" if live_browser else "headless",
+                "site": "linkedin",
+            },
+        )
 
     try:
         from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -594,45 +649,9 @@ async def linkedin_send_connection(
         f"Type this note: '{note[:280]}'. "
         f"Click 'Send'. Confirm the request was sent."
     )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=12, live_browser=live_browser, run_id=run_id)
-
-
-async def linkedin_send_message(
-    llm: BaseChatModel,
-    user_id: str,
-    profile_url: str,
-    message: str,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Send a LinkedIn direct message to a 1st-degree connection."""
-    task = (
-        f"Go to {profile_url}. "
-        f"Click the 'Message' button to open the messaging window. "
-        f"Type this message: '{message}'. "
-        f"Click the Send button. Confirm the message was sent."
+    return await run_browser_task_with_captcha_retry(
+        llm, task, user_id, max_steps=12, live_browser=live_browser, run_id=run_id
     )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=10, live_browser=live_browser, run_id=run_id)
-
-
-async def linkedin_easy_apply(
-    llm: BaseChatModel,
-    user_id: str,
-    job_url: str,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Apply to a job via LinkedIn Easy Apply."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click the 'Easy Apply' button. "
-        f"Fill in any required fields using reasonable defaults. "
-        f"Upload resume if prompted (skip if no file available). "
-        f"Click through steps until the final review screen. "
-        f"Stop before final Submit/Send Application and report READY_FOR_REVIEW. "
-        f"Do not submit without explicit user approval."
-    )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=20, live_browser=live_browser, run_id=run_id)
 
 
 async def apply_to_job(
@@ -663,46 +682,6 @@ async def apply_to_job(
         f"If login, CAPTCHA, OTP, payment, account creation, or missing required personal data blocks "
         f"progress, stop and report REQUIRES_MANUAL."
     )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=25, live_browser=live_browser, run_id=run_id)
-
-
-async def linkedin_update_profile(
-    llm: BaseChatModel, user_id: str,
-    headline: str | None = None,
-    about: str | None = None,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Update LinkedIn profile headline and/or about section."""
-    parts = ["Go to https://www.linkedin.com/in/me/."]
-    if headline:
-        parts.append(
-            f"Click the pencil/edit icon near the headline. "
-            f"Clear the current headline and type: '{headline}'. Save."
-        )
-    if about:
-        parts.append(
-            f"Scroll to the About section. Click the pencil/edit icon. "
-            f"Clear the current text and type: '{about[:2000]}'. Save."
-        )
-    parts.append("Stop on the final confirmation state and report what changed.")
-    task = " ".join(parts)
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=15, live_browser=live_browser, run_id=run_id)
-
-
-async def send_email_via_browser(
-    llm: BaseChatModel, user_id: str,
-    to: str, subject: str, body: str,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Send an email via Gmail web interface (fallback when OAuth not available)."""
-    task = (
-        f"Go to https://mail.google.com/mail/u/0/#inbox. "
-        f"Click 'Compose'. "
-        f"In the 'To' field, type '{to}'. "
-        f"In the 'Subject' field, type '{subject}'. "
-        f"In the body, type: '{body[:1000]}'. "
-        f"Click 'Send'. Confirm the email was sent."
+    return await run_browser_task_with_captcha_retry(
+        llm, task, user_id, max_steps=25, live_browser=live_browser, run_id=run_id
     )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=12, live_browser=live_browser, run_id=run_id)

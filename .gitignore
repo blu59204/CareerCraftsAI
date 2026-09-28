@@ -55,6 +55,9 @@ CLAUDE.md
 AGENTS.md
 GEMINI.md
 
+# Pentest (strix) run output - may contain captured tokens/responses.
+strix_runs/
+
 # Browser automation profiles/captures may contain cookies, tokens, or private page data.
 .browser_data/
 **/.browser_data/

@@ -4,6 +4,7 @@ job_platforms_service.py — Multi-platform job scraping via JobSpy + Indian pla
 JobSpy: LinkedIn, Indeed, Glassdoor, Google Jobs, ZipRecruiter, Wellfound.
 Indian (browser-use): Naukri, Foundit, Instahyre, Cutshort, Hirect, Internshala, Shine, iimjobs, Freshersworld.
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -24,25 +25,63 @@ class JobListing:
 
 
 # JobSpy-supported platforms (wellfound/bayt/naukri added 2026-06-05)
-JOBSPY_PLATFORMS = ["linkedin", "indeed", "glassdoor", "google", "zip_recruiter", "wellfound", "bayt", "naukri"]
+JOBSPY_PLATFORMS = [
+    "linkedin",
+    "indeed",
+    "glassdoor",
+    "google",
+    "zip_recruiter",
+    "wellfound",
+    "bayt",
+    "naukri",
+]
 
 
 # Map common location strings to JobSpy's `country_indeed` enum (ISO 3166-1
 # alpha-2, lowercased).  Default is "usa" because Indeed defaults to US; for
 # India-based users the upstream caller passes `country="India"` explicitly.
 _COUNTRY_MAP = {
-    "usa": "usa", "us": "usa", "united states": "usa", "new york": "usa",
-    "san francisco": "usa", "seattle": "usa", "austin": "usa", "boston": "usa",
-    "india": "india", "in": "india", "bangalore": "india", "bengaluru": "india",
-    "mumbai": "india", "delhi": "india", "hyderabad": "india", "pune": "india",
-    "chennai": "india", "kolkata": "india", "gurgaon": "india", "gurugram": "india",
-    "noida": "india", "ahmedabad": "india", "jaipur": "india",
-    "uk": "uk", "united kingdom": "uk", "london": "uk", "manchester": "uk",
-    "germany": "germany", "berlin": "germany", "munich": "germany",
-    "france": "france", "paris": "france",
-    "canada": "canada", "toronto": "canada", "vancouver": "canada",
-    "australia": "australia", "sydney": "australia", "melbourne": "australia",
-    "singapore": "singapore", "dubai": "uae", "uae": "uae",
+    "usa": "usa",
+    "us": "usa",
+    "united states": "usa",
+    "new york": "usa",
+    "san francisco": "usa",
+    "seattle": "usa",
+    "austin": "usa",
+    "boston": "usa",
+    "india": "india",
+    "in": "india",
+    "bangalore": "india",
+    "bengaluru": "india",
+    "mumbai": "india",
+    "delhi": "india",
+    "hyderabad": "india",
+    "pune": "india",
+    "chennai": "india",
+    "kolkata": "india",
+    "gurgaon": "india",
+    "gurugram": "india",
+    "noida": "india",
+    "ahmedabad": "india",
+    "jaipur": "india",
+    "uk": "uk",
+    "united kingdom": "uk",
+    "london": "uk",
+    "manchester": "uk",
+    "germany": "germany",
+    "berlin": "germany",
+    "munich": "germany",
+    "france": "france",
+    "paris": "france",
+    "canada": "canada",
+    "toronto": "canada",
+    "vancouver": "canada",
+    "australia": "australia",
+    "sydney": "australia",
+    "melbourne": "australia",
+    "singapore": "singapore",
+    "dubai": "uae",
+    "uae": "uae",
 }
 
 
@@ -64,15 +103,8 @@ def _country_from_location(location: str | None) -> str:
             return _COUNTRY_MAP[key]
     return "usa"
 
+
 # Indian platforms requiring browser-use
-INDIAN_BROWSER_PLATFORMS = [
-    "naukri", "foundit", "instahyre", "cutshort",
-    "hirect", "internshala", "shine", "iimjobs", "freshersworld",
-]
-
-ALL_PLATFORMS = JOBSPY_PLATFORMS + INDIAN_BROWSER_PLATFORMS
-
-
 def scrape_jobs(
     search_term: str,
     location: str = "Remote",
@@ -115,18 +147,22 @@ def scrape_jobs(
 
         jobs: list[JobListing] = []
         for _, row in df.iterrows():
-            jobs.append(JobListing(
-                title=str(row.get("title", "")),
-                company=str(row.get("company", "")),
-                location=str(row.get("location", location)),
-                description=str(row.get("description", ""))[:2000],
-                job_url=str(row.get("job_url", "")),
-                platform=str(row.get("site", "unknown")),
-                date_posted=str(row.get("date_posted", "")) if row.get("date_posted") else None,
-                salary=str(row.get("min_amount", "")) if row.get("min_amount") else None,
-            ))
+            jobs.append(
+                JobListing(
+                    title=str(row.get("title", "")),
+                    company=str(row.get("company", "")),
+                    location=str(row.get("location", location)),
+                    description=str(row.get("description", ""))[:2000],
+                    job_url=str(row.get("job_url", "")),
+                    platform=str(row.get("site", "unknown")),
+                    date_posted=str(row.get("date_posted", "")) if row.get("date_posted") else None,
+                    salary=str(row.get("min_amount", "")) if row.get("min_amount") else None,
+                )
+            )
 
-        logger.info("JobSpy found %d jobs across %s for '%s'", len(jobs), target_platforms, search_term)
+        logger.info(
+            "JobSpy found %d jobs across %s for '%s'", len(jobs), target_platforms, search_term
+        )
         return jobs
 
     except Exception as exc:
@@ -171,6 +207,7 @@ async def scrape_all_platforms(
     indian_jobs: list[JobListing] = []
     if include_indian and llm and user_id:
         from app.services.indian_platforms_service import scrape_all_indian_platforms
+
         indian_jobs = await scrape_all_indian_platforms(
             llm=llm,
             user_id=user_id,
@@ -181,25 +218,10 @@ async def scrape_all_platforms(
         )
 
     combined = jobspy_jobs + indian_jobs
-    logger.info("Total jobs found: %d (JobSpy: %d, Indian: %d)", len(combined), len(jobspy_jobs), len(indian_jobs))
+    logger.info(
+        "Total jobs found: %d (JobSpy: %d, Indian: %d)",
+        len(combined),
+        len(jobspy_jobs),
+        len(indian_jobs),
+    )
     return combined
-
-
-def get_active_platforms() -> list[dict]:
-    """Return list of all supported job platforms with status."""
-    return [
-        {"name": "LinkedIn", "id": "linkedin", "status": "active", "url": "https://linkedin.com/jobs", "method": "jobspy"},
-        {"name": "Indeed", "id": "indeed", "status": "active", "url": "https://indeed.com", "method": "jobspy"},
-        {"name": "Glassdoor", "id": "glassdoor", "status": "active", "url": "https://glassdoor.com", "method": "jobspy"},
-        {"name": "Google Jobs", "id": "google", "status": "active", "url": "https://google.com/jobs", "method": "jobspy"},
-        {"name": "ZipRecruiter", "id": "zip_recruiter", "status": "active", "url": "https://ziprecruiter.com", "method": "jobspy"},
-        {"name": "Naukri", "id": "naukri", "status": "active", "url": "https://naukri.com", "method": "browser-use"},
-        {"name": "Foundit", "id": "foundit", "status": "active", "url": "https://foundit.in", "method": "browser-use"},
-        {"name": "Instahyre", "id": "instahyre", "status": "active", "url": "https://instahyre.com", "method": "browser-use"},
-        {"name": "Cutshort", "id": "cutshort", "status": "active", "url": "https://cutshort.io", "method": "browser-use"},
-        {"name": "Hirect", "id": "hirect", "status": "active", "url": "https://hirect.in", "method": "browser-use"},
-        {"name": "Internshala", "id": "internshala", "status": "active", "url": "https://internshala.com", "method": "browser-use"},
-        {"name": "Shine", "id": "shine", "status": "active", "url": "https://shine.com", "method": "browser-use"},
-        {"name": "iimjobs", "id": "iimjobs", "status": "active", "url": "https://iimjobs.com", "method": "browser-use"},
-        {"name": "Freshersworld", "id": "freshersworld", "status": "active", "url": "https://freshersworld.com", "method": "browser-use"},
-    ]

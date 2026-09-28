@@ -192,3 +192,50 @@ async def test_approve_rejects_temporal_run_missing_workflow_id():
     with pytest.raises(HTTPException) as exc_info:
         await _signal_temporal_approval(run, "browser_review", {})
     assert exc_info.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_reject_cancels_the_pending_application_attempt():
+    """Rejecting must close the attempt row, not just the workflow's in-memory
+    state, so claim_attempt_for_submit can never claim a rejected attempt."""
+    import app.api.v1.agents as agents_module
+    from app.models.db import AgentRun, ApplicationAttempt
+
+    run = AgentRun(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        agent_type="apply_prepare",
+        status="awaiting_approval",
+        input={"engine": "temporal", "workflow_id": "auto-apply/u1/j1"},
+    )
+    attempt = ApplicationAttempt(id=uuid.uuid4(), run_id=run.id, state="awaiting_approval")
+    other_run_attempt = ApplicationAttempt(
+        id=uuid.uuid4(), run_id=uuid.uuid4(), state="awaiting_approval"
+    )
+
+    fake_handle = MagicMock()
+    fake_handle.signal = AsyncMock()
+    reject = agents_module.approve_or_cancel.__wrapped__  # skip slowapi's Request check
+
+    for target, expected in ((attempt, "cancelled"), (other_run_attempt, "awaiting_approval")):
+        run.status = "awaiting_approval"
+        run.output = {"attempt_id": str(target.id)}
+        db = MagicMock()
+        db.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=run))
+        )
+        db.get = AsyncMock(return_value=target)
+        db.commit = AsyncMock()
+        with (
+            patch("app.workflows.starters.auto_apply_handle", AsyncMock(return_value=fake_handle)),
+            patch.object(agents_module, "publish"),
+        ):
+            result = await reject(
+                str(run.id),
+                agents_module.ApproveRequest(approved=False),
+                None,
+                db=db,
+                current_user=MagicMock(id=run.user_id),
+            )
+        assert result == {"status": "cancelled"}
+        assert target.state == expected

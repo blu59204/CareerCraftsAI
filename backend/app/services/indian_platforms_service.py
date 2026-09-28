@@ -7,16 +7,18 @@ Platforms: Naukri, Foundit, Instahyre, Cutshort, Hirect, Internshala,
 Uses browser-use (AI-driven Playwright) to scrape job listings from platforms
 that JobSpy doesn't support natively.
 """
+
 import asyncio
 import logging
 import secrets
-from dataclasses import dataclass
 from urllib.parse import quote_plus
 
 from langchain_core.language_models import BaseChatModel
 
 from app.core.event_bus import emit
-from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
+from app.services.browser_control_service import (
+    run_browser_task_with_captcha_retry as run_browser_task,
+)
 from app.services.job_platforms_service import JobListing
 
 logger = logging.getLogger(__name__)
@@ -146,14 +148,16 @@ def _parse_extraction_result(raw_text: str, platform: str) -> list[JobListing]:
                     parts[key.strip().upper()] = val.strip()
 
             if parts.get("TITLE"):
-                jobs.append(JobListing(
-                    title=parts.get("TITLE", ""),
-                    company=parts.get("COMPANY", "Unknown"),
-                    location=parts.get("LOCATION", ""),
-                    description=parts.get("DESC", "")[:2000],
-                    job_url=parts.get("URL", ""),
-                    platform=platform,
-                ))
+                jobs.append(
+                    JobListing(
+                        title=parts.get("TITLE", ""),
+                        company=parts.get("COMPANY", "Unknown"),
+                        location=parts.get("LOCATION", ""),
+                        description=parts.get("DESC", "")[:2000],
+                        job_url=parts.get("URL", ""),
+                        platform=platform,
+                    )
+                )
         except Exception as exc:
             logger.debug("Skipping unparsable %s job line: %s", platform, exc)
             continue
@@ -203,12 +207,16 @@ async def _search_google_jobs_playwright(
     user_dir.mkdir(parents=True, exist_ok=True)
 
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "navigate",
-            "mode": "visible" if live_browser else "headless",
-            "url": url,
-            "task": "Search Google Jobs with Playwright",
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "navigate",
+                "mode": "visible" if live_browser else "headless",
+                "url": url,
+                "task": "Search Google Jobs with Playwright",
+            },
+        )
 
     async with async_playwright() as p:
         context = await p.chromium.launch_persistent_context(
@@ -237,7 +245,11 @@ async def _search_google_jobs_playwright(
                     jobs.append(job)
 
             if run_id:
-                emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
+                emit(
+                    run_id,
+                    "browser",
+                    {"phase": "extracted", "source": "google_jobs", "count": len(jobs)},
+                )
             if live_browser:
                 await page.wait_for_timeout(5000)
             return jobs
@@ -299,84 +311,6 @@ async def scrape_all_indian_platforms(
     return all_jobs
 
 
-async def login_to_platform(
-    llm: BaseChatModel,
-    user_id: str,
-    platform: str,
-    email: str,
-    password: str,
-) -> str:
-    """Login to an Indian job platform. Cookies are persisted for future scraping.
-
-    Credentials are filled directly through Playwright so they never enter an
-    LLM prompt, SSE event, or provider-side trace.
-    """
-    del llm
-
-    if platform not in INDIAN_PLATFORMS:
-        return f"Unknown platform: {platform}"
-
-    config = INDIAN_PLATFORMS[platform]
-    login_urls = {
-        "naukri": "https://www.naukri.com/nlogin/login",
-        "foundit": "https://www.foundit.in/login",
-        "instahyre": "https://www.instahyre.com/login/",
-        "internshala": "https://internshala.com/login",
-    }
-    login_url = login_urls.get(platform, config["url"])
-
-    try:
-        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.async_api import async_playwright
-    except ImportError as exc:  # pragma: no cover - dependency is optional in some test envs
-        raise RuntimeError("Playwright is required for secure platform login") from exc
-
-    from app.services.browser_control_service import BROWSER_DATA_DIR
-
-    user_dir = BROWSER_DATA_DIR / user_id / platform
-    user_dir.mkdir(parents=True, exist_ok=True)
-    email_selectors = (
-        'input[type="email"], input[name*="email" i], input[name*="user" i], '
-        'input[id*="email" i], input[id*="user" i], input[type="text"]'
-    )
-    # CSS selectors for password fields, not stored credentials.
-    password_selectors = (
-        'input[type="password"], input[name*="password" i], input[id*="password" i]'  # noqa: S105  # nosec B105
-    )
-    submit_selectors = 'button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign in")'
-
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=str(user_dir),
-            headless=True,
-        )
-        page = context.pages[0] if context.pages else await context.new_page()
-        try:
-            await page.goto(login_url, wait_until="domcontentloaded")
-            await _human_delay()
-            await page.locator(email_selectors).first.fill(email)
-            await page.locator(password_selectors).first.fill(password)
-            await page.locator(submit_selectors).first.click()
-            try:
-                await page.wait_for_load_state("networkidle", timeout=15000)
-            except PlaywrightTimeoutError:
-                pass
-            page_text = (await page.locator("body").inner_text(timeout=5000)).lower()
-            if any(marker in page_text for marker in ("captcha", "otp", "verification code")):
-                return f"{config['name']} security challenge requires manual review"
-            return f"{config['name']} login submitted"
-        finally:
-            await context.close()
-
-
-def get_indian_platforms() -> list[dict]:
-    """Return list of supported Indian job platforms."""
-    return [
-        {"name": v["name"], "id": k, "status": "active", "url": v["url"]}
-        for k, v in INDIAN_PLATFORMS.items()
-    ]
-
-
 async def search_google_jobs(
     llm: BaseChatModel,
     user_id: str,
@@ -415,12 +349,16 @@ async def search_google_jobs(
     )
 
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "navigate",
-            "mode": "visible" if live_browser else "headless",
-            "url": url,
-            "task": "Search Google Jobs for real-time job listings",
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "navigate",
+                "mode": "visible" if live_browser else "headless",
+                "url": url,
+                "task": "Search Google Jobs for real-time job listings",
+            },
+        )
 
     try:
         await _human_delay()
@@ -431,7 +369,11 @@ async def search_google_jobs(
         )
         jobs = _parse_extraction_result(raw_text, "google_jobs")
         if run_id:
-            emit(run_id, "browser", {"phase": "extracted", "source": "google_jobs", "count": len(jobs)})
+            emit(
+                run_id,
+                "browser",
+                {"phase": "extracted", "source": "google_jobs", "count": len(jobs)},
+            )
         return jobs
     except Exception as exc:
         logger.error("Google Jobs search failed: %s", exc)

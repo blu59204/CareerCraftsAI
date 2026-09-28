@@ -13,8 +13,6 @@ Runs on demand as an agent run (AgentRunWorkflow).
 
 import logging
 import re
-import uuid
-from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage
 
@@ -26,15 +24,6 @@ from app.services.gmail_service import GmailMCPClient
 logger = logging.getLogger(__name__)
 
 # Platform sender patterns
-_PLATFORM_SENDERS = {
-    "linkedin": ["linkedin.com", "notifications-noreply@linkedin.com"],
-    "naukri": ["naukri.com", "info@naukri.com"],
-    "indeed": ["indeed.com", "alert@indeed.com"],
-    "foundit": ["foundit.in", "monster.com"],
-    "instahyre": ["instahyre.com"],
-    "glassdoor": ["glassdoor.com"],
-}
-
 # Status detection patterns
 _STATUS_PATTERNS = {
     "interview": [
@@ -198,66 +187,3 @@ def _extract_company_regex(text: str) -> str:
         if match:
             return match.group(1).strip()
     return "UNKNOWN"
-
-
-async def run_email_monitor(user_id: str) -> dict:
-    """Convenience function to run the email monitor and update application statuses."""
-    from app.core.database import AsyncSessionLocal
-    from app.models.db import JobApplication
-    from sqlalchemy import select, update
-
-    state = AgentState(
-        user_id=user_id,
-        run_id=str(uuid.uuid4()),
-        task_type="email_monitor",
-        messages=[HumanMessage(content="Scan inbox for job notifications")],
-        context={},
-        status="running",
-        pending_action=None,
-        result=None,
-        error=None,
-    )
-
-    import asyncio
-
-    result_state = await asyncio.get_running_loop().run_in_executor(None, email_monitor_node, state)
-
-    if result_state["status"] != "completed":
-        return {"status": "failed", "error": result_state.get("error")}
-
-    updates = (result_state.get("result") or {}).get("updates", [])
-    status_map = {
-        "INTERVIEW": "interview",
-        "REJECTED": "rejected",
-        "VIEWED": "viewed",
-        "SHORTLISTED": "shortlisted",
-    }
-
-    updated_count = 0
-    async with AsyncSessionLocal() as db:
-        for update_item in updates:
-            new_status = status_map.get(update_item["category"])
-            if not new_status or update_item["company"] == "UNKNOWN":
-                continue
-
-            # Find matching application by company name
-            res = await db.execute(
-                select(JobApplication).where(
-                    JobApplication.user_id == uuid.UUID(user_id),
-                    JobApplication.company.ilike(f"%{update_item['company']}%"),
-                    JobApplication.status.in_(["applied", "viewed", "shortlisted"]),
-                )
-            )
-            app = res.scalars().first()
-            if app:
-                app.status = new_status
-                updated_count += 1
-
-        await db.commit()
-
-    return {
-        "status": "ok",
-        "notifications_scanned": (result_state.get("result") or {}).get("notifications_scanned", 0),
-        "updates_found": len(updates),
-        "applications_updated": updated_count,
-    }

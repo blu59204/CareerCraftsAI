@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -93,9 +94,31 @@ async def _request_id_middleware(request: Request, call_next):
     return response
 
 
+# ── Security headers (defence-in-depth; no CSP-sensitive inline scripts here) ──
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+_API_CSP = "default-src 'none'; frame-ancestors 'none'"
+# Swagger UI / ReDoc (non-production only) load scripts and styles from a CDN.
+_DOCS_PATHS = ("/docs", "/redoc")
+
+
+async def _security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.update(_SECURITY_HEADERS)
+    if not request.url.path.startswith(_DOCS_PATHS):
+        response.headers["Content-Security-Policy"] = _API_CSP
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
+
 # ── JWT middleware (skip public paths) ───────────────────────────
 _PUBLIC_PATHS = {
     "/health",
+    "/health/live",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -126,7 +149,10 @@ async def _jwt_middleware(request: Request, call_next):
         )
     try:
         token = auth_header.split(" ", 1)[1]
-        payload = verify_token(token)
+        # verify_token can block on a synchronous JWKS HTTP fetch on cache miss
+        # (jwt.PyJWKClient uses urllib internally) — run it off the event loop
+        # so one slow/cold JWKS fetch can't stall every other in-flight request.
+        payload = await asyncio.to_thread(verify_token, token)
         request.state.user = payload
     except Exception:
         return JSONResponse(
@@ -220,9 +246,10 @@ async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
 # to travel back out through CORSMiddleware to pick up Access-Control-Allow-Origin,
 # otherwise the browser reports an opaque CORS failure and the frontend can't tell
 # an expired token from a dead network.
-# Execution order: CORS → request ID → JWT → route.
+# Execution order: CORS → security headers → request ID → JWT → route.
 app.middleware("http")(_jwt_middleware)
 app.middleware("http")(_request_id_middleware)
+app.middleware("http")(_security_headers_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
@@ -260,7 +287,14 @@ from app.core.llm_gateway import router as llm_gw
 app.include_router(llm_gw)
 
 
-# ── Health endpoint (no auth required) ──────────────────────────
+# ── Health endpoints (no auth required) ──────────────────────────
+# Bare liveness — no dependency checks, so a slow/degraded DB or Redis can't
+# flap the load balancer's health probe. Use /health for deep diagnostics.
+@app.get("/health/live")
+async def health_live():
+    return {"status": "ok"}
+
+
 @app.get("/health")
 async def health():
     from fastapi.responses import JSONResponse

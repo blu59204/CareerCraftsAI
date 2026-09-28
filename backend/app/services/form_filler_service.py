@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.sync_db import _get_sync_factory, fetch_user_profile_text
 from app.services.browser_control_service import (
@@ -126,70 +124,6 @@ BIO:
 
 JOB DESCRIPTION:
 {job_description[:1000] if job_description else 'Not provided'}"""
-
-
-FORM_FILLER_SYSTEM = """You are an expert job application form filler. You have access to the \
-candidate's complete profile and must fill every form field accurately.
-
-RULES:
-- Use EXACT data from the profile for factual fields (name, email, phone, etc.)
-- For open-ended questions ("Why this role?", "Tell us about yourself"), write compelling \
-  2-3 sentence answers using the resume and job description context.
-- For dropdowns/selects, pick the closest matching option.
-- For work authorization or sponsorship, use only explicitly confirmed candidate facts; otherwise return NEEDS_HUMAN.
-- For "How did you hear about us?": say "LinkedIn" or "Job Board".
-- For salary: use the salary expectation from profile. If field is optional and no data, skip.
-- NEVER fabricate credentials, degrees, or certifications not in the resume.
-- For unknown required or ambiguous fields, return NEEDS_HUMAN rather than guessing."""
-
-
-def generate_form_answers(
-    llm: BaseChatModel,
-    profile: UserFormProfile,
-    form_fields: list[str],
-    job_description: str = "",
-) -> dict[str, str]:
-    """Use LLM to generate answers for a list of form field labels.
-
-    Args:
-        llm: LLM instance
-        profile: User's complete form profile
-        form_fields: List of field labels/questions from the form
-        job_description: JD for context
-
-    Returns:
-        Dict mapping field label → answer
-    """
-    context = _build_profile_context(profile, job_description)
-    fields_text = "\n".join(f"- {f}" for f in form_fields)
-
-    response = llm.invoke(
-        [
-            SystemMessage(content=FORM_FILLER_SYSTEM),
-            HumanMessage(content=f"""{context}
-
-FORM FIELDS TO FILL:
-{fields_text}
-
-For each field, provide the answer. Format:
-FIELD: <field label>
-ANSWER: <your answer>
-
-Fill ALL fields listed above."""),
-        ]
-    )
-
-    # Parse response into dict
-    answers = {}
-    current_field = None
-    for line in response.content.strip().split("\n"):
-        if line.startswith("FIELD:"):
-            current_field = line.replace("FIELD:", "").strip()
-        elif line.startswith("ANSWER:") and current_field:
-            answers[current_field] = line.replace("ANSWER:", "").strip()
-            current_field = None
-
-    return answers
 
 
 async def fill_and_submit_form(

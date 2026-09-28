@@ -23,10 +23,10 @@ All of this is **data**, not code. The actual fetchers are in
 (JobSpy, ATS scrapers, web-search waterfall), and ``auto_apply_service.py``
 (apply pipeline).
 """
+
 from __future__ import annotations
 
 from typing import TypedDict
-
 
 # ----------------------------------------------------------------------
 # 1. SEARCH_PRESETS — 18 job-board URL templates with date/exp filters
@@ -35,13 +35,14 @@ from typing import TypedDict
 
 class SearchPreset(TypedDict, total=False):
     """One ready-to-fetch URL pattern for a job board."""
-    name: str                          # Human-friendly name
-    url: str                           # URL template (use {q}, {loc}, {exp}, {days})
-    method: str                        # "jobspy" | "browser_use" | "fetch" | "serpapi"
-    date_filter: str | None            # Param key for date filter (e.g. "f_TPR")
-    exp_filter: str | None             # Param key for experience filter
-    region: str | None                 # "india" | "global" | "remote"
-    notes: str                         # Why / when to use
+
+    name: str  # Human-friendly name
+    url: str  # URL template (use {q}, {loc}, {exp}, {days})
+    method: str  # "jobspy" | "browser_use" | "fetch" | "serpapi"
+    date_filter: str | None  # Param key for date filter (e.g. "f_TPR")
+    exp_filter: str | None  # Param key for experience filter
+    region: str | None  # "india" | "global" | "remote"
+    notes: str  # Why / when to use
 
 
 # URL cheat-sheet:
@@ -75,7 +76,6 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "region": "india",
         "notes": "Direct fresher tag. Anti-bot blocks raw fetch; use browser-use.",
     },
-
     # ----- India: Indeed -----
     {
         "name": "Indeed India — last 3 days, sorted by date",
@@ -95,30 +95,28 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "region": "india",
         "notes": "Entry-level only, 7-day window.",
     },
-
     # ----- India: LinkedIn -----
     {
         "name": "LinkedIn — past 24h, entry-level + internship, India",
         "url": "https://www.linkedin.com/jobs/search/?keywords={q}&location={loc}"
-               "&f_TPR=r86400&f_E=1%2C2&sortBy=DD",
+        "&f_TPR=r86400&f_E=1%2C2&sortBy=DD",
         "method": "jobspy",
         "date_filter": "f_TPR=r86400",
         "exp_filter": "f_E=1,2",
         "region": "india",
         "notes": "f_E=1 internship, 2 entry-level. r86400 = 24h window. LinkedIn "
-                 "JobSpy scrape is slow + 1-2 captchas per run; throttle.",
+        "JobSpy scrape is slow + 1-2 captchas per run; throttle.",
     },
     {
         "name": "LinkedIn — past 7 days, 0-2 yr exp, India",
         "url": "https://www.linkedin.com/jobs/search/?keywords={q}&location={loc}"
-               "&f_TPR=r604800&f_E=2&sortBy=DD",
+        "&f_TPR=r604800&f_E=2&sortBy=DD",
         "method": "jobspy",
         "date_filter": "f_TPR=r604800",
         "exp_filter": "f_E=2",
         "region": "india",
         "notes": "7-day window, entry-level only.",
     },
-
     # ----- India: Internshala (best for freshers + interns) -----
     {
         "name": "Internshala — fresher AI jobs",
@@ -145,7 +143,6 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "method": "browser_use",
         "region": "india",
     },
-
     # ----- India: Glassdoor -----
     {
         "name": "Glassdoor India — AI/ML fresher",
@@ -161,7 +158,6 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "method": "browser_use",
         "region": "india",
     },
-
     # ----- India: Hirist (tech-only, fresher-friendly) -----
     {
         "name": "Hirist — AI/ML jobs, 0-1 yr",
@@ -176,7 +172,6 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "method": "browser_use",
         "region": "india",
     },
-
     # ----- India: Cutshort, Instahyre, Foundit, Shine -----
     {
         "name": "Cutshort — India AI/ML fresher",
@@ -194,7 +189,7 @@ SEARCH_PRESETS: list[SearchPreset] = [
     {
         "name": "Instahyre — India, ML + Python, 0-1 yr",
         "url": "https://www.instahyre.com/jobs-in-india/?skills=machine-learning,python"
-               "&min_experience=0&max_experience=1",
+        "&min_experience=0&max_experience=1",
         "method": "browser_use",
         "region": "india",
         "notes": "Already in indian_platforms_service.INSTAHYRE.",
@@ -215,7 +210,6 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "region": "india",
         "notes": "Already in indian_platforms_service.SHINE.",
     },
-
     # ----- Global: Wellfound / AngelList (startups) -----
     {
         "name": "Wellfound — ML engineer, India",
@@ -231,7 +225,6 @@ SEARCH_PRESETS: list[SearchPreset] = [
         "method": "jobspy",
         "region": "global",
     },
-
     # ----- Global: Remote (already wired) -----
     {
         "name": "RemoteOK — AI/ML",
@@ -284,10 +277,11 @@ SEARCH_PRESETS: list[SearchPreset] = [
 
 class GoogleDork(TypedDict, total=False):
     """A Google dork that X-rays career sites / ATS for jobs."""
+
     name: str
-    dork: str                # The Google search expression
-    use_for: str             # When this dork is most useful
-    engine: str              # Which of our 7 search providers to fire this on
+    dork: str  # The Google search expression
+    use_for: str  # When this dork is most useful
+    engine: str  # Which of our 7 search providers to fire this on
 
 
 # Operators cheat-sheet:
@@ -318,35 +312,33 @@ GOOGLE_DORKS: list[GoogleDork] = [
         "use_for": "Junior AI/ML roles across the board.",
         "engine": "google_cse",
     },
-
     # ----- Target: specific Indian IT + global career subdomains -----
     {
         "name": "FAANG + Indian IT careers — GenAI Python fresher (past week)",
-        "dork": '(site:careers.google.com OR site:amazon.jobs OR '
-                'site:jobs.careers.microsoft.com OR site:careers.tcs.com OR '
-                'site:careers.infosys.com OR site:careers.wipro.com OR '
-                'site:careers.accenture.com) "GenAI" "Python" "fresher"',
+        "dork": "(site:careers.google.com OR site:amazon.jobs OR "
+        "site:jobs.careers.microsoft.com OR site:careers.tcs.com OR "
+        "site:careers.infosys.com OR site:careers.wipro.com OR "
+        'site:careers.accenture.com) "GenAI" "Python" "fresher"',
         "use_for": "The 7 biggest fresher-hiring companies in one query.",
         "engine": "google_cse",
     },
     {
         "name": "Indian IT services — AI/ML (no senior)",
-        "dork": '(site:careers.tcs.com OR site:careers.infosys.com OR '
-                'site:careers.wipro.com OR site:careers.cognizant.com OR '
-                'site:careers.capgemini.com OR site:www.hcltech.com OR '
-                'site:careers.techmahindra.com OR site:careers.ltimindtree.com) '
-                '"AI" OR "ML" "Python" "fresher" -senior -lead -"5 years"',
+        "dork": "(site:careers.tcs.com OR site:careers.infosys.com OR "
+        "site:careers.wipro.com OR site:careers.cognizant.com OR "
+        "site:careers.capgemini.com OR site:www.hcltech.com OR "
+        "site:careers.techmahindra.com OR site:careers.ltimindtree.com) "
+        '"AI" OR "ML" "Python" "fresher" -senior -lead -"5 years"',
         "use_for": "Indian IT services — exclude senior roles explicitly.",
         "engine": "google_cse",
     },
-
     # ----- Target: ATS platforms (X-ray Greenhouse, Lever, Workday, etc.) -----
     {
         "name": "All major ATS — AI ML Python fresher India",
-        "dork": '(site:lever.co OR site:greenhouse.io OR site:workday.com OR '
-                'site:smartrecruiters.com OR site:icims.com OR '
-                'site:myworkdayjobs.com OR site:taleo.net OR site:bamboohr.com) '
-                '"AI ML" "Python" "fresher" India',
+        "dork": "(site:lever.co OR site:greenhouse.io OR site:workday.com OR "
+        "site:smartrecruiters.com OR site:icims.com OR "
+        "site:myworkdayjobs.com OR site:taleo.net OR site:bamboohr.com) "
+        '"AI ML" "Python" "fresher" India',
         "use_for": "Casts a net over 8 ATS systems at once.",
         "engine": "google_cse",
     },
@@ -380,16 +372,14 @@ GOOGLE_DORKS: list[GoogleDork] = [
         "use_for": "BambooHR-powered mid-size companies.",
         "engine": "google_cse",
     },
-
     # ----- Time-filtered (last 24h) -----
     {
         "name": "All ATS — last 24h, AI Python fresher India",
-        "dork": '(site:lever.co OR site:greenhouse.io OR site:myworkdayjobs.com OR '
-                'site:icims.com OR site:bamboohr.com) "AI" "Python" "fresher" India',
+        "dork": "(site:lever.co OR site:greenhouse.io OR site:myworkdayjobs.com OR "
+        'site:icims.com OR site:bamboohr.com) "AI" "Python" "fresher" India',
         "use_for": "24h freshness across the major ATS systems.",
         "engine": "google_cse",
     },
-
     # ----- LinkedIn posts (referral / hiring) -----
     {
         "name": "LinkedIn posts — 'hiring GenAI Python fresher' (last week)",
@@ -403,7 +393,6 @@ GOOGLE_DORKS: list[GoogleDork] = [
         "use_for": "Broader LinkedIn hiring posts.",
         "engine": "google_cse",
     },
-
     # ----- Twitter / X -----
     {
         "name": "Twitter / X — 'hiring AI ML fresher Python' India",
@@ -411,7 +400,6 @@ GOOGLE_DORKS: list[GoogleDork] = [
         "use_for": "Startup founders often hire via tweet.",
         "engine": "google_cse",
     },
-
     # ----- Walk-in drives (Indian-specific) -----
     {
         "name": "Walk-in drives — AI ML Python fresher India 2026",
@@ -419,7 +407,6 @@ GOOGLE_DORKS: list[GoogleDork] = [
         "use_for": "Walk-in drives (in-person hiring events).",
         "engine": "google_cse",
     },
-
     # ----- PDF job descriptions (rarely indexed otherwise) -----
     {
         "name": "PDFs — AI ML Engineer fresher Python India 2026",
@@ -427,7 +414,6 @@ GOOGLE_DORKS: list[GoogleDork] = [
         "use_for": "Companies that publish JD as PDFs (small companies, gov).",
         "engine": "google_cse",
     },
-
     # ----- "Posted X days ago" exact-phrase trick (Google) -----
     {
         "name": "Google 'posted 2 days ago' — GenAI Python fresher India",
@@ -447,7 +433,7 @@ class CompanyCareer(TypedDict, total=False):
     name: str
     url: str
     notes: str
-    apply_via: str         # "browser_use" | "lever" | "greenhouse" | "ashby"
+    apply_via: str  # "browser_use" | "lever" | "greenhouse" | "ashby"
 
 
 COMPANY_CAREER_PAGES: list[CompanyCareer] = [
@@ -505,12 +491,11 @@ COMPANY_CAREER_PAGES: list[CompanyCareer] = [
         "url": "https://careers.mphasis.com/home/search?keywords=AI%20ML",
         "apply_via": "browser_use",
     },
-
     # ----- Global: FAANG + AI labs (6) -----
     {
         "name": "Microsoft",
         "url": "https://jobs.careers.microsoft.com/global/en/search?q=AI+engineer"
-                "&exp=Students%20and%20graduates",
+        "&exp=Students%20and%20graduates",
         "apply_via": "browser_use",
         "notes": "exp=Students%20and%20graduates filters to entry-level.",
     },
@@ -551,71 +536,25 @@ COMPANY_CAREER_PAGES: list[CompanyCareer] = [
 # ----------------------------------------------------------------------
 
 
-URL_FILTERS: dict[str, dict[str, str]] = {
-    # platform -> {date_param, exp_param, sort_param}
-    "linkedin": {
-        "date_24h":   "f_TPR=r86400",
-        "date_7d":    "f_TPR=r604800",
-        "date_30d":   "f_TPR=r2592000",
-        "exp_intern": "f_E=1",
-        "exp_entry":  "f_E=2",
-        "exp_mid":    "f_E=3",
-        "sort_date":  "sortBy=DD",
-    },
-    "indeed": {
-        "date_1d":  "fromage=1",
-        "date_3d":  "fromage=3",
-        "date_7d":  "fromage=7",
-        "date_14d": "fromage=14",
-        "exp_entry": "explvl=entry_level",
-        "sort_date": "sort=date",
-    },
-    "naukri": {
-        "date_1d":  "jobAge=1",
-        "date_3d":  "jobAge=3",
-        "date_7d":  "jobAge=7",
-        "date_15d": "jobAge=15",
-        "exp_0":   "experience=0",
-        "exp_1":   "experience=1",
-        "exp_2":   "experience=2",
-        "sort_date": "sort=date",
-        "sort_relevance": "sort=relevance",
-    },
-    "glassdoor": {
-        "date_1d":   "fromAge=1",
-        "date_7d":   "fromAge=7",
-        "date_30d":  "fromAge=30",
-        "exp_entry": "seniorityType=entrylevel",
-        "sort_date_desc": "sortBy=date_desc",
-    },
-    "wellfound": {
-        "exp_junior": "experience=junior",
-        "exp_mid":    "experience=mid",
-        "exp_senior": "experience=senior",
-    },
-    "google_cse": {
-        # Google CSE tbs= (Time-Based Search) values
-        "date_24h": "tbs=qdr:d1",
-        "date_7d":  "tbs=qdr:w1",
-        "date_30d": "tbs=qdr:m1",
-        "date_1h":  "tbs=qdr:h1",
-    },
-}
-
-
 # ----------------------------------------------------------------------
 # Helper: build a search URL from a preset + filters
 # ----------------------------------------------------------------------
 
 
-def build_url(preset: SearchPreset, q: str = "AI ML Python", loc: str = "India",
-              exp: str | None = None, days: int | None = None) -> str:
+def build_url(
+    preset: SearchPreset,
+    q: str = "AI ML Python",
+    loc: str = "India",
+    exp: str | None = None,
+    days: int | None = None,
+) -> str:
     """Substitute {q}/{loc}/{exp}/{days} into a preset's URL template.
 
     >>> build_url(SEARCH_PRESETS[2], q="GenAI Python", loc="Bengaluru")
     'https://in.indeed.com/jobs?q=GenAI+Python&l=Bengaluru&fromage=3&sort=date'
     """
     from urllib.parse import quote_plus
+
     url = preset["url"]
     url = url.replace("{q}", quote_plus(q))
     url = url.replace("{loc}", quote_plus(loc))
@@ -634,8 +573,3 @@ def presets_for_region(region: str) -> list[SearchPreset]:
 def dorks_for_engine(engine: str) -> list[GoogleDork]:
     """Return all dorks that target a specific search engine."""
     return [d for d in GOOGLE_DORKS if d.get("engine") == engine]
-
-
-def career_pages_for_apply_via(apply_via: str) -> list[CompanyCareer]:
-    """Return all company career pages that should be scraped via `apply_via`."""
-    return [c for c in COMPANY_CAREER_PAGES if c.get("apply_via") == apply_via]
