@@ -551,58 +551,6 @@ COMPANY_CAREER_PAGES: list[CompanyCareer] = [
 # ----------------------------------------------------------------------
 
 
-URL_FILTERS: dict[str, dict[str, str]] = {
-    # platform -> {date_param, exp_param, sort_param}
-    "linkedin": {
-        "date_24h":   "f_TPR=r86400",
-        "date_7d":    "f_TPR=r604800",
-        "date_30d":   "f_TPR=r2592000",
-        "exp_intern": "f_E=1",
-        "exp_entry":  "f_E=2",
-        "exp_mid":    "f_E=3",
-        "sort_date":  "sortBy=DD",
-    },
-    "indeed": {
-        "date_1d":  "fromage=1",
-        "date_3d":  "fromage=3",
-        "date_7d":  "fromage=7",
-        "date_14d": "fromage=14",
-        "exp_entry": "explvl=entry_level",
-        "sort_date": "sort=date",
-    },
-    "naukri": {
-        "date_1d":  "jobAge=1",
-        "date_3d":  "jobAge=3",
-        "date_7d":  "jobAge=7",
-        "date_15d": "jobAge=15",
-        "exp_0":   "experience=0",
-        "exp_1":   "experience=1",
-        "exp_2":   "experience=2",
-        "sort_date": "sort=date",
-        "sort_relevance": "sort=relevance",
-    },
-    "glassdoor": {
-        "date_1d":   "fromAge=1",
-        "date_7d":   "fromAge=7",
-        "date_30d":  "fromAge=30",
-        "exp_entry": "seniorityType=entrylevel",
-        "sort_date_desc": "sortBy=date_desc",
-    },
-    "wellfound": {
-        "exp_junior": "experience=junior",
-        "exp_mid":    "experience=mid",
-        "exp_senior": "experience=senior",
-    },
-    "google_cse": {
-        # Google CSE tbs= (Time-Based Search) values
-        "date_24h": "tbs=qdr:d1",
-        "date_7d":  "tbs=qdr:w1",
-        "date_30d": "tbs=qdr:m1",
-        "date_1h":  "tbs=qdr:h1",
-    },
-}
-
-
 # ----------------------------------------------------------------------
 # Helper: build a search URL from a preset + filters
 # ----------------------------------------------------------------------
@@ -636,6 +584,3 @@ def dorks_for_engine(engine: str) -> list[GoogleDork]:
     return [d for d in GOOGLE_DORKS if d.get("engine") == engine]
 
 
-def career_pages_for_apply_via(apply_via: str) -> list[CompanyCareer]:
-    """Return all company career pages that should be scraped via `apply_via`."""
-    return [c for c in COMPANY_CAREER_PAGES if c.get("apply_via") == apply_via]

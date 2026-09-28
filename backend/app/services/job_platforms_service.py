@@ -65,14 +65,6 @@ def _country_from_location(location: str | None) -> str:
     return "usa"
 
 # Indian platforms requiring browser-use
-INDIAN_BROWSER_PLATFORMS = [
-    "naukri", "foundit", "instahyre", "cutshort",
-    "hirect", "internshala", "shine", "iimjobs", "freshersworld",
-]
-
-ALL_PLATFORMS = JOBSPY_PLATFORMS + INDIAN_BROWSER_PLATFORMS
-
-
 def scrape_jobs(
     search_term: str,
     location: str = "Remote",
@@ -185,21 +177,3 @@ async def scrape_all_platforms(
     return combined
 
 
-def get_active_platforms() -> list[dict]:
-    """Return list of all supported job platforms with status."""
-    return [
-        {"name": "LinkedIn", "id": "linkedin", "status": "active", "url": "https://linkedin.com/jobs", "method": "jobspy"},
-        {"name": "Indeed", "id": "indeed", "status": "active", "url": "https://indeed.com", "method": "jobspy"},
-        {"name": "Glassdoor", "id": "glassdoor", "status": "active", "url": "https://glassdoor.com", "method": "jobspy"},
-        {"name": "Google Jobs", "id": "google", "status": "active", "url": "https://google.com/jobs", "method": "jobspy"},
-        {"name": "ZipRecruiter", "id": "zip_recruiter", "status": "active", "url": "https://ziprecruiter.com", "method": "jobspy"},
-        {"name": "Naukri", "id": "naukri", "status": "active", "url": "https://naukri.com", "method": "browser-use"},
-        {"name": "Foundit", "id": "foundit", "status": "active", "url": "https://foundit.in", "method": "browser-use"},
-        {"name": "Instahyre", "id": "instahyre", "status": "active", "url": "https://instahyre.com", "method": "browser-use"},
-        {"name": "Cutshort", "id": "cutshort", "status": "active", "url": "https://cutshort.io", "method": "browser-use"},
-        {"name": "Hirect", "id": "hirect", "status": "active", "url": "https://hirect.in", "method": "browser-use"},
-        {"name": "Internshala", "id": "internshala", "status": "active", "url": "https://internshala.com", "method": "browser-use"},
-        {"name": "Shine", "id": "shine", "status": "active", "url": "https://shine.com", "method": "browser-use"},
-        {"name": "iimjobs", "id": "iimjobs", "status": "active", "url": "https://iimjobs.com", "method": "browser-use"},
-        {"name": "Freshersworld", "id": "freshersworld", "status": "active", "url": "https://freshersworld.com", "method": "browser-use"},
-    ]

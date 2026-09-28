@@ -20,7 +20,7 @@ from langchain_core.language_models import BaseChatModel
 
 from app.core.config import settings
 from app.core.event_bus import emit
-from app.services.browser_logger import BrowserActionTimer, log_browser_action, save_debug_screenshot
+from app.services.browser_logger import log_browser_action, save_debug_screenshot
 
 logger = logging.getLogger(__name__)
 _RANDOM = secrets.SystemRandom()
@@ -597,44 +597,6 @@ async def linkedin_send_connection(
     return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=12, live_browser=live_browser, run_id=run_id)
 
 
-async def linkedin_send_message(
-    llm: BaseChatModel,
-    user_id: str,
-    profile_url: str,
-    message: str,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Send a LinkedIn direct message to a 1st-degree connection."""
-    task = (
-        f"Go to {profile_url}. "
-        f"Click the 'Message' button to open the messaging window. "
-        f"Type this message: '{message}'. "
-        f"Click the Send button. Confirm the message was sent."
-    )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=10, live_browser=live_browser, run_id=run_id)
-
-
-async def linkedin_easy_apply(
-    llm: BaseChatModel,
-    user_id: str,
-    job_url: str,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Apply to a job via LinkedIn Easy Apply."""
-    task = (
-        f"Go to {job_url}. "
-        f"Click the 'Easy Apply' button. "
-        f"Fill in any required fields using reasonable defaults. "
-        f"Upload resume if prompted (skip if no file available). "
-        f"Click through steps until the final review screen. "
-        f"Stop before final Submit/Send Application and report READY_FOR_REVIEW. "
-        f"Do not submit without explicit user approval."
-    )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=20, live_browser=live_browser, run_id=run_id)
-
-
 async def apply_to_job(
     llm: BaseChatModel,
     user_id: str,
@@ -666,43 +628,3 @@ async def apply_to_job(
     return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=25, live_browser=live_browser, run_id=run_id)
 
 
-async def linkedin_update_profile(
-    llm: BaseChatModel, user_id: str,
-    headline: str | None = None,
-    about: str | None = None,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Update LinkedIn profile headline and/or about section."""
-    parts = ["Go to https://www.linkedin.com/in/me/."]
-    if headline:
-        parts.append(
-            f"Click the pencil/edit icon near the headline. "
-            f"Clear the current headline and type: '{headline}'. Save."
-        )
-    if about:
-        parts.append(
-            f"Scroll to the About section. Click the pencil/edit icon. "
-            f"Clear the current text and type: '{about[:2000]}'. Save."
-        )
-    parts.append("Stop on the final confirmation state and report what changed.")
-    task = " ".join(parts)
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=15, live_browser=live_browser, run_id=run_id)
-
-
-async def send_email_via_browser(
-    llm: BaseChatModel, user_id: str,
-    to: str, subject: str, body: str,
-    live_browser: bool = False,
-    run_id: str | None = None,
-) -> str:
-    """Send an email via Gmail web interface (fallback when OAuth not available)."""
-    task = (
-        f"Go to https://mail.google.com/mail/u/0/#inbox. "
-        f"Click 'Compose'. "
-        f"In the 'To' field, type '{to}'. "
-        f"In the 'Subject' field, type '{subject}'. "
-        f"In the body, type: '{body[:1000]}'. "
-        f"Click 'Send'. Confirm the email was sent."
-    )
-    return await run_browser_task_with_captcha_retry(llm, task, user_id, max_steps=12, live_browser=live_browser, run_id=run_id)

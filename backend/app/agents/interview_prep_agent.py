@@ -15,61 +15,6 @@ from app.services.rag_service import retrieve
 
 logger = logging.getLogger(__name__)
 
-_QUESTIONS_PROMPT = """You are an expert interview coach. Generate interview preparation materials for the following candidate.
-
-Target Role: {role}
-Company: {company}
-Candidate Background (from resume):
-{context}
-
-STRATEGIC ANALYSIS (use this to tailor questions):
-{thinking}
-
-Generate exactly this structure:
-1. Five behavioral questions (STAR format) tailored to the role — focus on the candidate's RELEVANT experiences only
-2. Five technical/domain questions for this role — target likely weak spots and strengths
-3. Three questions the candidate should ask the interviewer — show strategic thinking
-4. One 60-second elevator pitch based on the candidate's STRONGEST relevant background
-
-Format your response as JSON with keys:
-  behavioral_questions, technical_questions, questions_to_ask, elevator_pitch
-
-Return ONLY valid JSON, no markdown fences."""
-
-
-def _fallback_prep(target_role: str, company: str, reason: str) -> dict:
-    return {
-        "type": "interview_prep",
-        "target_role": target_role,
-        "company": company,
-        "behavioral_questions": [
-            "Tell me about a time you shipped work with unclear requirements. Use STAR.",
-            "Describe a conflict with a teammate and how you resolved it.",
-            "Tell me about a time you improved reliability or quality.",
-            "Describe a project where you had to learn fast.",
-            "Tell me about a time you used feedback to improve an outcome.",
-        ],
-        "technical_questions": [
-            f"What systems or tools would you use to deliver strong results as a {target_role}?",
-            "How do you debug a production issue from first signal to fix?",
-            "How do you design code that stays maintainable as requirements change?",
-            "How do you decide between speed and quality under deadline pressure?",
-            "How do you validate that your work solved the user or business problem?",
-        ],
-        "questions_to_ask": [
-            "What are the biggest priorities for this role in the first 90 days?",
-            "How does the team measure success for this role?",
-            "What technical or product challenges should this person be ready to own?",
-        ],
-        "elevator_pitch": (
-            f"I am a practical {target_role} candidate focused on reliable delivery, "
-            "clear collaboration, and learning fast. I like turning ambiguous work into "
-            "shipped outcomes that help users and teams move faster."
-        ),
-        "thinking": f"Fallback interview prep used because live model call failed: {reason}",
-    }
-
-
 def interview_prep_agent_node(state: AgentState) -> AgentState:
     target_role = "software engineer"
     company = "the company"

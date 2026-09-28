@@ -24,7 +24,6 @@ from urllib.parse import urlparse
 
 from langchain_core.language_models import BaseChatModel
 
-from app.services.browser_control_service import run_browser_task_with_captcha_retry as run_browser_task
 from app.core.event_bus import emit
 
 logger = logging.getLogger(__name__)
@@ -200,25 +199,6 @@ PLATFORM_HANDLERS = {
     "foundit": apply_foundit,
     "cutshort": apply_cutshort,
 }
-
-
-async def apply_to_external_form(
-    llm: BaseChatModel,
-    user_id: str,
-    job_url: str,
-    resume_path: str | None = None,
-    cover_letter: str = "",
-    job_description: str = "",
-    run_id: str | None = None,
-) -> ApplyResult:
-    """Alias kept for backward compatibility — delegates to apply_to_any_portal."""
-    return await apply_to_any_portal(
-        llm, user_id, job_url,
-        run_id=run_id,
-        resume_path=resume_path,
-        cover_letter=cover_letter,
-        job_description=job_description,
-    )
 
 
 async def apply_to_job(

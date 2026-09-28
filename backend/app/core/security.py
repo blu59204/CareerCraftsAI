@@ -50,10 +50,3 @@ def decrypt_api_key(encrypted: str, app_secret: str) -> str:
     return plaintext.decode()
 
 
-def mask_api_key(key: str) -> str:
-    """Return a masked version safe for logging/display. e.g. 'sk-ant-api0...****'"""
-    if not key:
-        return ""
-    if len(key) <= 14:
-        return key[:4] + "****"
-    return key[:14] + "****"

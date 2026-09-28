@@ -72,12 +72,6 @@ def _get_jwks_client() -> jwt.PyJWKClient:
     return _jwks_client
 
 
-def reset_jwks_client() -> None:
-    """Drop the cached JWKS client (config reload / tests)."""
-    global _jwks_client
-    _jwks_client = None
-
-
 def verify_token(token: str) -> dict[str, Any]:
     """Decode and validate a Clerk JWT using JWKS (RS256). Returns payload dict."""
     try:

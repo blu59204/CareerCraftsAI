@@ -31,7 +31,6 @@ from app.models.db import (
     CandidateAnswer,
     ExtensionDevice,
     ExtensionTask,
-    JobApplication,
     User,
 )
 
@@ -345,7 +344,3 @@ async def plan_fields(db: AsyncSession, task: ExtensionTask, raw_fields: list[di
     return {"fields": plan, "unresolved_required": unresolved_required}
 
 
-async def application_for_task(db: AsyncSession, task: ExtensionTask) -> JobApplication | None:
-    if not task.job_application_id:
-        return None
-    return await db.get(JobApplication, task.job_application_id)
