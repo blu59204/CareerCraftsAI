@@ -35,7 +35,11 @@ async def research_company(
         input={"company_name": body.company_name},
     )
     db.add(agent_run)
-    await db.flush()
+    # Committed now, not just flushed: harness.run() below can run long
+    # enough to hit the timeout, and get_db() rolls back on any exception
+    # (including the HTTPException raised on timeout) — without this commit
+    # a timed-out run left no trace at all, not even as "failed".
+    await db.commit()
 
     harness = await get_harness()
     try:
@@ -52,7 +56,7 @@ async def research_company(
     except asyncio.TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
+        await db.commit()
         raise HTTPException(status_code=504, detail="Company research timed out") from None
     apply_harness_result(agent_run, harness_result)
     await db.flush()
