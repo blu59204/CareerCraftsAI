@@ -1,5 +1,7 @@
 # P1: Foundation Implementation Plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Scaffold monorepo, wire Docker Compose, Supabase schema, Clerk auth, model router, and FastAPI app so all subsequent phases have a stable base.

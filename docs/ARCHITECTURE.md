@@ -1,7 +1,7 @@
 # CareerCraft AI — Complete Architecture
 
 > Verified against codebase: `deploy/oracle-vm/` (the actual production stack — see `docs/DEPLOYMENT.md`), `backend/app/main.py`, `backend/app/agents/orchestrator.py`, `backend/app/core/`, `backend/app/services/`, `backend/app/api/v1/`, `backend/app/workflows/`, `extension/`, `deploy/laya/`, `frontend/src/`, `supabase/migrations/`.
-> Background jobs (agent runs, job search, applications, follow-ups) run on Temporal, not BullMQ — see §8.
+> Background jobs (agent runs, job search, applications, follow-ups, recurring jobs) run only as Temporal workflows — see §8.
 > The root `docker-compose.yml` and `nginx/` this doc used to reference were a generic/alternate deployment path that was never the one actually used in production — both were retired; `deploy/oracle-vm/` is the only real deployment.
 
 ---
@@ -20,7 +20,7 @@ CareerCraft AI/
 ├── backend/                # FastAPI Python 3.12 (port 8000)
 │   └── app/
 │       ├── main.py         # app factory, JWT+CORS+request-id middleware, /health
-│       ├── api/v1/         # routers + internal.py + extension.py
+│       ├── api/v1/         # routers (incl. extension.py)
 │       ├── agents/         # orchestrator + sub-agents + memory/
 │       ├── core/           # config, database, redis_client, event_bus,
 │       │                   # supabase_auth, security, llm_gateway, model_router,
@@ -67,7 +67,7 @@ subgraph Frontend["Frontend — Next.js — frontend:3000"]
 end
 subgraph Backend["Backend — FastAPI — backend:8000"]
   JWT["JWT middleware<br/>main.py:96<br/>Clerk / Supabase verify"]
-  Routers["API Routers — /api/v1<br/>users, rag, resume, jobs,<br/>leads, email, agents,<br/>browser, interview,<br/>interview_prep, cover_letter,<br/>salary, company, linkedin,<br/>extension, memory, internal,<br/>llm-gateway"]
+  Routers["API Routers — /api/v1<br/>users, rag, resume, jobs,<br/>leads, email, agents,<br/>browser, interview,<br/>interview_prep, cover_letter,<br/>salary, company, linkedin,<br/>extension, memory,<br/>llm-gateway"]
   Harness["AgentHarness<br/>agents/harness.py<br/>RAG inject + token track"]
   Orch["LangGraph Supervisor<br/>agents/orchestrator.py<br/>TASK_ROUTES + SSE emit"]
   Gateway["LLM Gateway<br/>core/llm_gateway.py<br/>session-token proxy<br/>Redis TTL 3600s"]
@@ -187,7 +187,7 @@ apiErrorMessage(err, fallback) // prefers FastAPI `detail`, handles 422 list
 
 1. `CORSMiddleware` (registered last = outermost; never `*`, exact origins only)
 2. `_request_id_middleware` — `X-Request-ID` uuid4 passthrough
-3. `_jwt_middleware` — skips `GET /health`, `/docs`, `/openapi.json`, `/internal/*`, `OPTIONS`; requires `Authorization: Bearer`, `verify_token()` → `request.state.user`
+3. `_jwt_middleware` — skips `GET /health`, `/health/live`, `/docs`, `/openapi.json`, the public demo search, the Nango webhook, `OPTIONS`; requires `Authorization: Bearer`, `verify_token()` → `request.state.user`
 4. `slowapi` limiter + generic 500 handler (logs method+path, returns `Internal server error`)
 
 **Lifespan:** checks DB + Redis connectivity, verifies `vector` pg_extension, warms SSE publisher thread (`event_bus._ensure_publisher`), disposes engine on shutdown.
@@ -214,7 +214,6 @@ apiErrorMessage(err, fallback) // prefers FastAPI `detail`, handles 422 list
 | `/linkedin` | `api/v1/linkedin.py` | `POST /linkedin/optimize`, `POST /linkedin/outreach` |
 | `/memory` | `memory/routes.py` | semantic memory CRUD |
 | `/extension` | `api/v1/extension.py` | web app: pair/list/revoke devices, list/cancel tasks; `/extension/device/*`: the extension itself (device token auth) claims tasks, fetches fill plans, reports progress, asks the decision engine |
-| `/internal` | `api/internal.py` | secret-protected (`INTERNAL_SECRET`) manual triggers for job search/follow-up/status-check; Temporal runs these on its own via Schedules — these routes exist for operator debugging |
 | `/llm-gateway` | `core/llm_gateway.py` | `POST|GET /llm-gateway/v1/{path:path}` proxy |
 
 ---
@@ -384,7 +383,34 @@ finds the workflow already running instead of starting a duplicate. If
 Temporal cannot be reached, `_client()` raises `WorkflowUnavailable` and the
 calling endpoint returns **503**.
 
-### Idempotency and retries
+### Concurrency, rate limits and retries
+
+- **Per user:** `POST /agents/run` admits at most `AGENT_MAX_CONCURRENT_PER_USER`
+  (2) `queued`/`running` runs per user, serialized with a row lock on the user
+  (`api/v1/agents.py`); `apply_prepare` runs waiting in the extension don't count.
+  Request rates are capped per user by slowapi (`/jobs/search` 10/min,
+  `/agents/run` `RATE_LIMIT_AGENT_RUN`, prepare-apply 5/hour).
+- **Per worker:** `max_concurrent_activities=TEMPORAL_WORKER_CONCURRENCY`.
+  There is no task-queue-wide rate limit on `careercraft` (the notification
+  email queue has one, `NOTIFICATION_EMAIL_RATE_LIMIT_PER_SECOND`).
+- **Retries:** job search 2 attempts, then `fail_job_search_activity` marks
+  the run failed; follow-up drafts 3 attempts (30s initial); daily search and
+  status check 3 attempts (1 min initial); maintenance 1 attempt (it runs
+  again on the next tick); agent execution 2 attempts; a continuation (which
+  may send an email or click Submit) never retries.
+- **Cancellation:** a rejected checkpoint is a `decide(approved=False)`
+  signal — the workflow ends `cancelled`; follow-ups stop once the
+  application moves on or the recruiter replies; an unanswered checkpoint
+  expires after `AGENT_APPROVAL_TIMEOUT_S`.
+
+### Running a job by hand
+
+There is no HTTP trigger. Use the Temporal CLI (or the UI) against the same
+namespace, e.g. `temporal schedule trigger --schedule-id daily-job-search`
+(also `maintenance`, `application-status-check`), and `temporal workflow
+describe --workflow-id agent-run/<run_id>` to inspect a run.
+
+### Idempotency
 
 `ApplicationAttempt` + a compare-and-swap on submit is the idempotency
 ledger shared by both apply modes. Preparation activities (navigate,
@@ -497,7 +523,7 @@ BE->>T: signal_agent_decision() — `decide` signal
 - **Secrets:** `api_key_enc`, `linkedin_*_enc`, `google_*_token_enc`, `state_enc` all AES-256 (`security.py`, `APP_SECRET_KEY`); plaintext never in `user_model_settings`; gateway session-token pattern (above).
 - **Isolation:** RLS everywhere; JWT verified per-request (Clerk RS256 JWKS or Supabase HS256); `agent_runs` audit of every run (input/output/tokens/duration); client only ever sees `"Agent failed"`.
 - **Transport/limits:** TLS via nginx + HSTS; exact-origin CORS; SlowAPI (`60/min` default, `10/min` agent-run, `5/min` upload, `100/min` strict); 2 concurrent runs/user; token budgets per agent (table §5, overridable `user_model_settings.token_budget`); timeouts per agent (table §5).
-- **Infra:** `/internal/*` blocked at nginx and gated by `INTERNAL_SECRET` — Temporal activities call `scheduled_jobs.py` in-process, not over HTTP, so nothing depends on these routes at runtime; they exist for manual operator triggers only. Browser `mem 2.5g/shm 256m`, session caps (`BROWSER_USE_MAX_CONCURRENT_SESSIONS=4`, `SANDBOX_MAX_ACTIVE=4`, TTL 1800s, domain allowlist); Bandit SAST on CI.
+- **Infra:** there is no HTTP route that runs a background job outside Temporal — activities call `scheduled_jobs.py` in-process; nginx still returns 404 for `/internal/*` as defense in depth. Browser `mem 2.5g/shm 256m`, session caps (`BROWSER_USE_MAX_CONCURRENT_SESSIONS=4`, `SANDBOX_MAX_ACTIVE=4`, TTL 1800s, domain allowlist); Bandit SAST on CI.
 - **Extension device tokens:** `ccx_`-prefixed, only their SHA-256 hash is stored (`extension_devices.token_hash`); revocable per-device in Settings; rate-limited per device (`rate_limit.py` keys on the token hash), separate from per-user limits.
 
 ---
@@ -607,7 +633,7 @@ uvicorn app.main:app --reload --port 8000
 - Temporal: `backend/app/workflows/{registry,starters,agent_run,job_search,auto_apply,followup,scheduled,activities,agent_activities,job_activities,extension_activities}.py`, `backend/app/core/temporal_client.py`
 - Orchestration: `backend/app/agents/orchestrator.py`, `harness.py`, `state.py`, `strategies.py`, `base_agent.py`
 - Agents: `backend/app/agents/*.py` (see §5 table)
-- API: `backend/app/api/v1/*.py` (incl. `extension.py`), `backend/app/api/internal.py`
+- API: `backend/app/api/v1/*.py` (incl. `extension.py`)
 - Core: `backend/app/core/{config,database,redis_client,event_bus,supabase_auth,security,llm_gateway,model_router,rate_limit,temporal_client,agent_runs_repository}.py`
 - Services: `backend/app/services/{rag_service,workflow_service,scheduled_jobs,extension_service,decision_engine,sse_service,llm_gateway,llm_proxy_service,job_search_service,job_platforms_service,indian_platforms_service,naukri_service,gmail_service,resend_service,hunter_service,email_finder_service,proxycurl_service,exa_service,youtube_service,ats_service,pdf_service,persona_service,browser_control_service,form_filler_service,sandbox_service,storage_service,drive_service,integration_proxy_service,application_workflow,auto_apply_service,linkedin_outreach_service,token_budget_service,model_catalog_service,search_presets}.py`
 - Extension: `extension/src/background.js`, `extension/src/content/*.js`, `extension/README.md`

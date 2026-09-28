@@ -9,6 +9,7 @@ calling a synchronous endpoint for an agent that now runs 60-120s server-side.
 Requires RUN_LIVE_E2E=1 plus TEST_JWT, TEST_EMAIL, TEST_PASSWORD, WEB_URL,
 API_URL (see conftest.py's `_auth_state` fixture, which skips otherwise).
 """
+
 from __future__ import annotations
 
 import os
@@ -78,9 +79,9 @@ def test_company_research_renders_full_intel(authenticated_page):
     partial_data_warning = page.get_by_text("Partial data - failed sources:", exact=False)
     if partial_data_warning.count() > 0:
         expect(partial_data_warning).to_be_visible()
-        assert partial_data_warning.inner_text().strip() != "Partial data - failed sources:", (
-            "expected at least one failed source name after the warning prefix"
-        )
+        assert (
+            partial_data_warning.inner_text().strip() != "Partial data - failed sources:"
+        ), "expected at least one failed source name after the warning prefix"
 
     # Force Refresh must exist and re-run with force_refresh: true — it must
     # not silently reuse stale data forever.
@@ -108,9 +109,9 @@ def test_salary_report_awaits_approval(authenticated_page):
     # empty/failed contract silently mapped to zeros).
     percentile_values = page.locator("span.font-mono").all_text_contents()
     assert percentile_values, "expected p25/p50/p75 values to render"
-    assert all(v not in ("$0", "") for v in percentile_values), (
-        f"expected non-zero salary percentiles, got {percentile_values}"
-    )
+    assert all(
+        v not in ("$0", "") for v in percentile_values
+    ), f"expected non-zero salary percentiles, got {percentile_values}"
 
     expect(page.get_by_text("Negotiation Script")).to_be_visible()
 
@@ -160,9 +161,9 @@ def test_interview_coach_start_answer_and_next_question(authenticated_page):
     # states for this contract; a repeat of question 1 with no summary is not.
     next_question_visible = page.get_by_text("Question 2").is_visible()
     session_complete_visible = page.get_by_text("Session Complete").is_visible()
-    assert next_question_visible or session_complete_visible, (
-        "expected either question 2 or the session summary after answering question 1"
-    )
+    assert (
+        next_question_visible or session_complete_visible
+    ), "expected either question 2 or the session summary after answering question 1"
 
 
 def test_email_inbox_cleanup_never_shows_fake_sender(authenticated_page):
@@ -200,9 +201,9 @@ def test_interview_prep_practice_uses_generated_plan_question(authenticated_page
 
     start_button.click()
     modal_question = page.locator(".rounded-2xl.bg-primary\\/5 p").first.inner_text()
-    assert modal_question.strip() == first_question.strip(), (
-        "expected the mock interview's first question to come from the generated plan"
-    )
+    assert (
+        modal_question.strip() == first_question.strip()
+    ), "expected the mock interview's first question to come from the generated plan"
 
 
 # ---------------------------------------------------------------------------
@@ -290,9 +291,9 @@ def test_integrations_page_lists_providers_and_connection_state(authenticated_pa
     if connected_status.count() > 0:
         connected_email = page.get_by_text("Connected account:", exact=False)
         expect(connected_email.first).to_be_visible()
-        assert connected_email.first.inner_text().strip() != "Connected account:", (
-            "expected a real account email after the 'Connected account:' label"
-        )
+        assert (
+            connected_email.first.inner_text().strip() != "Connected account:"
+        ), "expected a real account email after the 'Connected account:' label"
 
 
 def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authenticated_page):
@@ -321,9 +322,15 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
     previously_active_provider = None
     previously_active_model_name = None
     if had_previously_active:
-        active_row = active_badge.first.locator("xpath=ancestor::div[contains(@class,'rounded-2xl')][1]")
-        previously_active_provider = active_row.locator("div.text-sm.font-medium.truncate").inner_text()
-        previously_active_model_name = active_row.locator("div.text-xs.text-muted-foreground.truncate").inner_text()
+        active_row = active_badge.first.locator(
+            "xpath=ancestor::div[contains(@class,'rounded-2xl')][1]"
+        )
+        previously_active_provider = active_row.locator(
+            "div.text-sm.font-medium.truncate"
+        ).inner_text()
+        previously_active_model_name = active_row.locator(
+            "div.text-xs.text-muted-foreground.truncate"
+        ).inner_text()
 
     responses: list = []
     page.on(
@@ -357,9 +364,9 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
                 body = response.text()
             except Exception:
                 continue
-            assert fake_api_key not in body, (
-                f"plaintext API key leaked into a {response.url} response body"
-            )
+            assert (
+                fake_api_key not in body
+            ), f"plaintext API key leaked into a {response.url} response body"
 
         # Model-test action: must resolve to a visible pass/fail, not hang.
         # The new (now-active) DeepSeek entry is the one with the "Active" badge.
@@ -370,9 +377,9 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
         expect(new_row.get_by_role("button", name="Testing…")).to_have_count(0, timeout=60_000)
         success = page.get_by_text("Model working:", exact=False)
         failure = page.get_by_text("Test failed", exact=False)
-        assert success.count() > 0 or failure.count() > 0, (
-            "expected a model-test result toast (success or failure) after clicking Test"
-        )
+        assert (
+            success.count() > 0 or failure.count() > 0
+        ), "expected a model-test result toast (success or failure) after clicking Test"
     finally:
         # Always attempt to remove the disposable fake-key model and
         # restore whichever model was active before this test ran — even
@@ -424,7 +431,9 @@ def test_onboarding_wizard_completes_and_saves_target_role(authenticated_page):
     # Step 3: resume upload (optional — skip)
     page.get_by_role("button", name="Continue").click()
     # Step 4: target roles
-    page.get_by_placeholder("Frontend Engineer, React Developer, Full Stack Developer").fill(target_role)
+    page.get_by_placeholder("Frontend Engineer, React Developer, Full Stack Developer").fill(
+        target_role
+    )
     page.get_by_role("button", name="Continue").click()
     # Step 5: preferred locations
     page.get_by_placeholder("Bangalore, Remote, Hyderabad").fill(location)
@@ -443,9 +452,7 @@ def test_onboarding_wizard_completes_and_saves_target_role(authenticated_page):
 # Step 2: career-document journeys
 # ---------------------------------------------------------------------------
 
-RESUME_FIXTURE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "fixtures", "test_resume.pdf"
-)
+RESUME_FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "..", "fixtures", "test_resume.pdf")
 
 
 def test_resume_upload_ats_score_tailor_and_download(authenticated_page):
@@ -472,9 +479,11 @@ def test_resume_upload_ats_score_tailor_and_download(authenticated_page):
     approve_responses: list = []
     page.on(
         "response",
-        lambda response: approve_responses.append(response)
-        if re.search(r"/agents/.+/approve$", response.url)
-        else None,
+        lambda response: (
+            approve_responses.append(response)
+            if re.search(r"/agents/.+/approve$", response.url)
+            else None
+        ),
     )
 
     page.goto(f"{WEB_URL}/resume")
@@ -499,9 +508,9 @@ def test_resume_upload_ats_score_tailor_and_download(authenticated_page):
     while time.monotonic() < deadline and not approve_responses:
         page.wait_for_timeout(500)
     assert approve_responses, "expected the tailored resume draft to be auto-approved"
-    assert approve_responses[-1].ok, (
-        f"resume draft approve call failed with status {approve_responses[-1].status}"
-    )
+    assert approve_responses[
+        -1
+    ].ok, f"resume draft approve call failed with status {approve_responses[-1].status}"
 
     with page.expect_download() as download_info:
         page.get_by_role("button", name="Export").click()
@@ -524,7 +533,9 @@ def test_cover_letter_generation_reflects_job_description(authenticated_page):
     )
 
     page.goto(f"{WEB_URL}/cover-letter")
-    page.get_by_placeholder("Paste the job description here to get a tailored cover letter…").fill(jd_text)
+    page.get_by_placeholder("Paste the job description here to get a tailored cover letter…").fill(
+        jd_text
+    )
     page.get_by_role("button", name="Generate Cover Letter").click()
 
     expect(page.get_by_text("Generation failed", exact=False)).to_have_count(0)
@@ -618,17 +629,19 @@ def test_job_search_agent_persists_saved_jobs_to_applications(authenticated_page
     expect(page.get_by_text("roles saved", exact=False)).to_be_visible(timeout=180_000)
 
     after = api_client.get("/jobs/applications", params={"status": "saved"}).json()
-    assert len(after) > baseline_count, (
-        "expected the job search run to persist at least one new saved JobApplication row"
-    )
+    assert (
+        len(after) > baseline_count
+    ), "expected the job search run to persist at least one new saved JobApplication row"
 
     page.goto(f"{WEB_URL}/applications")
-    saved_count_text = page.get_by_text("Saved", exact=True).locator(
-        "xpath=following-sibling::span[1]"
-    ).inner_text()
-    assert int(saved_count_text) >= 1, (
-        "expected the Applications kanban's Saved column to reflect the persisted jobs"
+    saved_count_text = (
+        page.get_by_text("Saved", exact=True)
+        .locator("xpath=following-sibling::span[1]")
+        .inner_text()
     )
+    assert (
+        int(saved_count_text) >= 1
+    ), "expected the Applications kanban's Saved column to reflect the persisted jobs"
 
     # NOTE: the "Filter by company or role..." input in ApplicationsPage has
     # no onChange handler or query wiring today — it renders but cannot
@@ -720,9 +733,9 @@ def test_auto_apply_first_checkpoint_includes_drafts_and_rejects_cleanly(
     expect(page.get_by_text("Review Required")).to_be_visible(timeout=300_000)
     checkpoint_dump = page.locator("pre").last.inner_text()
     assert checkpoint_dump.strip(), "expected the first checkpoint to render real pipeline output"
-    assert "resume_markdown" in checkpoint_dump or "resume_draft" in checkpoint_dump, (
-        "expected the auto-apply checkpoint to include resume/cover-letter draft content for review"
-    )
+    assert (
+        "resume_markdown" in checkpoint_dump or "resume_draft" in checkpoint_dump
+    ), "expected the auto-apply checkpoint to include resume/cover-letter draft content for review"
 
     # HITL gate: Approve & Execute is visible and enabled, but this test
     # must never click it — that would queue the apply_browser/send_email
@@ -733,10 +746,12 @@ def test_auto_apply_first_checkpoint_includes_drafts_and_rejects_cleanly(
     page.get_by_role("button", name="Cancel").click()
 
     result = wait_for_run(api_client, run_id, timeout_s=30)
-    assert result["status"] == "failed", (
-        f"expected rejecting the checkpoint to cancel the run, got {result['status']}"
-    )
-    assert (result.get("output") or {}).get("error") == "Action cancelled by user", (
+    assert (
+        result["status"] == "failed"
+    ), f"expected rejecting the checkpoint to cancel the run, got {result['status']}"
+    assert (result.get("output") or {}).get(
+        "error"
+    ) == "Action cancelled by user", (
         "expected the run's output to record the rejection, not a submitted/queued outcome"
     )
 
@@ -941,8 +956,8 @@ def test_followup_schedule_set_when_application_marked_applied(api_client, wait_
     the backend directly when a screen doesn't surface something, this
     verifies the real contract via the API: update_application_status must
     stamp followup_day5/day12 (5 and 12 days after applied_at) the moment a
-    saved application transitions to "applied", mirroring what
-    FollowUpAgent enqueues in BullMQ. Self-sufficient (runs its own job
+    saved application transitions to "applied", mirroring the timers
+    FollowupWorkflow waits on. Self-sufficient (runs its own job
     search rather than depending on another test's ordering) and restores
     the application to "saved" afterward."""
     search = api_client.post(
@@ -976,7 +991,9 @@ def test_followup_schedule_set_when_application_marked_applied(api_client, wait_
         api_client.patch(f"/jobs/applications/{application_id}/status", json={"status": "saved"})
 
 
-def test_email_monitor_scan_never_shows_send_checkpoint(authenticated_page, api_client, wait_for_run):
+def test_email_monitor_scan_never_shows_send_checkpoint(
+    authenticated_page, api_client, wait_for_run
+):
     """EmailMonitorAgent's node always returns `pending_action=None` — it
     only classifies inbox notifications and updates application status
     (interview/rejected/viewed detection), it never drafts or sends a
@@ -1014,7 +1031,9 @@ def test_email_monitor_scan_never_shows_send_checkpoint(authenticated_page, api_
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline and "id" not in run_id_holder:
         page.wait_for_timeout(500)
-    assert "id" in run_id_holder, "expected /agents/run to return a run_id for the Email Monitor run"
+    assert (
+        "id" in run_id_holder
+    ), "expected /agents/run to return a run_id for the Email Monitor run"
     run_id = run_id_holder["id"]
 
     run = wait_for_run(api_client, run_id, timeout_s=180)
@@ -1053,7 +1072,9 @@ def test_linkedin_outreach_identify_and_reject_draft(authenticated_page, api_cli
     run_id_holder: dict[str, str] = {}
 
     def _capture_run_id(response):
-        if response.request.method == "POST" and response.url.endswith("/linkedin/outreach/identify"):
+        if response.request.method == "POST" and response.url.endswith(
+            "/linkedin/outreach/identify"
+        ):
             try:
                 run_id = response.json().get("run_id")
             except Exception:
@@ -1087,9 +1108,11 @@ def test_linkedin_outreach_identify_and_reject_draft(authenticated_page, api_cli
         # (AgentRun.started_at.desc()), so among cards matching (company,
         # awaiting_approval) this run's own card — just started — is the
         # first, not the last.
-        queue_card = page.locator("div.glass-panel", has_text=company).filter(
-            has=page.get_by_text("awaiting approval", exact=True)
-        ).first
+        queue_card = (
+            page.locator("div.glass-panel", has_text=company)
+            .filter(has=page.get_by_text("awaiting approval", exact=True))
+            .first
+        )
         expect(queue_card).to_be_visible(timeout=30_000)
         discard_button = queue_card.get_by_role("button", name="Discard")
         approve_button = queue_card.get_by_role("button", name="Approve & Send")
@@ -1099,8 +1122,8 @@ def test_linkedin_outreach_identify_and_reject_draft(authenticated_page, api_cli
         expect(page.get_by_text("Message discarded")).to_be_visible(timeout=30_000)
 
         run_after = wait_for_run(api_client, run_id, timeout_s=30)
-        assert run_after["status"] != "awaiting_approval", (
-            f"expected discarding this run's ({run_id}) draft to clear its checkpoint: {run_after}"
-        )
+        assert (
+            run_after["status"] != "awaiting_approval"
+        ), f"expected discarding this run's ({run_id}) draft to clear its checkpoint: {run_after}"
     else:
         assert run["status"] == "completed", run

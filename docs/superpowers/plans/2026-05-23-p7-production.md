@@ -1,5 +1,7 @@
 # P7: Production Hardening Implementation Plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Harden the platform for production: Nginx SSL, rate limiting verification, security audit (Bandit + dependency scan), Docker health checks, CD pipeline, and load testing baseline.

@@ -1,5 +1,5 @@
-"""Workflows started by Temporal Schedules (was the Node BullMQ scheduler),
-and the code that registers those Schedules."""
+"""Workflows started by Temporal Schedules, and the code that registers
+those Schedules."""
 
 from __future__ import annotations
 

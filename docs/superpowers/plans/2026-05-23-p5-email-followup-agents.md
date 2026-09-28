@@ -1,5 +1,7 @@
 # P5: Email Agent + Follow-Up Agent Implementation Plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build Email Agent (reads Gmail via MCP, drafts outreach) and Follow-Up Agent (BullMQ scheduler triggers emails at day 5 and day 12 after application). Both gate on human approval before sending.

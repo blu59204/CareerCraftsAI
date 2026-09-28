@@ -1,5 +1,7 @@
 # P4: Job Search Agent + BullMQ Queue Implementation Plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build Job Search Agent (PinchTab browses LinkedIn, LLM scores matches) and BullMQ Node.js worker for async job queue processing. Jobs submitted to queue; worker runs agent in background; results stored in `job_applications` table.

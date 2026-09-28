@@ -54,9 +54,7 @@ class Settings(BaseSettings):
     # ── Redis ──────────────────────────────────────────────────────────
     REDIS_PASSWORD: str | None = None
 
-    # ── Internal / gateway ─────────────────────────────────────────────
-    INTERNAL_SECRET: str = ""
-    BACKEND_INTERNAL_URL: str = "http://backend:8000"
+    # ── LLM gateway ────────────────────────────────────────────────────
     LLM_GATEWAY_URL: str = "http://localhost:8000/llm-gateway/v1"
 
     # ── Browser Use ────────────────────────────────────────────────────
@@ -227,7 +225,7 @@ class Settings(BaseSettings):
     # Uploaded resumes/documents live on local disk (self-hosted Postgres too —
     # both moved off Supabase because the deployment VM has no outbound IPv6,
     # which Supabase's managed hosts require). In Docker this is a named volume
-    # shared by backend and agent-worker; back it up, nothing else holds a copy.
+    # shared by backend and temporal-worker; back it up, nothing else holds a copy.
     DOCUMENT_STORAGE_DIR: str = "/data/documents"
 
     @model_validator(mode="after")

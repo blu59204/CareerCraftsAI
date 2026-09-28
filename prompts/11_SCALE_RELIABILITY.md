@@ -1,5 +1,7 @@
 # PHASE 6 — SCALE & RELIABILITY (one prompt per item)
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 6.1 Timeouts everywhere: every agent node wrapped with asyncio.wait_for using AGENT_TIMEOUTS; every httpx
     client timeout=20; every LLM call timeout via model kwargs; browser step timeout 30s. On timeout → error
     event + agent_runs status "timeout".

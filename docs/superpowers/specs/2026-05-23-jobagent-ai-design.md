@@ -1,5 +1,7 @@
 # JobAgent AI — System Design
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 **Date:** 2026-05-23  
 **Status:** Approved  
 **Authors:** Claude Code (architect), team  

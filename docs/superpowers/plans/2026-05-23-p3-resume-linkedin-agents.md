@@ -1,5 +1,7 @@
 # P3: Resume Agent + LinkedIn Agent Implementation Plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build Resume Agent (RAG retrieval → LLM rewrite → ReportLab PDF) and LinkedIn Agent (RAG retrieval → LLM rewrite → PinchTab profile update). Both are LangGraph nodes that read/write `AgentState`.

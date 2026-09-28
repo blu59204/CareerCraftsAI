@@ -1,4 +1,4 @@
-"""JobSearchWorkflow — one POST /jobs/search run (was a BullMQ job)."""
+"""JobSearchWorkflow — one POST /jobs/search run."""
 
 from __future__ import annotations
 

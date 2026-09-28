@@ -140,17 +140,20 @@ The `/approve` endpoint verifies:
 
 ---
 
-## Internal Endpoints
+## Background jobs have no HTTP trigger
 
-`/internal/*` (`backend/app/api/internal.py`) are thin, secret-protected wrappers around job-search, follow-up, daily-search and application-status-check logic (`app/services/scheduled_jobs.py`). Nothing calls them automatically: Temporal is what actually decides when this work runs — the `temporal-worker` service invokes the same `scheduled_jobs.py` functions in-process, from Temporal activities, on the Schedules described in `docs/ARCHITECTURE.md` §8. The `/internal/*` routes exist only for an operator to trigger one of these jobs by hand while debugging, and are never exposed publicly:
+Job search, follow-up drafts, the daily search and the application status
+check (`app/services/scheduled_jobs.py`) run only inside Temporal activities
+on the `temporal-worker` (see `docs/ARCHITECTURE.md` §8). No route executes
+them out of band, and `tests/security/test_api_security.py::
+test_no_out_of_band_job_trigger_routes` keeps it that way. Operators trigger
+them through the Temporal CLI/UI, which must itself stay off the public
+internet (see `docs/DEPLOYMENT.md`). Nginx still answers `/internal/*` with
+404 as defense in depth:
 
 ```nginx
-location /internal/ {
-    return 404;
-}
+location /internal { return 404; }
 ```
-
-Every route also requires the `X-Internal-Secret` header to match `INTERNAL_SECRET` (falling back to `APP_SECRET_KEY` if unset), checked with a constant-time comparison — bypassing JWT auth is safe only because both the Nginx block and the secret must be defeated.
 
 ### Browser extension device tokens
 

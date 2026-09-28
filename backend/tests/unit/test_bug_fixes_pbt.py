@@ -91,11 +91,7 @@ def test_onboarding_model_default():
     from pathlib import Path
 
     catalog_path = (
-        Path(__file__).resolve().parents[3]
-        / "frontend"
-        / "src"
-        / "lib"
-        / "model-providers.ts"
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "lib" / "model-providers.ts"
     )
     if not catalog_path.exists():
         pytest.skip("Frontend source not available")
@@ -108,21 +104,6 @@ def test_onboarding_model_default():
     assert "claude" in model_name.lower()
     assert model_name != "claude-sonnet-4-5"  # The bug we fixed
     assert "-" in model_name  # Real model IDs have dashes
-
-
-# Property: internal.py handlers don't have duplicate secret params
-def test_internal_no_duplicate_secret_params():
-    """Verify internal handlers use dependencies, not duplicate Header params."""
-    import inspect
-
-    from app.api.internal import run_followup, run_job_search
-
-    sig_search = inspect.signature(run_job_search)
-    sig_followup = inspect.signature(run_followup)
-
-    # Neither handler should have x_internal_secret as a parameter
-    assert "x_internal_secret" not in sig_search.parameters
-    assert "x_internal_secret" not in sig_followup.parameters
 
 
 # Property: _psycopg_url converts asyncpg to psycopg

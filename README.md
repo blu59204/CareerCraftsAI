@@ -220,7 +220,7 @@ CLERK_ISSUER=https://[your-instance].clerk.accounts.dev
 CLERK_SECRET_KEY=<from Clerk dashboard → API keys>
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=<from Clerk dashboard → API keys>
 REDIS_URL=redis://redis:6379
-INTERNAL_SECRET=<shared secret between backend and worker>
+TEMPORAL_ADDRESS=temporal:7233   # or your Temporal Cloud endpoint (+ TEMPORAL_TLS_* paths)
 
 # Required if your active model has no embeddings API (Anthropic, DeepSeek,
 # OpenRouter, NVIDIA NIM): which provider embeds documents for RAG
@@ -527,7 +527,7 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 - **Authentication** via Clerk session JWTs, verified locally on every protected route against Clerk's JWKS (RS256)
 - **Data isolation** enforced in the API: every query is scoped to the authenticated user (RLS policies from the migrations remain as defense in depth)
 - **Rate limiting** per-route limits via slowapi, keyed by user
-- **Internal endpoints** (`/internal/*`) blocked at Nginx and gated by `INTERNAL_SECRET`; the worker refuses to start if its secret is rejected
+- **No out-of-band job triggers** — background jobs run only as Temporal workflows; nginx still returns 404 for `/internal/*` as defense in depth
 - **Browser isolation** Playwright creates a separate browser context per user
 - **Dependency audit** `pip-audit` + `npm audit` in CI; `bandit` SAST on every PR
 - **CVE-2025-68664** (LangChain serialization) — patched, using langchain-core 1.4.0
@@ -628,7 +628,6 @@ Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
 - [ ] Configure Nango Gmail/Drive integration keys and the verified webhook URL
 - [ ] Verify Redis `appendonly yes` is persisting to Docker volume
 - [ ] Set up PostgreSQL backups and connection-pool alerts
-- [ ] When rotating `INTERNAL_SECRET`, recreate `backend` and `temporal-worker` too
 - [ ] Confirm `GET /health` reports `"temporal": {"connected": true, "workers": >=1}`
 - [ ] Set Hunter.io, ProxyCurl, and Exa API keys for full feature coverage
 

@@ -94,3 +94,6 @@ deploy/secrets/
 
 # Quarantined scratch/junk files pending deletion by the user
 _scratch/
+
+# Locally generated architecture diagrams (archify output)
+Diagram/

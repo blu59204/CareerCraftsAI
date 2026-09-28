@@ -9,17 +9,18 @@ Currently: NOTHING works end-to-end. We are making it work one slice at a time.
 ## Stack
 - Backend: Python 3.12, FastAPI, SQLAlchemy async + asyncpg, LangGraph 0.2.76, langchain-core 0.3.86,
   langchain-anthropic 0.3.22, langchain-openai 0.3.35, langchain-google-genai 2.1.12, langchain-ollama 0.3.10,
-  pgvector, Redis (event bus + cache + BullMQ), Playwright via browser-use 0.12.9, reportlab (PDF), python-jobspy.
+  pgvector, Redis (event bus + cache — not a queue), Temporal (temporalio), Playwright via browser-use 0.12.9, reportlab (PDF), python-jobspy.
   Pins live in backend/constraints.txt (wins over requirements.txt).
 - Frontend: Next.js 16.2.6 (App Router), React 19, TypeScript 6 strict, Tailwind 3.4, Zustand 5, TanStack Query 5,
   @supabase/ssr, axios, Radix UI, motion. Path alias @/* -> src/*.
-- Worker: Node 24, TypeScript, BullMQ 5, ioredis. Processors: job-search, followup, daily-search, status-check.
+- Worker: Temporal only — `python -m app.temporal_worker` (backend/app/workflows/: AgentRun, JobSearch, AutoApply,
+  Followup workflows + Schedules for daily search, maintenance, status check). No Node worker, no BullMQ.
 - DB/Auth: Supabase (Postgres 16 + pgvector + Auth + Storage). 32 migrations in supabase/migrations/. RLS on.
 - Infra: Docker Compose (docker-compose.yml prod, docker-compose.dev.yml dev), Nginx, GitHub Actions.
 - OS: Windows 11, PowerShell 5.1. Repo root: D:\CareerCraft AI (git branch master).
 
 ## Key paths
-backend/app/main.py                    FastAPI factory, routers at /api/v1, /internal, /llm-gateway, /health
+backend/app/main.py                    FastAPI factory, routers at /api/v1, /llm-gateway, /health
 backend/app/core/config.py             Settings (pydantic BaseSettings). Single source of env vars.
 backend/app/core/database.py           async engine + get_db
 backend/app/core/supabase_auth.py      verify_token() HS256, audience "authenticated"
@@ -34,8 +35,8 @@ backend/app/agents/base_agent.py       BaseAgent ABC: run(), _get_llm(), _hitl_c
 backend/app/agents/<name>_agent.py     one file per agent (also *_v2.py untracked duplicates)
 backend/app/api/v1/agents.py           POST /run, GET /{id}/stream (SSE), POST /{id}/approve, GET /runs
 backend/app/api/v1/*.py                resume, jobs, cover_letter, company, salary, interview, linkedin, email, rag, users
-backend/app/api/internal.py            worker-only endpoints, header X-Internal-Secret
-backend/app/services/*.py              rag_service, pdf_service, ats_service, gmail_service, queue_service, etc.
+backend/app/workflows/starters.py      the only way API code starts/signals Temporal workflows
+backend/app/services/*.py              rag_service, pdf_service, ats_service, gmail_service, scheduled_jobs, etc.
 backend/app/models/*.py                SQLAlchemy models: users, model_settings, documents, applications, agent_runs...
 frontend/src/lib/api.ts                axios client, Bearer from Supabase session, deduplicatedGet()
 frontend/src/lib/sse.ts                useAgentStream(runId) → Zustand agentStore
@@ -43,7 +44,7 @@ frontend/src/store/agentStore.ts       canonical run store (agentSlice.ts is a l
 frontend/src/app/(app)/*               dashboard, jobs, resume, cover-letter, linkedin, email, applications, interview,
                                        interview-prep, company, salary, leads, agents, onboarding, settings/*
 frontend/src/components/agents/*       AgentStatusStream, ApprovalModal (HITL UI)
-worker/src/processors/*.ts             BullMQ processors
+backend/app/temporal_worker.py         Temporal worker entry point
 supabase/migrations/0001..0032         schema, RLS, HNSW
 
 ## Contracts that everything depends on

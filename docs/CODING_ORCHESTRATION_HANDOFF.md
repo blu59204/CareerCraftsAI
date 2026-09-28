@@ -1,5 +1,7 @@
 # GPT-6 Astra / Muse Spark coding handoff
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 ## Agent configuration
 
 - Coordinator: `astra-orchestrator`, model `openai/gpt-6-astra`.

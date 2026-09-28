@@ -8,6 +8,7 @@ the underlying application_workflow.run_application_stage these activities
 wrap. What's tested here is Temporal-specific: signals, queries, retry
 policy behavior, and the states no application should ever get stuck in.
 """
+
 import uuid
 
 import pytest
@@ -31,14 +32,22 @@ def test_stable_workflow_id_is_deterministic_per_user_and_application():
     # Same inputs -> same id, every time (this is what makes "repeated start
     # requests return the existing run" work: Temporal itself rejects a
     # second Start with the same id while one is running).
-    assert auto_apply_workflow_id(user_id, job_application_id) == auto_apply_workflow_id(user_id, job_application_id)
-    assert auto_apply_workflow_id(user_id, "other") != auto_apply_workflow_id(user_id, job_application_id)
+    assert auto_apply_workflow_id(user_id, job_application_id) == auto_apply_workflow_id(
+        user_id, job_application_id
+    )
+    assert auto_apply_workflow_id(user_id, "other") != auto_apply_workflow_id(
+        user_id, job_application_id
+    )
 
 
 def _reserved(run_id="run-1", attempt_id="attempt-1"):
     return {
-        "attempt_id": attempt_id, "run_id": run_id, "job_url": "https://jobs.example.test/apply",
-        "company": "Acme", "role": "Backend Engineer", "pdf_document_id": "doc-1",
+        "attempt_id": attempt_id,
+        "run_id": run_id,
+        "job_url": "https://jobs.example.test/apply",
+        "company": "Acme",
+        "role": "Backend Engineer",
+        "pdf_document_id": "doc-1",
         "resume_sha256": "deadbeef",
     }
 
@@ -55,7 +64,10 @@ async def test_approval_signal_advances_from_review_to_submit():
     async def fake_stage(params: dict) -> dict:
         stage_calls.append(params["pending"]["type"])
         if params["pending"]["type"] == "browser_prepare":
-            return {"status": "awaiting_approval", "pending_action": {"type": "browser_review", "form": {}}}
+            return {
+                "status": "awaiting_approval",
+                "pending_action": {"type": "browser_review", "form": {}},
+            }
         return {"status": "completed", "result": {"outcome": "submitted"}}
 
     @activity.defn(name="apply_answers_and_resume_activity")
@@ -68,7 +80,9 @@ async def test_approval_signal_advances_from_review_to_submit():
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
-            env.client, task_queue=TASK_QUEUE, workflows=[AutoApplyWorkflow],
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[AutoApplyWorkflow],
             activities=[fake_reserve, fake_stage, fake_answers, fake_followup],
         ):
             handle = await env.client.start_workflow(
@@ -81,6 +95,7 @@ async def test_approval_signal_advances_from_review_to_submit():
             # signaling — the time-skipping env auto-advances time, so this
             # resolves almost immediately in wall-clock terms.
             import asyncio
+
             for _ in range(50):
                 status = await handle.query(AutoApplyWorkflow.status)
                 if status.state == "awaiting_approval":
@@ -105,7 +120,10 @@ async def test_cancellation_signal_stops_the_workflow_before_submit():
 
     @activity.defn(name="run_application_stage_activity")
     async def fake_stage(params: dict) -> dict:
-        return {"status": "awaiting_approval", "pending_action": {"type": "browser_review", "form": {}}}
+        return {
+            "status": "awaiting_approval",
+            "pending_action": {"type": "browser_review", "form": {}},
+        }
 
     @activity.defn(name="apply_answers_and_resume_activity")
     async def fake_answers(params: dict) -> dict:
@@ -117,7 +135,9 @@ async def test_cancellation_signal_stops_the_workflow_before_submit():
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
-            env.client, task_queue=TASK_QUEUE, workflows=[AutoApplyWorkflow],
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[AutoApplyWorkflow],
             activities=[fake_reserve, fake_stage, fake_answers, fake_followup],
         ):
             handle = await env.client.start_workflow(
@@ -127,6 +147,7 @@ async def test_cancellation_signal_stops_the_workflow_before_submit():
                 task_queue=TASK_QUEUE,
             )
             import asyncio
+
             for _ in range(50):
                 status = await handle.query(AutoApplyWorkflow.status)
                 if status.state == "awaiting_approval":
@@ -156,7 +177,10 @@ async def test_submit_activity_is_never_retried_on_failure():
     @activity.defn(name="run_application_stage_activity")
     async def fake_stage(params: dict) -> dict:
         if params["pending"]["type"] == "browser_prepare":
-            return {"status": "awaiting_approval", "pending_action": {"type": "browser_review", "form": {}}}
+            return {
+                "status": "awaiting_approval",
+                "pending_action": {"type": "browser_review", "form": {}},
+            }
         submit_attempts["n"] += 1
         raise RuntimeError("browser crashed mid-click")
 
@@ -170,7 +194,9 @@ async def test_submit_activity_is_never_retried_on_failure():
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
-            env.client, task_queue=TASK_QUEUE, workflows=[AutoApplyWorkflow],
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[AutoApplyWorkflow],
             activities=[fake_reserve, fake_stage, fake_answers, fake_followup],
         ):
             handle = await env.client.start_workflow(
@@ -180,6 +206,7 @@ async def test_submit_activity_is_never_retried_on_failure():
                 task_queue=TASK_QUEUE,
             )
             import asyncio
+
             for _ in range(50):
                 status = await handle.query(AutoApplyWorkflow.status)
                 if status.state == "awaiting_approval":
@@ -210,7 +237,13 @@ async def test_unresolved_answers_checkpoint_reuses_answers_activity_then_resume
             "status": "awaiting_approval",
             "pending_action": {
                 "type": "application_answers_required",
-                "fields": [{"field_id": "sponsor", "question_key": "authorization.requires_sponsorship", "label": "Sponsorship?"}],
+                "fields": [
+                    {
+                        "field_id": "sponsor",
+                        "question_key": "authorization.requires_sponsorship",
+                        "label": "Sponsorship?",
+                    }
+                ],
             },
         }
 
@@ -225,7 +258,9 @@ async def test_unresolved_answers_checkpoint_reuses_answers_activity_then_resume
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
-            env.client, task_queue=TASK_QUEUE, workflows=[AutoApplyWorkflow],
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[AutoApplyWorkflow],
             activities=[fake_reserve, fake_stage, fake_answers, fake_followup],
         ):
             handle = await env.client.start_workflow(
@@ -235,6 +270,7 @@ async def test_unresolved_answers_checkpoint_reuses_answers_activity_then_resume
                 task_queue=TASK_QUEUE,
             )
             import asyncio
+
             for _ in range(50):
                 status = await handle.query(AutoApplyWorkflow.status)
                 if status.state == "awaiting_input":
@@ -260,8 +296,14 @@ async def test_unknown_outcome_sets_needs_verification_and_does_not_reschedule_f
     @activity.defn(name="run_application_stage_activity")
     async def fake_stage(params: dict) -> dict:
         if params["pending"]["type"] == "browser_prepare":
-            return {"status": "awaiting_approval", "pending_action": {"type": "browser_review", "form": {}}}
-        return {"status": "failed", "result": {"outcome": "unknown", "message": "Check the portal before retrying."}}
+            return {
+                "status": "awaiting_approval",
+                "pending_action": {"type": "browser_review", "form": {}},
+            }
+        return {
+            "status": "failed",
+            "result": {"outcome": "unknown", "message": "Check the portal before retrying."},
+        }
 
     @activity.defn(name="apply_answers_and_resume_activity")
     async def fake_answers(params: dict) -> dict:
@@ -273,7 +315,9 @@ async def test_unknown_outcome_sets_needs_verification_and_does_not_reschedule_f
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
-            env.client, task_queue=TASK_QUEUE, workflows=[AutoApplyWorkflow],
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[AutoApplyWorkflow],
             activities=[fake_reserve, fake_stage, fake_answers, fake_followup],
         ):
             handle = await env.client.start_workflow(
@@ -283,6 +327,7 @@ async def test_unknown_outcome_sets_needs_verification_and_does_not_reschedule_f
                 task_queue=TASK_QUEUE,
             )
             import asyncio
+
             for _ in range(50):
                 status = await handle.query(AutoApplyWorkflow.status)
                 if status.state == "awaiting_approval":
@@ -302,9 +347,9 @@ async def test_unknown_outcome_sets_needs_verification_and_does_not_reschedule_f
 @pytest.mark.asyncio
 async def test_browser_input_waits_for_approval_signal_like_browser_review():
     """Regression: browser_input must NOT auto-retry on a timer — the
-    BullMQ path's frontend "Continue preparation" button posts to the same
-    generic approve endpoint for every checkpoint type, so Temporal must
-    wait for that same signal rather than silently changing the UX."""
+    frontend "Continue preparation" button posts to the same generic
+    approve endpoint for every checkpoint type, so the workflow must wait
+    for that same signal rather than silently changing the UX."""
     stage_calls = []
 
     @activity.defn(name="reserve_application_attempt")
@@ -315,7 +360,10 @@ async def test_browser_input_waits_for_approval_signal_like_browser_review():
     async def fake_stage(params: dict) -> dict:
         stage_calls.append(params["pending"]["type"])
         if len(stage_calls) == 1:
-            return {"status": "awaiting_approval", "pending_action": {"type": "browser_input", "form": {}}}
+            return {
+                "status": "awaiting_approval",
+                "pending_action": {"type": "browser_input", "form": {}},
+            }
         return {"status": "completed", "result": {"outcome": "submitted"}}
 
     @activity.defn(name="apply_answers_and_resume_activity")
@@ -328,7 +376,9 @@ async def test_browser_input_waits_for_approval_signal_like_browser_review():
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
-            env.client, task_queue=TASK_QUEUE, workflows=[AutoApplyWorkflow],
+            env.client,
+            task_queue=TASK_QUEUE,
+            workflows=[AutoApplyWorkflow],
             activities=[fake_reserve, fake_stage, fake_answers, fake_followup],
         ):
             handle = await env.client.start_workflow(
@@ -338,6 +388,7 @@ async def test_browser_input_waits_for_approval_signal_like_browser_review():
                 task_queue=TASK_QUEUE,
             )
             import asyncio
+
             for _ in range(50):
                 status = await handle.query(AutoApplyWorkflow.status)
                 if status.state == "awaiting_browser_input":
@@ -349,7 +400,9 @@ async def test_browser_input_waits_for_approval_signal_like_browser_review():
             # Give the workflow a moment to (incorrectly) auto-retry if the
             # regression this test guards against were reintroduced.
             await asyncio.sleep(0.2)
-            assert stage_calls == ["browser_prepare"], "must not retry browser_input without a signal"
+            assert stage_calls == [
+                "browser_prepare"
+            ], "must not retry browser_input without a signal"
 
             await handle.signal(AutoApplyWorkflow.approve)
             result = await handle.result()

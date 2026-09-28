@@ -1,4 +1,7 @@
 # COMPLETE HANDOFF DOCUMENT — CareerCraft AI
+
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 **Date:** 2026-09-06
 **Prepared for:** Brand-new AI assistant with zero context
 **Working directory:** `D:\CareerCraft AI`

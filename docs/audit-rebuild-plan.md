@@ -1,5 +1,7 @@
 # CareerCraft AI — Full Technical Audit & Rebuild Plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 **Generated:** 2026-06-06
 **Scope:** End-to-end diagnosis and phased rebuild for a non-functional "AI-vibe-coded" multi-agent platform
 **Status:** PLANNING ONLY — No implementation yet

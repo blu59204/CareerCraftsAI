@@ -27,7 +27,8 @@ jobs:
             docker compose pull
             docker compose build --parallel
             docker compose up -d --build temporal-postgres temporal temporal-ui redis
-            # --remove-orphans retires the old BullMQ worker/agent-worker containers.
+            # --remove-orphans retires containers for services no longer defined
+            # (e.g. the pre-Temporal worker/agent-worker on hosts that predate it).
             docker compose up -d --no-deps --build --remove-orphans backend temporal-worker frontend
             docker compose up -d nginx
 

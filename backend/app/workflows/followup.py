@@ -1,7 +1,6 @@
 """FollowupWorkflow — day-5 and day-12 follow-up drafts for one application.
 
-Replaces BullMQ delayed jobs + the Redis "already scheduled" markers: the
-workflow id (one per application) is the de-duplication, and the durable
+The workflow id (one per application) is the de-duplication, and the durable
 timers survive worker restarts. Each due step only *drafts* an email into
 an awaiting_approval run; a person approves the send.
 """

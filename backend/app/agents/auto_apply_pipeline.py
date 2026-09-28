@@ -7,6 +7,7 @@ Chains: Multi-platform search → Score → Find recruiter → Tailor resume →
 Prepares outreach end-to-end, then emits an approval checkpoint before any
 email or LinkedIn action is dispatched.
 """
+
 import asyncio
 import base64
 import logging
@@ -34,7 +35,7 @@ async def _get_or_create_job_application(user_id: str, job: JobListing) -> str:
     """Get-or-create the JobApplication row for this job, keyed by
     (user_id, job_url) — same idempotent-on-url pattern already used when
     search results are persisted (see job_search.py::_persist_saved_jobs and
-    api/internal.py). An apply_browser action needs a job_application_id so
+    services/scheduled_jobs.py). An apply_browser action needs a job_application_id so
     workflow_service's auto_apply_approval branch can reserve an
     ApplicationAttempt before ever queuing a browser submit.
     """
@@ -44,18 +45,24 @@ async def _get_or_create_job_application(user_id: str, job: JobListing) -> str:
     from app.models.db import JobApplication
 
     async with AsyncSessionLocal() as db:
-        existing = (await db.execute(
-            _select(JobApplication).where(
-                JobApplication.user_id == uuid.UUID(user_id),
-                JobApplication.job_url == job.job_url,
+        existing = (
+            await db.execute(
+                _select(JobApplication).where(
+                    JobApplication.user_id == uuid.UUID(user_id),
+                    JobApplication.job_url == job.job_url,
+                )
             )
-        )).scalar_one_or_none()
+        ).scalar_one_or_none()
         if existing:
             return str(existing.id)
         row = JobApplication(
-            user_id=uuid.UUID(user_id), company=job.company, role=job.title,
-            location=job.location, job_url=job.job_url,
-            jd_text=(job.description or "")[:4000], status="saved",
+            user_id=uuid.UUID(user_id),
+            company=job.company,
+            role=job.title,
+            location=job.location,
+            job_url=job.job_url,
+            jd_text=(job.description or "")[:4000],
+            status="saved",
         )
         db.add(row)
         await db.commit()
@@ -134,12 +141,16 @@ async def run_auto_apply_pipeline(
     # ── Step 1: Scrape jobs from all platforms ──────────────────────
     logger.info("[AutoApply] Step 1: Scraping jobs for '%s' in '%s'", search_query, location)
     if run_id:
-        emit(run_id, "browser", {
-            "phase": "auto_apply_search",
-            "mode": "visible" if live_browser else "headless",
-            "query": search_query,
-            "location": location,
-        })
+        emit(
+            run_id,
+            "browser",
+            {
+                "phase": "auto_apply_search",
+                "mode": "visible" if live_browser else "headless",
+                "query": search_query,
+                "location": location,
+            },
+        )
     jobs = await asyncio.get_running_loop().run_in_executor(
         None, scrape_jobs, search_query, location, max_applications * 3, 72, platforms
     )
@@ -160,7 +171,7 @@ async def run_auto_apply_pipeline(
     llm = _build_llm(model_settings)
 
     scored_jobs: list[tuple[JobListing, int]] = []
-    for job in jobs[:max_applications * 2]:
+    for job in jobs[: max_applications * 2]:
         score = _score_job_quick(llm, job, user_profile)
         scored_jobs.append((job, score))
 
@@ -174,6 +185,7 @@ async def run_auto_apply_pipeline(
     from app.core.database import AsyncSessionLocal
     from app.models.db import User as UserModel
     from sqlalchemy import select as sel
+
     auto_mode = "drafts"
     linkedin_email = None
     linkedin_password = None
@@ -186,8 +198,13 @@ async def run_auto_apply_pipeline(
             if user_row.linkedin_email_enc and user_row.linkedin_password_enc:
                 from app.core.security import decrypt_api_key
                 from app.core.config import settings as app_settings
-                linkedin_email = decrypt_api_key(user_row.linkedin_email_enc, app_settings.APP_SECRET_KEY)
-                linkedin_password = decrypt_api_key(user_row.linkedin_password_enc, app_settings.APP_SECRET_KEY)
+
+                linkedin_email = decrypt_api_key(
+                    user_row.linkedin_email_enc, app_settings.APP_SECRET_KEY
+                )
+                linkedin_password = decrypt_api_key(
+                    user_row.linkedin_password_enc, app_settings.APP_SECRET_KEY
+                )
 
     if linkedin_credentials:
         linkedin_email = linkedin_credentials.get("email")
@@ -195,10 +212,23 @@ async def run_auto_apply_pipeline(
 
     # Login to LinkedIn via browser-use if auto mode + credentials available
     linkedin_ready = False
-    if linkedin_email and linkedin_password and auto_mode == "auto" and not app_settings.OPEN_SANDBOX_URL:
+    if (
+        linkedin_email
+        and linkedin_password
+        and auto_mode == "auto"
+        and not app_settings.OPEN_SANDBOX_URL
+    ):
         try:
             from app.services.browser_control_service import linkedin_login as browser_login
-            login_status = await browser_login(llm, user_id, linkedin_email, linkedin_password, live_browser=live_browser, run_id=run_id)
+
+            login_status = await browser_login(
+                llm,
+                user_id,
+                linkedin_email,
+                linkedin_password,
+                live_browser=live_browser,
+                run_id=run_id,
+            )
             linkedin_ready = login_status == "Login completed"
         except Exception as exc:
             logger.warning("[AutoApply] LinkedIn browser login failed: %s", exc)
@@ -226,9 +256,7 @@ async def run_auto_apply_pipeline(
             results["applications_sent"] += 1
 
     approval_actions = [
-        action
-        for app in results["applications"]
-        for action in app.get("approval_actions", [])
+        action for app in results["applications"] for action in app.get("approval_actions", [])
     ]
     if approval_actions:
         results["type"] = "auto_apply_approval"
@@ -241,7 +269,9 @@ async def run_auto_apply_pipeline(
 
     logger.info(
         "[AutoApply] Pipeline complete: %d jobs found, %d applications sent in %dms",
-        results["jobs_found"], results["applications_sent"], duration_ms
+        results["jobs_found"],
+        results["applications_sent"],
+        duration_ms,
     )
     return results
 
@@ -273,16 +303,24 @@ async def _apply_to_job(
 
     try:
         if run_id:
-            emit(run_id, "browser", {
-                "phase": "apply_prepare",
-                "company": job.company,
-                "role": job.title,
-                "url": job.job_url,
-            })
+            emit(
+                run_id,
+                "browser",
+                {
+                    "phase": "apply_prepare",
+                    "company": job.company,
+                    "role": job.title,
+                    "url": job.job_url,
+                },
+            )
         # ── Find recruiter email (self-hosted, no API key) ──────────
         recruiter = await find_email_for_company(job.company)
         recruiter_email = recruiter["email"] if recruiter else None
-        recruiter_name = f"{recruiter.get('first_name', '')} {recruiter.get('last_name', '')}".strip() if recruiter else "Hiring Manager"
+        recruiter_name = (
+            f"{recruiter.get('first_name', '')} {recruiter.get('last_name', '')}".strip()
+            if recruiter
+            else "Hiring Manager"
+        )
 
         # ── Tailor resume ───────────────────────────────────────────
         state = AgentState(
@@ -305,14 +343,22 @@ async def _apply_to_job(
         resume_sha256 = None
         if resume_draft.get("pdf_document_id"):
             from app.services.application_workflow import load_resume
-            _, resume_sha256 = await load_resume(uuid.UUID(user_id), resume_draft["pdf_document_id"])
+
+            _, resume_sha256 = await load_resume(
+                uuid.UUID(user_id), resume_draft["pdf_document_id"]
+            )
 
         # ── Generate cold email ─────────────────────────────────────
         email_content = None
         if recruiter_email:
             email_content = _generate_cold_email(
-                llm, recruiter_name, recruiter_email,
-                job.company, job.title, job.description, user_profile
+                llm,
+                recruiter_name,
+                recruiter_email,
+                job.company,
+                job.title,
+                job.description,
+                user_profile,
             )
 
         # ── AUTO MODE: Queue for approval (HITL gate preserved) ────
@@ -331,37 +377,42 @@ async def _apply_to_job(
                     "type": "auto_apply_approval",
                     "company": job.company,
                     "role": job.title,
-                    "actions_pending": []
+                    "actions_pending": [],
                 }
 
                 # Autonomous browser application — the agent fills + submits the
                 # real job form on approval (HITL gate preserved).
                 if job.job_url and resume_draft.get("pdf_document_id"):
                     job_application_id = await _get_or_create_job_application(user_id, job)
-                    checkpoint_data["actions_pending"].append({
-                        "action": "apply_browser",
-                        "job_url": job.job_url,
-                        "job_application_id": job_application_id,
-                        "company": job.company,
-                        "role": job.title,
-                        "pdf_document_id": resume_draft["pdf_document_id"],
-                        "resume_sha256": resume_sha256,
-                        "resume_markdown": resume_draft.get("resume_markdown", ""),
-                    })
+                    checkpoint_data["actions_pending"].append(
+                        {
+                            "action": "apply_browser",
+                            "job_url": job.job_url,
+                            "job_application_id": job_application_id,
+                            "company": job.company,
+                            "role": job.title,
+                            "pdf_document_id": resume_draft["pdf_document_id"],
+                            "resume_sha256": resume_sha256,
+                            "resume_markdown": resume_draft.get("resume_markdown", ""),
+                        }
+                    )
                     result["apply_browser_queued"] = True
 
                 if email_content and recruiter_email:
-                    checkpoint_data["actions_pending"].append({
-                        "action": "send_email",
-                        "to": recruiter_email,
-                        "subject": email_content["subject"],
-                        "body": email_content["body"],
-                    })
+                    checkpoint_data["actions_pending"].append(
+                        {
+                            "action": "send_email",
+                            "to": recruiter_email,
+                            "subject": email_content["subject"],
+                            "body": email_content["body"],
+                        }
+                    )
                     result["email_draft"] = email_content
                     result["recruiter_email"] = recruiter_email
 
                 if linkedin_ready:
                     from app.services.proxycurl_service import ProxycurlService
+
                     proxycurl = ProxycurlService()
                     contacts = await proxycurl.find_contacts(job.company, "recruiter")
                     if contacts and contacts[0].get("linkedin_url"):
@@ -378,13 +429,17 @@ async def _apply_to_job(
         else:
             result["draft_saved"] = True
             if run_id:
-                emit(run_id, "checkpoint", {
-                    "type": "review_application_draft",
-                    "company": job.company,
-                    "role": job.title,
-                    "job_url": job.job_url,
-                    "message": "Review draft before any email or application is submitted.",
-                })
+                emit(
+                    run_id,
+                    "checkpoint",
+                    {
+                        "type": "review_application_draft",
+                        "company": job.company,
+                        "role": job.title,
+                        "job_url": job.job_url,
+                        "message": "Review draft before any email or application is submitted.",
+                    },
+                )
             result["draft"] = {
                 "recruiter_email": recruiter_email,
                 "recruiter_name": recruiter_name,
@@ -394,16 +449,24 @@ async def _apply_to_job(
             }
 
         # Drafts mode also allows document review followed by sandbox preparation.
-        if not result.get("approval_actions") and job.job_url and resume_draft.get("pdf_document_id"):
+        if (
+            not result.get("approval_actions")
+            and job.job_url
+            and resume_draft.get("pdf_document_id")
+        ):
             job_application_id = await _get_or_create_job_application(user_id, job)
-            result["approval_actions"] = [{
-                "action": "apply_browser", "job_url": job.job_url,
-                "job_application_id": job_application_id,
-                "company": job.company, "role": job.title,
-                "pdf_document_id": resume_draft["pdf_document_id"],
-                "resume_sha256": resume_sha256,
-                "resume_markdown": resume_draft.get("resume_markdown", ""),
-            }]
+            result["approval_actions"] = [
+                {
+                    "action": "apply_browser",
+                    "job_url": job.job_url,
+                    "job_application_id": job_application_id,
+                    "company": job.company,
+                    "role": job.title,
+                    "pdf_document_id": resume_draft["pdf_document_id"],
+                    "resume_sha256": resume_sha256,
+                    "resume_markdown": resume_draft.get("resume_markdown", ""),
+                }
+            ]
 
     except Exception as exc:
         result["error"] = "Auto-apply preparation failed"
@@ -416,7 +479,10 @@ def _score_job_quick(llm: Any, job: JobListing, profile: str) -> int:
     """Score a job 0-100 using critical thinking analysis."""
     try:
         from app.agents.thinking import think_about_job_match
-        result = think_about_job_match(llm, profile, f"{job.title} at {job.company}\n{job.description[:500]}")
+
+        result = think_about_job_match(
+            llm, profile, f"{job.title} at {job.company}\n{job.description[:500]}"
+        )
         match_level = result.get("match_level", "MEDIUM")
         decision = result.get("decision", "MAYBE")
 
@@ -431,21 +497,30 @@ def _score_job_quick(llm: Any, job: JobListing, profile: str) -> int:
 
 
 def _generate_cold_email(
-    llm: Any, recruiter_name: str, recruiter_email: str,
-    company: str, role: str, jd: str, profile: str
+    llm: Any,
+    recruiter_name: str,
+    recruiter_email: str,
+    company: str,
+    role: str,
+    jd: str,
+    profile: str,
 ) -> dict | None:
     """Generate personalized cold email."""
     try:
-        resp = llm.invoke([HumanMessage(
-            content=COLD_EMAIL_PROMPT.format(
-                recruiter_name=recruiter_name,
-                recruiter_email=recruiter_email,
-                company=company,
-                role=role,
-                jd_snippet=jd[:500],
-                profile_snippet=profile[:300],
-            )
-        )])
+        resp = llm.invoke(
+            [
+                HumanMessage(
+                    content=COLD_EMAIL_PROMPT.format(
+                        recruiter_name=recruiter_name,
+                        recruiter_email=recruiter_email,
+                        company=company,
+                        role=role,
+                        jd_snippet=jd[:500],
+                        profile_snippet=profile[:300],
+                    )
+                )
+            ]
+        )
         text = resp.content.strip()
         if text.startswith("Subject:"):
             lines = text.split("\n", 2)
@@ -461,11 +536,15 @@ def _generate_cold_email(
 def _generate_linkedin_note(llm: Any, company: str, role: str, profile: str) -> str:
     """Generate LinkedIn connection note (max 280 chars)."""
     try:
-        resp = llm.invoke([HumanMessage(
-            content=LINKEDIN_NOTE_PROMPT.format(
-                company=company, role=role, profile_snippet=profile[:200]
-            )
-        )])
+        resp = llm.invoke(
+            [
+                HumanMessage(
+                    content=LINKEDIN_NOTE_PROMPT.format(
+                        company=company, role=role, profile_snippet=profile[:200]
+                    )
+                )
+            ]
+        )
         return resp.content.strip()[:280]
     except Exception:
         return f"Hi! I'm interested in the {role} role at {company}. Would love to connect."[:280]

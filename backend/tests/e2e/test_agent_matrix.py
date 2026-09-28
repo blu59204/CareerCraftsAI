@@ -32,6 +32,7 @@ under the real runner.
 
 This suite never approves an email send or job application submit.
 """
+
 from __future__ import annotations
 
 import os
@@ -70,13 +71,26 @@ AGENT_CASES = [
     ("resume_optimize", {"jd_text": "Senior Python Engineer using FastAPI and PostgreSQL"}),
     ("cover_letter", {"jd_text": "Senior Python Engineer using FastAPI", "tone": "formal"}),
     ("linkedin_optimize", {"target_role": "Senior Python Engineer"}),
-    ("linkedin_outreach", {"company_name": "Example Corp", "role_context": "Senior Python Engineer"}),
-    ("email", {"company": "Example Corp", "role": "Senior Python Engineer", "recipient_email": "e2e@example.com"}),
+    (
+        "linkedin_outreach",
+        {"company_name": "Example Corp", "role_context": "Senior Python Engineer"},
+    ),
+    (
+        "email",
+        {
+            "company": "Example Corp",
+            "role": "Senior Python Engineer",
+            "recipient_email": "e2e@example.com",
+        },
+    ),
     ("email_monitor", {}),
     ("interview_coach", {"role": "Senior Python Engineer", "company": "Example Corp"}),
     ("interview_prep", {"role": "Senior Python Engineer", "company": "Example Corp"}),
     ("company_research", {"company_name": "Example Corp"}),
-    ("salary_intelligence", {"role": "Senior Python Engineer", "location": "Bengaluru", "experience_years": 5}),
+    (
+        "salary_intelligence",
+        {"role": "Senior Python Engineer", "location": "Bengaluru", "experience_years": 5},
+    ),
 ]
 
 # email_monitor is a read-only Gmail inbox scan (AGENTS.md) that can
@@ -91,7 +105,9 @@ EMPTY_RESULT_ALLOWED = {"email_monitor"}
 TERMINAL_STATUSES = {"completed", "awaiting_approval", "failed", "expired"}
 
 
-def start_and_wait(api_client, wait_for_run, task_type: str, context: dict, terminal_statuses=TERMINAL_STATUSES) -> dict:
+def start_and_wait(
+    api_client, wait_for_run, task_type: str, context: dict, terminal_statuses=TERMINAL_STATUSES
+) -> dict:
     """POST /agents/run for (task_type, context), poll GET /agents/runs/{id}
     via the shared `wait_for_run` helper until the run reaches one of
     `terminal_statuses`, and return the persisted run detail dict."""
@@ -135,7 +151,9 @@ def _assert_owner_isolation(api_client, run_id: str) -> None:
 
 @pytest.mark.parametrize("task_type,context", AGENT_CASES)
 def test_agent_matrix_reaches_terminal_result(api_client, wait_for_run, task_type, context):
-    run = start_and_wait(api_client, wait_for_run, task_type, context, {"completed", "awaiting_approval"})
+    run = start_and_wait(
+        api_client, wait_for_run, task_type, context, {"completed", "awaiting_approval"}
+    )
 
     assert run.get("duration_ms") is not None and run["duration_ms"] > 0, run
     _assert_owner_isolation(api_client, run["id"])
@@ -176,36 +194,24 @@ def test_agent_matrix_reaches_terminal_result(api_client, wait_for_run, task_typ
 #     submission is verified, so there is nothing to "approve only the
 #     scheduling checkpoint" of.
 #
-#   - The actual day-5/day-12 SEND does have a checkpoint, but it lives in
-#     app/api/internal.py's POST /internal/agents/run-followup, fired only
-#     by the BullMQ worker (worker/src/processors/followup.processor.ts)
-#     once a delayed job's real 5- or 12-day timer elapses. That endpoint is
-#     protected by a dedicated `x-internal-secret` header
-#     (app/api/internal.py's `_verify_secret`), not the JWT `api_client`
-#     authenticates with, and the module's own docstring states it is "Not
-#     exposed via Nginx (blocked at nginx level)" — deliberately walled off
-#     from the public API surface this live suite talks to. Reaching it
-#     live would mean either handing this test process a server secret
-#     meant only for the internal worker, or waiting out a real multi-day
-#     BullMQ delay — neither is reasonable here.
+#   - The day-5/day-12 drafts are produced by FollowupWorkflow
+#     (app/workflows/followup.py) once its durable Temporal timer elapses;
+#     each step calls draft_followup_activity -> scheduled_jobs.run_followup,
+#     which drafts into an awaiting_approval run (the send still needs a
+#     person's approval). There is no public API to fast-forward that timer,
+#     so reaching it live means waiting out a real multi-day delay.
 #
-#   - CORRECTION to this task's original investigation notes: a real
-#     auto-cancel-on-reply mechanism DOES exist. run_followup() in
-#     app/api/internal.py calls _has_recruiter_replied() before drafting
-#     and, if it returns True, clears followup_day5/followup_day12 and
-#     returns status="cancelled" without ever drafting or sending anything
-#     — it is not a dead stub, and it is unit-tested with mocks in
-#     backend/tests/unit/test_followup_agent.py::
+#   - Auto-cancel-on-reply is real: run_followup() in
+#     app/services/scheduled_jobs.py calls _has_recruiter_replied() before
+#     drafting and, if it returns True, clears followup_day5/followup_day12
+#     and returns status="cancelled" (which also stops the workflow). It is
+#     unit-tested with mocks in backend/tests/unit/test_followup_agent.py::
 #     test_run_followup_cancels_instead_of_drafting_when_recruiter_replied.
-#     What's missing is not the feature; it's a way to reach it live
-#     through the public, JWT-authenticated API surface without either
-#     breaking the internal/public boundary or waiting multiple real days.
 #
 # Both halves of Step 3 (the scheduling-checkpoint approval and the
-# cancel-on-reply flow) are only reachable through that internal,
-# secret-gated, worker-only endpoint or a real multi-day delay, so there is
-# no additional *live* assertion to safely add beyond Task 8's
-# date-mirroring coverage. Documented here rather than fabricated.
+# cancel-on-reply flow) are only reachable through a multi-day Temporal
+# timer, so there is no additional *live* assertion to safely add beyond
+# Task 8's date-mirroring coverage. Documented here rather than fabricated.
 
 
 # ---------------------------------------------------------------------------
@@ -319,9 +325,7 @@ def test_missing_active_model_produces_actionable_failed_status(api_client, wait
     established (restore in `finally`, regardless of assertion outcome)."""
     list_resp = api_client.get("/users/me/models")
     list_resp.raise_for_status()
-    previously_active_id = next(
-        (m["id"] for m in list_resp.json() if m.get("is_active")), None
-    )
+    previously_active_id = next((m["id"] for m in list_resp.json() if m.get("is_active")), None)
     assert previously_active_id, (
         "expected this shared live account to already have an active model "
         "(every other live-LLM test in this suite depends on one) — nothing "
@@ -346,7 +350,11 @@ def test_missing_active_model_produces_actionable_failed_status(api_client, wait
         disposable_id = None  # gone — don't try to delete it again in finally
 
         run = start_and_wait(
-            api_client, wait_for_run, "job_search", _CASES_BY_TYPE["job_search"], {"failed"},
+            api_client,
+            wait_for_run,
+            "job_search",
+            _CASES_BY_TYPE["job_search"],
+            {"failed"},
         )
         error = ((run.get("output") or {}).get("error") or "").lower()
         assert "model" in error, f"expected an actionable missing-model error, got: {run}"
@@ -398,7 +406,8 @@ def test_concurrency_limit_counts_active_runs_not_approval_waiting_ones(api_clie
     run_a_id = run_a.json()["run_id"]
 
     run_b = api_client.post(
-        "/agents/run", json={"task_type": "job_search", "context": _CASES_BY_TYPE["job_search"]},
+        "/agents/run",
+        json={"task_type": "job_search", "context": _CASES_BY_TYPE["job_search"]},
     )
     run_b.raise_for_status()
     run_b_id = run_b.json()["run_id"]

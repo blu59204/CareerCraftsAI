@@ -1,5 +1,7 @@
 # Scalable agent sandbox: project review and implementation plan
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 Review date: 2026-09-09. Scope: current working tree, with emphasis on agent execution, browser login, applications, approvals, and horizontal scaling.
 
 ## Executive conclusion

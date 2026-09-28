@@ -1,8 +1,9 @@
 """Job search, follow-up drafts, the daily search and the status check.
 
-Called by Temporal activities (app/workflows/) — and by the secret-protected
-/internal endpoints for manual operator triggers. Nothing here schedules
-itself; Temporal workflows and Schedules decide when these run.
+Called only by Temporal activities (app/workflows/job_activities.py).
+Nothing here schedules itself; Temporal workflows and Schedules decide when
+these run. To run one by hand, trigger its Schedule or start its workflow
+with the Temporal CLI (see docs/DEPLOYMENT.md).
 """
 
 import asyncio

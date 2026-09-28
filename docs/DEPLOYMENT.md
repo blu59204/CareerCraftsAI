@@ -55,7 +55,8 @@ today.
 - The `/opt/careercraft-secrets/` directory, containing (all gitignored,
   root-owned, `chmod 600`):
   - `backend.env` — `DATABASE_URL`, `REDIS_URL`, `CLERK_SECRET_KEY`,
-    `INTERNAL_SECRET`, `APP_SECRET_KEY`, third-party API keys, etc.
+    `APP_SECRET_KEY`, `TEMPORAL_ADDRESS` (+ `TEMPORAL_TLS_*` for mTLS),
+    third-party API keys, etc. A leftover `INTERNAL_SECRET` is ignored.
   - `public.env` — `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
     (frontend build args — see the note in `deploy/oracle-vm/compose.yml`
     about why these are passed as build `args`, not runtime env, and never
@@ -129,6 +130,42 @@ shows `Up` — `docker compose ps` alone doesn't catch that.
 
 ---
 
+## Temporal (the only job engine)
+
+Every agent run, job search, application, follow-up and recurring job is a
+Temporal workflow; nothing else executes background work. To run it in
+production:
+
+1. **Server.** Bring up `deploy/oracle-vm/temporal-compose.yml` on its box
+   (or use Temporal Cloud). Only port 7233 may be reachable from the app VM;
+   6933–6939 and `temporal-postgres` stay on loopback.
+2. **Transport security.** `TEMPORAL_ADDRESS` in `backend.env` must point at
+   that server. If 7233 crosses a network the app VM doesn't own, set
+   `TEMPORAL_TLS_CERT_PATH`/`TEMPORAL_TLS_KEY_PATH` (+ `TEMPORAL_TLS_CA_PATH`)
+   and mount the files into `backend` and `temporal-worker`; without them the
+   client connects in plaintext.
+3. **Workers.** `temporal-worker` (task queue `careercraft`) is mandatory.
+   `python -m app.notification_worker`
+   (`deploy/oracle-vm/notification-worker-compose.yml`, task queues
+   `careercraft-notifications*`) is required for in-app notifications and
+   notification emails to be delivered.
+4. **Schedules.** Each worker start registers `daily-job-search`,
+   `maintenance` and, in `server_browser` apply mode only,
+   `application-status-check` (`TEMPORAL_SCHEDULES_ENABLED=true`). Check with
+   `temporal schedule list`.
+5. **Retire the old queue workers** on any host that predates the Temporal
+   migration: stop and remove the Node `worker` and Python `agent-worker`
+   containers (`docker compose up -d --remove-orphans` does this for
+   services no longer in the compose file). Redis stays — it backs the SSE
+   event bus, the public demo's per-IP quota, LLM gateway sessions, token
+   budgets and caches (slowapi limits are in-process).
+   Any `bull:*` keys left in Redis are inert; delete them only after
+   confirming no old worker is running.
+6. **Verify** with `/health` (step 4 above) and, to run a job by hand,
+   `temporal schedule trigger --schedule-id daily-job-search`.
+
+---
+
 ## Secrets rotation (e.g. switching Clerk from a development to a
 ## production instance)
 
@@ -164,6 +201,8 @@ way the forward migration was applied in step 2 above.
 
 - **No CI/CD auto-deploy.** Deploys are manual (`git pull` + rebuild on the
   VM directly), not triggered by merging to `master`.
+  `.github/workflows/cd.yml` still targets branch `main`, `/opt/jobagent`
+  and the retired root `docker-compose.yml`; it does not deploy this stack.
 - **No migration runner.** See step 2 above.
 - **ngrok as the public ingress** is unusual for a permanent production
   setup (normally used for temporary/dev tunneling) — the comments in

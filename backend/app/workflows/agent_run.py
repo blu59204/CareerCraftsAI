@@ -1,8 +1,8 @@
 """AgentRunWorkflow — durable execution of one POST /agents/run request.
 
-Replaces the old WorkflowTask outbox + BullMQ dispatcher. The workflow is
-the execution ledger; the agent_runs row stays the user-facing record that
-the activities keep in sync (status, output, SSE events).
+The workflow is the execution ledger; the agent_runs row stays the
+user-facing record that the activities keep in sync (status, output, SSE
+events).
 
     execute ──► completed / failed
        │

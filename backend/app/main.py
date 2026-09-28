@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api import internal
 from app.api.v1 import (
     agents,
     browser,
@@ -122,7 +121,6 @@ _PUBLIC_PATHS = {
     "/docs",
     "/redoc",
     "/openapi.json",
-    "/internal",
     "/api/v1/integrations/webhooks/nango",
     # Public marketing-site demo: intentionally unauthenticated, gated
     # instead by a per-IP lifetime search cap (see app/api/v1/demo.py).
@@ -133,7 +131,7 @@ _PUBLIC_PATHS = {
 
 async def _jwt_middleware(request: Request, call_next):
     path = request.url.path
-    if path in _PUBLIC_PATHS or path.startswith("/internal"):
+    if path in _PUBLIC_PATHS:
         return await call_next(request)
     # The browser extension authenticates with its own device token, checked
     # by the extension router's get_device dependency.
@@ -280,7 +278,6 @@ app.include_router(candidate_profile.router, prefix="/api/v1")
 app.include_router(integrations.router, prefix="/api/v1")
 app.include_router(extension.router, prefix="/api/v1")
 app.include_router(memory_router)
-app.include_router(internal.router)
 
 from app.core.llm_gateway import router as llm_gw
 

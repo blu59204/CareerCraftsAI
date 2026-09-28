@@ -64,21 +64,10 @@ async def test_health_endpoint_is_public():
     assert "status" in resp.json()
 
 
-@pytest.mark.asyncio
-async def test_internal_endpoint_rejects_wrong_secret():
-    async with make_client() as client:
-        resp = await client.post(
-            "/internal/agents/run-job-search",
-            json={
-                "user_id": "x",
-                "run_id": "x",
-                "search_query": "x",
-                "location": "x",
-                "max_results": 5,
-            },
-            headers={"x-internal-secret": "wrong-secret"},
-        )
-    assert resp.status_code == 403
+def test_no_out_of_band_job_trigger_routes():
+    # Temporal is the only way background jobs run; the old /internal/*
+    # routes executed them in the API process, outside any workflow.
+    assert not [r.path for r in app.routes if getattr(r, "path", "").startswith("/internal")]
 
 
 @pytest.mark.asyncio

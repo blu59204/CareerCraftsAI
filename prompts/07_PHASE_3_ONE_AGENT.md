@@ -1,5 +1,7 @@
 # PHASE 3 — MAKE ONE AGENT WORK (repeat this file once per agent, fresh chat each time)
 
+> **Historical (superseded 2026-09-28):** written when background jobs ran on BullMQ/Redis workers. They now run only as Temporal workflows — see `docs/ARCHITECTURE.md` §8. Queue/worker details below are out of date.
+
 ## Fill in before pasting
 AGENT_NAME = <resume | job_search | cover_letter | company_research | salary | linkedin | interview_prep |
               interview_coach | nl_search | email | followup | email_monitor | linkedin_outreach | auto_apply>

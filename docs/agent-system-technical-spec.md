@@ -4,6 +4,8 @@
 **Scope:** All 15 LangGraph agents, Playwright browser control, AutoApplyPipeline, HITL gates
 **Status:** AUDIT — comparing requested architecture vs actual implementation
 
+> **Updated 2026-09-28:** background execution moved from BullMQ to Temporal (PR #10). §5.4 and §6 below describe the Temporal implementation; `docs/ARCHITECTURE.md` §8 is the authoritative reference.
+
 ---
 
 ## 0. EXECUTIVE SUMMARY
@@ -300,7 +302,8 @@ email_agent_node(state):
 ### 5.4 EmailMonitorAgent Flow
 
 ```
-Scheduled via BullMQ every 6 hours (status-check):
+On demand only: POST /agents/run {task_type: "email_monitor"} → AgentRunWorkflow (not scheduled;
+the `application-status-check` Schedule checks portal status via the browser, not Gmail):
   1. gmail.search_threads(["from:linkedin.com newer_than:1d", "from:naukri.com", ...])
   2. For each notification: classify via regex first, then LLM fallback
   3. Classifications: INTERVIEW, REJECTED, VIEWED, SHORTLISTED, RECRUITER_MESSAGE, IRRELEVANT
@@ -310,36 +313,30 @@ Scheduled via BullMQ every 6 hours (status-check):
 
 ---
 
-## 6. FOLLOWUP AGENT + BULLMQ SCHEDULING
+## 6. FOLLOWUP AGENT + TEMPORAL SCHEDULING
 
 ### 6.1 Current State
 
 | Feature | Status |
 |---|---|
-| `schedule_followups(user_id, application_id, applied_at)` | ✅ |
-| Day-5 and Day-12 BullMQ jobs enqueued | ✅ |
-| Idempotency via Redis key `followup:scheduled:{application_id}` (30-day TTL) | ✅ |
-| 3 retries with exponential backoff (5s base) | ✅ |
-| Auto-cancel on recruiter reply | ⚠️ NOT YET IMPLEMENTED |
+| `start_followups(user_id, application_id, applied_at)` (`app/workflows/starters.py`) | ✅ |
+| `FollowupWorkflow` durable timers for day 5 and day 12 (`app/workflows/followup.py`) | ✅ |
+| Idempotency: workflow id `followup/{application_id}`, `ALLOW_DUPLICATE_FAILED_ONLY` | ✅ |
+| `draft_followup_activity`: 3 attempts, 30s initial backoff | ✅ |
+| Auto-cancel on recruiter reply (`scheduled_jobs._has_recruiter_replied`) — workflow stops | ✅ |
+| Each step only drafts into an `awaiting_approval` run; a person approves the send | ✅ |
 
-### 6.2 Auto-Cancel Logic (Needs Implementation)
+### 6.2 Recurring jobs (Temporal Schedules, `app/workflows/scheduled.py`)
 
-```python
-# In followup.processor.ts (worker side), before sending:
-async def should_cancel_followup(user_id, application_id):
-    gmail = GmailMCPClient(user_id)
-    threads = gmail.search_threads(f"subject:{application_id}", max_results=3)
-    for thread in threads:
-        # Check if latest message is from recruiter (not from user)
-        if thread.latest_message_from != user_id:
-            return True  # Cancel — recruiter already replied
-    return False
-```
+| Schedule id | Interval | Workflow |
+|---|---|---|
+| `daily-job-search` | `DAILY_SEARCH_INTERVAL_HOURS` (24h) | `DailySearchWorkflow` |
+| `maintenance` | `MAINTENANCE_INTERVAL_SECONDS` (60s) | `MaintenanceWorkflow` |
+| `application-status-check` | `STATUS_CHECK_INTERVAL_HOURS` (6h), server_browser mode only | `StatusCheckWorkflow` |
 
-### 6.3 BullMQ Queue Configuration
+Overlap policy `SKIP`. Worker: task queue `TEMPORAL_TASK_QUEUE` (`careercraft`), `max_concurrent_activities=TEMPORAL_WORKER_CONCURRENCY` (4). Per-user admission (2 concurrent runs) is enforced by `POST /agents/run`.
 
-| Setting | Value |
-|---|---|
+---|---|
 | Queue name | `agent-queue` |
 | Connection | Redis (`REDIS_URL`) |
 | Concurrency | 2 workers |
@@ -570,8 +567,8 @@ def _looks_like_captcha(text: str) -> bool:
 - **Effect:** SalaryAgent and CoverLetterAgent now use Claude's extended thinking (8000 token budget) for deeper reasoning. Non-Anthropic providers are unaffected.
 
 ### 2. FollowUp auto-cancel on recruiter reply
-- **File:** `backend/app/api/internal.py`
-- **Change:** Added `_has_recruiter_replied()` async function that searches Gmail for replies from recruiters since the application date. The `/agents/run-followup` endpoint now checks this before forwarding to `schedule_followups()`.
+- **File:** `backend/app/services/scheduled_jobs.py` (originally `api/internal.py`)
+- **Change:** Added `_has_recruiter_replied()` async function that searches Gmail for replies from recruiters since the application date. `run_followup()` (called by `FollowupWorkflow`'s `draft_followup_activity`) checks this before drafting.
 - **Effect:** When a recruiter replies to any thread mentioning the company or role, the day-5 and day-12 follow-up jobs are cancelled with reason `"recruiter_replied"`. `followup_day5` and `followup_day12` fields on the JobApplication are set to None.
 
 ### 3. NLSearchAgent live scraping
