@@ -245,3 +245,24 @@ def test_resolved_warnings_are_filtered_but_persisted_in_full(mock_llm):
     assert result["pending_action"]["warnings"] == [AZURE_WARNING]
     # The document keeps the model's original list; readers filter it.
     assert persist.call_args.kwargs["warnings"] == [DATES_WARNING, AZURE_WARNING]
+
+
+def test_failing_saved_facts_do_not_skip_contact_or_name(mock_llm):
+    draft = (
+        "## EXPERIENCE\n### Prompt Engineer Intern | Acme Labs\n"
+        "- Built prompt evaluation pipelines\n## SKILLS\n**Languages:** Python\n"
+    )
+    contact = {"email": "jane@example.com", "phone": "+91 98765 43210"}
+    facts = {"experience": [{"role": "Prompt Engineer Intern", "start": "Jun 2025"}]}
+
+    with patch(
+        "app.agents.resume_agent.apply_saved_facts",
+        side_effect=ValueError("No experience entry matches"),
+    ) as apply_saved:
+        result, render, _, _ = _run_agent(mock_llm, _resume_json(draft), facts=(contact, facts))
+
+    apply_saved.assert_called_once()
+    rendered = render.call_args.args[0]
+    assert "jane@example.com" in rendered and "+91 98765 43210" in rendered
+    assert rendered.startswith("# Jane Doe\n")
+    assert result["pending_action"]["resume_markdown"] == rendered

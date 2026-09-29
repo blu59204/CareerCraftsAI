@@ -1,9 +1,37 @@
+import logging
+import shutil
+from pathlib import Path
+
 import fitz  # PyMuPDF
 import pytest
 
+from app.services import pdf_service
 from app.services.pdf_service import THEMES, generate_resume_pdf
 
 TEMPLATES = ["modern", "classic", "technical"]
+WIN_FONTS = Path(r"C:\Windows\Fonts")
+
+
+def _use_fonts(monkeypatch, dirs: tuple[Path, ...], roots: tuple[Path, ...]) -> None:
+    """Point the font lookup at `dirs` (flat) and `roots` (searched recursively)."""
+    monkeypatch.setattr(pdf_service, "_font_dirs", lambda: dirs)
+    monkeypatch.setattr(pdf_service, "_SYSTEM_FONT_ROOTS", roots)
+    pdf_service._system_fonts.cache_clear()
+    pdf_service._unicode_family.cache_clear()
+
+
+@pytest.fixture
+def font_lookup(monkeypatch):
+    yield lambda dirs=(), roots=(): _use_fonts(monkeypatch, dirs, roots)
+    monkeypatch.undo()
+    pdf_service._system_fonts.cache_clear()
+    pdf_service._unicode_family.cache_clear()
+
+
+@pytest.fixture
+def no_fonts(font_lookup):
+    """No Unicode TTF anywhere: only the core (WinAnsi) fonts."""
+    font_lookup()
 
 
 def test_generate_pdf_returns_bytes():
@@ -145,7 +173,7 @@ def test_placeholders_never_reach_the_pdf():
     assert "EDUCATION" not in body
 
 
-def test_non_latin_characters_are_transliterated_not_dropped():
+def test_non_latin_characters_are_transliterated_not_dropped(no_fonts):
     # ₹ → ≥ ✓ Ł ź ı ş are all outside cp1252 (the core fonts' WinAnsi encoding).
     text = "# Jane\n## SUMMARY\nZürich café: ₹15 LPA → 40% ✓ ≥ 3x; Łódź; Işık; e‑mail"
     pdf = generate_resume_pdf(text, full_name="Jane", template="modern")
@@ -175,6 +203,93 @@ def test_unicode_name_is_rendered_with_a_unicode_font():
         assert "Разработчик backend, Python" in texts
         core = {"Helvetica", "Helvetica-Bold", "Times-Roman", "Times-Bold"}
         assert not any(font in core for font, _, _ in lines)
+
+
+CYRILLIC = (
+    "# Иван Петров\nМосква | ivan@x.com\n## EXPERIENCE\n### Инженер | Яндекс | 2021 - 2022\n- x"
+)
+_STYLES = ("Regular", "Bold", "Italic", "BoldItalic")
+_WIN_STYLES = {
+    "LiberationSans": ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"),
+    "LiberationSerif": ("times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf"),
+}
+
+
+def _require_windows_fonts() -> None:
+    if not (WIN_FONTS / "arial.ttf").is_file():
+        pytest.skip(r"C:\Windows\Fonts\arial.ttf not available")
+
+
+def test_unicode_candidates_include_linux_liberation_and_dejavu():
+    assert Path("/usr/share/fonts") in pdf_service._SYSTEM_FONT_ROOTS
+    sans, serif = pdf_service._UNICODE_FONTS["sans"], pdf_service._UNICODE_FONTS["serif"]
+    assert sans[0] == tuple(f"LiberationSans-{s}.ttf" for s in _STYLES)
+    assert serif[0] == tuple(f"LiberationSerif-{s}.ttf" for s in _STYLES)
+    assert sans[1][:2] == ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf")
+    assert serif[1][:2] == ("DejaVuSerif.ttf", "DejaVuSerif-Bold.ttf")
+    assert sans[-1][0] == "arial.ttf" and serif[-1][0] == "times.ttf"
+
+
+def test_liberation_fonts_in_linux_layout_render_cyrillic(font_lookup, tmp_path):
+    """Mirror the backend image: only fonts-liberation under /usr/share/fonts."""
+    _require_windows_fonts()
+    folder = tmp_path / "truetype" / "liberation"
+    folder.mkdir(parents=True)
+    for family, sources in _WIN_STYLES.items():
+        for style, source in zip(_STYLES, sources, strict=True):
+            shutil.copyfile(WIN_FONTS / source, folder / f"{family}-{style}.ttf")
+    font_lookup(roots=(tmp_path,))
+
+    assert pdf_service._unicode_family(False)[0] == "CC-LiberationSans"
+    assert pdf_service._unicode_family(True)[0] == "CC-LiberationSerif"
+    for template in TEMPLATES:
+        pdf = generate_resume_pdf(CYRILLIC, template=template)
+        body = fitz.open(stream=pdf, filetype="pdf")[0].get_text()
+        assert "Иван Петров" in body
+        assert "Москва" in body
+        assert "Инженер" in body and "Яндекс" in body
+
+
+def test_dejavu_fonts_in_linux_layout_are_found(font_lookup, tmp_path):
+    _require_windows_fonts()
+    folder = tmp_path / "truetype" / "dejavu"
+    folder.mkdir(parents=True)
+    for name in ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf", "DejaVuSerif.ttf"):
+        shutil.copyfile(WIN_FONTS / "arial.ttf", folder / name)
+    font_lookup(roots=(tmp_path,))
+
+    assert pdf_service._find_font("DejaVuSans-Bold.ttf") == folder / "DejaVuSans-Bold.ttf"
+    assert pdf_service._unicode_family(False)[0] == "CC-DejaVuSans"
+    assert pdf_service._unicode_family(True)[0] == "CC-DejaVuSerif"
+    pdf = generate_resume_pdf(CYRILLIC, template="modern")
+    assert "Иван Петров" in fitz.open(stream=pdf, filetype="pdf")[0].get_text()
+
+
+def test_latin_extended_text_uses_the_unicode_font(font_lookup):
+    _require_windows_fonts()
+    font_lookup(dirs=(WIN_FONTS,))
+    for template in TEMPLATES:
+        pdf = generate_resume_pdf("# Jane\n## SUMMARY\nŁódź; Işık", template=template)
+        body = fitz.open(stream=pdf, filetype="pdf")[0].get_text()
+        assert "Łódź; Işık" in body
+    # Pure cp1252 text keeps the core fonts even when a Unicode font exists.
+    pdf = generate_resume_pdf("# Jane\n## SUMMARY\nZürich café – 2021", template="modern")
+    assert all("Helvetica" in font for font, _, _ in _lines(pdf))
+
+
+def test_dropped_glyphs_are_counted_in_a_warning_without_the_text(no_fonts, caplog):
+    with caplog.at_level(logging.WARNING, logger="app.services.pdf_service"):
+        generate_resume_pdf("# Иван Петров\n## SUMMARY\nPython", template="modern")
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "10 character(s)" in message  # Иван (4) + Петров (6)
+    assert "Иван" not in message and "Петров" not in message
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="app.services.pdf_service"):
+        generate_resume_pdf("# Jane\n## SUMMARY\nŁódź; Işık", template="modern")
+    assert not caplog.records  # transliterated, nothing dropped
 
 
 def test_none_full_name_is_treated_as_empty():

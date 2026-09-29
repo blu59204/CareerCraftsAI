@@ -99,8 +99,11 @@ class _Harness:
         self.calls: list = []
         self.flushes = 0
         self.commit_error: Exception | None = None
-        # Model name -> the document id an in-flight approval references.
-        self.pins: dict[str, uuid.UUID] = {}
+        # Models whose pending-approval lookup reports a pin. What those
+        # queries match is checked structurally and against Postgres.
+        self.pins: set[str] = set()
+        # Whether each document lookup locked the row (SELECT ... FOR UPDATE).
+        self.doc_locks: list[bool] = []
         self.render_error: Exception | None = None
         self.ats_error: Exception | None = None
 
@@ -126,15 +129,22 @@ class _Harness:
             self.deleted.append((path, user_id))
             self.calls.append(("delete", path))
 
-        async def load_facts_row(db, user_id):
+        async def load_facts_row(db, user_id, *, for_update=False):
             return self.facts_row
 
         async def load_profile(db, user_id):
             return None
 
-        async def save_facts(db, user_id, facts):
+        async def save_facts(db, user_id, *, contact, experience, education):
+            # The real merge (pure); the locking read/write is covered by
+            # test_resume_facts and the Postgres integration tests.
+            from app.services.resume_facts import merge_facts
+
+            stored = dict(self.facts_row.answer or {}) if self.facts_row else {}
+            facts = merge_facts(stored, contact=contact, experience=experience, education=education)
             self.saved_facts.append((user_id, facts))
             self.calls.append("save_facts")
+            return facts
 
         class _Ats:
             composite_score = 91
@@ -171,14 +181,14 @@ class _Harness:
 
         class _FakeDB:
             async def execute(self, stmt, *a, **k):
+                from sqlalchemy.dialects import postgresql
+
                 entity = stmt.column_descriptions[0].get("entity")
-                params = stmt.compile().params
+                compiled = stmt.compile(dialect=postgresql.dialect())
+                params = compiled.params
                 if entity is not UserDocument:
-                    # Pending-approval lookups: answer only when the query
-                    # asks about the document that is actually pinned.
-                    pinned = harness.pins.get(entity.__name__)
-                    hit = pinned is not None and str(pinned) in repr(params)
-                    return _Result(uuid.uuid4() if hit else None)
+                    return _Result(uuid.uuid4() if entity.__name__ in harness.pins else None)
+                harness.doc_locks.append(str(compiled).endswith("FOR UPDATE"))
                 # Honour the query's id/user filters so ownership is exercised.
                 values = set(params.values())
                 doc = harness.doc
@@ -574,7 +584,7 @@ async def test_fact_match_keys_come_from_the_manual_edit(monkeypatch):
 async def test_fix_of_pinned_resume_saves_a_new_version(monkeypatch, model):
     doc = _doc(uuid.uuid4())
     h = _Harness(monkeypatch, doc)
-    h.pins[model] = doc.id
+    h.pins.add(model)
 
     resp = await h.fix({**FULL_FIX, "template": "classic"})
 
@@ -597,10 +607,9 @@ async def test_fix_of_pinned_resume_saves_a_new_version(monkeypatch, model):
 
 
 @pytest.mark.asyncio
-async def test_approval_of_another_document_does_not_pin(monkeypatch):
+async def test_unpinned_resume_is_edited_in_place(monkeypatch):
     doc = _doc(uuid.uuid4())
     h = _Harness(monkeypatch, doc)
-    h.pins = {"ApplicationAttempt": uuid.uuid4(), "AgentRun": uuid.uuid4()}
 
     resp = await h.fix({"template": "classic"})
 
@@ -611,39 +620,99 @@ async def test_approval_of_another_document_does_not_pin(monkeypatch):
     assert ("u/resume.pdf", str(doc.user_id)) in h.deleted
 
 
-def test_pin_queries_target_open_attempts_and_approval_checkpoints():
-    """The pin lookup SQL (Postgres) filters on the document and open states."""
+@pytest.mark.asyncio
+async def test_fix_locks_the_document_row_and_get_does_not(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+
+    assert (await h.fix({"template": "classic"})).status_code == 200
+    assert (await h.get()).status_code == 200
+
+    assert h.doc_locks == [True, False]
+
+
+def _conditions(stmt) -> list[tuple[str, str, object]]:
+    """(table.column, operator, bound value) for every column-vs-parameter
+    comparison in the statement's WHERE clause."""
+    from sqlalchemy.sql import visitors
+    from sqlalchemy.sql.elements import BinaryExpression, BindParameter, ColumnClause
+
+    found = []
+    for el in visitors.iterate(stmt.whereclause):
+        if (
+            isinstance(el, BinaryExpression)
+            and isinstance(el.left, ColumnClause)
+            and isinstance(el.right, BindParameter)
+        ):
+            op = getattr(el.operator, "opstring", None) or el.operator.__name__
+            found.append((f"{el.left.table.name}.{el.left.name}", op, el.right.effective_value))
+    return found
+
+
+def test_pin_attempt_query_is_owner_scoped_and_needs_an_open_run():
     from sqlalchemy.dialects import postgresql
 
     from app.api.v1 import resume as resume_api
 
     doc = _doc(uuid.uuid4())
+    stmt = resume_api._pinning_attempt_query(doc)
+    conditions = _conditions(stmt)
+
+    assert ("application_attempts.user_id", "eq", doc.user_id) in conditions
+    assert ("job_applications.user_id", "eq", doc.user_id) in conditions
+    assert ("agent_runs.user_id", "eq", doc.user_id) in conditions
+    assert ("job_applications.resume_id", "eq", doc.id) in conditions
+    [states] = [v for c, op, v in conditions if c == "application_attempts.state"]
+    assert set(states) == {"preparing", "awaiting_approval", "submitting"}
+    [statuses] = [v for c, op, v in conditions if c == "agent_runs.status"]
+    assert set(statuses) == {"queued", "running", "awaiting_approval"}
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "JOIN agent_runs ON agent_runs.id = application_attempts.run_id" in sql
+
+
+def test_pin_run_query_is_owner_scoped_and_matches_the_document_in_the_checkpoint():
+    from app.api.v1 import resume as resume_api
+
+    doc = _doc(uuid.uuid4())
+    conditions = _conditions(resume_api._pinning_run_query(doc))
+
+    assert ("agent_runs.user_id", "eq", doc.user_id) in conditions
+    assert ("agent_runs.status", "eq", "awaiting_approval") in conditions
+    json_conditions = [(op, v) for c, op, v in conditions if c == "agent_runs.output"]
+    doc_id = str(doc.id)
+    assert sorted(json_conditions, key=repr) == sorted(
+        [
+            ("?", "resume_sha256"),
+            ("@>", {"pdf_document_id": doc_id}),
+            ("@>", {"actions_pending": [{"pdf_document_id": doc_id}]}),
+        ],
+        key=repr,
+    )
+
+
+def test_pin_lookup_runs_the_attempt_query_then_the_run_query():
+    from app.api.v1 import resume as resume_api
+
+    doc = _doc(uuid.uuid4())
     seen = []
 
-    class _Result:
-        def scalar_one_or_none(self):
-            return None
-
     class _DB:
-        async def execute(self, stmt):
-            seen.append(stmt.compile(dialect=postgresql.dialect()))
-            return _Result()
+        def __init__(self, answers):
+            self.answers = list(answers)
 
-    assert asyncio.run(resume_api._pinned_by_pending_approval(_DB(), doc)) is False
-    attempt_sql, run_sql = (str(s) for s in seen)
-    attempt_params, run_params = (s.params for s in seen)
-    assert "job_applications.resume_id" in attempt_sql
-    assert "application_attempts.state IN" in attempt_sql
-    assert doc.id in attempt_params.values()
-    assert {"preparing", "awaiting_approval", "submitting"} <= {
-        v
-        for p in attempt_params.values()
-        for v in (p if isinstance(p, list) else [p])
-        if isinstance(v, str)
-    }
-    assert "agent_runs.output @>" in run_sql and "agent_runs.output ?" in run_sql
-    assert "awaiting_approval" in run_params.values()
-    assert str(doc.id) in repr(run_params)
+        async def execute(self, stmt):
+            seen.append(stmt.column_descriptions[0]["entity"].__name__)
+            value = self.answers.pop(0)
+            return type("R", (), {"scalar_one_or_none": lambda self: value})()
+
+    assert asyncio.run(resume_api._pinned_by_pending_approval(_DB([None, None]), doc)) is False
+    assert seen == ["ApplicationAttempt", "AgentRun"]
+    seen.clear()
+    assert asyncio.run(resume_api._pinned_by_pending_approval(_DB([uuid.uuid4()]), doc)) is True
+    assert seen == ["ApplicationAttempt"]
+    seen.clear()
+    assert asyncio.run(resume_api._pinned_by_pending_approval(_DB([None, uuid.uuid4()]), doc))
+    assert seen == ["ApplicationAttempt", "AgentRun"]
 
 
 # ── Limits ───────────────────────────────────────────────────────────────────

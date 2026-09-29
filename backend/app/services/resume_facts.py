@@ -114,12 +114,17 @@ def _same_experience(old: dict, new: dict) -> bool:
 
     The new record's match keys describe the entry *before* this fix, which
     may already carry values from an earlier fix (e.g. the full employer).
+    Roles must match and so must the employers: an employer-less fact is
+    only the same entry as a saved fact that has no employer either.
     """
     old_roles = {_fold(old.get("role")), _fold(old.get("match_role"))} - {""}
     new_roles = {_fold(new.get("role")), _fold(new.get("match_role"))} - {""}
     role_hit = bool(old_roles & new_roles) or not (old_roles or new_roles)
-    employers = {_fold(old.get("employer_match")), _fold(old.get("employer"))}
-    return role_hit and _fold(new.get("employer_match")) in employers
+    old_employers = {_fold(old.get("employer_match")), _fold(old.get("employer"))} - {""}
+    new_employer = _fold(new.get("employer_match"))
+    if not new_employer:
+        return role_hit and not old_employers
+    return role_hit and new_employer in old_employers
 
 
 def _merge_experience(saved: list[dict], item: dict) -> list[dict]:
@@ -195,15 +200,16 @@ def merge_facts(
 # ── async (API) ─────────────────────────────────────────────────────────────
 
 
-async def load_facts_row(db: AsyncSession, user_id: uuid.UUID) -> CandidateAnswer | None:
-    return (
-        await db.execute(
-            select(CandidateAnswer).where(
-                CandidateAnswer.user_id == user_id,
-                CandidateAnswer.question_key == FACTS_KEY,
-            )
-        )
-    ).scalar_one_or_none()
+async def load_facts_row(
+    db: AsyncSession, user_id: uuid.UUID, *, for_update: bool = False
+) -> CandidateAnswer | None:
+    stmt = select(CandidateAnswer).where(
+        CandidateAnswer.user_id == user_id,
+        CandidateAnswer.question_key == FACTS_KEY,
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 async def load_profile(db: AsyncSession, user_id: uuid.UUID) -> CandidateProfile | None:
@@ -212,20 +218,38 @@ async def load_profile(db: AsyncSession, user_id: uuid.UUID) -> CandidateProfile
     ).scalar_one_or_none()
 
 
-async def save_facts(db: AsyncSession, user_id: uuid.UUID, facts: dict) -> None:
-    row = await load_facts_row(db, user_id)
+async def save_facts(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    contact: dict | None,
+    experience: list[dict],
+    education: list[dict],
+) -> dict:
+    """Merge newly submitted fixes into the user's saved facts and store them.
+
+    The facts row is read ``FOR UPDATE`` and the delta merged into what is
+    stored *now*, so two concurrent fixes both land instead of the later
+    write replacing the earlier one. Returns the stored facts.
+    """
+    delta = {"contact": contact, "experience": experience, "education": education}
+    row = await load_facts_row(db, user_id, for_update=True)
     if row is None:
+        facts = merge_facts({}, **delta)
         try:
             # Savepoint: a concurrent first save for the same user hits the
             # unique (user_id, question_key) constraint; only this insert is
-            # rolled back and the winner's row is updated below instead.
+            # rolled back (pending changes of the caller survive) and the
+            # delta is merged into the winner's row below instead.
             async with db.begin_nested():
                 db.add(
                     CandidateAnswer(
                         user_id=user_id,
                         question_key=FACTS_KEY,
                         normalized_question="Resume facts entered in the resume gap fixer",
-                        answer_type="json",
+                        # The answer column is JSONB whatever the type; the
+                        # table's CHECK (migration 0035) has no "json" value.
+                        answer_type="text",
                         answer=facts,
                         source="user",
                         confidence=1.0,
@@ -233,14 +257,16 @@ async def save_facts(db: AsyncSession, user_id: uuid.UUID, facts: dict) -> None:
                     )
                 )
                 await db.flush()
-            return
+            return facts
         except IntegrityError:
-            row = await load_facts_row(db, user_id)
+            row = await load_facts_row(db, user_id, for_update=True)
             if row is None:
                 raise
+    facts = merge_facts(dict(row.answer or {}), **delta)
     row.answer = facts
     row.approved_by_user = True
     await db.flush()
+    return facts
 
 
 # ── sync (agent worker) ─────────────────────────────────────────────────────

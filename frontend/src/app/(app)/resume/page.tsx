@@ -15,7 +15,7 @@ import { ResumePreview } from "@/components/resume/ResumePreview";
 import { ResumeFixPanel } from "@/components/resume/ResumeFixPanel";
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { apiClient, getApiErrorMessage } from "@/lib/api";
+import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
 import { getResumeInsightData } from "@/lib/resume-insights";
 import { takePendingJd } from "@/lib/job-handoff";
 import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
@@ -116,6 +116,12 @@ const MAX_MARKDOWN_LENGTH = 30_000;
 /** Backend limit for a job description (OptimizeRequest.jd_text). */
 const MAX_JD_LENGTH = 20_000;
 
+/**
+ * Client-side cap for the cover-letter job description. The cover-letter
+ * endpoint sets no length limit of its own; this reuses the resume cap.
+ */
+const MAX_COVER_JD_LENGTH = MAX_JD_LENGTH;
+
 /** Main preview: minimum paper width (px) before it scrolls, and zoom range. */
 const PREVIEW_MIN_WIDTH = 560;
 const ZOOM_MIN = 0.6;
@@ -183,14 +189,14 @@ function CoverLetterGenerator({
           <textarea
             value={jd}
             onChange={(e) => setJd(e.target.value)}
-            maxLength={MAX_JD_LENGTH}
+            maxLength={MAX_COVER_JD_LENGTH}
             aria-label="Job description"
             aria-describedby="cover-jd-count"
             placeholder="Paste the job description here to get a tailored cover letter…"
             className="h-32 w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           <p id="cover-jd-count" className="-mt-2 text-right text-xs text-muted-foreground">
-            {jd.length.toLocaleString()}/{MAX_JD_LENGTH.toLocaleString()} characters
+            {jd.length.toLocaleString()}/{MAX_COVER_JD_LENGTH.toLocaleString()} characters
           </p>
 
           <div>
@@ -431,10 +437,13 @@ function HistoryTab({ agentRuns, isLoading, onDownload, onOpen, openingId, busy 
                 <>
                   <button
                     type="button"
-                    onClick={() => onOpen(docId)}
-                    disabled={busy}
+                    onClick={() => {
+                      if (!busy) onOpen(docId);
+                    }}
+                    // aria-disabled (not disabled) keeps the button focusable while another request runs.
+                    aria-disabled={busy || undefined}
                     aria-label="Open this tailored resume in the builder"
-                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors disabled:opacity-60"
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
                   >
                     {isOpening ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -609,7 +618,7 @@ export default function ResumePage() {
   const templateMutation = useMutation<Tailored, unknown, TemplateId>({
     mutationKey: [...RESUME_TAILORED_KEY, "template"],
     mutationFn: async (template) => {
-      if (!lastDocId) throw new Error("Tailor your resume first.");
+      if (!lastDocId) throw new UserFacingError("Tailor your resume first.");
       const generation = docGenRef.current;
       return { data: await postResumeFix(lastDocId, { template }), generation };
     },
@@ -624,7 +633,7 @@ export default function ResumePage() {
   const editTextMutation = useMutation<Tailored, unknown, string>({
     mutationKey: [...RESUME_TAILORED_KEY, "edit-text"],
     mutationFn: async (markdown) => {
-      if (!lastDocId) throw new Error("Tailor your resume first.");
+      if (!lastDocId) throw new UserFacingError("Tailor your resume first.");
       const generation = docGenRef.current;
       return { data: await postResumeFix(lastDocId, { resume_markdown: markdown }), generation };
     },
@@ -674,7 +683,7 @@ export default function ResumePage() {
   const optimizeMutation = useMutation<{ data: OptimizeResult; generation: number }, unknown, string>({
     mutationFn: async (jdInput: string) => {
       const jd = jdInput.trim();
-      if (!jd) throw new Error("Paste the job description before tailoring your resume.");
+      if (!jd) throw new UserFacingError("Paste the job description before tailoring your resume.");
       const generation = ++docGenRef.current;
       // This call runs the LLM synchronously server-side (no SSE/queue) and
       // routinely takes 30-60s+ — well past the client's default 30s timeout,
@@ -686,6 +695,12 @@ export default function ResumePage() {
       return { data: data as OptimizeResult, generation };
     },
     onSuccess: async ({ data, generation }) => {
+      // Approve the finished run even when its result is stale below, so it
+      // never lingers as "awaiting approval". A failed approval doesn't undo
+      // the tailored resume, so it doesn't block applying it.
+      if (data.resume_markdown && data.run_id) {
+        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true }).catch(() => undefined);
+      }
       queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
       queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
       // A newer upload / history open replaced the document meanwhile.
@@ -704,9 +719,6 @@ export default function ResumePage() {
       setLastAtsScore(data.ats_score ?? null);
       setLastMissingKeywords(data.keywords_missing ?? []);
       setLastWarnings(data.warnings ?? []);
-      if (data.resume_markdown && data.run_id) {
-        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
-      }
       const openIssues = countOpenIssues(data.review);
       if (openIssues > 0) toast.warning(`Resume tailored — ${openIssues} detail(s) need your input below.`);
       else if (data.warnings?.length) toast.warning(data.warnings[0]);
@@ -732,9 +744,13 @@ export default function ResumePage() {
 
   // The "Edit text" button is disabled while a request is pending (the save
   // itself settles a render after the editor closes), so wait until it's usable.
+  // Only take focus back if it was lost with the removed editor (it sits on
+  // <body> or a detached node); if the user moved on meanwhile, leave it.
   useEffect(() => {
     if (editingText || busy || !restoreEditFocusRef.current) return;
     restoreEditFocusRef.current = false;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
     editButtonRef.current?.focus();
   }, [editingText, busy]);
 

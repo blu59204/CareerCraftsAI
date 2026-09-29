@@ -52,10 +52,7 @@ const SECTIONS = new Set([
 
 const HEADING = /^(#{1,6})\s+/;
 const BULLET = /^(?:[-*•]|\d+[.)])\s+/;
-const YEAR = /\b(?:19|20)\d{2}\b/;
-const DATE_WORD = /\b(?:present|current|now|ongoing)\b/i;
 const ENTRY_DATE = /\b(?:19|20)\d{2}\b|\b(?:present|current)\b/i;
-const RANGE_SPLIT = /\s*(?:\s-\s|–|—|\bto\b|-(?=\s*(?:\d|present|current|now|ongoing)))\s*/i;
 /** A whole heading/contact part that is only N/A, TBD or NOT_PROVIDED (any case). */
 const PLACEHOLDER = /^\W*(?:not[_ ]provided|n\/a|tbd)\W*$/i;
 /** A line whose entire content is the NOT_PROVIDED marker. */
@@ -65,18 +62,47 @@ const PLACEHOLDER_INLINE = /[[(]?\bNOT[_ ]PROVIDED\b[\])]?/g;
 const MONTH =
   "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?" +
   "|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
-const DATE_TOKEN = new RegExp(
-  `(?:${MONTH})\\b\\.?` +
-    "|(?:spring|summer|fall|autumn|winter|present|current|now|ongoing|to)\\b" +
-    "|(?:0?[1-9]|1[0-2])/(?:19|20)\\d{2}\\b" +
-    "|(?:19|20)\\d{2}\\b",
-  "iy",
+const PRESENT_WORDS = "present|current|now|ongoing";
+const FULL_YEAR = "(?:19|20)\\d{2}(?!\\d)";
+/** Not followed by a word character (Python `(?!\w)`). */
+const NO_WORD = "(?![\\p{L}\\p{N}_])";
+// Date-range tokens (contract D2), tried in order at each position; the same
+// table as backend `_DATE_TOKENS`. All sticky: they match at the scan position.
+const DATE_TOKENS: Array<[string, RegExp]> = [
+  ["space", /\s+/uy],
+  ["range", /[-–—]/uy],
+  ["to", new RegExp(`to${NO_WORD}`, "iuy")],
+  ["sep", /[,/]/uy],
+  ["month_year", new RegExp(`(?:0?[1-9]|1[0-2])[/.\\-]${FULL_YEAR}`, "uy")],
+  ["year", new RegExp(FULL_YEAR, "uy")],
+  ["short_year", /\d{2}(?!\d)/uy],
+  ["modifier", new RegExp(`(?:early|mid|late)(?:-|\\s+)(?=${FULL_YEAR})`, "iuy")],
+  ["since", new RegExp(`(?:since|from)${NO_WORD}`, "iuy")],
+  ["present", new RegExp(`(?:${PRESENT_WORDS})${NO_WORD}`, "iuy")],
+  ["date", new RegExp(`date${NO_WORD}`, "iuy")],
+  ["word", new RegExp(`(?:${MONTH})(?!\\p{L})\\.?`, "iuy")],
+  ["word", new RegExp(`(?:spring|summer|fall|autumn|winter|q[1-4])${NO_WORD}`, "iuy")],
+];
+/** Start/end split: a spaced separator first, else an unspaced dash between a year and a digit. */
+const RANGE_SPACED = /\s+(?:[-–—]|to)\s+/i;
+const RANGE_LEFT = new RegExp(`(?:\\b(?:19|20)\\d{2}|\\b(?:${PRESENT_WORDS}))$`, "i");
+const RANGE_RIGHT = new RegExp(`^(?:\\d|(?:${PRESENT_WORDS})\\b)`, "i");
+// Location heuristic for legacy headings (contract D1).
+const REMOTE_WORDS = new Set(["remote", "hybrid", "on-site", "onsite", "wfh", "work from home"]);
+const REGIONS = new Set(
+  [
+    "India", "USA", "US", "United States", "UK", "United Kingdom", "England", "Canada", "Germany",
+    "France", "Netherlands", "Ireland", "Singapore", "UAE", "United Arab Emirates", "Australia",
+    "New Zealand", "Japan", "China", "Spain", "Italy", "Sweden", "Switzerland", "Poland", "Israel",
+    "Brazil", "Mexico", "South Africa", "Karnataka", "Maharashtra", "Tamil Nadu", "Telangana",
+    "Delhi", "NCR", "Haryana", "Uttar Pradesh", "West Bengal", "Gujarat", "Kerala", "Rajasthan",
+    "Punjab", "Andhra Pradesh", "Madhya Pradesh", "Odisha", "Goa", "California", "New York",
+    "Texas", "Washington", "Massachusetts", "Illinois",
+  ].map((r) => r.toLowerCase()),
 );
-const DATE_SEP = /[\s,/\-–—]+/y;
-const REMOTE_WORDS = new Set(["remote", "hybrid", "on-site", "onsite", "on site", "wfh", "work from home"]);
-const CAP_WORDS = "[A-Z][\\p{L}\\p{N}_.'-]*(?:\\s+[A-Z][\\p{L}\\p{N}_.'-]*){0,2}";
-const CITY_REGION = new RegExp(`^${CAP_WORDS},\\s*${CAP_WORDS}$`, "u");
-const COMPANY_SUFFIX = /\b(?:inc|llc|llp|ltd|limited|pvt|corp|corporation|co|company|gmbh|plc|ag|bv)\b/i;
+const REGION_CODE = /^[A-Z]{2}$/;
+/** Exactly one comma: `City, Region`. */
+const CITY_REGION = /^([^,]+),([^,]+)$/;
 const CONTACT_HINT = /@|(?:\+?\d[\d\s().-]{7,})|(?:linkedin|github)\.com|https?:\/\//i;
 const CONTACT_SPLIT = /\s*[|·•]\s*/;
 const LIST_SEPARATORS = /[,;|/]/;
@@ -98,37 +124,58 @@ function isPlaceholder(value: string): boolean {
   return !!v && PLACEHOLDER.test(v);
 }
 
-function looksLikeDates(value: string): boolean {
-  return YEAR.test(value) || DATE_WORD.test(value);
-}
-
 /**
- * True when `text` consists only of date tokens (months, seasons, 19xx/20xx,
- * MM/YYYY, Present/Current/Now/Ongoing, "to") and separators (- – — , /
- * whitespace), with at least one year or Present-style word. Mirrors backend
- * `is_date_range`: "Deloitte (Summer 2023)" and "Mid-2021 - 2023" are not dates.
+ * True when `text` is a date range (contract D2, mirrors backend
+ * `is_date_range`). Every token must be a month (Jan…Dec, Sept, full names,
+ * optional "."), a season, Q1-Q4, Early/Mid/Late before a year (`Mid-2021`),
+ * Since/From as the first token, a 19xx/20xx year, MM/YYYY, MM.YYYY, MM-YYYY,
+ * a 2-digit year right after a range separator that follows a year
+ * (`2021-22`), Present/Current/Now/Ongoing, "date" right after "to", or a
+ * separator (- – — to , / whitespace); and at least one year or Present-style
+ * word is required. "Deloitte (Summer 2023)" and "Know Now Inc" are not dates.
  */
 export function isDateRange(text: string): boolean {
   const value = plain(text ?? "");
-  if (!value || !looksLikeDates(value)) return false;
+  const kinds: string[] = []; // non-space tokens so far
   let pos = 0;
   while (pos < value.length) {
-    DATE_SEP.lastIndex = pos;
-    let m = DATE_SEP.exec(value);
-    if (!m) {
-      DATE_TOKEN.lastIndex = pos;
-      m = DATE_TOKEN.exec(value);
+    let matched: [string, string] | null = null;
+    for (const [kind, re] of DATE_TOKENS) {
+      re.lastIndex = pos;
+      const m = re.exec(value);
+      if (m) {
+        matched = [kind, m[0]];
+        break;
+      }
     }
-    if (!m || m[0].length === 0) return false;
-    pos += m[0].length;
+    if (!matched) return false;
+    const [kind, token] = matched;
+    const prev = kinds[kinds.length - 1];
+    if (kind === "short_year" && !(kinds.length >= 2 && (prev === "range" || prev === "to") && kinds[kinds.length - 2] === "year")) {
+      return false;
+    }
+    if (kind === "since" && kinds.length) return false;
+    if (kind === "date" && prev !== "to") return false;
+    if (kind !== "space") kinds.push(kind);
+    pos += token.length;
   }
-  return true;
+  return kinds.some((k) => k === "year" || k === "month_year" || k === "present");
 }
 
-function looksLikeLocation(value: string): boolean {
+/**
+ * A lone non-date part of a legacy heading is a location (not the employer)
+ * when it is a remote word, or — only when the heading has dates — a
+ * `City, Region` pair whose region is a known country/state or a 2-letter
+ * code (contract D1, mirrors the backend).
+ */
+function isLegacyLocation(value: string, hasDates: boolean): boolean {
   const v = value.trim();
   if (REMOTE_WORDS.has(v.toLowerCase())) return true;
-  return CITY_REGION.test(v) && !COMPANY_SUFFIX.test(v);
+  if (!hasDates) return false;
+  const m = CITY_REGION.exec(v);
+  if (!m || !m[1].trim()) return false;
+  const region = m[2].trim();
+  return REGIONS.has(region.toLowerCase()) || REGION_CODE.test(region);
 }
 
 function isUpperCase(value: string): boolean {
@@ -192,26 +239,47 @@ function cleanPlaceholders(markdown: string): string[] {
 
 // ── Heading parts ───────────────────────────────────────────────────────────
 
-function splitDates(value: string): [string, string] {
-  const m = RANGE_SPLIT.exec(value);
-  if (m) {
-    const start = value.slice(0, m.index).trim();
-    const end = value.slice(m.index + m[0].length).trim();
-    if (start && end && looksLikeDates(start)) return [start, end];
+/**
+ * Date range → [start, end] (contract D2, mirrors backend `split_dates`).
+ * Splits on the first spaced separator (" - ", " – ", " — ", " to "); else on
+ * an unspaced dash only between a year/Present-word and a digit/Present-word,
+ * so "2021-2024" and "2021-22" split but "Mid-2021" and "06-2021" do not.
+ * An end of "date" ("2020 to date") becomes "Present".
+ */
+export function splitDates(value: string): [string, string] {
+  const text = (value ?? "").trim();
+  let start = "";
+  let end = "";
+  const spaced = RANGE_SPACED.exec(text);
+  if (spaced) {
+    start = text.slice(0, spaced.index).trim();
+    end = text.slice(spaced.index + spaced[0].length).trim();
+  } else {
+    for (let i = 0; i < text.length; i++) {
+      if (!"-–—".includes(text[i])) continue;
+      if (RANGE_LEFT.test(text.slice(0, i)) && RANGE_RIGHT.test(text.slice(i + 1))) {
+        start = text.slice(0, i).trim();
+        end = text.slice(i + 1).trim();
+        break;
+      }
+    }
   }
-  return [value.trim(), ""];
+  if (!start || !end) return [text, ""];
+  return [start, end.toLowerCase() === "date" ? "Present" : end];
 }
 
 /**
  * `Role | Employer | Location | Dates` → parts (any part may be absent).
  *
  * Slots are positional when the heading has an empty inner slot
- * (`Engineer |  | Remote | 2021 - 2022`). Otherwise (legacy headings) the last
- * part is dates only if it is a pure date range, and a lone second part that
- * looks like a location (Remote, `City, Country`) is read as the location.
+ * (`Engineer |  | Remote | 2021 - 2022`). Otherwise (legacy headings, contract
+ * D1) the last part is dates only if it is a date range, and a lone part
+ * between the role and the dates is the location only if it is a remote word
+ * or — with dates present — a `City, Region` pair (`Pune, India`,
+ * `Seattle, WA`); otherwise it is the employer (`TechCorp, Bangalore`).
  */
 export function splitHeading(text: string): HeadingParts {
-  let parts = text.split("|").map((p) => {
+  const parts = text.split("|").map((p) => {
     const v = plain(p);
     return isPlaceholder(v) ? "" : v;
   });
@@ -221,17 +289,16 @@ export function splitHeading(text: string): HeadingParts {
   if (parts.length > 1 && isDateRange(parts[parts.length - 1])) {
     dates = parts.pop() ?? "";
   }
-  if (!positional && parts.length === 2 && looksLikeLocation(parts[1])) {
-    parts = [parts[0], "", parts[1]];
-  }
   const [start, end] = dates ? splitDates(dates) : ["", ""];
-  return {
-    role: parts[0] ?? "",
-    employer: parts[1] ?? "",
-    location: parts.slice(2).filter(Boolean).join(", "),
-    start,
-    end,
-  };
+  const role = parts[0] ?? "";
+  if (positional) {
+    return { role, employer: parts[1] ?? "", location: parts.slice(2).filter(Boolean).join(", "), start, end };
+  }
+  const rest = parts.slice(1);
+  if (rest.length === 1 && isLegacyLocation(rest[0], !!dates)) {
+    return { role, employer: "", location: rest[0], start, end };
+  }
+  return { role, employer: rest[0] ?? "", location: rest.slice(1).join(", "), start, end };
 }
 
 /** "Jun 2025", "Present" → "Jun 2025 – Present" (either side may be empty). */

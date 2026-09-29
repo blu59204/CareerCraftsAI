@@ -662,7 +662,6 @@ def test_clearing_employer_keeps_location_slot():
         ("Intern | Deloitte (Summer 2023)", "Deloitte (Summer 2023)", ""),
         ("Data Analyst | Know Now Inc", "Know Now Inc", ""),
         ("Winner | Smart India Hackathon 2022", "Smart India Hackathon 2022", ""),
-        ("Engineer | Acme | Mid-2021 - 2023", "Acme", "Mid-2021 - 2023"),
     ],
 )
 def test_text_with_years_is_not_a_date_part(text, employer, location):
@@ -681,7 +680,6 @@ def test_text_with_years_is_not_a_date_part(text, employer, location):
         ("Summer 2023", True),
         ("Sept. 2020 — Present", True),
         ("January 2020 - Current", True),
-        ("Mid-2021 - 2023", False),
         ("Deloitte (Summer 2023)", False),
         ("Know Now Inc", False),
         ("Smart India Hackathon 2022", False),
@@ -793,3 +791,250 @@ def test_contact_values_cannot_inject_headings():
 def test_name_values_cannot_inject_headings():
     out = apply_fixes("## SKILLS\nPython\n", full_name="Jane\n## HACK")
     assert _heading_lines(out) == ["# Jane ## HACK", "## SKILLS"]
+
+
+# ── Regression tests for the second-review findings ─────────────────────────
+
+# D1. legacy heading location heuristic
+
+
+@pytest.mark.parametrize(
+    "text,employer,location",
+    [
+        (
+            "Engineer | Tata Consultancy Services, Mumbai | 2020 - 2021",
+            "Tata Consultancy Services, Mumbai",
+            "",
+        ),
+        ("Engineer | TechCorp, Bangalore | 2021 - 2022", "TechCorp, Bangalore", ""),
+        ("Engineer | Infosys, Bangalore", "Infosys, Bangalore", ""),
+        ("Engineer | Johnson, Matthey", "Johnson, Matthey", ""),
+        ("Engineer | Pune, India | 2021 - 2022", "", "Pune, India"),
+        ("Engineer | Remote | 2021 - 2022", "", "Remote"),
+        ("Engineer | Remote", "", "Remote"),
+        ("Engineer | work from HOME", "", "work from HOME"),
+        ("Engineer | Seattle, WA | 2021", "", "Seattle, WA"),
+        ("Engineer | Bengaluru,  karnataka  | 2021", "", "Bengaluru,  karnataka"),
+        # A known region still needs a date part; a lowercase code is not a code.
+        ("Engineer | Pune, India", "Pune, India", ""),
+        ("Engineer | Seattle, wa | 2021", "Seattle, wa", ""),
+        ("Engineer | Acme | Pune, India | 2021", "Acme", "Pune, India"),
+    ],
+)
+def test_d1_legacy_heading_location(text, employer, location):
+    p = split_heading(text)
+    assert (p.role, p.employer, p.location) == ("Engineer", employer, location)
+
+
+def test_d1_empty_slot_headings_stay_positional():
+    p = split_heading("Engineer |  | Tata Consultancy Services, Mumbai | 2021")
+    assert (p.employer, p.location) == ("", "Tata Consultancy Services, Mumbai")
+    p = split_heading("Engineer | Remote |  | 2021")
+    assert (p.employer, p.location) == ("Remote", "")
+
+
+def test_d1_adding_dates_keeps_employer_with_city():
+    text = _exp("Engineer | Tata Consultancy Services, Mumbai")
+    assert "missing_employer" not in _codes(review_resume(text))
+    out = apply_fixes(text, experience=[{"index": 0, "start": "2020", "end": "2021"}])
+    assert "### Engineer | Tata Consultancy Services, Mumbai |  | 2020 - 2021" in out
+    [entry] = review_resume(out)["experience"]
+    assert entry["employer"] == "Tata Consultancy Services, Mumbai"
+    assert entry["issues"] == []
+
+
+# D2. date grammar
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Jan 2021 - Dec 2022",
+        "2021-2024",
+        "2021-22",
+        "2021 – 22",
+        "Q1 2021 - Q3 2022",
+        "Since 2021",
+        "From Jan 2021",
+        "2020 - Mid 2021",
+        "Mid-2021 - 2023",
+        "Early 2020 – Late 2021",
+        "01.2021 - 03.2022",
+        "06/2021 - 08/2022",
+        "06-2021 - 08-2022",
+        "2020 to date",
+        "Summer 2023",
+        "May 2023",
+        "Sept. 2020 — Now",
+        "Jan 2021 - Ongoing",
+    ],
+)
+def test_d2_valid_date_ranges(text):
+    assert is_date_range(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Deloitte (Summer 2023)",
+        "Smart India Hackathon 2022",
+        "Know Now Inc",
+        "Remote",
+        "Summer",
+        "22",
+        "2021 22",
+        "Jan 22",
+        "Mid",
+        "Mid Jan",
+        "2021 Since",
+        "2021 date",
+        "Q5 2021",
+        "Mayfair 2021",
+    ],
+)
+def test_d2_invalid_date_ranges(text):
+    assert is_date_range(text) is False
+
+
+@pytest.mark.parametrize(
+    "value,start,end",
+    [
+        ("2021-22", "2021", "22"),
+        ("2021 – 22", "2021", "22"),
+        ("Mid-2021 - 2023", "Mid-2021", "2023"),
+        ("Mid-2021", "Mid-2021", ""),
+        ("06-2021", "06-2021", ""),
+        ("Since 2021", "Since 2021", ""),
+        ("2020 to date", "2020", "Present"),
+        ("2020 - Mid 2021", "2020", "Mid 2021"),
+        ("Q1 2021 - Q3 2022", "Q1 2021", "Q3 2022"),
+        ("01.2021 - 03.2022", "01.2021", "03.2022"),
+        ("2021-Present", "2021", "Present"),
+    ],
+)
+def test_d2_split_dates(value, start, end):
+    assert split_dates(value) == (start, end)
+
+
+def test_d2_mid_year_heading_is_dated():
+    p = split_heading("Engineer | Acme | Mid-2021 - 2023")
+    assert (p.employer, p.location, p.start, p.end) == ("Acme", "", "Mid-2021", "2023")
+
+
+# 3. unlabeled contact parts are a location only when place-like
+
+
+def test_unlabeled_title_is_not_a_contact_location():
+    text = "# Jane\nML Engineer | jane@x.com | +91 98765 43210\n## SKILLS\nPython\n"
+    contact = parse_contact(text)
+    assert (contact["location"], contact["email"]) == ("", "jane@x.com")
+    out = ensure_contact(text, {"location": "Pune, India"})
+    assert "ML Engineer | jane@x.com | +91 98765 43210 | Pune, India" in out
+    assert parse_contact(out)["location"] == "Pune, India"
+
+
+def test_unclassified_contact_value_is_not_appended_twice():
+    text = "# Jane\njane@x.com\n## SKILLS\nPython\n"
+    once = apply_fixes(text, contact={"location": "Pune"})
+    assert "jane@x.com | Pune" in once
+    assert apply_fixes(once, contact={"location": "Pune"}) == once
+
+
+@pytest.mark.parametrize(
+    "line,location",
+    [
+        ("Open to relocation | jane@x.com", ""),
+        ("Location: Pune | jane@x.com", "Pune"),
+        ("jane@x.com | Sector 62, Noida", "Sector 62, Noida"),
+        ("jane@x.com | Remote", "Remote"),
+    ],
+)
+def test_contact_location_classification(line, location):
+    assert parse_contact(f"# Jane\n{line}\n## SKILLS\nPython\n")["location"] == location
+
+
+# 4. Markdown-link contact parts
+
+LINKED = (
+    "# Jane\n[jane@x.com](mailto:jane@x.com) | [LinkedIn](https://linkedin.com/in/j) | "
+    "[+91 98765 43210](tel:+919876543210)\n## SKILLS\nPython\n"
+)
+
+
+def test_markdown_link_contact_parts_are_classified():
+    contact = parse_contact(LINKED)
+    assert (contact["email"], contact["linkedin"], contact["phone"]) == (
+        "jane@x.com",
+        "https://linkedin.com/in/j",
+        "+91 98765 43210",
+    )
+    mailto_only = "# Jane\n[Email me](mailto:jane@x.com?subject=Hi)\n## SKILLS\nPython\n"
+    assert parse_contact(mailto_only)["email"] == "jane@x.com"
+
+
+def test_ensure_contact_with_markdown_links_adds_no_second_line():
+    out = ensure_contact(LINKED, {"email": "jane@x.com", "location": "Pune, India"})
+    lines = out.splitlines()
+    assert lines[1] == (
+        "[jane@x.com](mailto:jane@x.com) | [LinkedIn](https://linkedin.com/in/j) | "
+        "[+91 98765 43210](tel:+919876543210) | Pune, India"
+    )
+    assert out.count("jane@x.com") == 2  # once as text, once in the mailto target
+    assert ensure_contact(LINKED, {"email": "other@x.com"}) == LINKED
+
+
+def test_markdown_link_part_rewritten_only_when_changed():
+    out = apply_fixes(LINKED, contact={"phone": "+91 90000 00000", "email": "jane@x.com"})
+    assert _line_with(out, "mailto") == (
+        "[jane@x.com](mailto:jane@x.com) | [LinkedIn](https://linkedin.com/in/j) | "
+        "+91 90000 00000"
+    )
+
+
+# 5. warning filter is specific about employer and dates
+
+
+@pytest.mark.parametrize(
+    "warning",
+    [
+        "Missing: Terraform, Kubernetes (no employer has used these)",
+        "Missing dates for Kafka projects",
+        "No project dates are given for the hackathon entries.",
+        "No employer has used Terraform in production.",
+    ],
+)
+def test_unrelated_employer_and_date_mentions_are_kept(warning):
+    review = review_resume(FULL)
+    assert review["issues"] == []
+    assert filter_resolved_warnings([warning], review) == [warning]
+
+
+@pytest.mark.parametrize(
+    "warning",
+    [
+        "The employer name for the internship is missing.",
+        "Missing employer name for the Prompt Engineer Intern role.",
+        "The employer line is cut off.",
+        "Internship dates are missing.",
+        "Missing start date for the Prompt Engineer Intern role.",
+        "No duration is given for the role.",
+        "Education dates were not provided.",
+    ],
+)
+def test_resolved_employer_and_date_warnings_are_dropped(warning):
+    assert filter_resolved_warnings([warning], review_resume(FULL)) == []
+    assert filter_resolved_warnings([warning], review_resume(SPARSE)) == [warning]
+
+
+# 6. header placeholder lines and prose spacing
+
+
+@pytest.mark.parametrize("line", ["N/A", "tbd", "- NOT_PROVIDED", "[n/a]"])
+def test_clean_placeholders_drops_header_placeholder_lines(line):
+    out = clean_placeholders(f"# Jane\n{line}\n## SUMMARY\nN/A\n")
+    assert out == "# Jane\n## SUMMARY\nN/A\n"
+
+
+def test_clean_placeholders_collapses_space_left_by_inline_token():
+    out = clean_placeholders("# Jane\nContact details NOT_PROVIDED by candidate.\n## SKILLS\nPy\n")
+    assert "Contact details by candidate." in out.splitlines()

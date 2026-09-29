@@ -21,6 +21,7 @@ import bisect
 import functools
 import importlib.util
 import io
+import logging
 import os
 import re
 import unicodedata
@@ -42,6 +43,8 @@ from reportlab.platypus import Flowable, HRFlowable, Paragraph, SimpleDocTemplat
 from reportlab.platypus.doctemplate import LayoutError
 
 from app.services.resume_structure import clean_placeholders, split_heading
+
+logger = logging.getLogger(__name__)
 
 Template = Literal["classic", "modern", "technical"]
 
@@ -210,9 +213,19 @@ def _encode(value: str, glyphs: Glyphs = None) -> str:
 
 
 # ── Unicode fonts ───────────────────────────────────────────────────────────
-# (regular, bold, italic, bold-italic) file names, in preference order.
+# (regular, bold, italic, bold-italic) file names, in preference order. On
+# Linux they are looked up under _SYSTEM_FONT_ROOTS, e.g. the backend image's
+# /usr/share/fonts/truetype/liberation/ (fonts-liberation) and
+# /usr/share/fonts/truetype/dejavu/ (fonts-dejavu-core, which ships no
+# obliques: a missing style falls back to the regular face).
 _UNICODE_FONTS = {
     "sans": [
+        (
+            "LiberationSans-Regular.ttf",
+            "LiberationSans-Bold.ttf",
+            "LiberationSans-Italic.ttf",
+            "LiberationSans-BoldItalic.ttf",
+        ),
         (
             "DejaVuSans.ttf",
             "DejaVuSans-Bold.ttf",
@@ -228,6 +241,12 @@ _UNICODE_FONTS = {
         ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"),
     ],
     "serif": [
+        (
+            "LiberationSerif-Regular.ttf",
+            "LiberationSerif-Bold.ttf",
+            "LiberationSerif-Italic.ttf",
+            "LiberationSerif-BoldItalic.ttf",
+        ),
         (
             "DejaVuSerif.ttf",
             "DejaVuSerif-Bold.ttf",
@@ -249,12 +268,17 @@ def _font_dirs() -> tuple[Path, ...]:
     return tuple(dirs)
 
 
+_SYSTEM_FONT_ROOTS = (Path("/usr/share/fonts"),)
+
+
 @functools.lru_cache(maxsize=1)
 def _system_fonts() -> dict[str, Path]:
-    root = Path("/usr/share/fonts")
-    if not root.is_dir():
-        return {}
-    return {p.name.lower(): p for p in root.rglob("*.ttf")}
+    fonts: dict[str, Path] = {}
+    for root in _SYSTEM_FONT_ROOTS:
+        if root.is_dir():
+            for path in sorted(root.rglob("*.ttf")):
+                fonts.setdefault(path.name.lower(), path)
+    return fonts
 
 
 def _find_font(filename: str) -> Path | None:
@@ -277,7 +301,7 @@ def _unicode_family(serif: bool) -> tuple[str, frozenset[int]] | None:
         regular = _find_font(files[0])
         if regular is None:
             continue
-        name = "CC-" + files[0].rsplit(".", 1)[0]
+        name = "CC-" + files[0].rsplit(".", 1)[0].removesuffix("-Regular")
         names = (name, f"{name}-Bold", f"{name}-Italic", f"{name}-BoldItalic")
         try:
             for font_name, filename in zip(names, files, strict=True):
@@ -297,20 +321,26 @@ def _unicode_family(serif: bool) -> tuple[str, frozenset[int]] | None:
 
 
 def _document_fonts(theme: Theme, text: str) -> tuple[Theme, Glyphs]:
-    """Switch to a Unicode TTF only when folding would erase letters or digits
-    (Cyrillic, CJK, Devanagari, ...) that such a font can actually draw."""
-    lost = {
-        ord(ch)
-        for ch in set(text.translate(_ASCII_PUNCT))
-        if unicodedata.category(ch)[0] in "LN" and not _winansi_ok(ch) and not _fold(ch)
-    }
-    if not lost:
+    """Switch to a Unicode TTF whenever the text has characters outside cp1252
+    (Łódź, Cyrillic, CJK, ...) that such a font can actually draw; pure
+    cp1252 text keeps the core fonts."""
+    extra = {ord(ch) for ch in set(text.translate(_ASCII_PUNCT)) if not _winansi_ok(ch)}
+    if not extra:
         return theme, None
     family = _unicode_family(theme.regular.startswith("Times"))
-    if family is None or not lost & family[1]:
+    if family is None or not extra & family[1]:
         return theme, None
     name, glyphs = family
     return replace(theme, regular=name, bold=f"{name}-Bold", italic=f"{name}-Italic"), glyphs
+
+
+def _dropped(text: str, glyphs: Glyphs) -> int:
+    """Characters that neither the chosen font nor transliteration can keep."""
+    return sum(
+        1
+        for ch in text.translate(_ASCII_PUNCT)
+        if not _winansi_ok(ch) and (glyphs is None or ord(ch) not in glyphs) and not _fold(ch)
+    )
 
 
 # ── Inline emphasis ─────────────────────────────────────────────────────────
@@ -656,6 +686,13 @@ def generate_resume_pdf(
         raise ValueError("resume_text cannot be empty")
 
     theme, glyphs = _document_fonts(THEMES[template], f"{full_name}\n{cleaned}")
+    if dropped := _dropped(f"{full_name}\n{cleaned}", glyphs):
+        # Count only: the text itself is candidate PII.
+        logger.warning(
+            "Resume PDF (%s): %d character(s) have no glyph in any available font and were dropped",
+            template,
+            dropped,
+        )
     st = _Styles(theme)
     ink = colors.HexColor(theme.ink)
 

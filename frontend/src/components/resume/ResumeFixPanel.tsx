@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -59,8 +60,8 @@ export interface ResumeFixPanelProps {
  *
  * Form state is reset whenever a new review arrives (e.g. after a successful
  * fix) by keying the inner form on the document id + review contents. The
- * wrapper outlives those remounts, so it owns the "Resume updated"
- * announcement and moves focus to the new form's heading.
+ * wrapper outlives those remounts, so it moves focus to the new form's
+ * heading after a fix (the "Resume updated" toast is the announcement).
  */
 function ResumeFixPanelImpl(props: ResumeFixPanelProps) {
   const formKey = `${props.documentId}:${JSON.stringify(props.review ?? null)}:${JSON.stringify(props.contactSuggestions ?? {})}`;
@@ -74,14 +75,7 @@ function ResumeFixPanelImpl(props: ResumeFixPanelProps) {
     if (fixCount > 0) headingRef.current?.focus();
   }, [fixCount]);
 
-  return (
-    <>
-      <ResumeFixForm key={formKey} {...props} headingRef={headingRef} onApplied={onApplied} />
-      <p role="status" aria-live="polite" className="sr-only">
-        {fixCount > 0 ? <span key={fixCount}>Resume updated</span> : null}
-      </p>
-    </>
-  );
+  return <ResumeFixForm key={formKey} {...props} headingRef={headingRef} onApplied={onApplied} />;
 }
 
 export const ResumeFixPanel = memo(ResumeFixPanelImpl);
@@ -258,6 +252,11 @@ const DATE_MAX = 40;
 const DETAILS_MAX = 300;
 /** Backend limit on `education` fixes per request (indexed edits + new rows). */
 const MAX_EDUCATION_FIXES = 10;
+/** Backend limit on `experience` fixes per request. */
+const MAX_EXPERIENCE_FIXES = 30;
+/** Highest entry index the fix API accepts (ExperienceFix / EducationFix `index`). */
+const MAX_EXPERIENCE_INDEX = 50;
+const MAX_EDUCATION_INDEX = 20;
 
 interface ExpState {
   role: string;
@@ -325,6 +324,8 @@ interface TextFieldProps {
   error?: string;
   hint?: ReactNode;
   warning?: boolean;
+  /** The value won't be sent (e.g. an unticked profile suggestion). */
+  muted?: boolean;
   /** Rendered next to the label (e.g. a "Use" checkbox). */
   labelAddon?: ReactNode;
   type?: "text" | "email" | "tel" | "url";
@@ -335,7 +336,7 @@ interface TextFieldProps {
   className?: string;
 }
 
-function TextField({ label, value, onChange, onBlur, error, hint, warning, labelAddon, type = "text", className, ...rest }: TextFieldProps) {
+function TextField({ label, value, onChange, onBlur, error, hint, warning, muted, labelAddon, type = "text", className, ...rest }: TextFieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -356,7 +357,7 @@ function TextField({ label, value, onChange, onBlur, error, hint, warning, label
         onBlur={onBlur}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
-        className={cn(INPUT, warning && INPUT_WARNING, error && INPUT_ERROR)}
+        className={cn(INPUT, warning && INPUT_WARNING, error && INPUT_ERROR, muted && "text-muted-foreground")}
         {...rest}
       />
       {hint && (
@@ -389,11 +390,26 @@ function DateField({ label, value, onChange, disabled, error, warning, described
   const id = useId();
   const errorId = `${id}-error`;
   const hintId = `${id}-hint`;
+  const reasonId = `${id}-reason`;
   const monthSupported = useMonthInputSupported();
   const pickerMode = monthSupported && value.mode === "month";
   const text = value.text;
   const pickable = !text.trim() || !!labelToMonthInput(text);
   const showFormatHint = !pickerMode && !disabled && !looksLikeDate(text);
+  const toggleBlocked = !pickerMode && !pickable;
+  /** The picker's value when it gained focus (see onBlur); null when not focused. */
+  const [textAtFocus, setTextAtFocus] = useState<string | null>(null);
+  const canClear = !!text.trim() || !!textAtFocus?.trim();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const clear = () => {
+    setTextAtFocus(null);
+    onChange({ ...value, text: "" });
+    // The button disappears once the field is empty; keep focus in the field.
+    // After the re-render, so the picker's onFocus records "" and its onBlur
+    // doesn't restore the cleared month.
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
 
   const toggle = () => {
     if (value.mode === "month") {
@@ -407,27 +423,42 @@ function DateField({ label, value, onChange, disabled, error, warning, described
   const ariaDescribedBy =
     [describedBy, showFormatHint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
   const inputClass = cn(INPUT, (warning || showFormatHint) && INPUT_WARNING, error && INPUT_ERROR);
+  const linkButton =
+    "rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
         <label htmlFor={id} className={LABEL}>
           {label}
         </label>
-        {!disabled && monthSupported && (
-          <button
-            type="button"
-            onClick={toggle}
-            // aria-disabled (not disabled) keeps focus and the explanation reachable.
-            aria-disabled={!pickerMode && !pickable ? true : undefined}
-            title={
-              !pickerMode && !pickable
-                ? `“${text.trim()}” isn’t a single month, so it stays as typed.`
-                : undefined
-            }
-            className="rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:no-underline"
-          >
-            {pickerMode ? "Type instead" : "Use month picker"}
-          </button>
+        {!disabled && (
+          <div className="flex items-center gap-2">
+            {canClear && (
+              <button
+                type="button"
+                onClick={clear}
+                aria-label={`Clear ${label.toLowerCase()} date`}
+                className={linkButton}
+              >
+                Clear
+              </button>
+            )}
+            {monthSupported && (
+              <button
+                type="button"
+                onClick={toggle}
+                // aria-disabled (not disabled) keeps focus and the explanation reachable.
+                aria-disabled={toggleBlocked || undefined}
+                aria-describedby={toggleBlocked ? reasonId : undefined}
+                className={cn(
+                  linkButton,
+                  "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:no-underline",
+                )}
+              >
+                {pickerMode ? "Type instead" : "Use month picker"}
+              </button>
+            )}
+          </div>
         )}
       </div>
       {pickerMode ? (
@@ -437,9 +468,17 @@ function DateField({ label, value, onChange, disabled, error, warning, described
           value={labelToMonthInput(text) ?? ""}
           onChange={(e) => {
             const v = e.target.value;
-            // "" only when the user cleared the picker.
+            // "" also while a segment is half-cleared; onBlur restores the
+            // previous month unless the user cleared it with "Clear".
             onChange({ mode: "month", text: v ? monthInputToLabel(v) || v : "" });
           }}
+          onFocus={() => setTextAtFocus(text)}
+          onBlur={() => {
+            const before = textAtFocus;
+            setTextAtFocus(null);
+            if (!text.trim() && before?.trim()) onChange({ mode: "month", text: before });
+          }}
+          ref={inputRef}
           disabled={disabled}
           placeholder="YYYY-MM"
           aria-invalid={error ? true : undefined}
@@ -452,6 +491,7 @@ function DateField({ label, value, onChange, disabled, error, warning, described
           type="text"
           value={text}
           onChange={(e) => onChange({ ...value, text: e.target.value })}
+          ref={inputRef}
           disabled={disabled}
           placeholder="Jun 2025"
           maxLength={DATE_MAX}
@@ -459,6 +499,11 @@ function DateField({ label, value, onChange, disabled, error, warning, described
           aria-describedby={ariaDescribedBy}
           className={inputClass}
         />
+      )}
+      {toggleBlocked && monthSupported && !disabled && (
+        <p id={reasonId} className="text-[11px] text-muted-foreground">
+          “{text.trim()}” isn’t a single month, so the month picker is off and it stays as typed.
+        </p>
       )}
       {showFormatHint && (
         <p id={hintId} className="flex items-start gap-1 text-xs text-warning">
@@ -565,13 +610,19 @@ function ResumeFixForm({
   const issues: ReviewIssue[] = review?.issues ?? [];
   const reviewContact: Partial<ContactFields> = review?.contact ?? {};
   const suggestions: Partial<ContactFields> = contactSuggestions ?? {};
-  const experience: ReviewEntry[] = review?.experience ?? [];
+  const allExperience: ReviewEntry[] = review?.experience ?? [];
   const education: ReviewEntry[] = review?.education ?? [];
+  // The fix API only addresses entries up to these indexes; later ones are
+  // listed as a notice and can be changed with "Edit text".
+  const experience = allExperience.filter((e) => e.index <= MAX_EXPERIENCE_INDEX);
+  const uneditableExpCount = allExperience.length - experience.length;
 
   const hasContactIssue = issues.some((i) => i.code === "missing_email" || i.code === "missing_phone");
   const missingEducationIssue = issues.find((i) => i.code === "missing_education");
   const expWithIssues = experience.filter((e) => e.issues?.length);
-  const eduDateEntries = education.filter((e) => e.issues?.includes("missing_dates"));
+  const allEduDateEntries = education.filter((e) => e.issues?.includes("missing_dates"));
+  const eduDateEntries = allEduDateEntries.filter((e) => e.index <= MAX_EDUCATION_INDEX);
+  const uneditableEduCount = allEduDateEntries.length - eduDateEntries.length;
   const openCount = countOpenIssues(review);
   const maxNewEdu = Math.max(0, MAX_EDUCATION_FIXES - eduDateEntries.length);
 
@@ -664,6 +715,7 @@ function ResumeFixForm({
     }
   }
   if (expFixes.length) payload.experience = expFixes;
+  const tooManyExpFixes = expFixes.length > MAX_EXPERIENCE_FIXES;
 
   const eduFixes: EducationFix[] = [];
   for (const entry of eduDateEntries) {
@@ -719,9 +771,27 @@ function ResumeFixForm({
   }, [invalidFocusRequest]);
 
   // --- mutation (shares the page's "resume-tailored" key for busy tracking) ---
+  // Callbacks live on the mutation options (not mutate()) so a result that
+  // arrives after this form unmounted (tab switch, remount) is still applied.
+  // They read the latest props through refs; onFixed is the page's
+  // generation-guarded apply, which outlives this form.
+  const onFixedRef = useRef(onFixed);
+  const onAppliedRef = useRef(onApplied);
+  useLayoutEffect(() => {
+    onFixedRef.current = onFixed;
+    onAppliedRef.current = onApplied;
+  });
   const mutation = useMutation<TailoredResume, unknown, { body: ResumeFixPayload; generation: number }>({
     mutationKey: [...RESUME_TAILORED_KEY, "fix"],
     mutationFn: ({ body }) => postResumeFix(documentId, body),
+    onSuccess: (data, variables) => {
+      if (!onFixedRef.current(data, variables.generation)) return;
+      toast.success("Resume updated");
+      onAppliedRef.current();
+    },
+    onError: (err) => {
+      toast.error(getApiErrorMessage(err, "Could not update the resume"));
+    },
   });
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
@@ -736,21 +806,9 @@ function ResumeFixForm({
       setInvalidFocusRequest((n) => n + 1);
       return;
     }
-    if (disabled || changeCount === 0 || mutation.isPending) return;
-    // Per-call callbacks are skipped if this form unmounts before the reply.
-    mutation.mutate(
-      { body: payload, generation: getGeneration() },
-      {
-        onSuccess: (data, variables) => {
-          if (!onFixed(data, variables.generation)) return;
-          toast.success("Resume updated");
-          onApplied();
-        },
-        onError: (err) => {
-          toast.error(getApiErrorMessage(err, "Could not update the resume"));
-        },
-      },
-    );
+    if (disabled || changeCount === 0 || tooManyExpFixes || mutation.isPending) return;
+    setInvalidFocusRequest(0);
+    mutation.mutate({ body: payload, generation: getGeneration() });
   };
 
   // --- state updaters ---
@@ -766,7 +824,9 @@ function ResumeFixForm({
 
   const showFooter = showContact || visibleExp.length > 0 || showEducation || changeCount > 0;
   const hiddenRoleCount = experience.length - expWithIssues.length;
-  const submitDisabled = disabled || mutation.isPending || changeCount === 0;
+  const submitDisabled = disabled || mutation.isPending || changeCount === 0 || tooManyExpFixes;
+  const addEduBlocked = newEdu.length >= maxNewEdu;
+  const addEduReasonId = `${eduHeadingId}-add-reason`;
 
   return (
     <div className="space-y-4">
@@ -774,9 +834,9 @@ function ResumeFixForm({
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 id={headingId} ref={headingRef} tabIndex={-1} className="font-medium focus:outline-none">
+            <h2 id={headingId} ref={headingRef} tabIndex={-1} className="font-medium focus:outline-none">
               Fix resume gaps
-            </h3>
+            </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Add the details the Resume Agent couldn’t find. The PDF is regenerated with your facts — nothing is invented.
             </p>
@@ -801,7 +861,7 @@ function ResumeFixForm({
           {/* Contact */}
           <div role="group" aria-labelledby={contactHeadingId} className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h4 id={contactHeadingId} className="text-sm font-medium">Contact details</h4>
+              <h3 id={contactHeadingId} className="text-sm font-medium">Contact details</h3>
               {!hasContactIssue && (
                 <button
                   type="button"
@@ -836,6 +896,8 @@ function ResumeFixForm({
               {CONTACT_FIELDS.map((f) => {
                 const suggested = isSuggested(f.key);
                 const used = !!useSuggestion[f.key];
+                // Once the user edits a suggestion it's their own value, not the profile's.
+                const edited = suggested && contact[f.key].trim() !== (suggestions[f.key] ?? "").trim();
                 const missing = !effectiveContact(f.key) && issues.some((i) => i.code === `missing_${f.key}`);
                 return (
                   <TextField
@@ -852,11 +914,14 @@ function ResumeFixForm({
                     error={textError(`contact.${f.key}`)}
                     hint={
                       suggested
-                        ? used
-                          ? "From your profile — will be added."
-                          : "Suggested from your profile — tick Use to add it."
+                        ? !used
+                          ? "Not included — tick Use to add it."
+                          : edited
+                            ? undefined
+                            : "From your profile — will be added."
                         : undefined
                     }
+                    muted={suggested && !used}
                     warning={missing}
                     labelAddon={
                       suggested ? (
@@ -865,7 +930,11 @@ function ResumeFixForm({
                             type="checkbox"
                             checked={used}
                             onChange={(e) => setUseSuggestion((u) => ({ ...u, [f.key]: e.target.checked }))}
-                            aria-label={`Use the ${f.label.toLowerCase()} from your profile`}
+                            aria-label={
+                              edited
+                                ? `Include this ${f.label.toLowerCase()}`
+                                : `Use the ${f.label.toLowerCase()} from your profile`
+                            }
                             className="h-3.5 w-3.5 shrink-0 rounded border-border accent-primary"
                           />
                           Use
@@ -887,7 +956,7 @@ function ResumeFixForm({
           {experience.length > 0 && (
             <div role="group" aria-labelledby={expHeadingId} className="space-y-3 border-t border-border pt-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h4 id={expHeadingId} className="text-sm font-medium">Experience</h4>
+                <h3 id={expHeadingId} className="text-sm font-medium">Experience</h3>
                 {hiddenRoleCount > 0 && (
                   <button
                     type="button"
@@ -904,6 +973,16 @@ function ResumeFixForm({
               </div>
               {visibleExp.length === 0 && (
                 <p className="text-sm text-muted-foreground">Every role has an employer and dates.</p>
+              )}
+              {uneditableExpCount > 0 && (
+                <p className="flex items-start gap-1 text-xs text-muted-foreground">
+                  <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span>
+                    {uneditableExpCount} more {uneditableExpCount === 1 ? "role isn’t" : "roles aren’t"} listed here
+                    (only the first {MAX_EXPERIENCE_INDEX + 1} can be fixed in this form) — use Edit text to change{" "}
+                    {uneditableExpCount === 1 ? "it" : "them"}.
+                  </span>
+                </p>
               )}
               {visibleExp.map((entry, n) => {
                 const state = exp[entry.index];
@@ -966,18 +1045,36 @@ function ResumeFixForm({
           {/* Education */}
           <div role="group" aria-labelledby={eduHeadingId} className="space-y-3 border-t border-border pt-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h4 id={eduHeadingId} className="text-sm font-medium">Education</h4>
+              <h3 id={eduHeadingId} className="text-sm font-medium">Education</h3>
               <button
                 type="button"
                 onClick={addEduRow}
-                disabled={newEdu.length >= maxNewEdu}
-                title={newEdu.length >= maxNewEdu ? `You can add up to ${maxNewEdu} education entries at a time.` : undefined}
-                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
+                // aria-disabled (not disabled) keeps the button and its reason reachable.
+                aria-disabled={addEduBlocked || undefined}
+                aria-describedby={addEduBlocked ? addEduReasonId : undefined}
+                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 Add education
               </button>
             </div>
+            {addEduBlocked && (
+              <p id={addEduReasonId} className="text-xs text-muted-foreground">
+                {maxNewEdu === 0
+                  ? `Up to ${MAX_EDUCATION_FIXES} education changes can be sent at a time — add the dates below first.`
+                  : `You can add up to ${maxNewEdu} education ${maxNewEdu === 1 ? "entry" : "entries"} at a time.`}
+              </p>
+            )}
+            {uneditableEduCount > 0 && (
+              <p className="flex items-start gap-1 text-xs text-muted-foreground">
+                <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                <span>
+                  {uneditableEduCount} more education {uneditableEduCount === 1 ? "entry needs" : "entries need"} dates
+                  but {uneditableEduCount === 1 ? "isn’t" : "aren’t"} listed here (only the first{" "}
+                  {MAX_EDUCATION_INDEX + 1} can be fixed in this form) — use Edit text.
+                </span>
+              </p>
+            )}
             {missingEducationIssue && (
               <p className="flex items-start gap-1 text-xs text-warning">
                 <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
@@ -987,7 +1084,7 @@ function ResumeFixForm({
                 </span>
               </p>
             )}
-            {!showEducation && (
+            {!showEducation && uneditableEduCount === 0 && (
               <p className="text-sm text-muted-foreground">Your education entries have dates.</p>
             )}
 
@@ -1097,14 +1194,23 @@ function ResumeFixForm({
                   {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                   {mutation.isPending ? "Regenerating…" : "Apply & regenerate PDF"}
                 </LiquidGlassButton>
-                <p aria-live="polite" className={cn("text-xs", submitted && hasErrors ? "text-danger" : "text-muted-foreground")}>
+                <p className={cn("text-xs", (submitted && hasErrors) || tooManyExpFixes ? "text-danger" : "text-muted-foreground")}>
                   {submitted && hasErrors
                     ? "Fix the highlighted fields before applying."
-                    : disabled && !mutation.isPending
-                      ? "Wait for the current resume update to finish."
-                      : changeCount === 0
-                        ? "Make a change to enable."
-                        : `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready.`}
+                    : tooManyExpFixes
+                      ? `Up to ${MAX_EXPERIENCE_FIXES} roles can be changed at a time — undo some changes, apply, then continue.`
+                      : disabled && !mutation.isPending
+                        ? "Wait for the current resume update to finish."
+                        : changeCount === 0
+                          ? "Make a change to enable."
+                          : `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready.`}
+                </p>
+                {/* Announced once per failed submit, not on every keystroke;
+                    success is announced by the "Resume updated" toast. */}
+                <p aria-live="polite" className="sr-only">
+                  {invalidFocusRequest > 0 ? (
+                    <span key={invalidFocusRequest}>Fix the highlighted fields before applying.</span>
+                  ) : null}
                 </p>
                 {hiddenChangeCount > 0 && (
                   <p className="text-xs text-warning">
@@ -1121,7 +1227,7 @@ function ResumeFixForm({
         <section aria-label="Notes from the Resume Agent" className="rounded-3xl border border-border bg-card/60 p-6">
           <div className="flex items-center gap-2">
             <Info className="h-4 w-4 text-warning" aria-hidden="true" />
-            <h3 className="text-sm font-medium">Notes from the Resume Agent</h3>
+            <h2 className="text-sm font-medium">Notes from the Resume Agent</h2>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             These can’t be fixed by editing — they’re genuine gaps versus the job. Address them in a cover letter or by building the skill.

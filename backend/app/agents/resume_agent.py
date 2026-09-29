@@ -102,13 +102,20 @@ def _finalize_markdown(
         parsed.resume_markdown = ""
         parsed.ats_score = 0
         return parsed, None
+    # Independent steps: one that cannot be applied must not skip the others.
     try:
         markdown = apply_saved_facts(markdown, saved_facts)
-        markdown = ensure_contact(markdown, verified_contact)
-        if full_name:
-            markdown = apply_fixes(markdown, full_name=full_name)
     except ValueError as exc:
         logger.warning("Saved resume facts could not be applied: %s", exc)
+    try:
+        markdown = ensure_contact(markdown, verified_contact)
+    except ValueError as exc:
+        logger.warning("Verified contact details could not be applied: %s", exc)
+    if full_name:
+        try:
+            markdown = apply_fixes(markdown, full_name=full_name)
+        except ValueError as exc:
+            logger.warning("Resume name heading could not be applied: %s", exc)
     parsed.resume_markdown = markdown
     return parsed, review_resume(markdown)
 

@@ -129,6 +129,59 @@ def test_merge_facts_replaces_a_legacy_record():
     }
 
 
+def test_merge_facts_keeps_an_employer_less_fact_separate_from_a_same_role_fact():
+    saved = merge_facts(
+        {},
+        contact=None,
+        education=[],
+        experience=[
+            {
+                "role": "SE",
+                "employer_match": "Acme",
+                "start": "2020",
+                "submitted": ["start"],
+            }
+        ],
+    )
+    merged = merge_facts(
+        saved,
+        contact=None,
+        education=[],
+        experience=[
+            {
+                "role": "SE",
+                "employer": "Initech",
+                "start": "2022",
+                "submitted": ["employer", "start"],
+            }
+        ],
+    )
+
+    acme, initech = merged["experience"]
+    assert (acme["employer_match"], acme["start"]) == ("Acme", "2020")
+    assert "employer" not in acme
+    assert (initech["employer"], initech["start"]) == ("Initech", "2022")
+    assert "employer_match" not in initech
+
+
+def test_merge_facts_combines_two_employer_less_facts_for_the_same_role():
+    first = merge_facts(
+        {},
+        contact=None,
+        education=[],
+        experience=[{"role": "SE", "start": "2020", "submitted": ["start"]}],
+    )
+    second = merge_facts(
+        first,
+        contact=None,
+        education=[],
+        experience=[{"role": "SE", "end": "2022", "submitted": ["end"]}],
+    )
+
+    [exp] = second["experience"]
+    assert (exp["start"], exp["end"], exp["submitted"]) == ("2020", "2022", ["start", "end"])
+
+
 # ── Prompt rendering ─────────────────────────────────────────────────────────
 
 
@@ -251,8 +304,12 @@ class _FactsDB:
         self.fail_first_flush = fail_first_flush
         self.added = []
         self.log = []
+        self.sql = []
 
     async def execute(self, stmt):
+        from sqlalchemy.dialects import postgresql
+
+        self.sql.append(str(stmt.compile(dialect=postgresql.dialect())))
         row = self.rows.pop(0)
         return SimpleNamespace(scalar_one_or_none=lambda: row)
 
@@ -269,36 +326,100 @@ class _FactsDB:
             raise IntegrityError("INSERT", {}, Exception("duplicate key"))
 
 
+def _delta(contact=None, experience=(), education=()):
+    return {"contact": contact, "experience": list(experience), "education": list(education)}
+
+
+SAVED_EXPERIENCE = {"role": "SE", "employer_match": "Acme", "start": "2020", "submitted": ["start"]}
+
+
 def test_save_facts_inserts_inside_a_savepoint():
     db = _FactsDB([None])
     user_id = uuid.uuid4()
 
-    asyncio.run(resume_facts.save_facts(db, user_id, {"contact": {}}))
+    stored = asyncio.run(
+        resume_facts.save_facts(db, user_id, **_delta(contact={"phone": "+91 98765 43210"}))
+    )
 
     [row] = db.added
-    assert (row.user_id, row.question_key, row.answer) == (user_id, "resume.facts", {"contact": {}})
+    assert (row.user_id, row.question_key) == (user_id, "resume.facts")
+    # Allowed by candidate_answers_answer_type_check (migration 0035).
+    assert row.answer_type in {"text", "boolean", "select", "number", "date"}
+    assert row.answer == stored
+    assert stored["contact"] == {"phone": "+91 98765 43210"}
     assert db.log == ["savepoint", "flush", "release_savepoint"]
+    [sql] = db.sql
+    assert sql.endswith("FOR UPDATE")
 
 
-def test_save_facts_updates_the_row_a_concurrent_insert_created():
-    winner = SimpleNamespace(answer={"contact": {"phone": "1"}}, approved_by_user=False)
+def test_save_facts_merges_into_the_currently_stored_facts():
+    row = SimpleNamespace(
+        answer={"experience": [SAVED_EXPERIENCE], "contact": {"email": "a@example.com"}},
+        approved_by_user=False,
+    )
+    db = _FactsDB([row])
+
+    asyncio.run(resume_facts.save_facts(db, uuid.uuid4(), **_delta(contact={"phone": "+91 1"})))
+
+    assert row.answer["contact"] == {"email": "a@example.com", "phone": "+91 1"}
+    assert row.answer["experience"] == [SAVED_EXPERIENCE]
+    assert row.approved_by_user is True
+    assert db.added == [] and db.log == ["flush"]
+    assert db.sql[0].endswith("FOR UPDATE")
+
+
+def test_save_facts_merges_into_the_row_a_concurrent_insert_created():
+    winner = SimpleNamespace(
+        answer={"contact": {"phone": "1"}, "experience": [SAVED_EXPERIENCE]},
+        approved_by_user=False,
+    )
     db = _FactsDB([None, winner], fail_first_flush=True)
-    facts = {"contact": {"phone": "+91 98765 43210"}}
+    education = [{"degree": "B.Tech", "institution": "SPPU"}]
 
-    asyncio.run(resume_facts.save_facts(db, uuid.uuid4(), facts))
+    asyncio.run(
+        resume_facts.save_facts(
+            db, uuid.uuid4(), **_delta(contact={"phone": "+91 98765 43210"}, education=education)
+        )
+    )
 
-    assert winner.answer == facts and winner.approved_by_user is True
+    # The winner's facts are kept; only the delta is applied on top of them.
+    assert winner.answer["contact"] == {"phone": "+91 98765 43210"}
+    assert winner.answer["experience"] == [SAVED_EXPERIENCE]
+    assert winner.answer["education"] == education
+    assert winner.approved_by_user is True
     assert db.log == ["savepoint", "flush", "rollback_savepoint", "flush"]
+    assert len(db.sql) == 2 and all(sql.endswith("FOR UPDATE") for sql in db.sql)
 
 
 def test_save_facts_reraises_when_no_row_exists_after_conflict():
     db = _FactsDB([None, None], fail_first_flush=True)
 
     with pytest.raises(IntegrityError):
-        asyncio.run(resume_facts.save_facts(db, uuid.uuid4(), {}))
+        asyncio.run(resume_facts.save_facts(db, uuid.uuid4(), **_delta()))
 
 
 # ── Exposure through other endpoints ─────────────────────────────────────────
+
+
+def test_document_ats_endpoint_drops_jd_text():
+    from app.api.v1.rag import get_ats_score
+
+    ats_data = {"template": "modern", "jd_text": "scraped JD", "keywords_missing": ["Azure"]}
+    doc = SimpleNamespace(ats_score=80, ats_data=ats_data)
+    user = SimpleNamespace(id=uuid.uuid4())
+
+    class _DB:
+        async def execute(self, stmt):
+            assert user.id in stmt.compile().params.values()
+            return SimpleNamespace(scalar_one_or_none=lambda: doc)
+
+    body = asyncio.run(get_ats_score(uuid.uuid4(), db=_DB(), current_user=user))
+
+    assert body == {
+        "ats_score": 80,
+        "ats_data": {"template": "modern", "keywords_missing": ["Azure"]},
+    }
+    assert "jd_text" in ats_data  # the stored row is not modified
 
 
 def test_document_listing_drops_jd_text_from_ats_data():

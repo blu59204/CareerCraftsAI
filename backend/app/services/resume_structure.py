@@ -44,10 +44,12 @@ _HEADING = re.compile(r"^(#{1,6})\s+")
 _BULLET = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 _DATE_WORD = re.compile(r"\b(?:present|current|now|ongoing)\b", re.I)
-_RANGE_SPLIT = re.compile(
-    r"\s*(?:\s-\s|–|—|\bto\b|-(?=\s*(?:\d|present|current|now|ongoing)))\s*",
-    re.I,
-)
+_PRESENT = r"(?:present|current|now|ongoing)"
+# Start/end split: first spaced separator, else an unspaced dash between a
+# year/Present word and a digit/Present word ("2021-2024", "2021-22").
+_SPACED_RANGE = re.compile(r"\s+(?:[-–—]|to)\s+", re.I)
+_RANGE_LEFT = re.compile(rf"(?:\b(?:19|20)\d{{2}}|\b{_PRESENT})$", re.I)
+_RANGE_RIGHT = re.compile(rf"\d|{_PRESENT}\b", re.I)
 # Part-level placeholder (a whole heading/contact part); case-insensitive.
 _PLACEHOLDER = re.compile(r"^\W*(?:not[_ ]provided|n/a|tbd)\W*$", re.I)
 # A line whose entire content is the NOT_PROVIDED marker.
@@ -59,29 +61,44 @@ _MONTH = (
     r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
     r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
 )
-_DATE_TOKEN = re.compile(
-    rf"(?:{_MONTH})\b\.?"
-    r"|(?:spring|summer|fall|autumn|winter|present|current|now|ongoing|to)\b"
-    r"|(?:0?[1-9]|1[0-2])/(?:19|20)\d{2}\b"
-    r"|(?:19|20)\d{2}\b",
-    re.I,
-)
-_DATE_SEP = re.compile(r"[\s,/\-–—]+")
+_FULL_YEAR = r"(?:19|20)\d{2}(?!\d)"
+# (kind, pattern) tried in order at each position of a candidate date part.
+_DATE_TOKENS = [
+    ("space", re.compile(r"\s+")),
+    ("range", re.compile(r"[-–—]")),
+    ("to", re.compile(r"to(?!\w)", re.I)),
+    ("sep", re.compile(r"[,/]")),
+    ("month_year", re.compile(rf"(?:0?[1-9]|1[0-2])[/.\-]{_FULL_YEAR}")),
+    ("year", re.compile(_FULL_YEAR)),
+    ("short_year", re.compile(r"\d{2}(?!\d)")),
+    ("modifier", re.compile(rf"(?:early|mid|late)(?:-|\s+)(?={_FULL_YEAR})", re.I)),
+    ("since", re.compile(r"(?:since|from)(?!\w)", re.I)),
+    ("present", re.compile(rf"{_PRESENT}(?!\w)", re.I)),
+    ("date", re.compile(r"date(?!\w)", re.I)),
+    ("word", re.compile(rf"(?:{_MONTH})(?![^\W\d_])\.?", re.I)),
+    ("word", re.compile(r"(?:spring|summer|fall|autumn|winter|q[1-4])(?!\w)", re.I)),
+]
 # Same test the PDF renderer uses for `**Role** | Employer | Dates` lines.
 _ENTRY_DATE = re.compile(r"\b(?:19|20)\d{2}\b|\b(?:present|current)\b", re.I)
 
-_REMOTE_WORDS = {"remote", "hybrid", "on-site", "onsite", "on site", "wfh", "work from home"}
-# Capitalized words (Pune, Winston-Salem, St.) or 2-3 letter codes (NY, UK);
-# CamelCase tech names such as "FastAPI" do not qualify.
-_CAP_WORD = r"(?:[A-Z][^\W\d_A-Z]*(?:[.'-][^\W\d_]*)*|[A-Z]{2,3})"
-_CAP_WORDS = rf"{_CAP_WORD}(?:\s+{_CAP_WORD}){{0,2}}"
-_CITY_REGION = re.compile(rf"{_CAP_WORDS},\s*{_CAP_WORDS}")
-_COMPANY_SUFFIX = re.compile(
-    r"\b(?:inc|llc|llp|ltd|limited|pvt|corp|corporation|co|company|gmbh|plc|ag|bv)\b",
-    re.I,
-)
+_REMOTE_WORDS = {"remote", "hybrid", "on-site", "onsite", "wfh", "work from home"}
+# Regions that make a lone dated `City, Region` heading part a location.
+_REGIONS = {
+    r.casefold()
+    for r in (
+        "India|USA|US|United States|UK|United Kingdom|England|Canada|Germany|France"
+        "|Netherlands|Ireland|Singapore|UAE|United Arab Emirates|Australia|New Zealand|Japan"
+        "|China|Spain|Italy|Sweden|Switzerland|Poland|Israel|Brazil|Mexico|South Africa"
+        "|Karnataka|Maharashtra|Tamil Nadu|Telangana|Delhi|NCR|Haryana|Uttar Pradesh"
+        "|West Bengal|Gujarat|Kerala|Rajasthan|Punjab|Andhra Pradesh|Madhya Pradesh|Odisha|Goa"
+        "|California|New York|Texas|Washington|Massachusetts|Illinois"
+    ).split("|")
+}
+_CITY_REGION = re.compile(r"([^,]+),([^,]+)")
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# A whole `[text](target)` Markdown link part.
+_MD_LINK = re.compile(r"\[([^\]]*)\]\(\s*<?([^()\s<>]+)>?\s*\)")
 _PHONE = re.compile(r"(?<![\w/])\+?\(?\d[\d\s().-]{7,}\d(?![\w/])")
 _LINKEDIN = re.compile(r"(?:https?://)?(?:[\w-]+\.)?linkedin\.com/\S+", re.I)
 _GITHUB = re.compile(r"(?:https?://)?(?:www\.)?github\.com/\S+", re.I)
@@ -168,21 +185,37 @@ def looks_like_dates(value: str) -> bool:
 def is_date_range(text: str | None) -> bool:
     """True when ``text`` consists only of date tokens and separators.
 
-    Tokens: month names/abbreviations, seasons, 19xx/20xx years, MM/YYYY,
-    Present/Current/Now/Ongoing and "to"; separators: - – — , / whitespace.
-    At least one year or Present-style word is required, so "Summer" alone or
+    Tokens: month names/abbreviations, seasons, Q1-Q4, Early/Mid/Late before a
+    year ("Mid 2021", "Mid-2021"), a leading Since/From, 19xx/20xx years,
+    MM/YYYY, MM.YYYY, MM-YYYY, a 2-digit year right after a range separator
+    that follows a 4-digit year ("2021-22"), Present/Current/Now/Ongoing and
+    "date" after "to"; separators: - – — to , / whitespace. At least one
+    4-digit year or Present-style word is required, so "Summer" alone or
     "Deloitte (Summer 2023)" is not a date range.
     """
     value = _plain(text or "")
-    if not value or not (_YEAR.search(value) or _DATE_WORD.search(value)):
-        return False
+    kinds: list[str] = []  # non-space tokens so far
     pos = 0
     while pos < len(value):
-        match = _DATE_SEP.match(value, pos) or _DATE_TOKEN.match(value, pos)
-        if not match:
+        for kind, rx in _DATE_TOKENS:
+            match = rx.match(value, pos)
+            if not match:
+                continue
+            if kind == "short_year" and not (
+                len(kinds) >= 2 and kinds[-1] in ("range", "to") and kinds[-2] == "year"
+            ):
+                return False
+            if kind == "since" and kinds:
+                return False
+            if kind == "date" and not (kinds and kinds[-1] == "to"):
+                return False
+            break
+        else:
             return False
+        if kind != "space":
+            kinds.append(kind)
         pos = match.end()
-    return True
+    return bool({"year", "month_year", "present"} & set(kinds))
 
 
 def clean_placeholders(markdown: str) -> str:
@@ -190,17 +223,21 @@ def clean_placeholders(markdown: str) -> str:
 
     - Pipe-separated heading/contact parts that are exactly N/A, TBD or
       NOT_PROVIDED are removed (heading slots stay positional).
-    - Lines whose entire content is NOT_PROVIDED are removed.
+    - Lines whose entire content is NOT_PROVIDED are removed; in the header
+      (before the first ``##``) so are lines that are only N/A or TBD.
     - In prose only the uppercase ``NOT_PROVIDED``/``NOT PROVIDED`` marker is
       removed; ordinary words ("not provided", "- NA") are kept.
 
     Section headings left with no content are removed afterwards.
     """
     out: list[str] = []
+    in_header = True  # before the first `##`
     for raw in markdown.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
         heading = _HEADING.match(stripped)
+        if heading and len(heading.group(1)) == 2:
+            in_header = False
         if "|" in stripped:
             body = stripped[heading.end() :] if heading else stripped
             parts = [p.strip() for p in body.split("|")]
@@ -216,7 +253,7 @@ def clean_placeholders(markdown: str) -> str:
                 line = (f"{heading.group(1)} " if heading else "") + " | ".join(blanked)
                 stripped = line.strip()
         body = _HEADING.sub("", stripped)
-        if body and _PLACEHOLDER_LINE.match(_plain(body)):
+        if body and (_PLACEHOLDER if in_header else _PLACEHOLDER_LINE).match(_plain(body)):
             continue
         # Inline "(NOT_PROVIDED)" fragments inside prose.
         replaced = _PLACEHOLDER_INLINE.sub("", line)
@@ -264,18 +301,38 @@ class EntryParts:
 
 
 def split_dates(value: str) -> tuple[str, str]:
-    parts = [p.strip() for p in _RANGE_SPLIT.split(value, maxsplit=1) if p and p.strip()]
-    if len(parts) == 2 and looks_like_dates(parts[0]):
-        return parts[0], parts[1]
-    return value.strip(), ""
+    """A date part → (start, end); "to date" ends in "Present".
 
-
-def _looks_like_location(value: str) -> bool:
-    """Remote/Hybrid/On-site/WFH, or a `City, Country`-style pair."""
+    Splits on the first spaced separator (" - ", " – ", " — ", " to "), else
+    on an unspaced dash between a year/Present word and a digit/Present word
+    ("2021-2024", "2021-22"; "Mid-2021" and "06-2021" stay whole).
+    """
     value = value.strip()
-    if value.casefold() in _REMOTE_WORDS:
-        return True
-    return bool(_CITY_REGION.fullmatch(value)) and not _COMPANY_SUFFIX.search(value)
+    start = end = ""
+    spaced = _SPACED_RANGE.search(value)
+    if spaced:
+        start, end = value[: spaced.start()].strip(), value[spaced.end() :].strip()
+    else:
+        for i, ch in enumerate(value):
+            if ch in "-–—" and _RANGE_LEFT.search(value[:i]) and _RANGE_RIGHT.match(value, i + 1):
+                start, end = value[:i].strip(), value[i + 1 :].strip()
+                break
+    if not (start and end):
+        return value, ""
+    return start, "Present" if end.casefold() == "date" else end
+
+
+def _is_remote(value: str) -> bool:
+    return value.strip().casefold() in _REMOTE_WORDS
+
+
+def _is_city_region(value: str) -> bool:
+    """`City, Region` with a known region or a 2-letter uppercase code (WA, KA)."""
+    m = _CITY_REGION.fullmatch(value.strip())
+    if not m or not m.group(1).strip():
+        return False
+    region = m.group(2).strip()
+    return region.casefold() in _REGIONS or bool(re.fullmatch(r"[A-Z]{2}", region))
 
 
 def split_heading(text: str) -> EntryParts:
@@ -283,7 +340,9 @@ def split_heading(text: str) -> EntryParts:
 
     Slots are positional when the heading has an empty inner slot. Otherwise
     (legacy headings) the last part is dates only if it is a real date range,
-    and a lone second part that looks like a location is read as location.
+    and a lone part between role and dates is the location only when it is a
+    remote word, or — with dates present — a `City, Region` pair with a known
+    region/2-letter code; otherwise it is the employer.
     """
     parts = [_plain(p) for p in text.split("|")]
     parts = ["" if is_placeholder(p) else p for p in parts]
@@ -293,7 +352,11 @@ def split_heading(text: str) -> EntryParts:
     dates = ""
     if len(parts) > 1 and is_date_range(parts[-1]):
         dates = parts.pop()
-    if not positional and len(parts) == 2 and _looks_like_location(parts[1]):
+    if (
+        not positional
+        and len(parts) == 2
+        and (_is_remote(parts[1]) or (dates and _is_city_region(parts[1])))
+    ):
         parts = [parts[0], "", parts[1]]
     start, end = split_dates(dates) if dates else ("", "")
     entry = EntryParts(start=start, end=end)
@@ -388,12 +451,14 @@ def _is_url(value: str) -> bool:
 
 
 def _location_like(value: str) -> bool:
-    """A short place-like part on a line that also holds email/phone/links."""
+    """An unlabeled contact part that is a place: a remote word, or a short
+    comma pair ("Pune, India", "Sector 62, Noida"). "ML Engineer" or "Open to
+    relocation" are not places."""
+    if _is_remote(value):
+        return True
     if len(value) > 60 or len(value.split()) > 6 or not re.search(r"[^\W\d_]", value):
         return False
-    if any(ch in value for ch in "@/:"):
-        return False
-    return not any(ch.isdigit() for ch in value) or "," in value
+    return "," in value and not any(ch in value for ch in "@/:")
 
 
 def _classify(value: str, label: str | None) -> str | None:
@@ -416,6 +481,23 @@ def _classify(value: str, label: str | None) -> str | None:
     return None
 
 
+def _read_link(text: str, target: str, label: str | None) -> tuple[str, str | None]:
+    """`[text](target)` → (value, field): mailto:/tel: give the email/phone
+    (visible text preferred), other targets are classified as links."""
+    text = _unwrap(text)
+    scheme, _, rest = target.partition(":")
+    if scheme.casefold() in ("mailto", "tel"):
+        kind = "email" if scheme.casefold() == "mailto" else "phone"
+        for candidate in (text, rest.split("?", 1)[0]):
+            if _classify(candidate, None) == kind:
+                return candidate, kind
+    else:
+        kind = _classify(target, None)
+        if kind in _STRONG_CONTACT:
+            return target, kind
+    return text, _classify(text, label)
+
+
 def _read_part(text: str) -> tuple[str, str, str | None]:
     """One contact part → (label prefix, value, field)."""
     raw = text.strip()
@@ -423,23 +505,33 @@ def _read_part(text: str) -> tuple[str, str, str | None]:
     prefix = raw[: label.end()] if label else ""
     value = _unwrap(raw[label.end() :] if label else raw)
     hint = _LABEL_FIELD[label.group(1).casefold().replace("-", "")] if label else None
+    link = _MD_LINK.fullmatch(value)
+    if link:
+        value, kind = _read_link(link.group(1), link.group(2), hint)
+        return prefix, value, kind
     return prefix, value, _classify(value, hint)
 
 
 def _is_contact_line(text: str) -> bool:
-    """Every part is contact-classifiable and at least one is email/phone/link.
+    """At least one part is an email/phone/link; other short parts ("ML
+    Engineer") ride along as unclassified extras.
 
-    A single labeled part ("Location: Pune") or a lone `City, Country` also
-    counts. Body lines such as "Software Engineer, Acme, 2019 - 2021" do not.
+    A single labeled part ("Location: Pune") or a lone `City, Region`/remote
+    word also counts. Body lines such as "Software Engineer, Acme, 2019 - 2021"
+    do not.
     """
     read = [_read_part(t) for t in _CONTACT_SEP.split(text.strip())[::2]]
     read = [r for r in read if r[1] and not is_placeholder(r[1])]
-    if not read or any(kind is None for _, _, kind in read):
+    if not read:
         return False
     if any(kind in _STRONG_CONTACT for _, _, kind in read):
-        return True
-    prefix, value, _ = read[0]
-    return len(read) == 1 and (bool(prefix) or _looks_like_location(value))
+        return all(kind or len(value) <= 60 for _, value, kind in read)
+    prefix, value, kind = read[0]
+    return (
+        len(read) == 1
+        and kind is not None
+        and (bool(prefix) or _is_remote(value) or _is_city_region(value))
+    )
 
 
 def _level(raw: str) -> int:
@@ -660,6 +752,10 @@ _CONTACT_NEXT = (
     r"(?=\s*(?:$|[,.;:)\]/]|(?:and|or|is|are|was|were|has|have|had|not|missing|omitted"
     r"|absent|provided|given|listed|appear\w*|fields?|anywhere|in|on|for|from)\b))"
 )
+_EMPLOYER_NOUN = r"(?:employer(?:'s)?\s+(?:names?|lines?)|legal\s+employer|company\s+names?)"
+_EMPLOYER_GAP = (
+    r"(?:missing|omitted|absent|incomplete|truncated|cut[ -]off|not[_ ]provided|unknown)"
+)
 _WARNING_TOPICS = {
     "contact": re.compile(
         r"\bcontact\s+(?:details|info(?:rmation)?)\b"
@@ -668,8 +764,10 @@ _WARNING_TOPICS = {
         re.I,
     ),
     "dates": re.compile(
-        r"\b(?:employment\s+(?:dates?|duration)|(?:dates?|duration)\s+of\s+employment"
-        r"|start\s*(?:/|and|or|&)\s*end\s+dates?|(?:start|end)\s+dates?|dates)(?![\w-])",
+        r"\b(?:(?:employment|roles?|positions?|jobs?|internships?|education|work)\s+dates?"
+        r"|dates?\s+(?:of|for)\s+(?:(?:the|each|every|all|your|this)\s+)?"
+        r"(?:employment|roles?|positions?|jobs?|internships?|education)"
+        r"|start\s*(?:/|and|or|&)\s*end\s+dates?|(?:start|end)\s+dates?|duration)(?![\w-])",
         re.I,
     ),
     "education": re.compile(
@@ -678,11 +776,20 @@ _WARNING_TOPICS = {
         r"(?![\w-])",
         re.I,
     ),
+    # Only the employer name itself being absent or cut off; "no employer has
+    # used these" is not about the resume's employer (parentheticals are
+    # ignored, see warning_topics).
     "employer": re.compile(
-        r"\b(?:employer(?:\s+(?:names?|lines?))?|legal\s+employer|company\s+names?)(?![\w-])",
+        rf"\b{_EMPLOYER_NOUN}\b.{{0,80}}?\b{_EMPLOYER_GAP}(?![\w-])"
+        rf"|\b(?:{_EMPLOYER_GAP}|no)\s+(?:(?:the|an?|full|legal)\s+)*{_EMPLOYER_NOUN}(?![\w-])"
+        rf"|\b{_EMPLOYER_GAP}\s+(?:(?:the|an?|full|legal)\s+)*employers?(?![\w-])"
+        r"|\blegal\s+employer\s+names?(?![\w-])"
+        r"|\btruncated\s+mid[- ]sentence\b.*\bemployer(?![\w-])"
+        r"|\bemployer\b.*\btruncated\s+mid[- ]sentence(?![\w-])",
         re.I,
     ),
 }
+_PARENTHETICAL = re.compile(r"\([^()]*\)")
 _ISSUE_TOPIC = {
     "missing_email": "contact",
     "missing_phone": "contact",
@@ -697,17 +804,25 @@ def warning_topics(text: str) -> set[str]:
     """Fixable gaps a warning reports as absent (empty → never auto-hidden).
 
     A topic counts only when a clause pairs an absence phrase (missing, no,
-    omitted, truncated, …) with a fixable field (contact details/email/phone,
-    employment dates, education section, employer name). Warnings that cite
-    the job (JD, job description, experience with …) are real gaps and have
-    no topic; a clause stating a requirement (requires, prefers …) has none.
+    omitted, truncated, …) with a fixable field (contact details/email/phone;
+    employment/role/internship/education dates, start/end date, duration;
+    education section; the employer name itself — not a parenthetical or "no
+    employer has used …"). Project dates are not reviewed, so they never
+    count. Warnings that cite the job (JD, job description, experience with …)
+    are real gaps and have no topic; a clause stating a requirement (requires,
+    prefers …) has none.
     """
     if _JD_REFERENCE.search(text):
         return set()
     topics: set[str] = set()
     for clause in _CLAUSE_SPLIT.split(text):
         if clause and _ABSENCE.search(clause) and not _REQUIREMENT.search(clause):
-            topics |= {topic for topic, rx in _WARNING_TOPICS.items() if rx.search(clause)}
+            outside = _PARENTHETICAL.sub(" ", clause)
+            topics |= {
+                topic
+                for topic, rx in _WARNING_TOPICS.items()
+                if rx.search(outside if topic == "employer" else clause)
+            }
     return topics
 
 
@@ -893,7 +1008,9 @@ def _apply_contact(lines: list[str], contact: dict[str, str | None]) -> None:
     parsed = _parse("\n".join(lines))
     tokens = {i: _CONTACT_SEP.split(lines[i].strip()) for i in parsed.contact_lines}
     holders: dict[str, _ContactPart] = {}
+    present: set[str] = set()
     for part in _contact_parts(parsed):
+        present.add(part.value.casefold())
         if part.kind in CONTACT_FIELDS:
             holders.setdefault(part.kind, part)
     appended: list[str] = []
@@ -904,7 +1021,9 @@ def _apply_contact(lines: list[str], contact: dict[str, str | None]) -> None:
         value = clean_field(contact[key], 200)
         holder = holders.get(key)
         if holder is None:
-            if value:
+            # An unclassified part may already hold it ("Pune" is not read
+            # back as a location); never write it twice.
+            if value and value.casefold() not in present:
                 appended.append(value)
         elif value != holder.value:
             tokens[holder.line][holder.token] = holder.prefix + value if value else ""

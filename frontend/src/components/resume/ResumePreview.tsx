@@ -165,11 +165,20 @@ function Item({ item, theme }: { item: ResumeItem; theme: Theme }) {
   );
 }
 
-/** Dashed markers where the continuous HTML page crosses each 11in boundary. */
-function PageBreaks({ height, width }: { height: number; width: number }) {
+/**
+ * Dashed markers where the continuous HTML page would break onto a new PDF
+ * page. Each PDF page holds (11in − top − bottom margin) of content, and the
+ * HTML page shows the top margin once and the bottom margin once, so page N+1
+ * starts at topMargin + N × contentHeight. Approximate: ReportLab moves whole
+ * flowables to the next page, so real breaks can come slightly earlier.
+ */
+function PageBreaks({ height, width, marginY }: { height: number; width: number; marginY: number }) {
   if (!width || !height) return null;
-  const pageHeight = (width * PAGE_HEIGHT_PX) / PAGE_WIDTH_PX;
-  const count = Math.max(0, Math.ceil(height / pageHeight - 0.001) - 1);
+  const inch = width / 8.5;
+  const margin = marginY * inch;
+  const pageContent = (11 - 2 * marginY) * inch;
+  const content = height - 2 * margin;
+  const count = Math.max(0, Math.ceil(content / pageContent - 0.001) - 1);
   if (!count) return null;
   return (
     <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
@@ -180,7 +189,7 @@ function PageBreaks({ height, width }: { height: number; width: number }) {
             position: "absolute",
             left: 0,
             right: 0,
-            top: pageHeight * (i + 1),
+            top: margin + pageContent * (i + 1),
             borderTop: "1px dashed #94A3B8",
           }}
         >
@@ -214,7 +223,7 @@ export interface ResumePreviewProps {
   scale?: number;
   /** The name the PDF prints; when non-empty it replaces the parsed `# Name`. */
   displayName?: string;
-  /** Overlay a dashed marker at every 11in of paper height (main preview). */
+  /** Overlay a dashed marker where the PDF would start a new page (main preview). */
   showPageBreaks?: boolean;
   /** Zoom factor for the fit-to-width preview (1 = fit, capped at letter width). */
   zoom?: number;
@@ -357,7 +366,8 @@ function ResumePreviewImpl({
           ) : null}
 
           {resume.sections.map((section, s) => (
-            <section key={s} aria-label={section.title || undefined}>
+            // A plain div: named <section>s would add a landmark per resume section.
+            <div key={s}>
               {section.title ? (
                 <p
                   role="heading"
@@ -382,10 +392,10 @@ function ResumePreviewImpl({
               {section.items.map((item, i) => (
                 <Item key={i} item={item} theme={theme} />
               ))}
-            </section>
+            </div>
           ))}
         </article>
-        {showPageBreaks ? <PageBreaks width={size.width} height={size.height} /> : null}
+        {showPageBreaks ? <PageBreaks width={size.width} height={size.height} marginY={theme.marginY} /> : null}
       </div>
     </div>
   );

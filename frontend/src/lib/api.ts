@@ -68,12 +68,25 @@ apiClient.interceptors.response.use(
 );
 
 /**
+ * An error whose message is written for the user (e.g. "Tailor your resume
+ * first."). `getApiErrorMessage` shows only these messages; any other Error
+ * (a timeout, a bug, a raw agent failure) gets the caller's fallback.
+ */
+export class UserFacingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserFacingError";
+  }
+}
+
+/**
  * Pulls the backend's `detail` message out of an axios error, falling back to
  * a generic message only when the backend gave nothing usable (e.g. the
  * request never reached it). Use this in onError handlers instead of a
  * hardcoded string, so a 409 "no model configured" doesn't get reported to
  * the user as "backend not connected". FastAPI validation errors (a `detail`
- * array) are joined into one message; a plain Error uses its own message.
+ * array) are joined into one message; a `UserFacingError` uses its own
+ * message; any other error uses `fallback`.
  */
 export function getApiErrorMessage(error: unknown, fallback: string): string {
   if (axios.isAxiosError(error)) {
@@ -90,7 +103,7 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
     }
     return fallback;
   }
-  if (error instanceof Error && error.message.trim()) return error.message;
+  if (error instanceof UserFacingError && error.message.trim()) return error.message;
   return fallback;
 }
 

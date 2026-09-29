@@ -220,20 +220,24 @@ async def _contact_suggestions(db: AsyncSession, user: User) -> dict[str, str]:
         return {}
 
 
-async def _get_tailored_doc(db: AsyncSession, document_id: str, user: User) -> UserDocument:
+async def _get_tailored_doc(
+    db: AsyncSession, document_id: str, user: User, *, for_update: bool = False
+) -> UserDocument:
+    """The user's tailored resume. ``for_update`` locks the row (SELECT ...
+    FOR UPDATE) until the transaction ends, so concurrent /fix calls for one
+    document run one after the other instead of overwriting each other."""
     try:
         doc_uuid = uuid.UUID(document_id)
     except (ValueError, AttributeError):
         raise HTTPException(status_code=404, detail="Document not found") from None
-    doc = (
-        await db.execute(
-            select(UserDocument).where(
-                UserDocument.id == doc_uuid,
-                UserDocument.user_id == user.id,
-                UserDocument.doc_type == "resume_tailored",
-            )
-        )
-    ).scalar_one_or_none()
+    stmt = select(UserDocument).where(
+        UserDocument.id == doc_uuid,
+        UserDocument.user_id == user.id,
+        UserDocument.doc_type == "resume_tailored",
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    doc = (await db.execute(stmt)).scalar_one_or_none()
     if not doc or not doc.raw_text:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
@@ -270,53 +274,88 @@ def _tailored_response(
 # sha256, captured when the attempt is reserved) and still has to upload or
 # submit it. Editing that PDF in place would make the approval fail.
 _PINNING_ATTEMPT_STATES = ("preparing", "awaiting_approval", "submitting")
+# Agent-run statuses of an application that is still in flight (mirrors
+# _OPEN_RUN_STATUSES in workflows/job_activities.py).
+_OPEN_RUN_STATUSES = ("queued", "running", "awaiting_approval")
+
+# Why the attempt state alone is not enough (checked against agents.py
+# approve_or_cancel, workflows/auto_apply.py, application_workflow.py,
+# extension_activities.py and job_activities.reconcile):
+#
+# - The attempt row only advances in a few places: reserve -> "preparing",
+#   form ready -> "awaiting_approval", claim -> "submitting", then a terminal
+#   state from the submit/extension activities. Nothing moves it out of
+#   "preparing"/"awaiting_approval" when the application is abandoned:
+#   rejecting a ``browser_input`` checkpoint leaves the attempt "preparing"
+#   (approve_or_cancel only cancels "awaiting_approval" attempts), and the
+#   maintenance reaper expires the *run* of a dead workflow but only touches
+#   "submitting" attempts. Those rows would pin the PDF forever.
+# - The attempt's AgentRun (attempt.run_id) is closed on every one of those
+#   paths (cancelled -> "failed", reaped -> "expired"/"failed", finished ->
+#   "completed"/"failed"), and reserve re-points run_id on every retry. So an
+#   attempt pins only while its run is open.
+# - No age bound is applied: the reaper already bounds open runs (15 minutes
+#   for queued/running, AGENT_APPROVAL_TIMEOUT_S for approvals) whenever no
+#   workflow is running; a run whose AutoApplyWorkflow is still waiting has
+#   no timeout and can still be approved, so it must keep its pin.
+
+
+def _pinning_attempt_query(doc: UserDocument):
+    from app.models.db import AgentRun, ApplicationAttempt, JobApplication
+
+    return (
+        select(ApplicationAttempt.id)
+        .join(JobApplication, JobApplication.id == ApplicationAttempt.job_application_id)
+        .join(AgentRun, AgentRun.id == ApplicationAttempt.run_id)
+        .where(
+            ApplicationAttempt.user_id == doc.user_id,
+            JobApplication.user_id == doc.user_id,
+            JobApplication.resume_id == doc.id,
+            ApplicationAttempt.state.in_(_PINNING_ATTEMPT_STATES),
+            AgentRun.user_id == doc.user_id,
+            AgentRun.status.in_(_OPEN_RUN_STATUSES),
+        )
+        .limit(1)
+    )
+
+
+def _pinning_run_query(doc: UserDocument):
+    from sqlalchemy import and_, or_
+
+    from app.models.db import AgentRun
+
+    doc_id = str(doc.id)
+    return (
+        select(AgentRun.id)
+        .where(
+            AgentRun.user_id == doc.user_id,
+            AgentRun.status == "awaiting_approval",
+            or_(
+                and_(
+                    AgentRun.output.has_key("resume_sha256"),
+                    AgentRun.output.contains({"pdf_document_id": doc_id}),
+                ),
+                AgentRun.output.contains({"actions_pending": [{"pdf_document_id": doc_id}]}),
+            ),
+        )
+        .limit(1)
+    )
 
 
 async def _pinned_by_pending_approval(db: AsyncSession, doc: UserDocument) -> bool:
     """Whether an in-flight application approval references this PDF.
 
-    Two references exist: an ApplicationAttempt still in progress for a
-    JobApplication whose resume_id is this document, and an agent run
-    awaiting approval whose checkpoint recorded this document together with
-    its resume_sha256 (browser review stage, or the auto-apply pipeline's
-    ``actions_pending``).
+    Two references exist: an ApplicationAttempt still in progress (with an
+    open run, see above) for a JobApplication whose resume_id is this
+    document, and an agent run awaiting approval whose checkpoint recorded
+    this document together with its resume_sha256 (browser review stage, or
+    the auto-apply pipeline's ``actions_pending``). Both are scoped to the
+    document's owner.
     """
-    from sqlalchemy import and_, or_
-
-    from app.models.db import AgentRun, ApplicationAttempt, JobApplication
-
-    attempt = (
-        await db.execute(
-            select(ApplicationAttempt.id)
-            .join(JobApplication, JobApplication.id == ApplicationAttempt.job_application_id)
-            .where(
-                ApplicationAttempt.user_id == doc.user_id,
-                JobApplication.resume_id == doc.id,
-                ApplicationAttempt.state.in_(_PINNING_ATTEMPT_STATES),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    attempt = (await db.execute(_pinning_attempt_query(doc))).scalar_one_or_none()
     if attempt is not None:
         return True
-    doc_id = str(doc.id)
-    run = (
-        await db.execute(
-            select(AgentRun.id)
-            .where(
-                AgentRun.user_id == doc.user_id,
-                AgentRun.status == "awaiting_approval",
-                or_(
-                    and_(
-                        AgentRun.output.has_key("resume_sha256"),
-                        AgentRun.output.contains({"pdf_document_id": doc_id}),
-                    ),
-                    AgentRun.output.contains({"actions_pending": [{"pdf_document_id": doc_id}]}),
-                ),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    run = (await db.execute(_pinning_run_query(doc))).scalar_one_or_none()
     return run is not None
 
 
@@ -357,11 +396,13 @@ async def fix_tailored_resume(
     """
     from app.services.ats_service import compute_ats_score
     from app.services.pdf_service import generate_resume_pdf
-    from app.services.resume_facts import load_facts_row, merge_facts, save_facts
+    from app.services.resume_facts import save_facts
     from app.services.resume_structure import apply_fixes, clean_placeholders, review_resume
     from app.services.storage_service import delete_file, upload_file
 
-    doc = await _get_tailored_doc(db, document_id, current_user)
+    # Locked until the commit below: concurrent fixes of one document are
+    # serialised, so the second one edits the text the first one saved.
+    doc = await _get_tailored_doc(db, document_id, current_user, for_update=True)
     data = dict(doc.ats_data or {})
     template = payload.template or data.get("template") or "modern"
     base = clean_placeholders(
@@ -438,9 +479,10 @@ async def fix_tailored_resume(
             doc.ats_data = data
 
         if payload.remember:
-            row = await load_facts_row(db, current_user.id)
-            facts = merge_facts(
-                dict(row.answer or {}) if row else {},
+            # save_facts merges this delta into the stored facts under a row lock.
+            await save_facts(
+                db,
+                current_user.id,
                 contact=contact,
                 experience=_experience_facts(experience, before, review),
                 education=[
@@ -449,7 +491,6 @@ async def fix_tailored_resume(
                     if e.get("index") is None
                 ],
             )
-            await save_facts(db, current_user.id, facts)
         await db.flush()
         # Commit here, not in get_db after the response: the old PDF may only
         # be deleted once the row pointing at the new one is durable.

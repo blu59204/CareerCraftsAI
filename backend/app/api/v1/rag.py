@@ -344,7 +344,7 @@ async def get_ats_score(
         raise HTTPException(status_code=404, detail="Document not found")
     return {
         "ats_score": doc.ats_score,
-        "ats_data": doc.ats_data,
+        "ats_data": _public_ats_data(doc.ats_data),
     }
 
 
