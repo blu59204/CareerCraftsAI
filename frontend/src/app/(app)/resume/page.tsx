@@ -108,7 +108,7 @@ const RESUME_TEMPLATES: Array<{
 ];
 
 /** Scale for template-card thumbnails (816px letter page → ~245px wide). */
-const TEMPLATE_THUMB_SCALE = 0.3;
+const TEMPLATE_THUMB_SCALE = 0.35;
 
 /** Backend limit for a manual markdown edit. */
 const MAX_MARKDOWN_LENGTH = 30_000;
@@ -289,16 +289,34 @@ interface TemplateSelectorProps {
   canTailor: boolean;
   /** Another resume request is in flight. */
   busy: boolean;
+  /** The user's tailored resume; thumbnails show it instead of the sample. */
+  previewMarkdown: string | null;
+  displayName: string;
+  /** Selecting a card also re-renders the open tailored resume's PDF. */
+  hasTailoredResume: boolean;
 }
 
-function TemplateSelector({ selected, onSelect, onTailor, isTailoring, canTailor, busy }: TemplateSelectorProps) {
+function TemplateSelector({
+  selected,
+  onSelect,
+  onTailor,
+  isTailoring,
+  canTailor,
+  busy,
+  previewMarkdown,
+  displayName,
+  hasTailoredResume,
+}: TemplateSelectorProps) {
+  const ownResume = !!previewMarkdown;
   return (
     <div className="space-y-6">
       <div>
         <div className="text-sm text-muted-foreground">Resume Workspace · Templates</div>
         <h2 className="mt-1 text-xl font-medium">Choose a template.</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          All templates are single-column and optimised for Applicant Tracking Systems.
+          {ownResume
+            ? "Each card shows your tailored resume in that theme. All templates are single-column and ATS-safe."
+            : "Cards show a sample resume — tailor yours to see it in each theme. All templates are single-column and ATS-safe."}
         </p>
       </div>
 
@@ -315,10 +333,11 @@ function TemplateSelector({ selected, onSelect, onTailor, isTailoring, canTailor
               {/* Thumbnail rendered with the same layout as the PDF template */}
               <div
                 aria-hidden="true"
-                className="pointer-events-none flex h-48 w-full select-none justify-center overflow-hidden rounded-2xl border border-border bg-muted/40 pt-3"
+                className="pointer-events-none flex h-80 w-full select-none justify-center overflow-hidden rounded-2xl border border-border bg-muted/40 pt-3"
               >
                 <ResumePreview
-                  markdown={SAMPLE_RESUME_MARKDOWN}
+                  markdown={previewMarkdown || SAMPLE_RESUME_MARKDOWN}
+                  displayName={ownResume ? displayName : undefined}
                   template={tpl.id}
                   scale={TEMPLATE_THUMB_SCALE}
                 />
@@ -338,9 +357,12 @@ function TemplateSelector({ selected, onSelect, onTailor, isTailoring, canTailor
                   <LiquidGlassButton
                     tone={isSelected ? "ghost" : "primary"}
                     size="sm"
-                    onClick={() => onSelect(tpl.id)}
+                    aria-disabled={(busy && !isSelected) || undefined}
+                    onClick={() => {
+                      if (!busy && !isSelected) onSelect(tpl.id);
+                    }}
                   >
-                    {isSelected ? "Selected ✓" : "Select"}
+                    {isSelected ? "Selected ✓" : hasTailoredResume ? "Use for my resume" : "Select"}
                   </LiquidGlassButton>
                 </div>
               </div>
@@ -511,6 +533,7 @@ export default function ResumePage() {
   const [contactSuggestions, setContactSuggestions] = useState<Partial<ContactFields>>({});
   /** Template the current tailored document was rendered with. */
   const [lastTemplate, setLastTemplate] = useState<TemplateId | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<TemplateId | null>(null);
   const [aiChanges, setAiChanges] = useState<string[]>([]);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   /** The name the PDF prints (profile full name); "" uses the markdown `# Name`. */
@@ -622,12 +645,16 @@ export default function ResumePage() {
       const generation = docGenRef.current;
       return { data: await postResumeFix(lastDocId, { template }), generation };
     },
+    // The preview switches instantly (previewTemplate); this request only
+    // re-renders the downloadable PDF in the new theme.
+    onMutate: (template) => setPreviewTemplate(template),
     onSuccess: ({ data, generation }, template) => {
       if (!applyIfCurrent(data, generation)) return;
       setSelectedTemplate(template);
-      toast.success(`Switched to the ${RESUME_TEMPLATES.find((t) => t.id === template)?.name ?? template} template`);
+      toast.success(`PDF updated to the ${RESUME_TEMPLATES.find((t) => t.id === template)?.name ?? template} template`);
     },
     onError: (err) => toast.error(getApiErrorMessage(err, "Could not switch the template")),
+    onSettled: () => setPreviewTemplate(null),
   });
 
   const editTextMutation = useMutation<Tailored, unknown, string>({
@@ -741,6 +768,15 @@ export default function ResumePage() {
   /** Any request that replaces the tailored document is in flight. */
   const tailoredPending = useIsMutating({ mutationKey: RESUME_TAILORED_KEY }) > 0;
   const busy = tailoredPending || optimizeMutation.isPending;
+  // Theme shown in the preview: the one being switched to (instant), else the
+  // one the PDF was rendered with, else the one picked for the next tailor run.
+  const shownTemplate = previewTemplate ?? lastTemplate ?? selectedTemplate;
+
+  // Templates tab "Select": with a tailored resume open, also switch its PDF.
+  const selectTemplate = (id: TemplateId) => {
+    setSelectedTemplate(id);
+    if (lastDocId && !busy && id !== (lastTemplate ?? selectedTemplate)) templateMutation.mutate(id);
+  };
 
   // The "Edit text" button is disabled while a request is pending (the save
   // itself settles a render after the editor closes), so wait until it's usable.
@@ -1014,12 +1050,15 @@ export default function ResumePage() {
       {tab === "templates" && (
         <motion.div variants={fadeUp}>
           <TemplateSelector
-            selected={selectedTemplate}
-            onSelect={setSelectedTemplate}
+            selected={shownTemplate}
+            onSelect={selectTemplate}
             onTailor={() => optimizeMutation.mutate(jdText)}
             isTailoring={optimizeMutation.isPending}
             canTailor={!!primaryDoc && !!jdText.trim()}
             busy={busy}
+            previewMarkdown={resumePreviewText}
+            displayName={displayName}
+            hasTailoredResume={!!lastDocId}
           />
         </motion.div>
       )}
@@ -1187,7 +1226,7 @@ export default function ResumePage() {
                   <span id="resume-template-label" className="text-xs text-muted-foreground">Template</span>
                   <div role="group" aria-labelledby="resume-template-label" className="flex flex-wrap gap-1 rounded-full border border-border bg-muted/40 p-1">
                     {RESUME_TEMPLATES.map((tpl) => {
-                      const active = (lastTemplate ?? selectedTemplate) === tpl.id;
+                      const active = shownTemplate === tpl.id;
                       const pending = templateMutation.isPending && templateMutation.variables === tpl.id;
                       return (
                         <button
@@ -1212,8 +1251,10 @@ export default function ResumePage() {
                       );
                     })}
                   </div>
-                  <span className="sr-only" aria-live="polite">
-                    {templateMutation.isPending ? "Re-rendering the resume in the new template…" : ""}
+                  <span className="text-xs text-muted-foreground" aria-live="polite">
+                    {templateMutation.isPending
+                      ? "Preview updated · regenerating the PDF…"
+                      : "Click a theme to see your resume in it"}
                   </span>
                 </div>
               )}
@@ -1301,13 +1342,13 @@ export default function ResumePage() {
                   <div
                     aria-busy={busy}
                     className={`mt-3 max-h-[56rem] w-full overflow-auto rounded-2xl border border-border bg-muted/30 p-3 transition-opacity sm:p-4 ${
-                      tailoredPending ? "opacity-60" : ""
+                      tailoredPending && !templateMutation.isPending ? "opacity-60" : ""
                     }`}
                   >
                     {resumePreviewText ? (
                       <ResumePreview
                         markdown={resumePreviewText}
-                        template={lastTemplate ?? selectedTemplate}
+                        template={shownTemplate}
                         displayName={displayName}
                         zoom={previewZoom}
                         minWidth={PREVIEW_MIN_WIDTH}
