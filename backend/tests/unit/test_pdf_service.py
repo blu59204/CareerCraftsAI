@@ -42,6 +42,7 @@ def test_unknown_template_raises():
 
 # ── Layout helpers ──────────────────────────────────────────────────────────
 
+
 def _lines(pdf: bytes) -> list[tuple[str, float, str]]:
     """(font, size, text) for each rendered line, using the line's last span
     so a bullet glyph span does not mask the body text."""
@@ -110,8 +111,16 @@ def test_entry_renders_role_dates_employer_location(template):
 def test_reading_order_is_top_to_bottom():
     pdf = generate_resume_pdf(MARKDOWN_RESUME, full_name="Jane Doe", template="modern")
     text = fitz.open(stream=pdf, filetype="pdf")[0].get_text()
-    order = ["Jane Doe", "jane@example.com", "SKILLS", "EXPERIENCE", "Backend Engineer",
-             "2021", "Acme", "Built APIs"]
+    order = [
+        "Jane Doe",
+        "jane@example.com",
+        "SKILLS",
+        "EXPERIENCE",
+        "Backend Engineer",
+        "2021",
+        "Acme",
+        "Built APIs",
+    ]
     positions = [text.index(token) for token in order]
     assert positions == sorted(positions)
 
@@ -174,6 +183,7 @@ def test_none_full_name_is_treated_as_empty():
 
 
 # ── Inline emphasis (contract C4) ───────────────────────────────────────────
+
 
 def _spans(pdf: bytes) -> list[tuple[str, str]]:
     out = []
@@ -241,6 +251,7 @@ def test_invalid_markup_degrades_to_plain_text():
 
 # ── Oversized content never fails the layout ────────────────────────────────
 
+
 def _assert_pdf(pdf: bytes) -> fitz.Document:
     assert pdf[:4] == b"%PDF"
     doc = fitz.open(stream=pdf, filetype="pdf")
@@ -269,8 +280,9 @@ def test_huge_bullet_renders():
 
 
 def test_many_lines_render():
-    lines = "\n".join(f"### Role {i} | Acme | Remote | 2021 - 2022\n- Built thing {i}"
-                      for i in range(600))[:30000]
+    lines = "\n".join(
+        f"### Role {i} | Acme | Remote | 2021 - 2022\n- Built thing {i}" for i in range(600)
+    )[:30000]
     _assert_pdf(generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{lines}"))
 
 

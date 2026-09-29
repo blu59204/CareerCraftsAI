@@ -18,6 +18,7 @@ them. Every edit here is deterministic and uses only values the user typed —
 no model call and nothing inferred — so the truthfulness rule of the Resume
 Agent holds for fixes too.
 """
+
 from __future__ import annotations
 
 import re
@@ -27,8 +28,14 @@ from dataclasses import asdict, dataclass, field
 # ── Vocabulary ──────────────────────────────────────────────────────────────
 
 EXPERIENCE_SECTIONS = {
-    "experience", "work experience", "professional experience", "employment",
-    "employment history", "work history", "internships", "internship experience",
+    "experience",
+    "work experience",
+    "professional experience",
+    "employment",
+    "employment history",
+    "work history",
+    "internships",
+    "internship experience",
     "relevant experience",
 }
 EDUCATION_SECTIONS = {"education", "education and training", "academic background"}
@@ -38,7 +45,8 @@ _BULLET = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 _DATE_WORD = re.compile(r"\b(?:present|current|now|ongoing)\b", re.I)
 _RANGE_SPLIT = re.compile(
-    r"\s*(?:\s-\s|–|—|\bto\b|-(?=\s*(?:\d|present|current|now|ongoing)))\s*", re.I,
+    r"\s*(?:\s-\s|–|—|\bto\b|-(?=\s*(?:\d|present|current|now|ongoing)))\s*",
+    re.I,
 )
 # Part-level placeholder (a whole heading/contact part); case-insensitive.
 _PLACEHOLDER = re.compile(r"^\W*(?:not[_ ]provided|n/a|tbd)\W*$", re.I)
@@ -69,7 +77,8 @@ _CAP_WORD = r"(?:[A-Z][^\W\d_A-Z]*(?:[.'-][^\W\d_]*)*|[A-Z]{2,3})"
 _CAP_WORDS = rf"{_CAP_WORD}(?:\s+{_CAP_WORD}){{0,2}}"
 _CITY_REGION = re.compile(rf"{_CAP_WORDS},\s*{_CAP_WORDS}")
 _COMPANY_SUFFIX = re.compile(
-    r"\b(?:inc|llc|llp|ltd|limited|pvt|corp|corporation|co|company|gmbh|plc|ag|bv)\b", re.I,
+    r"\b(?:inc|llc|llp|ltd|limited|pvt|corp|corporation|co|company|gmbh|plc|ag|bv)\b",
+    re.I,
 )
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
@@ -78,9 +87,37 @@ _LINKEDIN = re.compile(r"(?:https?://)?(?:[\w-]+\.)?linkedin\.com/\S+", re.I)
 _GITHUB = re.compile(r"(?:https?://)?(?:www\.)?github\.com/\S+", re.I)
 _URL = re.compile(r"(https?://)?(www\.)?([\w-]+(?:\.[\w-]+)+)(/\S*)?", re.I)
 _TLDS = {
-    "com", "org", "net", "io", "dev", "me", "ai", "co", "in", "app", "xyz", "tech", "site",
-    "page", "info", "us", "uk", "ca", "de", "so", "sh", "gg", "ly", "design", "codes",
-    "online", "website", "blog", "cloud", "pro", "work",
+    "com",
+    "org",
+    "net",
+    "io",
+    "dev",
+    "me",
+    "ai",
+    "co",
+    "in",
+    "app",
+    "xyz",
+    "tech",
+    "site",
+    "page",
+    "info",
+    "us",
+    "uk",
+    "ca",
+    "de",
+    "so",
+    "sh",
+    "gg",
+    "ly",
+    "design",
+    "codes",
+    "online",
+    "website",
+    "blog",
+    "cloud",
+    "pro",
+    "work",
 }
 _CONTACT_SEP = re.compile(r"(\s*(?:\||·|•|;)\s*)")
 _LABEL = re.compile(
@@ -89,9 +126,18 @@ _LABEL = re.compile(
     re.I,
 )
 _LABEL_FIELD = {
-    "email": "email", "phone": "phone", "tel": "phone", "mobile": "phone", "mob": "phone",
-    "cell": "phone", "linkedin": "linkedin", "github": "github", "portfolio": "portfolio",
-    "website": "portfolio", "location": "location", "address": "location",
+    "email": "email",
+    "phone": "phone",
+    "tel": "phone",
+    "mobile": "phone",
+    "mob": "phone",
+    "cell": "phone",
+    "linkedin": "linkedin",
+    "github": "github",
+    "portfolio": "portfolio",
+    "website": "portfolio",
+    "location": "location",
+    "address": "location",
 }
 
 CONTACT_FIELDS = ("email", "phone", "location", "linkedin", "github", "portfolio")
@@ -156,7 +202,7 @@ def clean_placeholders(markdown: str) -> str:
         stripped = line.strip()
         heading = _HEADING.match(stripped)
         if "|" in stripped:
-            body = stripped[heading.end():] if heading else stripped
+            body = stripped[heading.end() :] if heading else stripped
             parts = [p.strip() for p in body.split("|")]
             blanked = ["" if is_placeholder(_plain(p)) else p for p in parts]
             if blanked != parts:
@@ -188,7 +234,7 @@ def clean_placeholders(markdown: str) -> str:
         m = _HEADING.match(line.strip())
         if m and len(m.group(1)) == 2:
             nxt = next(
-                (ln for ln in out[i + 1:] if ln.strip()),
+                (ln for ln in out[i + 1 :] if ln.strip()),
                 None,
             )
             nm = _HEADING.match(nxt.strip()) if nxt else None
@@ -200,6 +246,7 @@ def clean_placeholders(markdown: str) -> str:
 
 
 # ── Heading parts ───────────────────────────────────────────────────────────
+
 
 @dataclass
 class EntryParts:
@@ -273,18 +320,19 @@ def _unbalanced(value: str) -> bool:
 
 # ── Parsing ─────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class _Section:
     title: str
-    line: int          # index of the `##` line
-    end: int           # index one past the last line of the section
+    line: int  # index of the `##` line
+    end: int  # index one past the last line of the section
 
 
 @dataclass
 class _Entry:
     section: str
-    kind: str          # "experience" | "education"
-    index: int         # position within its kind
+    kind: str  # "experience" | "education"
+    index: int  # position within its kind
     line: int
     heading: str
     parts: EntryParts
@@ -297,17 +345,17 @@ class _Parsed:
     contact_lines: list[int]
     sections: list[_Section]
     entries: list[_Entry] = field(default_factory=list)
-    plain_name_line: int | None = None   # un-marked name on the first line
+    plain_name_line: int | None = None  # un-marked name on the first line
     has_sections: bool = False
 
 
 @dataclass
 class _ContactPart:
-    line: int          # index into _Parsed.lines
-    token: int         # index into _CONTACT_SEP.split(line)
-    prefix: str        # label kept verbatim on rewrite ("Email: ")
+    line: int  # index into _Parsed.lines
+    token: int  # index into _CONTACT_SEP.split(line)
+    prefix: str  # label kept verbatim on rewrite ("Email: ")
     value: str
-    kind: str | None   # a CONTACT_FIELDS name, or None when not contact-like
+    kind: str | None  # a CONTACT_FIELDS name, or None when not contact-like
 
 
 def _section_kind(title: str) -> str | None:
@@ -373,7 +421,7 @@ def _read_part(text: str) -> tuple[str, str, str | None]:
     raw = text.strip()
     label = _LABEL.match(raw)
     prefix = raw[: label.end()] if label else ""
-    value = _unwrap(raw[label.end():] if label else raw)
+    value = _unwrap(raw[label.end() :] if label else raw)
     hint = _LABEL_FIELD[label.group(1).casefold().replace("-", "")] if label else None
     return prefix, value, _classify(value, hint)
 
@@ -407,9 +455,13 @@ def _parse(markdown: str) -> _Parsed:
             if sections:
                 sections[-1].end = i
             s = raw.strip()
-            sections.append(_Section(
-                title=s[_HEADING.match(s).end():].strip(), line=i, end=len(lines),
-            ))
+            sections.append(
+                _Section(
+                    title=s[_HEADING.match(s).end() :].strip(),
+                    line=i,
+                    end=len(lines),
+                )
+            )
     has_sections = bool(sections)
     header_end = sections[0].line if sections else len(lines)
     name_line = next((i for i in range(header_end) if _level(lines[i]) == 1), None)
@@ -419,8 +471,12 @@ def _parse(markdown: str) -> _Parsed:
         first = next((i for i in range(header_end) if lines[i].strip()), None)
         if first is not None:
             s = lines[first].strip()
-            if (not _HEADING.match(s) and not _BULLET.match(s) and len(s) < 80
-                    and not _is_contact_line(s)):
+            if (
+                not _HEADING.match(s)
+                and not _BULLET.match(s)
+                and len(s) < 80
+                and not _is_contact_line(s)
+            ):
                 plain_name_line = first
 
     # Markdown resumes: every contact line in the header (before the first
@@ -438,8 +494,14 @@ def _parse(markdown: str) -> _Parsed:
         elif not has_sections:
             break
 
-    parsed = _Parsed(lines, name_line, contact_lines, sections,
-                     plain_name_line=plain_name_line, has_sections=has_sections)
+    parsed = _Parsed(
+        lines,
+        name_line,
+        contact_lines,
+        sections,
+        plain_name_line=plain_name_line,
+        has_sections=has_sections,
+    )
     counters = {"experience": 0, "education": 0}
     for sec in sections:
         kind = _section_kind(sec.title)
@@ -449,15 +511,21 @@ def _parse(markdown: str) -> _Parsed:
             s = lines[i].strip()
             m = _HEADING.match(s)
             if m and len(m.group(1)) >= 3:
-                heading = s[m.end():].strip()
+                heading = s[m.end() :].strip()
             elif s.startswith("**") and "|" in s and _ENTRY_DATE.search(_plain(s)):
-                heading = s    # `**Role** | Employer | Dates`, as the PDF renders it
+                heading = s  # `**Role** | Employer | Dates`, as the PDF renders it
             else:
                 continue
-            parsed.entries.append(_Entry(
-                section=sec.title, kind=kind, index=counters[kind], line=i,
-                heading=heading, parts=split_heading(heading),
-            ))
+            parsed.entries.append(
+                _Entry(
+                    section=sec.title,
+                    kind=kind,
+                    index=counters[kind],
+                    line=i,
+                    heading=heading,
+                    parts=split_heading(heading),
+                )
+            )
             counters[kind] += 1
     return parsed
 
@@ -484,6 +552,7 @@ def parse_contact(markdown: str) -> dict[str, str]:
 
 # ── Review (what is missing) ────────────────────────────────────────────────
 
+
 def _issue(code: str, message: str, **extra) -> dict:
     return {"code": code, "message": message, **extra}
 
@@ -507,25 +576,40 @@ def review_resume(markdown: str) -> dict:
 
     for entry in parsed.entries:
         p = entry.parts
-        item = {"index": entry.index, "heading": entry.heading, "section": entry.section,
-                **asdict(p), "issues": []}
+        item = {
+            "index": entry.index,
+            "heading": entry.heading,
+            "section": entry.section,
+            **asdict(p),
+            "issues": [],
+        }
         if entry.kind == "experience":
             label = p.role or entry.heading
             if not p.employer:
                 item["issues"].append("missing_employer")
-                issues.append(_issue("missing_employer", f"Add the employer for “{label}”.",
-                                     index=entry.index))
+                issues.append(
+                    _issue(
+                        "missing_employer", f"Add the employer for “{label}”.", index=entry.index
+                    )
+                )
             elif _unbalanced(p.employer) or _unbalanced(p.role):
                 item["issues"].append("truncated_employer")
-                issues.append(_issue(
-                    "truncated_employer",
-                    f"The employer name “{p.employer}” looks cut off — enter the full name.",
-                    index=entry.index,
-                ))
+                issues.append(
+                    _issue(
+                        "truncated_employer",
+                        f"The employer name “{p.employer}” looks cut off — enter the full name.",
+                        index=entry.index,
+                    )
+                )
             if not p.start:
                 item["issues"].append("missing_dates")
-                issues.append(_issue("missing_dates", f"Add start and end dates for “{label}”.",
-                                     index=entry.index))
+                issues.append(
+                    _issue(
+                        "missing_dates",
+                        f"Add start and end dates for “{label}”.",
+                        index=entry.index,
+                    )
+                )
             experience.append(item)
         else:
             if not p.start:
@@ -541,10 +625,12 @@ def review_resume(markdown: str) -> dict:
         _section_kind(ln.strip()) == "education" for ln in parsed.lines if ln.strip()
     )
     if not education and not has_education_content and not plain_education_title:
-        issues.append(_issue(
-            "missing_education",
-            "No education section. Add your degree, institution and graduation date.",
-        ))
+        issues.append(
+            _issue(
+                "missing_education",
+                "No education section. Add your degree, institution and graduation date.",
+            )
+        )
 
     return {
         "contact": contact,
@@ -598,9 +684,12 @@ _WARNING_TOPICS = {
     ),
 }
 _ISSUE_TOPIC = {
-    "missing_email": "contact", "missing_phone": "contact",
-    "missing_dates": "dates", "missing_education": "education",
-    "missing_employer": "employer", "truncated_employer": "employer",
+    "missing_email": "contact",
+    "missing_phone": "contact",
+    "missing_dates": "dates",
+    "missing_education": "education",
+    "missing_employer": "employer",
+    "truncated_employer": "employer",
 }
 
 
@@ -644,6 +733,7 @@ def filter_resolved_warnings(warnings: list[str], review: dict) -> list[str]:
 
 
 # ── Fixes ───────────────────────────────────────────────────────────────────
+
 
 def clean_field(value: str | None, limit: int = 160) -> str:
     """Normalize one user-typed value so it cannot break the Markdown shape.
@@ -726,9 +816,10 @@ def apply_fixes(
     # bottom-up so inserted detail bullets never shift a pending line.
     by_kind = {(e.kind, e.index): e for e in parsed.entries}
     planned: list[tuple[_Entry, dict]] = []
-    for kind, fixes in (("experience", experience or []), ("education", [
-        f for f in (education or []) if f.get("index") is not None
-    ])):
+    for kind, fixes in (
+        ("experience", experience or []),
+        ("education", [f for f in (education or []) if f.get("index") is not None]),
+    ):
         for index, fix in _merge_fixes(kind, fixes).items():
             entry = by_kind.get((kind, index))
             if entry is None:
@@ -887,8 +978,7 @@ def apply_saved_facts(markdown: str, facts: dict) -> str:
     exp_fixes: list[dict] = []
     for saved in saved_facts:
         role = _norm(saved.get("role"))
-        keys = {k for k in (_norm(saved.get("employer_match")), _norm(saved.get("employer")))
-                if k}
+        keys = {k for k in (_norm(saved.get("employer_match")), _norm(saved.get("employer"))) if k}
         matches: list[tuple[dict, bool]] = []
         for entry in review["experience"]:
             if _norm(entry["role"]) != role:
@@ -909,9 +999,7 @@ def apply_saved_facts(markdown: str, facts: dict) -> str:
             exp_fixes.append(fix)
     edu = facts.get("education") or []
     has_education = not any(i["code"] == "missing_education" for i in review["issues"])
-    new_edu = [] if has_education else [
-        {k: v for k, v in e.items() if k != "index"} for e in edu
-    ]
+    new_edu = [] if has_education else [{k: v for k, v in e.items() if k != "index"} for e in edu]
     if not exp_fixes and not new_edu:
         return markdown
     return apply_fixes(markdown, experience=exp_fixes, education=new_edu)

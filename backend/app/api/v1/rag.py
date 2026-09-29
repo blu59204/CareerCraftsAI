@@ -188,7 +188,9 @@ async def upload_document(
     try:
         raw_text = extract_text(content, safe_filename)
     except Exception as exc:
-        logger.warning("Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc)
+        logger.warning(
+            "Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc
+        )
         raise HTTPException(
             status_code=422,
             detail="Could not read this document — it may be corrupted or not a valid file of its declared type.",

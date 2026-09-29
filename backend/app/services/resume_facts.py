@@ -10,6 +10,7 @@ Sources, all typed by the user themselves (never model output):
 The login email is only ever offered as a *suggestion* for the form; it is
 not put on a resume unless the user confirms it.
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,7 +36,9 @@ def _link(value: str | None) -> str:
 
 
 def verified_contact(
-    profile: CandidateProfile | None, user: User | None, facts: dict | None,
+    profile: CandidateProfile | None,
+    user: User | None,
+    facts: dict | None,
 ) -> dict[str, str]:
     """Contact fields the user has explicitly entered somewhere."""
     saved = (facts or {}).get("contact") or {}
@@ -47,8 +50,11 @@ def verified_contact(
         "email": saved.get("email") or (p.email if p else "") or "",
         "phone": saved.get("phone") or (p.phone if p else "") or (user.phone if user else "") or "",
         "location": saved.get("location") or location,
-        "linkedin": _link(saved.get("linkedin") or (p.linkedin_url if p else "")
-                          or (user.linkedin_url if user else "")),
+        "linkedin": _link(
+            saved.get("linkedin")
+            or (p.linkedin_url if p else "")
+            or (user.linkedin_url if user else "")
+        ),
         "github": _link(saved.get("github") or (p.github_url if p else "")),
         "portfolio": _link(saved.get("portfolio") or (p.portfolio_url if p else "")),
     }
@@ -56,7 +62,9 @@ def verified_contact(
 
 
 def contact_suggestions(
-    profile: CandidateProfile | None, user: User | None, facts: dict | None,
+    profile: CandidateProfile | None,
+    user: User | None,
+    facts: dict | None,
 ) -> dict[str, str]:
     """Pre-fill values for the fix form: verified contact + the login email."""
     contact = verified_contact(profile, user, facts)
@@ -120,7 +128,7 @@ def _merge_experience(saved: list[dict], item: dict) -> list[dict]:
             continue
         if "submitted" not in old:
             # Legacy record: its values may be model-written; replace it.
-            return [*saved[:pos], *saved[pos + 1:], item]
+            return [*saved[:pos], *saved[pos + 1 :], item]
         combined = {**old, **{k: v for k, v in item.items() if k != "submitted"}}
         # Keep the oldest locator: it is the text a fresh draft will contain.
         for key in _EXPERIENCE_MATCH_KEYS:
@@ -128,7 +136,7 @@ def _merge_experience(saved: list[dict], item: dict) -> list[dict]:
                 combined[key] = old[key]
         typed = set(old["submitted"]) | set(item.get("submitted") or [])
         combined["submitted"] = [k for k in EXPERIENCE_FACT_KEYS if k in typed]
-        return [*saved[:pos], *saved[pos + 1:], combined]
+        return [*saved[:pos], *saved[pos + 1 :], combined]
     return [*saved, item]
 
 
@@ -154,8 +162,9 @@ def merge_facts(
             e for e in (_clean_experience(x) for x in facts.get("experience") or []) if e
         ],
         "education": [
-            e for e in (_clean_record(x, _EDUCATION_FACT_KEYS)
-                        for x in facts.get("education") or []) if e
+            e
+            for e in (_clean_record(x, _EDUCATION_FACT_KEYS) for x in facts.get("education") or [])
+            if e
         ],
     }
     for key, value in (contact or {}).items():
@@ -185,19 +194,22 @@ def merge_facts(
 
 # ── async (API) ─────────────────────────────────────────────────────────────
 
+
 async def load_facts_row(db: AsyncSession, user_id: uuid.UUID) -> CandidateAnswer | None:
-    return (await db.execute(
-        select(CandidateAnswer).where(
-            CandidateAnswer.user_id == user_id,
-            CandidateAnswer.question_key == FACTS_KEY,
+    return (
+        await db.execute(
+            select(CandidateAnswer).where(
+                CandidateAnswer.user_id == user_id,
+                CandidateAnswer.question_key == FACTS_KEY,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
 
 
 async def load_profile(db: AsyncSession, user_id: uuid.UUID) -> CandidateProfile | None:
-    return (await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == user_id)
-    )).scalar_one_or_none()
+    return (
+        await db.execute(select(CandidateProfile).where(CandidateProfile.user_id == user_id))
+    ).scalar_one_or_none()
 
 
 async def save_facts(db: AsyncSession, user_id: uuid.UUID, facts: dict) -> None:
@@ -208,16 +220,18 @@ async def save_facts(db: AsyncSession, user_id: uuid.UUID, facts: dict) -> None:
             # unique (user_id, question_key) constraint; only this insert is
             # rolled back and the winner's row is updated below instead.
             async with db.begin_nested():
-                db.add(CandidateAnswer(
-                    user_id=user_id,
-                    question_key=FACTS_KEY,
-                    normalized_question="Resume facts entered in the resume gap fixer",
-                    answer_type="json",
-                    answer=facts,
-                    source="user",
-                    confidence=1.0,
-                    approved_by_user=True,
-                ))
+                db.add(
+                    CandidateAnswer(
+                        user_id=user_id,
+                        question_key=FACTS_KEY,
+                        normalized_question="Resume facts entered in the resume gap fixer",
+                        answer_type="json",
+                        answer=facts,
+                        source="user",
+                        confidence=1.0,
+                        approved_by_user=True,
+                    )
+                )
                 await db.flush()
             return
         except IntegrityError:
@@ -230,6 +244,7 @@ async def save_facts(db: AsyncSession, user_id: uuid.UUID, facts: dict) -> None:
 
 
 # ── sync (agent worker) ─────────────────────────────────────────────────────
+
 
 def fetch_resume_facts_sync(user_id: str) -> tuple[dict[str, str], dict]:
     """(verified contact, saved facts) for the Resume Agent. Never raises."""

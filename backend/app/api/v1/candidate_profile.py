@@ -63,9 +63,11 @@ async def get_candidate_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return (await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == current_user.id)
-    )).scalar_one_or_none()
+    return (
+        await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
 
 
 @router.put("/", response_model=CandidateProfileResponse)
@@ -74,9 +76,11 @@ async def upsert_candidate_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    profile = (await db.execute(
-        select(CandidateProfile).where(CandidateProfile.user_id == current_user.id)
-    )).scalar_one_or_none()
+    profile = (
+        await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == current_user.id)
+        )
+    ).scalar_one_or_none()
     update_data = payload.model_dump(exclude_unset=True)
     if profile is None:
         profile = CandidateProfile(user_id=current_user.id, **update_data)
@@ -115,12 +119,14 @@ async def delete_candidate_answer(
     current_user: User = Depends(get_current_user),
 ):
     """Forget a saved answer so it stops being reused (e.g. it changed)."""
-    answer = (await db.execute(
-        select(CandidateAnswer).where(
-            CandidateAnswer.user_id == current_user.id,
-            CandidateAnswer.question_key == question_key,
+    answer = (
+        await db.execute(
+            select(CandidateAnswer).where(
+                CandidateAnswer.user_id == current_user.id,
+                CandidateAnswer.question_key == question_key,
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if answer:
         await db.delete(answer)
         await db.flush()

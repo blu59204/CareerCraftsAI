@@ -20,25 +20,27 @@ AI engineer building LLM tools.
 """
 
 FULL_EMPLOYER = "Agentic Universe (Qultured Media Pvt. Ltd.)"
-FIXED_HEADING = (
-    f"### Prompt Engineer Intern | {FULL_EMPLOYER} | Remote | Jun 2025 - Present"
-)
+FIXED_HEADING = f"### Prompt Engineer Intern | {FULL_EMPLOYER} | Remote | Jun 2025 - Present"
 
 FULL_FIX = {
     "contact": {"phone": "+91 98765 43210", "location": "Pune, India"},
-    "experience": [{
-        "index": 0,
-        "employer": FULL_EMPLOYER,
-        "location": "Remote",
-        "start": "Jun 2025",
-        "end": "Present",
-    }],
-    "education": [{
-        "degree": "B.Tech Computer Science",
-        "institution": "Savitribai Phule Pune University",
-        "start": "Aug 2021",
-        "end": "May 2025",
-    }],
+    "experience": [
+        {
+            "index": 0,
+            "employer": FULL_EMPLOYER,
+            "location": "Remote",
+            "start": "Jun 2025",
+            "end": "Present",
+        }
+    ],
+    "education": [
+        {
+            "degree": "B.Tech Computer Science",
+            "institution": "Savitribai Phule Pune University",
+            "start": "Aug 2021",
+            "end": "May 2025",
+        }
+    ],
 }
 
 DATES_WARNING = "Employment dates were not provided for the internship."
@@ -496,13 +498,16 @@ async def test_ats_failure_leaves_no_uploaded_pdf(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("make_error", [
-    lambda: LayoutError(
-        "Flowable <Paragraph at 0x1 frags=1>(<para>very long</para>) too large"
-    ),
-    lambda: ValueError("<font name='x'> unsupported"),
-    lambda: KeyError("style"),
-])
+@pytest.mark.parametrize(
+    "make_error",
+    [
+        lambda: LayoutError(
+            "Flowable <Paragraph at 0x1 frags=1>(<para>very long</para>) too large"
+        ),
+        lambda: ValueError("<font name='x'> unsupported"),
+        lambda: KeyError("style"),
+    ],
+)
 async def test_render_failure_is_generic_422(monkeypatch, make_error):
     doc = _doc(uuid.uuid4())
     h = _Harness(monkeypatch, doc)
@@ -547,10 +552,12 @@ async def test_fact_match_keys_come_from_the_manual_edit(monkeypatch):
         "### Data Engineer | Beta Corp",
     )
 
-    resp = await h.fix({
-        "resume_markdown": edited,
-        "experience": [{"index": 0, "location": "Pune"}],
-    })
+    resp = await h.fix(
+        {
+            "resume_markdown": edited,
+            "experience": [{"index": 0, "location": "Pune"}],
+        }
+    )
 
     assert resp.status_code == 200, resp.text
     [(_, facts)] = h.saved_facts
@@ -629,7 +636,9 @@ def test_pin_queries_target_open_attempts_and_approval_checkpoints():
     assert "application_attempts.state IN" in attempt_sql
     assert doc.id in attempt_params.values()
     assert {"preparing", "awaiting_approval", "submitting"} <= {
-        v for p in attempt_params.values() for v in (p if isinstance(p, list) else [p])
+        v
+        for p in attempt_params.values()
+        for v in (p if isinstance(p, list) else [p])
         if isinstance(v, str)
     }
     assert "agent_runs.output @>" in run_sql and "agent_runs.output ?" in run_sql

@@ -169,9 +169,7 @@ async def optimize_resume(
         error=None,
     )
 
-    result_state = await asyncio.get_running_loop().run_in_executor(
-        None, resume_agent_node, state
-    )
+    result_state = await asyncio.get_running_loop().run_in_executor(None, resume_agent_node, state)
 
     agent_run.status = result_state["status"]
     agent_run.completed_at = datetime.now(UTC)
@@ -227,20 +225,24 @@ async def _get_tailored_doc(db: AsyncSession, document_id: str, user: User) -> U
         doc_uuid = uuid.UUID(document_id)
     except (ValueError, AttributeError):
         raise HTTPException(status_code=404, detail="Document not found") from None
-    doc = (await db.execute(
-        select(UserDocument).where(
-            UserDocument.id == doc_uuid,
-            UserDocument.user_id == user.id,
-            UserDocument.doc_type == "resume_tailored",
+    doc = (
+        await db.execute(
+            select(UserDocument).where(
+                UserDocument.id == doc_uuid,
+                UserDocument.user_id == user.id,
+                UserDocument.doc_type == "resume_tailored",
+            )
         )
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if not doc or not doc.raw_text:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
 
 
 def _tailored_response(
-    doc: UserDocument, suggestions: dict[str, str], display_name: str = "",
+    doc: UserDocument,
+    suggestions: dict[str, str],
+    display_name: str = "",
 ) -> TailoredResumeResponse:
     from app.services.resume_structure import filter_resolved_warnings, review_resume
 
@@ -283,40 +285,42 @@ async def _pinned_by_pending_approval(db: AsyncSession, doc: UserDocument) -> bo
 
     from app.models.db import AgentRun, ApplicationAttempt, JobApplication
 
-    attempt = (await db.execute(
-        select(ApplicationAttempt.id)
-        .join(JobApplication, JobApplication.id == ApplicationAttempt.job_application_id)
-        .where(
-            ApplicationAttempt.user_id == doc.user_id,
-            JobApplication.resume_id == doc.id,
-            ApplicationAttempt.state.in_(_PINNING_ATTEMPT_STATES),
+    attempt = (
+        await db.execute(
+            select(ApplicationAttempt.id)
+            .join(JobApplication, JobApplication.id == ApplicationAttempt.job_application_id)
+            .where(
+                ApplicationAttempt.user_id == doc.user_id,
+                JobApplication.resume_id == doc.id,
+                ApplicationAttempt.state.in_(_PINNING_ATTEMPT_STATES),
+            )
+            .limit(1)
         )
-        .limit(1)
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     if attempt is not None:
         return True
     doc_id = str(doc.id)
-    run = (await db.execute(
-        select(AgentRun.id)
-        .where(
-            AgentRun.user_id == doc.user_id,
-            AgentRun.status == "awaiting_approval",
-            or_(
-                and_(
-                    AgentRun.output.has_key("resume_sha256"),
-                    AgentRun.output.contains({"pdf_document_id": doc_id}),
+    run = (
+        await db.execute(
+            select(AgentRun.id)
+            .where(
+                AgentRun.user_id == doc.user_id,
+                AgentRun.status == "awaiting_approval",
+                or_(
+                    and_(
+                        AgentRun.output.has_key("resume_sha256"),
+                        AgentRun.output.contains({"pdf_document_id": doc_id}),
+                    ),
+                    AgentRun.output.contains({"actions_pending": [{"pdf_document_id": doc_id}]}),
                 ),
-                AgentRun.output.contains({"actions_pending": [{"pdf_document_id": doc_id}]}),
-            ),
+            )
+            .limit(1)
         )
-        .limit(1)
-    )).scalar_one_or_none()
+    ).scalar_one_or_none()
     return run is not None
 
 
-_RENDER_ERROR = (
-    "The resume could not be rendered as a PDF. Shorten very long lines and try again."
-)
+_RENDER_ERROR = "The resume could not be rendered as a PDF. Shorten very long lines and try again."
 
 
 @router.get("/tailored/{document_id}", response_model=TailoredResumeResponse)
@@ -389,8 +393,10 @@ async def fix_tailored_resume(
 
     try:
         pdf_bytes = await asyncio.to_thread(
-            generate_resume_pdf, markdown,
-            full_name=current_user.full_name or "", template=template,
+            generate_resume_pdf,
+            markdown,
+            full_name=current_user.full_name or "",
+            template=template,
         )
     except Exception:  # noqa: BLE001 — ValueError, LayoutError, any ReportLab failure
         # The real message can carry ReportLab markup and internals: log it only.
@@ -439,7 +445,8 @@ async def fix_tailored_resume(
                 experience=_experience_facts(experience, before, review),
                 education=[
                     {k: v for k, v in e.items() if k != "index" and v}
-                    for e in education if e.get("index") is None
+                    for e in education
+                    if e.get("index") is None
                 ],
             )
             await save_facts(db, current_user.id, facts)
@@ -557,9 +564,7 @@ async def download_pdf(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f"attachment; filename=resume_{document_id[:8]}.pdf"
-        },
+        headers={"Content-Disposition": f"attachment; filename=resume_{document_id[:8]}.pdf"},
     )
 
 
@@ -588,11 +593,13 @@ async def compute_resume_ats_score(
             resume_text = doc.raw_text or ""
     else:
         result = await db.execute(
-            select(UserDocument).where(
+            select(UserDocument)
+            .where(
                 UserDocument.user_id == current_user.id,
                 UserDocument.doc_type == "resume",
                 UserDocument.is_primary == True,  # noqa: E712
-            ).order_by(UserDocument.embedded_at.desc().nulls_last())
+            )
+            .order_by(UserDocument.embedded_at.desc().nulls_last())
         )
         doc = result.scalar_one_or_none()
         if doc:
@@ -602,11 +609,8 @@ async def compute_resume_ats_score(
         raise HTTPException(status_code=404, detail="No resume found. Upload a resume first.")
 
     loop = asyncio.get_running_loop()
-    score_result = await loop.run_in_executor(
-        None, compute_ats_score, resume_text, payload.jd_text
-    )
+    score_result = await loop.run_in_executor(None, compute_ats_score, resume_text, payload.jd_text)
     return AtsScoreResponse(**score_result.__dict__)
-
 
 
 # ---------------------------------------------------------------------------
@@ -635,9 +639,7 @@ async def list_personas(
 ):
     from app.models.db import ResumePersona
 
-    result = await db.execute(
-        select(ResumePersona).where(ResumePersona.user_id == current_user.id)
-    )
+    result = await db.execute(select(ResumePersona).where(ResumePersona.user_id == current_user.id))
     return result.scalars().all()
 
 

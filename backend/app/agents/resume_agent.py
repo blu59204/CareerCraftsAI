@@ -154,7 +154,11 @@ def resume_agent_node(state: AgentState) -> AgentState:
     template = ctx.get("template", "modern")
 
     try:
-        emit(run_id, "thinking", {"step": "start", "message": "Retrieving resume context from RAG..."})
+        emit(
+            run_id,
+            "thinking",
+            {"step": "start", "message": "Retrieving resume context from RAG..."},
+        )
         model_settings = state.get("model_settings") or fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("No active model settings configured for user")
@@ -164,20 +168,38 @@ def resume_agent_node(state: AgentState) -> AgentState:
 
         verified_contact, saved_facts = fetch_resume_facts_sync(user_id)
 
-        emit(run_id, "tool_call", {"tool": "rag_retrieve", "input": {"doc_type": "resume", "query_len": len(jd_text)}})
+        emit(
+            run_id,
+            "tool_call",
+            {"tool": "rag_retrieve", "input": {"doc_type": "resume", "query_len": len(jd_text)}},
+        )
         resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=8)
-        chunk_texts = [c.page_content if hasattr(c, "page_content") else str(c) for c in resume_chunks]
-        emit(run_id, "tool_result", {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}})
+        chunk_texts = [
+            c.page_content if hasattr(c, "page_content") else str(c) for c in resume_chunks
+        ]
+        emit(
+            run_id,
+            "tool_result",
+            {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}},
+        )
 
         llm = _build_llm(model_settings)
 
-        emit(run_id, "thinking", {"step": "tailor", "message": "Tailoring resume to job description..."})
+        emit(
+            run_id,
+            "thinking",
+            {"step": "tailor", "message": "Tailoring resume to job description..."},
+        )
         parsed = call_llm_json(
             llm,
             RESUME_JSON_SYSTEM_PROMPT,
             build_resume_json_prompt(
-                {"jd_text": jd_text, "tone": tone, "template": template,
-                 "verified_facts": saved_facts},
+                {
+                    "jd_text": jd_text,
+                    "tone": tone,
+                    "template": template,
+                    "verified_facts": saved_facts,
+                },
                 chunk_texts,
             ),
             ResumeOutput,
@@ -200,7 +222,12 @@ def resume_agent_node(state: AgentState) -> AgentState:
             )
             try:
                 pdf_document_id = _persist_resume_document(
-                    user_id, full_name, template, parsed, jd_text, pdf_bytes,
+                    user_id,
+                    full_name,
+                    template,
+                    parsed,
+                    jd_text,
+                    pdf_bytes,
                     warnings=model_warnings,
                 )
             except Exception as se:
@@ -209,8 +236,11 @@ def resume_agent_node(state: AgentState) -> AgentState:
                 parsed.warnings = list(parsed.warnings or []) + [
                     "PDF storage unavailable — preview only."
                 ]
-            emit(run_id, "tool_result",
-                 {"tool": "pdf_store", "output": {"pdf_document_id": pdf_document_id}})
+            emit(
+                run_id,
+                "tool_result",
+                {"tool": "pdf_store", "output": {"pdf_document_id": pdf_document_id}},
+            )
 
         pending = _resume_pending_action(parsed, pdf_document_id)
         pending["review"] = review
@@ -221,7 +251,8 @@ def resume_agent_node(state: AgentState) -> AgentState:
             "status": "awaiting_approval",
             "pending_action": pending,
             "result": pending,
-            "messages": state.get("messages", []) + [AIMessage(content=parsed.resume_markdown[:200])],
+            "messages": state.get("messages", [])
+            + [AIMessage(content=parsed.resume_markdown[:200])],
         }
     except Exception as exc:
         logger.exception("Resume agent failed for user %s", user_id)

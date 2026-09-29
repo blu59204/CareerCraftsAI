@@ -22,15 +22,17 @@ def make_state(jd_text: str = "Python engineer at Stripe") -> AgentState:
 
 
 def _valid_resume_json() -> str:
-    return json.dumps({
-        "resume_markdown": "Jane Doe\n\nSUMMARY\n5 years Python experience",
-        "summary": "Backend engineer",
-        "ats_score": 70,
-        "keywords_matched": ["Python"],
-        "keywords_missing": ["AWS"],
-        "changes_made": ["Reordered sections"],
-        "warnings": [],
-    })
+    return json.dumps(
+        {
+            "resume_markdown": "Jane Doe\n\nSUMMARY\n5 years Python experience",
+            "summary": "Backend engineer",
+            "ats_score": 70,
+            "keywords_matched": ["Python"],
+            "keywords_missing": ["AWS"],
+            "changes_made": ["Reordered sections"],
+            "warnings": [],
+        }
+    )
 
 
 def test_resume_agent_pauses_for_approval(mock_llm):
@@ -39,14 +41,18 @@ def test_resume_agent_pauses_for_approval(mock_llm):
     mock_llm.responses = [_valid_resume_json()]
     mock_chunks = [MagicMock(page_content="5 years Python experience")]
 
-    with patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock(provider="openai")), \
-         patch("app.agents.resume_agent.retrieve", return_value=mock_chunks), \
-         patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"), \
-         patch("app.agents.resume_agent._persist_resume_document", return_value="doc-123") as persist, \
-         patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"), \
-         patch("app.core.model_router._build_llm", return_value=mock_llm), \
-         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})), \
-         patch("app.core.event_bus.emit"):
+    with (
+        patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch("app.agents.resume_agent.retrieve", return_value=mock_chunks),
+        patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"),
+        patch(
+            "app.agents.resume_agent._persist_resume_document", return_value="doc-123"
+        ) as persist,
+        patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
+        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
+        patch("app.core.event_bus.emit"),
+    ):
         result = resume_agent_node(make_state())
 
     persist.assert_called_once()
@@ -62,13 +68,15 @@ def test_resume_agent_pauses_for_approval(mock_llm):
 def test_resume_agent_fails_without_fabricating_a_draft():
     from app.agents.resume_agent import resume_agent_node
 
-    with patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock()), \
-         patch("app.core.sync_db.fetch_user_full_name", return_value="Test"), \
-         patch("app.agents.resume_agent.retrieve", side_effect=Exception("pgvector down")), \
-         patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"), \
-         patch("app.agents.resume_agent._persist_resume_document", return_value="doc-456"), \
-         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})), \
-         patch("app.core.event_bus.emit"):
+    with (
+        patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock()),
+        patch("app.core.sync_db.fetch_user_full_name", return_value="Test"),
+        patch("app.agents.resume_agent.retrieve", side_effect=Exception("pgvector down")),
+        patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"),
+        patch("app.agents.resume_agent._persist_resume_document", return_value="doc-456"),
+        patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
+        patch("app.core.event_bus.emit"),
+    ):
         result = resume_agent_node(make_state())
 
     assert result["status"] == "failed"
@@ -81,14 +89,19 @@ def test_resume_agent_degrades_without_pdf_storage(mock_llm):
     mock_llm.responses = [_valid_resume_json()]
     mock_chunks = [MagicMock(page_content="5 years Python experience")]
 
-    with patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock(provider="openai")), \
-         patch("app.agents.resume_agent.retrieve", return_value=mock_chunks), \
-         patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"), \
-         patch("app.agents.resume_agent._persist_resume_document", side_effect=Exception("storage down")), \
-         patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"), \
-         patch("app.core.model_router._build_llm", return_value=mock_llm), \
-         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})), \
-         patch("app.core.event_bus.emit"):
+    with (
+        patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch("app.agents.resume_agent.retrieve", return_value=mock_chunks),
+        patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"),
+        patch(
+            "app.agents.resume_agent._persist_resume_document",
+            side_effect=Exception("storage down"),
+        ),
+        patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
+        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
+        patch("app.core.event_bus.emit"),
+    ):
         result = resume_agent_node(make_state())
 
     assert result["status"] == "awaiting_approval"
@@ -115,21 +128,22 @@ def test_call_llm_json_retries_once_on_invalid():
     assert calls["n"] == 2
 
 
-
 DATES_WARNING = "Employment dates were not provided for the internship."
 AZURE_WARNING = "The JD asks for Azure experience, which the resume does not show."
 
 
 def _resume_json(markdown: str, warnings: list[str] | None = None) -> str:
-    return json.dumps({
-        "resume_markdown": markdown,
-        "summary": "Backend engineer",
-        "ats_score": 55,
-        "keywords_matched": ["Python"],
-        "keywords_missing": [],
-        "changes_made": [],
-        "warnings": warnings or [],
-    })
+    return json.dumps(
+        {
+            "resume_markdown": markdown,
+            "summary": "Backend engineer",
+            "ats_score": 55,
+            "keywords_matched": ["Python"],
+            "keywords_missing": [],
+            "changes_made": [],
+            "warnings": warnings or [],
+        }
+    )
 
 
 def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None):
@@ -140,17 +154,23 @@ def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None):
     render = MagicMock(return_value=b"%PDF-fake")
     persist = MagicMock(return_value="doc-789")
     settings = MagicMock(provider="openai")
-    with patch("app.core.sync_db.fetch_model_settings", return_value=settings), \
-         patch("app.agents.resume_agent.retrieve",
-               return_value=[MagicMock(page_content="source resume")]), \
-         patch("app.agents.resume_agent.generate_resume_pdf", render), \
-         patch("app.agents.resume_agent._persist_resume_document", persist), \
-         patch("app.core.sync_db.fetch_user_full_name", return_value="Jane Doe"), \
-         patch("app.core.model_router._build_llm", return_value=mock_llm), \
-         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=facts), \
-         patch("app.agents.resume_agent.compute_ats_score", ats or MagicMock(
-             return_value=MagicMock(composite_score=77, missing_keywords=[]))) as score, \
-         patch("app.core.event_bus.emit"):
+    with (
+        patch("app.core.sync_db.fetch_model_settings", return_value=settings),
+        patch(
+            "app.agents.resume_agent.retrieve",
+            return_value=[MagicMock(page_content="source resume")],
+        ),
+        patch("app.agents.resume_agent.generate_resume_pdf", render),
+        patch("app.agents.resume_agent._persist_resume_document", persist),
+        patch("app.core.sync_db.fetch_user_full_name", return_value="Jane Doe"),
+        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=facts),
+        patch(
+            "app.agents.resume_agent.compute_ats_score",
+            ats or MagicMock(return_value=MagicMock(composite_score=77, missing_keywords=[])),
+        ) as score,
+        patch("app.core.event_bus.emit"),
+    ):
         result = resume_agent_node(make_state("Python engineer, Azure"))
     return result, render, persist, score
 
@@ -179,19 +199,31 @@ def test_saved_facts_and_verified_contact_are_applied_to_the_draft(mock_llm):
     )
     contact = {"email": "jane@example.com", "phone": "+91 98765 43210"}
     facts = {
-        "experience": [{
-            "role": "Prompt Engineer Intern", "employer_match": "Acme Labs",
-            "start": "Jun 2025", "end": "Present", "submitted": ["start", "end"],
-        }],
-        "education": [{"degree": "B.Tech Computer Science", "institution": "SPPU",
-                       "end": "May 2025"}],
+        "experience": [
+            {
+                "role": "Prompt Engineer Intern",
+                "employer_match": "Acme Labs",
+                "start": "Jun 2025",
+                "end": "Present",
+                "submitted": ["start", "end"],
+            }
+        ],
+        "education": [
+            {"degree": "B.Tech Computer Science", "institution": "SPPU", "end": "May 2025"}
+        ],
     }
 
     result, render, persist, _ = _run_agent(mock_llm, _resume_json(draft), facts=(contact, facts))
 
     rendered = render.call_args.args[0]
-    for expected in ("jane@example.com", "+91 98765 43210", "Jun 2025 - Present",
-                     "## EDUCATION", "B.Tech Computer Science", "SPPU"):
+    for expected in (
+        "jane@example.com",
+        "+91 98765 43210",
+        "Jun 2025 - Present",
+        "## EDUCATION",
+        "B.Tech Computer Science",
+        "SPPU",
+    ):
         assert expected in rendered
     assert result["pending_action"]["resume_markdown"] == rendered
     assert result["pending_action"]["review"]["issues"] == []

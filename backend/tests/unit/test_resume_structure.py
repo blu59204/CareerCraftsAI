@@ -40,16 +40,23 @@ def _codes(review):
 def test_split_heading_all_parts():
     p = split_heading("Backend Engineer | Acme | Pune, India | Jan 2021 - Present")
     assert (p.role, p.employer, p.location, p.start, p.end) == (
-        "Backend Engineer", "Acme", "Pune, India", "Jan 2021", "Present",
+        "Backend Engineer",
+        "Acme",
+        "Pune, India",
+        "Jan 2021",
+        "Present",
     )
 
 
-@pytest.mark.parametrize("dates,start,end", [
-    ("2021-2024", "2021", "2024"),
-    ("Jun 2024 – Aug 2024", "Jun 2024", "Aug 2024"),
-    ("2020 to 2022", "2020", "2022"),
-    ("May 2023", "May 2023", ""),
-])
+@pytest.mark.parametrize(
+    "dates,start,end",
+    [
+        ("2021-2024", "2021", "2024"),
+        ("Jun 2024 – Aug 2024", "Jun 2024", "Aug 2024"),
+        ("2020 to 2022", "2020", "2022"),
+        ("May 2023", "May 2023", ""),
+    ],
+)
 def test_split_heading_date_formats(dates, start, end):
     p = split_heading(f"Engineer | Acme | {dates}")
     assert (p.employer, p.start, p.end) == ("Acme", start, end)
@@ -58,7 +65,10 @@ def test_split_heading_date_formats(dates, start, end):
 def test_review_flags_every_reported_gap():
     review = review_resume(SPARSE)
     assert _codes(review) == [
-        "missing_dates", "missing_education", "missing_email", "missing_phone",
+        "missing_dates",
+        "missing_education",
+        "missing_email",
+        "missing_phone",
         "truncated_employer",
     ]
     [entry] = review["experience"]
@@ -70,16 +80,29 @@ def test_review_flags_every_reported_gap():
 def test_apply_fixes_resolves_all_gaps():
     fixed = apply_fixes(
         SPARSE,
-        contact={"email": "asha@example.com", "phone": "+91 98765 43210",
-                 "location": "Pune, India"},
-        experience=[{
-            "index": 0, "employer": "Agentic Universe (Qultured Media Pvt. Ltd.)",
-            "location": "Remote", "start": "Jun 2025", "end": "Present",
-        }],
-        education=[{
-            "degree": "B.Tech, Computer Science", "institution": "Pune University",
-            "start": "2021", "end": "2025", "details": "CGPA 8.4/10",
-        }],
+        contact={
+            "email": "asha@example.com",
+            "phone": "+91 98765 43210",
+            "location": "Pune, India",
+        },
+        experience=[
+            {
+                "index": 0,
+                "employer": "Agentic Universe (Qultured Media Pvt. Ltd.)",
+                "location": "Remote",
+                "start": "Jun 2025",
+                "end": "Present",
+            }
+        ],
+        education=[
+            {
+                "degree": "B.Tech, Computer Science",
+                "institution": "Pune University",
+                "start": "2021",
+                "end": "2025",
+                "details": "CGPA 8.4/10",
+            }
+        ],
     )
     review = review_resume(fixed)
     assert review["issues"] == []
@@ -99,8 +122,12 @@ def test_contact_merge_keeps_existing_and_empty_string_removes():
     text = "# Jane\njane@example.com | +1 555 010 0199\n## SKILLS\nPython\n"
     out = apply_fixes(text, contact={"linkedin": "linkedin.com/in/jane", "phone": ""})
     assert parse_contact(out) == {
-        "email": "jane@example.com", "phone": "", "location": "",
-        "linkedin": "linkedin.com/in/jane", "github": "", "portfolio": "",
+        "email": "jane@example.com",
+        "phone": "",
+        "location": "",
+        "linkedin": "linkedin.com/in/jane",
+        "github": "",
+        "portfolio": "",
     }
 
 
@@ -147,12 +174,16 @@ def test_ensure_contact_never_overwrites():
 
 def test_saved_facts_reapply_to_a_new_draft():
     facts = {
-        "experience": [{
-            "role": "Prompt Engineer Intern",
-            "employer_match": "Agentic Universe (Qultured Media Pvt.",
-            "employer": "Agentic Universe (Qultured Media Pvt. Ltd.)",
-            "location": "Remote", "start": "Jun 2025", "end": "Present",
-        }],
+        "experience": [
+            {
+                "role": "Prompt Engineer Intern",
+                "employer_match": "Agentic Universe (Qultured Media Pvt.",
+                "employer": "Agentic Universe (Qultured Media Pvt. Ltd.)",
+                "location": "Remote",
+                "start": "Jun 2025",
+                "end": "Present",
+            }
+        ],
         "education": [{"degree": "B.Tech", "institution": "Pune University", "end": "2025"}],
     }
     review = review_resume(apply_saved_facts(SPARSE, facts))
@@ -169,8 +200,9 @@ def test_resolved_warnings_are_hidden_but_skill_gaps_kept():
     ]
     fixed = apply_fixes(
         SPARSE,
-        experience=[{"index": 0, "employer": "Agentic Universe Ltd",
-                     "start": "2025", "end": "Present"}],
+        experience=[
+            {"index": 0, "employer": "Agentic Universe Ltd", "start": "2025", "end": "Present"}
+        ],
         # Education needs its dates too: an undated education entry keeps the
         # "dates" topic open.
         education=[{"degree": "B.Tech", "institution": "Pune University", "end": "2025"}],
@@ -204,6 +236,7 @@ def _line_with(text, needle):
 
 # 1. contact parts keep inner underscores
 
+
 def test_parse_contact_keeps_underscores():
     text = "# Jane\njane_doe@example.com | github.com/jane_doe\n## SKILLS\nPython\n"
     contact = parse_contact(text)
@@ -227,15 +260,24 @@ LABELED = (
 
 def test_labeled_contact_parts_are_classified():
     assert parse_contact(LABELED) == {
-        "email": "jane@x.com", "phone": "+1 555 010 0199", "location": "Sector 62, Noida",
-        "linkedin": "", "github": "", "portfolio": "kaggle.com/jane",
+        "email": "jane@x.com",
+        "phone": "+1 555 010 0199",
+        "location": "Sector 62, Noida",
+        "linkedin": "",
+        "github": "",
+        "portfolio": "kaggle.com/jane",
     }
 
 
 def test_contact_update_edits_parts_in_place():
-    out = apply_fixes(LABELED, contact={
-        "phone": "+1 555 010 0100", "linkedin": "linkedin.com/in/jane", "email": None,
-    })
+    out = apply_fixes(
+        LABELED,
+        contact={
+            "phone": "+1 555 010 0100",
+            "linkedin": "linkedin.com/in/jane",
+            "email": None,
+        },
+    )
     assert _line_with(out, "jane@x.com") == (
         "Email: jane@x.com | Tel: +1 555 010 0100 | kaggle.com/jane | portfolio.dev | "
         "Sector 62, Noida | linkedin.com/in/jane"
@@ -286,7 +328,9 @@ def test_plain_text_contact_inserted_after_plain_name():
     text = "Jane Doe\nSoftware Engineer, Acme, 2019 - 2021\n"
     out = apply_fixes(text, full_name="jane doe", contact={"email": "jane@example.com"})
     assert out.splitlines() == [
-        "Jane Doe", "jane@example.com", "Software Engineer, Acme, 2019 - 2021",
+        "Jane Doe",
+        "jane@example.com",
+        "Software Engineer, Acme, 2019 - 2021",
     ]
 
 
@@ -307,17 +351,21 @@ def test_date_ranges_are_not_contact_lines():
 
 # 4. warning filter only drops resolved, fixable gaps
 
-@pytest.mark.parametrize("warning", [
-    "Keep up-to-date Kubernetes skills",
-    "email marketing tools (Mailchimp)",
-    "Missing email marketing tools (Mailchimp) experience.",
-    "phone-based customer support",
-    "No phone-based customer support experience.",
-    "JD prefers a Master's degree; education shows only a BSc",
-    "Graduation date for the BSc is missing",
-    "dates look fine but the JD requires Azure",
-    "5 years duration of Java",
-])
+
+@pytest.mark.parametrize(
+    "warning",
+    [
+        "Keep up-to-date Kubernetes skills",
+        "email marketing tools (Mailchimp)",
+        "Missing email marketing tools (Mailchimp) experience.",
+        "phone-based customer support",
+        "No phone-based customer support experience.",
+        "JD prefers a Master's degree; education shows only a BSc",
+        "Graduation date for the BSc is missing",
+        "dates look fine but the JD requires Azure",
+        "5 years duration of Java",
+    ],
+)
 def test_real_gaps_are_kept_on_a_fixed_resume(warning):
     review = review_resume(FULL)
     assert review["issues"] == []
@@ -341,9 +389,7 @@ def test_original_warnings_dropped_once_fixed():
 
 
 def test_original_warnings_kept_while_gaps_open():
-    assert filter_resolved_warnings(ORIGINAL_WARNINGS, review_resume(SPARSE)) == (
-        ORIGINAL_WARNINGS
-    )
+    assert filter_resolved_warnings(ORIGINAL_WARNINGS, review_resume(SPARSE)) == (ORIGINAL_WARNINGS)
 
 
 def test_education_date_gap_keeps_dates_warning_open():
@@ -396,15 +442,19 @@ def test_user_warnings_all_kept_while_gaps_open():
     assert filter_resolved_warnings(USER_WARNINGS, review_resume(SPARSE)) == USER_WARNINGS
 
 
-@pytest.mark.parametrize("warning", [
-    "The role requires a degree and no education section is listed.",
-    "Missing dates are required by the employer.",
-])
+@pytest.mark.parametrize(
+    "warning",
+    [
+        "The role requires a degree and no education section is listed.",
+        "Missing dates are required by the employer.",
+    ],
+)
 def test_requirement_in_the_same_clause_keeps_warning(warning):
     assert filter_resolved_warnings([warning], review_resume(FULL)) == [warning]
 
 
 # 5. saved facts attach only to the right role
+
 
 def _exp(role_line):
     return f"# Jane\n## EXPERIENCE\n### {role_line}\n- Built things\n"
@@ -412,32 +462,43 @@ def _exp(role_line):
 
 def test_saved_facts_do_not_attach_to_a_different_role():
     text = _exp("Senior Software Engineer | Beta Labs")
-    facts = {"experience": [{"role": "Software Engineer", "employer": "Acme",
-                             "start": "2019", "end": "2021"}]}
+    facts = {
+        "experience": [
+            {"role": "Software Engineer", "employer": "Acme", "start": "2019", "end": "2021"}
+        ]
+    }
     assert apply_saved_facts(text, facts) == text
 
 
 def test_saved_facts_do_not_attach_to_a_different_employer():
     text = _exp("Software Engineer | Beta Labs")
-    facts = {"experience": [{"role": "Software Engineer", "employer": "Acme Corp",
-                             "start": "2019", "end": "2021"}]}
+    facts = {
+        "experience": [
+            {"role": "Software Engineer", "employer": "Acme Corp", "start": "2019", "end": "2021"}
+        ]
+    }
     assert apply_saved_facts(text, facts) == text
 
 
 def test_saved_facts_fill_empty_employer_on_unique_role_match():
     text = _exp("Software Engineer")
-    facts = {"experience": [{"role": "software engineer.", "employer": "Acme Corp",
-                             "start": "2019", "end": "2021"}]}
+    facts = {
+        "experience": [
+            {"role": "software engineer.", "employer": "Acme Corp", "start": "2019", "end": "2021"}
+        ]
+    }
     out = apply_saved_facts(text, facts)
     assert "### Software Engineer | Acme Corp |  | 2019 - 2021" in out
 
 
 def test_saved_facts_ambiguous_role_only_match_is_skipped():
     text = _exp("Software Engineer")
-    facts = {"experience": [
-        {"role": "Software Engineer", "employer": "Acme Corp", "start": "2019"},
-        {"role": "Software Engineer", "employer": "Beta Labs", "start": "2021"},
-    ]}
+    facts = {
+        "experience": [
+            {"role": "Software Engineer", "employer": "Acme Corp", "start": "2019"},
+            {"role": "Software Engineer", "employer": "Beta Labs", "start": "2021"},
+        ]
+    }
     assert apply_saved_facts(text, facts) == text
 
 
@@ -452,28 +513,43 @@ def test_saved_fact_matching_two_entries_is_skipped():
 
 def test_saved_facts_normalize_punctuation_and_case():
     text = _exp("Software Engineer - Backend | ACME, Inc.")
-    facts = {"experience": [{"role": "software engineer (backend)", "employer": "Acme Inc",
-                             "start": "2019", "end": "2021"}]}
+    facts = {
+        "experience": [
+            {
+                "role": "software engineer (backend)",
+                "employer": "Acme Inc",
+                "start": "2019",
+                "end": "2021",
+            }
+        ]
+    }
     out = apply_saved_facts(text, facts)
     assert "### Software Engineer - Backend | ACME, Inc. |  | 2019 - 2021" in out
 
 
 def test_saved_facts_complete_a_truncated_employer_by_prefix():
     text = _exp("Intern | Agentic Universe (Qultured Media Pvt.")
-    facts = {"experience": [{"role": "Intern",
-                             "employer": "Agentic Universe (Qultured Media Pvt. Ltd.)"}]}
+    facts = {
+        "experience": [
+            {"role": "Intern", "employer": "Agentic Universe (Qultured Media Pvt. Ltd.)"}
+        ]
+    }
     out = apply_saved_facts(text, facts)
     assert "### Intern | Agentic Universe (Qultured Media Pvt. Ltd.)" in out
 
 
 # 6. placeholders
 
-@pytest.mark.parametrize("line", [
-    "The vendor had not provided patches",
-    "Budget was not provided, so we cut scope",
-    "- NA",
-    "- Unknown",
-])
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "The vendor had not provided patches",
+        "Budget was not provided, so we cut scope",
+        "- NA",
+        "- Unknown",
+    ],
+)
 def test_clean_placeholders_keeps_real_text(line):
     out = clean_placeholders(f"# Jane\n## SUMMARY\n{line}\n")
     assert line in out.splitlines()
@@ -514,6 +590,7 @@ def test_is_placeholder_is_case_insensitive_part_check():
 
 # 7. positional heading slots
 
+
 def test_legacy_two_part_location_is_not_an_employer():
     parts = split_heading("Engineer | Remote | 2021 - 2022")
     assert (parts.role, parts.employer, parts.location) == ("Engineer", "", "Remote")
@@ -522,39 +599,47 @@ def test_legacy_two_part_location_is_not_an_employer():
     assert review["experience"][0]["issues"] == ["missing_employer"]
 
 
-@pytest.mark.parametrize("text,expected", [
-    ("Engineer |  | Remote | Jan 2021 - Dec 2022", ("Engineer", "", "Remote", "Jan 2021")),
-    ("Engineer | Acme |  | 2021 - 2022", ("Engineer", "Acme", "", "2021")),
-    ("Engineer | Pune, India | 2021", ("Engineer", "", "Pune, India", "2021")),
-    ("Engineer | Acme, Inc | 2021", ("Engineer", "Acme, Inc", "", "2021")),
-    ("Engineer | Acme | Pune | 2021", ("Engineer", "Acme", "Pune", "2021")),
-    (" | Pune University |  | 2025", ("", "Pune University", "", "2025")),
-    ("Engineer | New York, NY | 2021", ("Engineer", "", "New York, NY", "2021")),
-    ("CareerCraft | Python, FastAPI | 2024", ("CareerCraft", "Python, FastAPI", "", "2024")),
-])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Engineer |  | Remote | Jan 2021 - Dec 2022", ("Engineer", "", "Remote", "Jan 2021")),
+        ("Engineer | Acme |  | 2021 - 2022", ("Engineer", "Acme", "", "2021")),
+        ("Engineer | Pune, India | 2021", ("Engineer", "", "Pune, India", "2021")),
+        ("Engineer | Acme, Inc | 2021", ("Engineer", "Acme, Inc", "", "2021")),
+        ("Engineer | Acme | Pune | 2021", ("Engineer", "Acme", "Pune", "2021")),
+        (" | Pune University |  | 2025", ("", "Pune University", "", "2025")),
+        ("Engineer | New York, NY | 2021", ("Engineer", "", "New York, NY", "2021")),
+        ("CareerCraft | Python, FastAPI | 2024", ("CareerCraft", "Python, FastAPI", "", "2024")),
+    ],
+)
 def test_split_heading_positional(text, expected):
     p = split_heading(text)
     assert (p.role, p.employer, p.location, p.start) == expected
 
 
 def test_format_heading_keeps_empty_inner_slots():
-    assert format_heading(EntryParts(role="Engineer", location="Remote", start="2021",
-                                     end="2022")) == "### Engineer |  | Remote | 2021 - 2022"
+    assert (
+        format_heading(EntryParts(role="Engineer", location="Remote", start="2021", end="2022"))
+        == "### Engineer |  | Remote | 2021 - 2022"
+    )
     assert format_heading(EntryParts(role="Engineer", employer="Acme")) == "### Engineer | Acme"
     assert format_heading(EntryParts(role="Engineer", start="2021")) == (
         "### Engineer |  |  | 2021"
     )
 
 
-@pytest.mark.parametrize("parts", [
-    EntryParts("Engineer", "Acme", "Pune, India", "Jan 2021", "Present"),
-    EntryParts("Engineer", "", "Remote", "2021", "2022"),
-    EntryParts("Engineer", "Acme", "", "2021", ""),
-    EntryParts("Engineer", "", "", "May 2023", ""),
-    EntryParts("Engineer", "", "Pune, India", "", ""),
-    EntryParts("Engineer", "Acme", "Pune", "", ""),
-    EntryParts("", "Pune University", "", "2021", "2025"),
-])
+@pytest.mark.parametrize(
+    "parts",
+    [
+        EntryParts("Engineer", "Acme", "Pune, India", "Jan 2021", "Present"),
+        EntryParts("Engineer", "", "Remote", "2021", "2022"),
+        EntryParts("Engineer", "Acme", "", "2021", ""),
+        EntryParts("Engineer", "", "", "May 2023", ""),
+        EntryParts("Engineer", "", "Pune, India", "", ""),
+        EntryParts("Engineer", "Acme", "Pune", "", ""),
+        EntryParts("", "Pune University", "", "2021", "2025"),
+    ],
+)
 def test_format_split_round_trip(parts):
     assert split_heading(format_heading(parts)[4:]) == parts
 
@@ -570,36 +655,55 @@ def test_clearing_employer_keeps_location_slot():
 
 # 8. only real date ranges are dates
 
-@pytest.mark.parametrize("text,employer,location", [
-    ("Intern | Deloitte (Summer 2023)", "Deloitte (Summer 2023)", ""),
-    ("Data Analyst | Know Now Inc", "Know Now Inc", ""),
-    ("Winner | Smart India Hackathon 2022", "Smart India Hackathon 2022", ""),
-    ("Engineer | Acme | Mid-2021 - 2023", "Acme", "Mid-2021 - 2023"),
-])
+
+@pytest.mark.parametrize(
+    "text,employer,location",
+    [
+        ("Intern | Deloitte (Summer 2023)", "Deloitte (Summer 2023)", ""),
+        ("Data Analyst | Know Now Inc", "Know Now Inc", ""),
+        ("Winner | Smart India Hackathon 2022", "Smart India Hackathon 2022", ""),
+        ("Engineer | Acme | Mid-2021 - 2023", "Acme", "Mid-2021 - 2023"),
+    ],
+)
 def test_text_with_years_is_not_a_date_part(text, employer, location):
     p = split_heading(text)
     assert (p.employer, p.location, p.start, p.end) == (employer, location, "", "")
 
 
-@pytest.mark.parametrize("text,ok", [
-    ("Jun 2019 – Mar 2021", True), ("2021-2024", True), ("2020 to 2022", True),
-    ("06/2021 - 08/2022", True), ("May 2023", True), ("Summer 2023", True),
-    ("Sept. 2020 — Present", True), ("January 2020 - Current", True),
-    ("Mid-2021 - 2023", False), ("Deloitte (Summer 2023)", False), ("Know Now Inc", False),
-    ("Smart India Hackathon 2022", False), ("Summer", False), ("", False),
-])
+@pytest.mark.parametrize(
+    "text,ok",
+    [
+        ("Jun 2019 – Mar 2021", True),
+        ("2021-2024", True),
+        ("2020 to 2022", True),
+        ("06/2021 - 08/2022", True),
+        ("May 2023", True),
+        ("Summer 2023", True),
+        ("Sept. 2020 — Present", True),
+        ("January 2020 - Current", True),
+        ("Mid-2021 - 2023", False),
+        ("Deloitte (Summer 2023)", False),
+        ("Know Now Inc", False),
+        ("Smart India Hackathon 2022", False),
+        ("Summer", False),
+        ("", False),
+    ],
+)
 def test_is_date_range(text, ok):
     assert is_date_range(text) is ok
 
 
-@pytest.mark.parametrize("value,start,end", [
-    ("Jun 2019 – Mar 2021", "Jun 2019", "Mar 2021"),
-    ("2021-2024", "2021", "2024"),
-    ("2020 to 2022", "2020", "2022"),
-    ("06/2021 - 08/2022", "06/2021", "08/2022"),
-    ("May 2023", "May 2023", ""),
-    ("Jan 2021 - Present", "Jan 2021", "Present"),
-])
+@pytest.mark.parametrize(
+    "value,start,end",
+    [
+        ("Jun 2019 – Mar 2021", "Jun 2019", "Mar 2021"),
+        ("2021-2024", "2021", "2024"),
+        ("2020 to 2022", "2020", "2022"),
+        ("06/2021 - 08/2022", "06/2021", "08/2022"),
+        ("May 2023", "May 2023", ""),
+        ("Jan 2021 - Present", "Jan 2021", "Present"),
+    ],
+)
 def test_split_dates(value, start, end):
     assert split_dates(value) == (start, end)
 
@@ -632,7 +736,10 @@ def test_bold_pipe_lines_are_entries():
     review = review_resume(text)
     [exp] = review["experience"]
     assert (exp["role"], exp["employer"], exp["start"], exp["end"]) == (
-        "Engineer", "Acme", "2021", "2022",
+        "Engineer",
+        "Acme",
+        "2021",
+        "2022",
     )
     assert review["education"][0]["employer"] == "IIT Bombay"
     out = apply_fixes(text, experience=[{"index": 0, "location": "Pune"}])
@@ -642,28 +749,40 @@ def test_bold_pipe_lines_are_entries():
 
 # 10. several fixes for the same entry merge
 
+
 def test_fixes_for_same_index_merge():
-    out = apply_fixes(SPARSE, experience=[
-        {"index": 0, "start": "2020", "end": "2021"},
-        {"index": 0, "location": "Pune", "start": None},
-    ])
+    out = apply_fixes(
+        SPARSE,
+        experience=[
+            {"index": 0, "start": "2020", "end": "2021"},
+            {"index": 0, "location": "Pune", "start": None},
+        ],
+    )
     [entry] = review_resume(out)["experience"]
     assert (entry["location"], entry["start"], entry["end"]) == ("Pune", "2020", "2021")
 
 
 def test_later_fix_keys_win():
-    out = apply_fixes(SPARSE, experience=[
-        {"index": 0, "start": "2020"}, {"index": 0, "start": "2019"},
-    ])
+    out = apply_fixes(
+        SPARSE,
+        experience=[
+            {"index": 0, "start": "2020"},
+            {"index": 0, "start": "2019"},
+        ],
+    )
     assert review_resume(out)["experience"][0]["start"] == "2019"
 
 
 # 11. validation and injection
 
+
 def test_unknown_education_index_raises_before_any_change():
     with pytest.raises(ValueError):
-        apply_fixes(SPARSE, experience=[{"index": 0, "start": "2020"}],
-                    education=[{"index": 0, "degree": "B.Tech"}])
+        apply_fixes(
+            SPARSE,
+            experience=[{"index": 0, "start": "2020"}],
+            education=[{"index": 0, "degree": "B.Tech"}],
+        )
 
 
 def test_contact_values_cannot_inject_headings():
