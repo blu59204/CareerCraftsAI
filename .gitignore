@@ -90,6 +90,9 @@ backend/tests/e2e/results.log
 .env.*.local
 *.secret
 deploy/secrets/
+# Machine-local run setups (local production replica + dev compose override)
+deploy/local/
+docker-compose.override.yml
 *.tsbuildinfo
 
 # Quarantined scratch/junk files pending deletion by the user

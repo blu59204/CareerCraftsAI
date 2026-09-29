@@ -165,6 +165,58 @@ production:
 
 ---
 
+## Ollama (embeddings)
+
+Chat providers without an embeddings API (Anthropic, DeepSeek, OpenRouter,
+NVIDIA NIM) index documents through a self-hosted Ollama serving
+`qwen3-embedding:0.6b`. It runs on the Temporal box
+(`deploy/oracle-vm/ollama-compose.yml`), bound to that box's private IP only —
+Ollama has no authentication.
+
+1. On the Temporal box, start it and pull the model:
+
+   ```bash
+   cd /opt/careercraft
+   docker compose -f deploy/oracle-vm/ollama-compose.yml up -d
+   docker compose -f deploy/oracle-vm/ollama-compose.yml exec ollama \
+     ollama pull qwen3-embedding:0.6b
+   ```
+
+2. Allow TCP 11434 **only from the main app VM's private IP**, never
+   `0.0.0.0/0`:
+   - OCI: add an ingress rule to the subnet's security list — source
+     `<app-vm-private-ip>/32`, TCP, destination port 11434.
+   - On the box itself:
+
+     ```bash
+     sudo iptables -I INPUT -p tcp --dport 11434 -s <app-vm-private-ip> -j ACCEPT
+     sudo iptables -A INPUT -p tcp --dport 11434 -j DROP
+     sudo netfilter-persistent save
+     ```
+
+3. In `/opt/careercraft-secrets/backend.env` on the main VM:
+
+   ```
+   EMBEDDING_PROVIDER=ollama
+   EMBEDDING_OLLAMA_URL=http://10.0.0.182:11434
+   ```
+
+4. Recreate the services that read it:
+
+   ```bash
+   docker compose -f deploy/oracle-vm/compose.yml up -d --force-recreate backend temporal-worker
+   ```
+
+5. Check from the main VM:
+   `curl -s http://10.0.0.182:11434/api/tags` should list `qwen3-embedding:0.6b`.
+
+After any embedding-model or dimension change, existing documents stay in
+their old collection (collections are named `{user}_{doc}_{provider}_{dim}d`)
+and are no longer searched. **Users must re-upload their documents** to
+re-index them.
+
+---
+
 ## Secrets rotation (e.g. switching Clerk from a development to a
 ## production instance)
 

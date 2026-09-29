@@ -8,14 +8,14 @@ import zipfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.models.db import User, UserDocument, UserModelSettings
 from app.services.drive_service import DriveError, upload_to_drive
-from app.services.rag_service import extract_text, ingest_document
+from app.services.rag_service import EmbeddingUnavailable, extract_text, ingest_document
 from app.services.storage_service import delete_file, download_file, upload_file
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,18 @@ def _safe_filename(filename: str | None) -> str:
     return (name or "upload.bin")[:255]
 
 
+_PRIVATE_ATS_KEYS = frozenset({"jd_text"})
+
+
+def _public_ats_data(data: dict | None) -> dict | None:
+    """ats_data without internal keys. Tailored resumes keep the job
+    description they were scored against (up to 20 KB of possibly scraped
+    text) for re-scoring; it is not part of the document listing."""
+    if data is None:
+        return None
+    return {k: v for k, v in data.items() if k not in _PRIVATE_ATS_KEYS}
+
+
 class DocumentResponse(BaseModel):
     id: uuid.UUID
     doc_type: str
@@ -79,6 +91,11 @@ class DocumentResponse(BaseModel):
     warning: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("ats_data")
+    @classmethod
+    def _strip_private_ats_data(cls, value: dict | None) -> dict | None:
+        return _public_ats_data(value)
 
 
 async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> None:
@@ -171,7 +188,9 @@ async def upload_document(
     try:
         raw_text = extract_text(content, safe_filename)
     except Exception as exc:
-        logger.warning("Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc)
+        logger.warning(
+            "Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc
+        )
         raise HTTPException(
             status_code=422,
             detail="Could not read this document — it may be corrupted or not a valid file of its declared type.",
@@ -210,9 +229,16 @@ async def upload_document(
                 current_user.id,
                 exc,
             )
+            if isinstance(exc, EmbeddingUnavailable):
+                reason = (
+                    f"your {model_settings.provider} model can't create search embeddings "
+                    "and no embedding fallback is configured (EMBEDDING_PROVIDER)."
+                )
+            else:
+                reason = "the embedding service failed — check Settings → Models."
             upload_warning = (
                 (upload_warning + " ") if upload_warning else ""
-            ) + "Document saved but not indexed for AI search — check Settings → Models."
+            ) + f"Document saved but not indexed for AI search: {reason}"
             embedded_at = None
 
     doc = UserDocument(
@@ -325,7 +351,7 @@ async def get_ats_score(
         raise HTTPException(status_code=404, detail="Document not found")
     return {
         "ats_score": doc.ats_score,
-        "ats_data": doc.ats_data,
+        "ats_data": _public_ats_data(doc.ats_data),
     }
 
 

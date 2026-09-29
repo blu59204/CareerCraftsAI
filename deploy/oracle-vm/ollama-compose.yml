@@ -1,0 +1,46 @@
+# Self-hosted Ollama for embeddings (RAG + agent memory), running on the same
+# dedicated box as deploy/oracle-vm/temporal-compose.yml (spare RAM there, and
+# keeps model memory off the resource-constrained main app VM).
+#
+# Serves qwen3-embedding:0.6b (1024-d) only -- chat still goes to each user's
+# own BYOK provider. Pull the model once after the first `up`:
+#   docker compose -f deploy/oracle-vm/ollama-compose.yml exec ollama \
+#     ollama pull qwen3-embedding:0.6b
+# The main VM's backend.env then points at it:
+#   EMBEDDING_PROVIDER=ollama
+#   EMBEDDING_OLLAMA_URL=http://10.0.0.182:11434
+#
+# Ollama has NO authentication. OLLAMA_HOST pins it to this box's private
+# VCN address, so it must never be 0.0.0.0 (under network_mode: host that
+# would expose it on the public interface). Port 11434 must additionally be
+# opened ONLY to the main app VM's private IP -- see the "Ollama (embeddings)"
+# section of docs/DEPLOYMENT.md for the OCI security-list and iptables steps.
+name: ollama-isolated
+services:
+  ollama:
+    image: ollama/ollama:latest
+    network_mode: host
+    environment:
+      # Private IP only (same address as TEMPORAL_BROADCAST_ADDRESS in
+      # temporal-compose.yml). Never 0.0.0.0.
+      OLLAMA_HOST: 10.0.0.182:11434
+      # Keep the model resident: embeddings are small but reloading adds
+      # seconds to the first query after idle.
+      OLLAMA_KEEP_ALIVE: "-1"
+      # backend + temporal-worker can embed at the same time.
+      OLLAMA_NUM_PARALLEL: "2"
+    volumes:
+      - ollama_models:/root/.ollama
+    mem_limit: 2g
+    cpus: 1.0
+    restart: unless-stopped
+    healthcheck:
+      # `ollama list` talks to OLLAMA_HOST, so this also proves the private
+      # bind is up.
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+volumes:
+  ollama_models:

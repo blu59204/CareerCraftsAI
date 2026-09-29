@@ -23,8 +23,10 @@ async def test_google_embed_offloads_the_blocking_sdk_call(monkeypatch):
     def fake_configure(api_key: str) -> None:
         calls.append("configure")
 
-    def fake_embed_content(model: str, content: str) -> dict:
+    def fake_embed_content(model: str, content: str, output_dimensionality: int) -> dict:
         calls.append("embed_content")
+        assert model == "models/gemini-embedding-001"
+        assert output_dimensionality == 768
         return {"embedding": [0.1, 0.2, 0.3]}
 
     fake_genai = types.SimpleNamespace(configure=fake_configure, embed_content=fake_embed_content)

@@ -225,6 +225,7 @@ TEMPORAL_ADDRESS=temporal:7233   # or your Temporal Cloud endpoint (+ TEMPORAL_T
 # Required if your active model has no embeddings API (Anthropic, DeepSeek,
 # OpenRouter, NVIDIA NIM): which provider embeds documents for RAG
 EMBEDDING_PROVIDER=ollama   # openai | google | ollama
+EMBEDDING_OLLAMA_URL=http://localhost:11434   # server-side Ollama with qwen3-embedding:0.6b
 
 # Optional — enables additional features
 HUNTER_API_KEY=<hunter.io key for email finding>
@@ -458,13 +459,13 @@ CareerCraftsAI/
 |---|---|---|
 | **Anthropic** | Claude Sonnet 4.6, Haiku 4.5 (+ extended thinking) | — (uses `EMBEDDING_PROVIDER`) |
 | **OpenAI** | GPT-4o, GPT-4o-mini | text-embedding-3-small |
-| **Google** | Gemini 2.0 Flash, Pro | models/embedding-001 |
-| **Ollama** | Any local model | nomic-embed-text |
+| **Google** | Gemini 2.0 Flash, Pro | gemini-embedding-001 (768-d) |
+| **Ollama** | Any local model | qwen3-embedding:0.6b (1024-d) |
 | **NVIDIA NIM** | Llama 3.1 70B, others | — (uses `EMBEDDING_PROVIDER`) |
 | **DeepSeek** | DeepSeek chat models | — (uses `EMBEDDING_PROVIDER`) |
 | **OpenRouter** | Any model in the OpenRouter catalog | — (uses `EMBEDDING_PROVIDER`) |
 
-Multiple providers can be configured simultaneously — select the active model in **Settings → Models**. Providers without an embeddings API use the provider named in `EMBEDDING_PROVIDER` (`openai`, `google`, or `ollama`) for RAG.
+Multiple providers can be configured simultaneously — select the active model in **Settings → Models**. Providers without an embeddings API use the provider named in `EMBEDDING_PROVIDER` (`openai`, `google`, or `ollama`) for RAG; with `ollama`, `EMBEDDING_OLLAMA_URL` points at the server's Ollama (`ollama pull qwen3-embedding:0.6b`).
 
 ---
 

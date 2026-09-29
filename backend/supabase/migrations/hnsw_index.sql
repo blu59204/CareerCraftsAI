@@ -9,7 +9,7 @@
 -- Parameters chosen for a multi-tenant workload:
 --   m = 16              (graph connectivity; 16 is the pgvector default, good for general use)
 --   ef_construction = 64 (build-time search width; higher = better recall, slower build)
---   cosine ops          (matches the OpenAI/Google/nomic-embed-text embedding space)
+--   cosine ops          (matches the OpenAI/Google/Ollama embedding spaces)
 --
 -- Monitoring query (check index is used, not seqscan):
 --   EXPLAIN (ANALYZE, BUFFERS)

@@ -13,6 +13,7 @@ def mock_embeddings():
 
 def test_extract_text_from_txt():
     from app.services.rag_service import extract_text
+
     content = b"Hello world, this is a resume."
     result = extract_text(content, "resume.txt")
     assert "Hello world" in result
@@ -20,6 +21,7 @@ def test_extract_text_from_txt():
 
 def test_chunk_text_produces_multiple_chunks():
     from app.services.rag_service import chunk_text
+
     long_text = " ".join(["word"] * 1000)
     chunks = chunk_text(long_text)
     assert len(chunks) > 1
@@ -27,24 +29,33 @@ def test_chunk_text_produces_multiple_chunks():
 
 def test_get_embedding_model_anthropic_uses_configured_ollama(monkeypatch):
     from app.services.rag_service import get_embedding_model
+
     settings_mock = MagicMock()
     settings_mock.provider = "anthropic"
     settings_mock.ollama_url = None
     monkeypatch.setattr("app.services.rag_service.app_settings.EMBEDDING_PROVIDER", "ollama")
-    with patch("app.services.rag_service.OllamaEmbeddings") as mock_ollama:
+    monkeypatch.setattr(
+        "app.services.rag_service.app_settings.EMBEDDING_OLLAMA_URL", "http://ollama:11434"
+    )
+    with patch("app.services.rag_service.QwenOllamaEmbeddings") as mock_ollama:
         mock_ollama.return_value = MagicMock()
         get_embedding_model(settings_mock)
-        mock_ollama.assert_called_once_with(model="nomic-embed-text", base_url=None)
+        mock_ollama.assert_called_once_with(
+            model="qwen3-embedding:0.6b", base_url="http://ollama:11434"
+        )
 
 
 def test_get_embedding_model_openai():
     from app.services.rag_service import get_embedding_model
+
     settings_mock = MagicMock()
     settings_mock.provider = "openai"
     settings_mock.api_key_enc = "encrypted"
-    with patch("app.services.rag_service.OpenAIEmbeddings") as mock_emb, \
-         patch("app.services.rag_service.decrypt_api_key", return_value="real-key"), \
-         patch("app.services.rag_service.app_settings") as mock_cfg:
+    with (
+        patch("app.services.rag_service.OpenAIEmbeddings") as mock_emb,
+        patch("app.services.rag_service.decrypt_api_key", return_value="real-key"),
+        patch("app.services.rag_service.app_settings") as mock_cfg,
+    ):
         mock_cfg.APP_SECRET_KEY = "secret"
         mock_emb.return_value = MagicMock()
         get_embedding_model(settings_mock)
@@ -53,9 +64,10 @@ def test_get_embedding_model_openai():
 
 def test_collection_name_format():
     from app.services.rag_service import collection_name
+
     # Default provider (openai, 1536-d)
     assert collection_name("usr_abc123", "resume") == "usr_abc123_resume_openai_1536d"
     assert collection_name("usr_abc123", "jd") == "usr_abc123_jd_openai_1536d"
     # Different providers have different dimensions
     assert collection_name("usr_abc123", "resume", "google") == "usr_abc123_resume_google_768d"
-    assert collection_name("usr_abc123", "resume", "ollama") == "usr_abc123_resume_ollama_768d"
+    assert collection_name("usr_abc123", "resume", "ollama") == "usr_abc123_resume_ollama_1024d"
