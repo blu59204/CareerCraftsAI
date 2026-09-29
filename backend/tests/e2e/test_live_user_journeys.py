@@ -322,15 +322,11 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
     previously_active_provider = None
     previously_active_model_name = None
     if had_previously_active:
-        active_row = active_badge.first.locator(
-            "xpath=ancestor::*[@data-testid='model-row'][1]"
-        )
+        active_row = active_badge.first.locator("xpath=ancestor::*[@data-testid='model-row'][1]")
         previously_active_provider = active_row.locator(
             "[data-testid='model-provider']"
         ).inner_text()
-        previously_active_model_name = active_row.locator(
-            "[data-testid='model-name']"
-        ).inner_text()
+        previously_active_model_name = active_row.locator("[data-testid='model-name']").inner_text()
 
     responses: list = []
     page.on(
