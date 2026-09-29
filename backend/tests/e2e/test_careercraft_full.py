@@ -558,7 +558,7 @@ class TestInterviewCoachAgent:
         print("INTERVIEW: 2-question session complete, scores returned")
 
     def test_interview_via_ui(self, page: Page):
-        page.goto(f"{BASE_URL}/interview")
+        page.goto(f"{BASE_URL}/interview?tab=coach")
         page.wait_for_load_state("networkidle")
         ss(page, "interview", "01_page_loaded")
         page.locator("input[name='job_title']").first.fill("Software Engineer")

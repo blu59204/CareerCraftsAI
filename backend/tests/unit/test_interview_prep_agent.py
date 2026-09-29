@@ -9,7 +9,7 @@ from app.agents.state import AgentState
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INTERVIEW_PREP_PAGE = (
-    REPO_ROOT / "frontend" / "src" / "app" / "(app)" / "interview-prep" / "page.tsx"
+    REPO_ROOT / "frontend" / "src" / "components" / "interview" / "PrepPlanPanel.tsx"
 )
 
 

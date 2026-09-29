@@ -1,203 +1,143 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { motion } from 'motion/react'
-import { fadeUp, stagger } from '@/lib/motion-variants'
-import { LiquidGlassButton } from '@/components/ui/LiquidGlassButton'
-import { CommandHeader } from '@/components/immersive/CommandHeader'
-import { apiClient, getApiErrorMessage } from '@/lib/api'
-import { toast } from 'sonner'
-import { Play, Send, Trophy } from 'lucide-react'
+import { Suspense, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { AnimatePresence, motion } from "motion/react";
+import { ListChecks, Microphone } from "@phosphor-icons/react";
+import { Bezel, PageHero, Screen, Segmented, panelSwap } from "@/components/vanguard";
+import { cn } from "@/lib/utils";
+import { MockInterviewPanel } from "@/components/interview/MockInterviewPanel";
+import { PrepPlanPanel } from "@/components/interview/PrepPlanPanel";
+import { InterviewBodySkeleton } from "@/components/interview/InterviewSkeleton";
 
-type QuestionType = 'behavioral' | 'technical' | 'situational'
+type InterviewTab = "prep" | "coach";
 
-interface Question {
-  type: string
-  question: string
-  context?: string
+function parseTab(value: string | null): InterviewTab {
+  return value === "coach" ? "coach" : "prep";
 }
 
-interface AnswerFeedback {
-  score: number
-  rating: string
-  tips: string[]
+const TAB_OPTIONS: ReadonlyArray<{ value: InterviewTab; label: string; icon: React.ReactNode }> = [
+  { value: "prep", label: "Prep plan", icon: <ListChecks size={15} weight="light" /> },
+  { value: "coach", label: "Mock interview", icon: <Microphone size={15} weight="light" /> },
+];
+
+const RHYTHM: ReadonlyArray<{ step: string; title: string; body: string; tab: InterviewTab }> = [
+  { step: "01", title: "Plan", body: "Build a role-specific question bank", tab: "prep" },
+  { step: "02", title: "Rehearse", body: "Shape answers with STAR stories", tab: "prep" },
+  { step: "03", title: "Perform", body: "Run a scored live session", tab: "coach" },
+];
+
+/** Hero aside: the three-beat prep rhythm, highlighting the active mode. */
+function RhythmAside({ tab }: { tab?: InterviewTab }) {
+  return (
+    <Bezel size="md" className="hidden lg:block" coreClassName="p-2">
+      <ol className="space-y-1">
+        {RHYTHM.map((item) => {
+          const active = tab === item.tab;
+          return (
+            <li
+              key={item.step}
+              className={cn(
+                "flex items-center gap-4 rounded-[1rem] px-4 py-3 transition-colors duration-500 ease-vanguard",
+                active ? "bg-primary/[0.07]" : "bg-transparent",
+              )}
+            >
+              <span className={cn("font-geist-mono text-[11px] tabular-nums", active ? "text-primary" : "text-muted-foreground/70")}>{item.step}</span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold tracking-[-0.01em] text-foreground">{item.title}</p>
+                <p className="truncate text-xs text-muted-foreground">{item.body}</p>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </Bezel>
+  );
 }
 
-interface SessionSummary {
-  overall_score: number
-  count: number
-  rating: string
+function InterviewHero({ actions, tab }: { actions?: React.ReactNode; tab?: InterviewTab }) {
+  return (
+    <PageHero
+      eyebrow="Interview studio"
+      title="Interview Coach"
+      accent="Practice makes perfect."
+      description="Generate a role-specific prep plan, rehearse with STAR stories, then run a live session with score-backed feedback."
+      actions={actions}
+      aside={<RhythmAside tab={tab} />}
+      className="pb-8 md:pb-10"
+    />
+  );
+}
+
+/**
+ * Reads ?tab=prep|coach (default prep). Local state gives an instant swap;
+ * the URL is kept in sync with router.replace (no scroll) and external URL
+ * changes (back/forward, links) are adopted during render.
+ */
+function InterviewWorkspace() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const urlTab = parseTab(searchParams.get("tab"));
+  const [tab, setTab] = useState<InterviewTab>(urlTab);
+  const [syncedUrlTab, setSyncedUrlTab] = useState<InterviewTab>(urlTab);
+  if (urlTab !== syncedUrlTab) {
+    setSyncedUrlTab(urlTab);
+    setTab(urlTab);
+  }
+
+  const selectTab = (next: InterviewTab) => {
+    if (next === tab) return;
+    setTab(next);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", next);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  return (
+    <div>
+      <InterviewHero
+        tab={tab}
+        actions={
+          <Segmented<InterviewTab>
+            ariaLabel="Interview mode"
+            value={tab}
+            onChange={selectTab}
+            options={TAB_OPTIONS}
+          />
+        }
+      />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={tab}
+          role="tabpanel"
+          aria-label={tab === "prep" ? "Prep plan" : "Mock interview"}
+          variants={panelSwap}
+          initial="hidden"
+          animate="show"
+          exit="exit"
+        >
+          {tab === "prep" ? <PrepPlanPanel /> : <MockInterviewPanel />}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
 }
 
 export default function InterviewPage() {
-  const [role, setRole] = useState('')
-  const [company, setCompany] = useState('')
-  const [questionType, setQuestionType] = useState<QuestionType>('behavioral')
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null)
-  const [questionIndex, setQuestionIndex] = useState(0)
-  const [answer, setAnswer] = useState('')
-  const [feedbacks, setFeedbacks] = useState<AnswerFeedback[]>([])
-  const [summary, setSummary] = useState<SessionSummary | null>(null)
-
-  const startSession = useMutation({
-    mutationFn: () =>
-      apiClient.post('/interview/session/start', {
-        role,
-        company: company || undefined,
-        question_type: questionType,
-      }),
-    onSuccess: (res) => {
-      setSessionId(res.data.session_id)
-      setCurrentQuestion(res.data.question)
-      setQuestionIndex(res.data.question_index ?? 0)
-      toast.success('Session started!')
-    },
-    onError: (error) => toast.error(getApiErrorMessage(error, 'Failed to start session')),
-  })
-
-  const submitAnswer = useMutation({
-    mutationFn: () =>
-      apiClient.post(`/interview/session/${sessionId}/answer`, {
-        question_index: questionIndex,
-        answer_text: answer,
-      }),
-    onSuccess: (res) => {
-      setFeedbacks((prev) => [...prev, res.data.feedback])
-      setAnswer('')
-      if (res.data.next_question) {
-        setCurrentQuestion(res.data.next_question)
-        setQuestionIndex(res.data.question_index + 1)
-      } else {
-        setSummary(res.data.summary)
-        setCurrentQuestion(null)
-      }
-    },
-    onError: (error) => toast.error(getApiErrorMessage(error, 'Failed to submit answer')),
-  })
-
-  const handleSubmitAnswer = () => {
-    if (answer.trim().split(/\s+/).length < 10) {
-      toast.error('Please write at least 10 words')
-      return
-    }
-    submitAnswer.mutate()
-  }
-
-  if (summary) {
-    return (
-      <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-6">
-        <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-8 text-center">
-          <Trophy className="w-12 h-12 mx-auto text-warning" />
-          <h1 className="text-2xl font-bold">Session Complete</h1>
-          <p className="text-4xl font-bold">{summary.overall_score}/100</p>
-          <p className="text-sm text-muted-foreground capitalize">{summary.rating} · {summary.count} questions answered</p>
-        </motion.div>
-        {feedbacks.length > 0 && (
-          <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
-            <h2 className="font-semibold text-sm">Feedback Recap</h2>
-            {feedbacks.map((fb, i) => (
-              <div key={i} className="p-3 bg-muted rounded-lg text-sm space-y-1">
-                <span className="font-medium capitalize">Q{i + 1}: {fb.score}/100 ({fb.rating})</span>
-                <ul className="list-disc pl-5 space-y-0.5">
-                  {fb.tips.map((tip, j) => <li key={j}>{tip}</li>)}
-                </ul>
-              </div>
-            ))}
-          </motion.div>
-        )}
-      </motion.div>
-    )
-  }
-
-  if (!sessionId) {
-    return (
-      <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-8">
-        <CommandHeader
-          eyebrow="AI Workflow"
-          title="Interview Coach"
-          description="Start a live practice loop, submit answers, and get score-backed feedback."
-        />
-        <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-6">
-          <input
-            type="text"
-            placeholder="Target Role *"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
-            required
-          />
-          <input
-            type="text"
-            placeholder="Company (optional)"
-            value={company}
-            onChange={(e) => setCompany(e.target.value)}
-            className="w-full rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
-          />
-          <fieldset className="space-y-2">
-            <legend className="font-medium text-sm">Question Type</legend>
-            {(['behavioral', 'technical', 'situational'] as QuestionType[]).map((type) => (
-              <label key={type} className="flex items-center gap-2 text-sm capitalize">
-                <input
-                  type="radio"
-                  name="questionType"
-                  value={type}
-                  checked={questionType === type}
-                  onChange={() => setQuestionType(type)}
-                />
-                {type}
-              </label>
-            ))}
-          </fieldset>
-          <LiquidGlassButton
-            onClick={() => startSession.mutate()}
-            disabled={!role.trim() || startSession.isPending}
-            className="w-full"
-          >
-            <Play className="w-4 h-4 mr-2" />
-            {startSession.isPending ? 'Starting...' : 'Start Session'}
-          </LiquidGlassButton>
-        </motion.div>
-      </motion.div>
-    )
-  }
-
   return (
-    <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-6">
-      {currentQuestion && (
-        <motion.div variants={fadeUp} className="glass-panel space-y-4 rounded-3xl p-6">
-          <p className="text-sm text-muted-foreground">Question {feedbacks.length + 1}</p>
-          <p className="text-lg font-medium">{currentQuestion.question}</p>
-          <textarea
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            placeholder="Type your answer (minimum 10 words)..."
-            rows={5}
-            className="w-full resize-none rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm"
-          />
-          <LiquidGlassButton
-            onClick={handleSubmitAnswer}
-            disabled={submitAnswer.isPending}
-          >
-            <Send className="w-4 h-4 mr-2" />
-            {submitAnswer.isPending ? 'Submitting...' : 'Submit Answer'}
-          </LiquidGlassButton>
-        </motion.div>
-      )}
-      {feedbacks.length > 0 && (
-        <motion.div variants={fadeUp} className="glass-panel space-y-3 rounded-3xl p-6">
-          <h2 className="font-semibold text-sm">Previous Feedback</h2>
-          {feedbacks.map((fb, i) => (
-            <div key={i} className="p-3 bg-muted rounded-lg text-sm space-y-1">
-              <span className="font-medium capitalize">Q{i + 1}: {fb.score}/100 ({fb.rating})</span>
-              <ul className="list-disc pl-5 space-y-0.5">
-                {fb.tips.map((tip, j) => <li key={j}>{tip}</li>)}
-              </ul>
-            </div>
-          ))}
-        </motion.div>
-      )}
-    </motion.div>
-  )
+    <Screen>
+      <Suspense
+        fallback={
+          <div>
+            <InterviewHero />
+            <InterviewBodySkeleton />
+          </div>
+        }
+      >
+        <InterviewWorkspace />
+      </Suspense>
+    </Screen>
+  );
 }
