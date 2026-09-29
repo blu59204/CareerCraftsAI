@@ -88,7 +88,7 @@ const RESUME_TEMPLATES: Array<{
   {
     id: "modern",
     name: "Modern",
-    description: "Clean Helvetica, ATS-optimized for Greenhouse & Workday",
+    description: "Centered name, subtle navy headings, and a clear single-column layout",
     badge: "Recommended",
     preview: [
       "Name",
@@ -103,7 +103,7 @@ const RESUME_TEMPLATES: Array<{
   {
     id: "classic",
     name: "Classic",
-    description: "Times New Roman, conservative — passes Taleo & legacy ATS",
+    description: "Conservative black-and-white layout with a left-aligned header",
     badge: "Taleo-Safe",
     preview: [
       "Name",
@@ -117,7 +117,7 @@ const RESUME_TEMPLATES: Array<{
   {
     id: "technical",
     name: "Technical",
-    description: "Skills-first layout for engineering & dev roles",
+    description: "Compact teal-accented layout for engineering and technical roles",
     badge: "Dev-Focused",
     preview: [
       "Name",

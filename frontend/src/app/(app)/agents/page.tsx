@@ -332,7 +332,7 @@ export default function AgentsPage() {
               filteredRuns.map((run) => (
                 <button key={run.id} className="w-full text-left" onClick={() => { setActiveRunId(run.id); setActiveRun(run.id); }}>
                 <AgentStatusCard
-                  agentName={`${run.agent_type.charAt(0).toUpperCase() + run.agent_type.slice(1).replace(/_/g, " ")} Agent`}
+                  agentType={run.agent_type}
                   status={
                     run.status === "completed"
                       ? "succeeded"

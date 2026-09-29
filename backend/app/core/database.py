@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.APP_ENV != "production",
+    echo=settings.APP_ENV == "development",
     pool_size=10,
     max_overflow=5,
     pool_pre_ping=True,

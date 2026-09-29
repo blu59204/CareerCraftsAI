@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -100,7 +100,7 @@ async def optimize_resume(
     )
 
     agent_run.status = result_state["status"]
-    agent_run.completed_at = datetime.now(timezone.utc)
+    agent_run.completed_at = datetime.now(UTC)
     pending = result_state.get("pending_action") or {}
     if pending:
         # Small DB footprint: ids + score only. No markdown, no binary.
@@ -111,7 +111,9 @@ async def optimize_resume(
         }
 
     if result_state["status"] in ("failed", "error"):
-        logger.warning("Resume optimize agent failed for run %s: %s", run_id, result_state.get("error"))
+        logger.warning(
+            "Resume optimize agent failed for run %s: %s", run_id, result_state.get("error")
+        )
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
     return OptimizeResponse(
@@ -141,7 +143,7 @@ async def download_pdf(
     try:
         doc_uuid = uuid.UUID(document_id)
     except (ValueError, AttributeError):
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Document not found") from None
     result = await db.execute(
         select(UserDocument).where(
             UserDocument.id == doc_uuid,
@@ -151,12 +153,38 @@ async def download_pdf(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        pdf_bytes = download_file(doc.storage_path, str(current_user.id))
-    except PermissionError:
-        raise HTTPException(status_code=404, detail="Document not found")
-    except RuntimeError:
-        raise HTTPException(status_code=502, detail="Storage download failed")
+    pdf_bytes = None
+    # Re-render tailored resumes so they pick up template improvements, but only
+    # when the chosen template was recorded. Older documents did not store it;
+    # re-rendering them would silently switch a Classic/Technical resume to
+    # Modern, so they keep the PDF that was generated at the time.
+    template = (doc.ats_data or {}).get("template")
+    if (
+        doc.doc_type == "resume_tailored"
+        and doc.raw_text
+        and template in ("modern", "classic", "technical")
+    ):
+        from app.services.pdf_service import generate_resume_pdf
+
+        try:
+            # ReportLab is CPU-bound; keep it off the event loop.
+            pdf_bytes = await asyncio.to_thread(
+                generate_resume_pdf,
+                doc.raw_text,
+                full_name=current_user.full_name or "",
+                template=template,
+            )
+        except Exception:
+            logger.exception(
+                "Resume re-render failed for document %s; serving stored PDF", document_id
+            )
+    if pdf_bytes is None:
+        try:
+            pdf_bytes = download_file(doc.storage_path, str(current_user.id))
+        except PermissionError:
+            raise HTTPException(status_code=404, detail="Document not found") from None
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail="Storage download failed") from exc
 
     return Response(
         content=pdf_bytes,
@@ -267,8 +295,9 @@ async def create_persona(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.models.db import ResumePersona
     from sqlalchemy import func
+
+    from app.models.db import ResumePersona
 
     # Enforce max 10 (use COUNT, not len() of all rows)
     count_result = await db.execute(
@@ -329,8 +358,9 @@ async def delete_persona(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.models.db import ResumePersona
     from sqlalchemy import delete
+
+    from app.models.db import ResumePersona
 
     result = await db.execute(
         delete(ResumePersona).where(
