@@ -17,33 +17,37 @@ ngrok tunnel (configure_runtime.py + a systemd unit set this up;
               forwards to 127.0.0.1:18180)
     │
     ▼
-Oracle Cloud "Always Free" ARM VM  (network_mode: host throughout —
-                                     the VM has no IPv6 route, and
-                                     Supabase's managed Postgres/Storage
-                                     were IPv6-only from here)
+APP VM  "chola-public", 10.0.0.183  (Oracle "Always Free" ARM,
+        network_mode: host throughout — the VM has no IPv6 route, and
+        Supabase's managed Postgres/Storage were IPv6-only from here)
 ├── gateway (nginx, loopback :18180)
 │     /api/v1/* → backend :18100
 │     everything else → frontend :18101
 ├── careercraft-isolated  (deploy/oracle-vm/compose.yml)
-│   ├── backend           (FastAPI, :18100)
-│   ├── frontend           (Next.js, :18101)
-│   ├── temporal-worker    (python -m app.temporal_worker — runs every workflow)
-│   ├── postgres           (pgvector/pgvector:pg16, :18132 — self-hosted DB)
-│   ├── redis              (SSE pub/sub, rate limiting, LLM sessions — no queues)
-│   └── sandbox-server     (OpenSandbox — isolated browser execution)
+│   ├── backend               (FastAPI, :18100)
+│   ├── frontend              (Next.js, :18101)
+│   ├── temporal-worker       (python -m app.temporal_worker — runs every workflow)
+│   ├── notification-worker   (python -m app.notification_worker — in-app + email notifications)
+│   ├── postgres              (pgvector/pgvector:pg16, :18132 — self-hosted DB)
+│   ├── redis                 (SSE pub/sub, rate limiting, LLM sessions — no queues)
+│   └── sandbox-server        (OpenSandbox — isolated browser execution)
+└── temporal-isolated  (deploy/oracle-vm/temporal-compose.yml)
+    └── self-hosted Temporal server + its own Postgres + Web UI, ALL on
+        loopback: 127.0.0.1:7233 (frontend), 6933–6939 (membership),
+        19232 (temporal-postgres), 19280 (UI). Nothing leaves the box, so
+        no firewall / Security List port is needed for Temporal.
+
+INFRA VM  "instance-20260921-0007", 10.0.0.182
 ├── nango-isolated  (deploy/oracle-vm/nango-compose.yml)
 │   └── self-hosted Nango — Gmail/Drive OAuth broker, :191xx range
-└── temporal-isolated  (deploy/oracle-vm/temporal-compose.yml)
-    └── self-hosted Temporal server + its own Postgres + Web UI,
-        stock ports (7233 frontend, 6933–6939 cluster membership — the
-        cluster-membership ports and temporal-postgres must never be
-        reachable beyond loopback)
+└── ollama-isolated (deploy/oracle-vm/ollama-compose.yml)
+    └── embeddings, :11434, allowed only from the APP VM's private IP
 ```
 
-All three compose projects currently share this one VM "for now" — the
-naming (`*-isolated`) anticipates splitting them onto separate boxes later
-if load requires it; nothing about the current setup requires that split
-today.
+Temporal used to run on the INFRA VM and was reached over the public
+internet. It now lives next to its only clients on the APP VM; the
+`*-isolated` compose project names still let any piece move to its own box
+later.
 
 ---
 
@@ -55,13 +59,18 @@ today.
 - The `/opt/careercraft-secrets/` directory, containing (all gitignored,
   root-owned, `chmod 600`):
   - `backend.env` — `DATABASE_URL`, `REDIS_URL`, `CLERK_SECRET_KEY`,
-    `APP_SECRET_KEY`, `TEMPORAL_ADDRESS` (+ `TEMPORAL_TLS_*` for mTLS),
-    third-party API keys, etc. A leftover `INTERNAL_SECRET` is ignored.
+    `APP_SECRET_KEY`, `TEMPORAL_ADDRESS=127.0.0.1:7233`, `RESEND_API_KEY`
+    (notification emails are skipped without it), third-party API keys, etc.
+    Shared by `backend`, `temporal-worker` and `notification-worker`. A
+    leftover `INTERNAL_SECRET` is ignored.
   - `public.env` — `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
     (frontend build args — see the note in `deploy/oracle-vm/compose.yml`
     about why these are passed as build `args`, not runtime env, and never
     merged into `backend.env`)
-  - `postgres.env`, `redis.conf`, `sandbox.env`, `nango.env`, `temporal.env`
+  - `postgres.env`, `redis.conf`, `sandbox.env`, `temporal.env` (APP VM —
+    `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_PWD`/`POSTGRES_DB` for
+    Temporal's own Postgres)
+  - `nango.env`, `nango-redis.conf` (INFRA VM only)
   - `ngrok.yml` — used by the systemd unit `configure_runtime.py` writes
 
 ---
@@ -99,8 +108,8 @@ runner, or at minimum a script that applies every unapplied file in order)
 
 ```bash
 cd deploy/oracle-vm
-sudo docker compose build backend frontend temporal-worker
-sudo docker compose up -d backend frontend temporal-worker
+sudo docker compose build backend frontend temporal-worker notification-worker
+sudo docker compose up -d backend frontend temporal-worker notification-worker
 ```
 
 Only rebuild the services whose code actually changed — rebuilding
@@ -136,19 +145,30 @@ Every agent run, job search, application, follow-up and recurring job is a
 Temporal workflow; nothing else executes background work. To run it in
 production:
 
-1. **Server.** Bring up `deploy/oracle-vm/temporal-compose.yml` on its box
-   (or use Temporal Cloud). Only port 7233 may be reachable from the app VM;
-   6933–6939 and `temporal-postgres` stay on loopback.
-2. **Transport security.** `TEMPORAL_ADDRESS` in `backend.env` must point at
-   that server. If 7233 crosses a network the app VM doesn't own, set
-   `TEMPORAL_TLS_CERT_PATH`/`TEMPORAL_TLS_KEY_PATH` (+ `TEMPORAL_TLS_CA_PATH`)
-   and mount the files into `backend` and `temporal-worker`; without them the
-   client connects in plaintext.
-3. **Workers.** `temporal-worker` (task queue `careercraft`) is mandatory.
-   `python -m app.notification_worker`
-   (`deploy/oracle-vm/notification-worker-compose.yml`, task queues
-   `careercraft-notifications*`) is required for in-app notifications and
-   notification emails to be delivered.
+1. **Server.** On the **APP VM**, from `deploy/oracle-vm`:
+   `sudo docker compose -f temporal-compose.yml up -d` (needs
+   `/opt/careercraft-secrets/temporal.env`). Server, its Postgres and the UI
+   all bind loopback only (7233, 6933–6939, 19232, 19280), so no firewall or
+   Security List rule is needed and nothing is exposed to the internet.
+   Its data lives in the `temporal-isolated_temporal_pgdata` volume — never
+   delete it without a `pg_dump` (`-p 19232`, databases `temporal` and
+   `temporal_visibility`).
+2. **Address.** `TEMPORAL_ADDRESS=127.0.0.1:7233` in `backend.env`. Traffic
+   never leaves the box, so no TLS is needed; only if the server ever moves
+   off-box set `TEMPORAL_TLS_CERT_PATH`/`TEMPORAL_TLS_KEY_PATH` (+
+   `TEMPORAL_TLS_CA_PATH`) and mount the files into the workers and `backend`.
+3. **Workers.** `temporal-worker` (task queue `careercraft`) and
+   `notification-worker` (`python -m app.notification_worker`, task queues
+   `careercraft-notifications` and `careercraft-notifications-email`) are both
+   services in `compose.yml` and both read `backend.env`. The notification
+   worker is required for in-app notifications and notification emails
+   (the latter also needs `RESEND_API_KEY`).
+   `/health` reports pollers for both queue groups.
+   **Temporal UI:** it has no auth and is not published. Use an SSH tunnel:
+   `ssh -N -L 19280:127.0.0.1:19280 oraclevm`, then open
+   `http://localhost:19280`.
+   **Log rotation:** the Temporal services and `notification-worker` use the
+   `json-file` driver capped at 10 MB × 3 files each.
 4. **Schedules.** Each worker start registers `daily-job-search`,
    `maintenance` and, in `server_browser` apply mode only,
    `application-status-check` (`TEMPORAL_SCHEDULES_ENABLED=true`). Check with
@@ -169,11 +189,11 @@ production:
 
 Chat providers without an embeddings API (Anthropic, DeepSeek, OpenRouter,
 NVIDIA NIM) index documents through a self-hosted Ollama serving
-`qwen3-embedding:0.6b`. It runs on the Temporal box
+`qwen3-embedding:0.6b`. It runs on the INFRA VM
 (`deploy/oracle-vm/ollama-compose.yml`), bound to that box's private IP only —
 Ollama has no authentication.
 
-1. On the Temporal box, start it and pull the model:
+1. On the INFRA VM, start it and pull the model:
 
    ```bash
    cd /opt/careercraft
@@ -238,8 +258,8 @@ re-index them.
 cd ~/CareerCraftsAI
 git checkout <previous-commit-or-tag>
 cd deploy/oracle-vm
-sudo docker compose build backend frontend temporal-worker
-sudo docker compose up -d backend frontend temporal-worker
+sudo docker compose build backend frontend temporal-worker notification-worker
+sudo docker compose up -d backend frontend temporal-worker notification-worker
 ```
 
 There is no automated down-migration path — a schema change that needs
@@ -257,6 +277,6 @@ way the forward migration was applied in step 2 above.
 - **No migration runner.** See step 2 above.
 - **ngrok as the public ingress** is unusual for a permanent production
   setup (normally used for temporary/dev tunneling) — the comments in
-  `deploy/oracle-vm/nango-compose.yml` describe the current one-VM layout as
+  `deploy/oracle-vm/nango-compose.yml` describe the current layout as
   "for now," suggesting this is understood to be a transitional setup, not
   the intended long-term architecture.

@@ -69,27 +69,41 @@ async def check_temporal_health() -> dict:
         reset_temporal_client()
         return {"connected": False, "workers": 0, "error": type(exc).__name__}
 
-    workers = await _count_task_queue_pollers(client)
-    return {"connected": True, "workers": workers, "task_queue": settings.TEMPORAL_TASK_QUEUE}
+    from temporalio.api.enums.v1 import TaskQueueType
+
+    workflow_type = TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW
+    activity_type = TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY
+    return {
+        "connected": True,
+        "workers": await _count_task_queue_pollers(client, settings.TEMPORAL_TASK_QUEUE, workflow_type),
+        "task_queue": settings.TEMPORAL_TASK_QUEUE,
+        # Reported only — not part of the ok/degraded decision, so an
+        # environment that doesn't run app.notification_worker stays "ok".
+        "notification_workers": await _count_task_queue_pollers(
+            client, settings.TEMPORAL_NOTIFICATION_TASK_QUEUE, workflow_type
+        ),
+        "notification_email_workers": await _count_task_queue_pollers(
+            client, settings.TEMPORAL_NOTIFICATION_EMAIL_TASK_QUEUE, activity_type
+        ),
+    }
 
 
-async def _count_task_queue_pollers(client: Client) -> int | None:
-    """Pollers seen on the workflow task queue recently; None if unknown."""
+async def _count_task_queue_pollers(client: Client, task_queue: str, queue_type: int) -> int | None:
+    """Pollers seen on a task queue recently; None if unknown."""
     try:
-        from temporalio.api.enums.v1 import TaskQueueType
         from temporalio.api.taskqueue.v1 import TaskQueue
         from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
 
         response = await client.workflow_service.describe_task_queue(
             DescribeTaskQueueRequest(
                 namespace=settings.TEMPORAL_NAMESPACE,
-                task_queue=TaskQueue(name=settings.TEMPORAL_TASK_QUEUE),
-                task_queue_type=TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW,
+                task_queue=TaskQueue(name=task_queue),
+                task_queue_type=queue_type,
             )
         )
         return len(response.pollers)
     except Exception as exc:
-        logger.debug("Temporal task-queue describe failed: %s", exc)
+        logger.debug("Temporal task-queue describe failed for %s: %s", task_queue, exc)
         return None
 
 

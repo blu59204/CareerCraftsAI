@@ -42,7 +42,8 @@ services:
       start_period: 60s
   # Executes every workflow (agent runs, job search, applications,
   # follow-ups) and registers the recurring Schedules. TEMPORAL_ADDRESS in
-  # backend.env points at the Temporal server (deploy/oracle-vm/temporal-compose.yml).
+  # backend.env points at the Temporal server (temporal-compose.yml, same VM,
+  # TEMPORAL_ADDRESS=127.0.0.1:7233).
   # Not profile-gated: without it nothing the API starts ever runs.
   temporal-worker:
     build: ../../backend
@@ -61,6 +62,30 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+  # Executes NotificationWorkflow (in-app notifications + Resend email) on its
+  # own task queues so a notification backlog can't starve temporal-worker.
+  # Shares this box, so backend.env's loopback DATABASE_URL / REDIS_URL /
+  # TEMPORAL_ADDRESS are correct as-is. Needs RESEND_API_KEY in backend.env
+  # for email; without it in-app notifications still work and emails are skipped.
+  notification-worker:
+    build: ../../backend
+    network_mode: host
+    env_file: /opt/careercraft-secrets/backend.env
+    command: python -m app.notification_worker
+    init: true
+    mem_limit: 512m
+    cpus: 0.5
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   frontend:
     build:
       context: ../../frontend
