@@ -44,6 +44,18 @@ const nextConfig = {
     ];
   },
 
+  // Interview Prep merged into /interview (Prep plan tab). Redirect at the
+  // routing layer so old links get a real HTTP redirect, not a client-side one.
+  async redirects() {
+    return [
+      {
+        source: "/interview-prep",
+        destination: "/interview?tab=prep",
+        permanent: false,
+      },
+    ];
+  },
+
   // Cache public assets. Next.js manages /_next/static cache headers itself,
   // which keeps dev chunks from being pinned across Fast Refresh rebuilds.
   async headers() {
