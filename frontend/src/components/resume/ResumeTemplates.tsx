@@ -1,8 +1,12 @@
 "use client";
 
 import { motion } from "motion/react";
-import { fadeUp, stagger } from "@/lib/motion-variants";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { Check } from "@phosphor-icons/react";
+import { cn } from "@/lib/utils";
+import { Bezel } from "@/components/vanguard/Bezel";
+import { IslandButton } from "@/components/vanguard/IslandButton";
+import { SectionHeading } from "@/components/vanguard/PageHero";
+import { listItem, listStagger } from "@/components/vanguard/motion";
 
 type ResumeTemplate = {
   id: string;
@@ -47,28 +51,23 @@ type Props = {
 
 function TemplateMiniPreview({ accent }: { accent: string }) {
   return (
-    <div className="h-48 w-full overflow-hidden rounded-2xl border border-border bg-background p-4">
-      {/* Header area */}
+    <div aria-hidden="true" className="h-48 w-full overflow-hidden rounded-[1rem] bg-background p-4 ring-1 ring-foreground/[0.06] dark:ring-white/10">
       <div className="space-y-1">
         <div className="h-3 w-2/3 rounded bg-foreground/80" />
         <div className="h-2 w-1/2 rounded bg-muted-foreground/40" />
       </div>
-      {/* Accent divider */}
-      <div className={`my-3 h-0.5 w-full rounded ${accent}`} />
-      {/* Section 1 */}
+      <div className={cn("my-3 h-0.5 w-full rounded", accent)} />
       <div className="mb-3 space-y-1">
         <div className="h-1.5 w-16 rounded bg-muted-foreground/50" />
         <div className="h-2 w-full rounded bg-muted/80" />
         <div className="h-2 w-4/5 rounded bg-muted/60" />
       </div>
-      {/* Section 2 */}
       <div className="mb-3 space-y-1">
         <div className="h-1.5 w-20 rounded bg-muted-foreground/50" />
         <div className="h-2 w-full rounded bg-primary/30" />
         <div className="h-2 w-3/4 rounded bg-primary/20" />
         <div className="h-2 w-5/6 rounded bg-primary/20" />
       </div>
-      {/* Section 3 */}
       <div className="space-y-1">
         <div className="h-1.5 w-14 rounded bg-muted-foreground/50" />
         <div className="h-2 w-full rounded bg-muted/70" />
@@ -80,69 +79,58 @@ function TemplateMiniPreview({ accent }: { accent: string }) {
 
 export function ResumeTemplates({ selected, onSelect }: Props) {
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-4">
-      <motion.div variants={fadeUp}>
-        <div className="text-sm text-muted-foreground">Resume Workspace · Templates</div>
-        <h2 className="mt-1 text-xl font-medium">Choose a template.</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          All templates are single-column and optimised for Applicant Tracking Systems.
-        </p>
-      </motion.div>
+    <div className="space-y-8">
+      <SectionHeading
+        eyebrow="Templates"
+        title="Choose a template."
+        description="All templates are single-column and optimised for Applicant Tracking Systems."
+      />
 
-      <motion.div variants={fadeUp} className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <motion.ul initial="hidden" animate="show" variants={listStagger} className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
         {TEMPLATES.map((tpl) => {
           const isSelected = selected === tpl.id;
           return (
-            <motion.div
-              key={tpl.id}
-              variants={fadeUp}
-              className={`rounded-3xl border p-6 transition-colors ${
-                isSelected
-                  ? "border-primary bg-primary/5"
-                  : "border-border bg-card/60"
-              }`}
-            >
-              <TemplateMiniPreview accent={tpl.accent} />
+            <motion.li key={tpl.id} variants={listItem}>
+              <Bezel tone={isSelected ? "primary" : "default"} coreClassName="flex h-full flex-col p-5">
+                <TemplateMiniPreview accent={tpl.accent} />
 
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">{tpl.name}</span>
-                  <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
+                <div className="mt-5 flex items-start justify-between gap-3">
+                  <h3 className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">{tpl.name}</h3>
+                  <span className="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium tabular-nums text-success ring-1 ring-success/20">
                     ATS: {tpl.atsScore}%
                   </span>
                 </div>
 
-                <p className="text-sm text-muted-foreground">{tpl.description}</p>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">{tpl.description}</p>
 
-                <div className="flex flex-wrap gap-1">
+                <ul className="mt-4 flex flex-wrap gap-1">
                   {tpl.sections.map((sec) => (
-                    <span
+                    <li
                       key={sec}
-                      className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+                      className="rounded-full bg-foreground/[0.03] px-2 py-0.5 text-[11px] text-muted-foreground ring-1 ring-foreground/[0.06] dark:bg-white/[0.04] dark:ring-white/10"
                     >
                       {sec}
-                    </span>
+                    </li>
                   ))}
-                </div>
+                </ul>
 
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-xs text-muted-foreground">
-                    {tpl.sections.length} sections
-                  </span>
-                  <LiquidGlassButton
+                <div className="mt-auto flex items-center justify-between pt-5">
+                  <span className="text-xs tabular-nums text-muted-foreground">{tpl.sections.length} sections</span>
+                  <IslandButton
                     tone={isSelected ? "ghost" : "primary"}
                     size="sm"
                     onClick={() => onSelect(tpl.id)}
                     aria-pressed={isSelected}
+                    icon={isSelected ? <Check size={14} weight="light" /> : undefined}
                   >
                     {isSelected ? "Selected ✓" : "Select"}
-                  </LiquidGlassButton>
+                  </IslandButton>
                 </div>
-              </div>
-            </motion.div>
+              </Bezel>
+            </motion.li>
           );
         })}
-      </motion.div>
-    </motion.div>
+      </motion.ul>
+    </div>
   );
 }

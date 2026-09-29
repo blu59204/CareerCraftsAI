@@ -1,6 +1,8 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { EASE_OUT_EXPO } from "@/components/vanguard/motion";
 import {
   parseResumeMarkdown,
   tokenizeInline,
@@ -166,6 +168,14 @@ function Item({ item, theme }: { item: ResumeItem; theme: Theme }) {
 }
 
 /**
+ * Paper lift: a hairline edge plus a warm, highly diffused ambient shadow.
+ * Fixed warm-neutral tint (not the theme foreground) because the sheet is
+ * always light paper, in light and dark mode alike.
+ */
+const PAPER_SHADOW =
+  "0 0 0 1px hsl(40 12% 18% / 0.06), 0 1px 2px hsl(40 12% 18% / 0.05), 0 28px 56px -32px hsl(40 14% 16% / 0.30), 0 10px 22px -18px hsl(40 14% 16% / 0.16)";
+
+/**
  * Dashed markers where the continuous HTML page would break onto a new PDF
  * page. Each PDF page holds (11in − top − bottom margin) of content, and the
  * HTML page shows the top margin once and the bottom margin once, so page N+1
@@ -173,6 +183,7 @@ function Item({ item, theme }: { item: ResumeItem; theme: Theme }) {
  * flowables to the next page, so real breaks can come slightly earlier.
  */
 function PageBreaks({ height, width, marginY }: { height: number; width: number; marginY: number }) {
+  const reduce = useReducedMotion();
   if (!width || !height) return null;
   const inch = width / 8.5;
   const margin = marginY * inch;
@@ -181,35 +192,30 @@ function PageBreaks({ height, width, marginY }: { height: number; width: number;
   const count = Math.max(0, Math.ceil(content / pageContent - 0.001) - 1);
   if (!count) return null;
   return (
-    <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0">
       {Array.from({ length: count }, (_, i) => (
-        <div
+        <motion.div
           key={i}
-          style={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            top: margin + pageContent * (i + 1),
-            borderTop: "1px dashed #94A3B8",
-          }}
+          initial={reduce ? { opacity: 0 } : { opacity: 0, x: 8 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: reduce ? 0.2 : 0.6, ease: EASE_OUT_EXPO, delay: reduce ? 0 : 0.08 * i }}
+          className="absolute inset-x-0"
+          style={{ top: margin + pageContent * (i + 1) }}
         >
+          {/* Perforation: a soft dashed seam across the sheet. */}
+          <div className="border-t border-dashed" style={{ borderColor: "hsl(40 8% 52% / 0.55)" }} />
           <span
+            className="absolute right-2 top-1.5 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-geist-mono text-[10px] font-medium uppercase leading-4 tracking-[0.14em] tabular-nums"
             style={{
-              position: "absolute",
-              right: 6,
-              top: 2,
-              padding: "0 6px",
-              borderRadius: 999,
-              background: "#F1F5F9",
-              color: "#475569",
-              fontFamily: SANS,
-              fontSize: 10,
-              lineHeight: "16px",
+              background: "hsl(40 20% 97% / 0.96)",
+              color: "hsl(40 8% 34%)",
+              boxShadow: "0 0 0 1px hsl(40 12% 18% / 0.08), 0 6px 14px -10px hsl(40 14% 16% / 0.25)",
             }}
           >
+            <span className="h-1 w-1 rounded-full" style={{ background: "hsl(40 8% 52%)" }} />
             Page {i + 2}
           </span>
-        </div>
+        </motion.div>
       ))}
     </div>
   );
@@ -302,14 +308,23 @@ function ResumePreviewImpl({
             fontSize: pt(theme.bodySize),
             lineHeight: pt(theme.bodySize * theme.leading),
             padding: `${pt(theme.marginY * 72)} ${pt(theme.marginX * 72)}`,
-            boxShadow: "0 1px 3px rgba(15, 23, 42, 0.12), 0 8px 24px rgba(15, 23, 42, 0.08)",
+            borderRadius: 3,
+            boxShadow: PAPER_SHADOW,
             overflowWrap: "anywhere",
           }}
         >
           {isEmpty ? (
-            <p style={{ margin: 0, color: "#6B7280", textAlign: "center", paddingTop: pt(120) }}>
-              Nothing to preview yet.
-            </p>
+            <div style={{ paddingTop: pt(96), textAlign: "center" }}>
+              {/* Ghost of a letterhead: faint rules hint at the page to come. */}
+              <div aria-hidden="true" style={{ display: "grid", justifyItems: "center", gap: pt(7), marginBottom: pt(22) }}>
+                <span style={{ width: "34%", height: pt(9), borderRadius: 999, background: "hsl(40 10% 92%)" }} />
+                <span style={{ width: "52%", height: pt(4), borderRadius: 999, background: "hsl(40 10% 94%)" }} />
+                <span style={{ width: "44%", height: pt(4), borderRadius: 999, background: "hsl(40 10% 94%)" }} />
+              </div>
+              <p style={{ margin: 0, color: "#6B6760", fontSize: pt(10.5), letterSpacing: "-0.005em" }}>
+                Nothing to preview yet.
+              </p>
+            </div>
           ) : null}
 
           {name || resume.headline.length || resume.contact.length ? (
