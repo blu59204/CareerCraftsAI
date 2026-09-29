@@ -1,4 +1,4 @@
-﻿"""Single-column resume PDFs with readable Markdown headings and bullets."""
+"""Single-column resume PDFs with readable Markdown headings and bullets."""
 
 import io
 import re
@@ -30,6 +30,7 @@ _SECTIONS = {
 }
 _BULLET = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
 _HEADING = re.compile(r"^(#{1,6})\s+")
+_LIST_SEPARATORS = re.compile(r"[,;|/]")
 _DATE = re.compile(r"\b(?:19|20)\d{2}\b|\b(?:present|current)\b", re.I)
 _CONTACT = re.compile(r"@|(?:\+?\d[\d\s().-]{7,})|(?:linkedin|github)\.com|https?://", re.I)
 _THEMES = {
@@ -92,7 +93,7 @@ def generate_resume_pdf(
     )
     bullet_style = ParagraphStyle(
         "ResumeBullet", parent=body_style, leftIndent=13,
-        bulletIndent=2, spaceAfter=2,
+        bulletIndent=2, bulletFontName=regular, spaceAfter=2,
     )
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -103,8 +104,12 @@ def generate_resume_pdf(
     story = []
     first_line = True
     in_header = True
+    lines = resume_text.strip().splitlines()
+    # Markdown resumes mark sections with `##`; only plain-text resumes need the
+    # all-caps heuristic, otherwise lines like "AWS, GCP, SQL" become headings.
+    has_markdown_sections = any(_HEADING.match(raw.strip()) for raw in lines)
 
-    for raw in resume_text.strip().splitlines():
+    for raw in lines:
         line = raw.strip()
         if not line or line in {"---", "***", "___"}:
             continue
@@ -123,9 +128,13 @@ def generate_resume_pdf(
                 continue
 
         section = plain.rstrip(":")
-        if (section.casefold() in _SECTIONS or
-                (level == 2 and len(section) < 50) or
-                (section.isupper() and 2 < len(section) < 40)):
+        caps_heading = (
+            not has_markdown_sections
+            and section.isupper()
+            and 2 < len(section) < 40
+            and not _LIST_SEPARATORS.search(section)
+        )
+        if section.casefold() in _SECTIONS or (level == 2 and len(section) < 50) or caps_heading:
             in_header = False
             story.append(Paragraph(_markup(section.upper()), section_style))
             rule = HRFlowable(width="100%", thickness=0.65, color=ink, spaceAfter=5)
