@@ -5,7 +5,7 @@ import logging
 import time
 from typing import Any, Callable
 
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, START, StateGraph
 
 from app.agents.state import AgentState
 from app.core.event_bus import emit
@@ -207,7 +207,8 @@ def build_graph() -> StateGraph:
     route_map = {name: name for name in _ALL_NODES}
     route_map[END] = END
 
-    graph.set_conditional_entry_point(_route_task, route_map)
+    # set_conditional_entry_point is deprecated in LangGraph 1.x.
+    graph.add_conditional_edges(START, _route_task, route_map)
 
     for node_name in _ALL_NODES:
         graph.add_edge(node_name, END)
