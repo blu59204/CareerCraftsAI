@@ -42,7 +42,9 @@ export function CookieBanner() {
     <div
       role="region"
       aria-label="Cookie notice"
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-card/95 px-4 py-4 backdrop-blur-xl sm:px-6"
+      // z-30: below modal/drawer overlays (z-40) so it can never cover an
+      // approval dialog's Approve/Cancel actions.
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 px-4 py-4 backdrop-blur-xl sm:px-6"
     >
       <div className="mx-auto flex max-w-4xl flex-col items-center gap-3 sm:flex-row sm:justify-between">
         <p className="text-sm text-muted-foreground">
