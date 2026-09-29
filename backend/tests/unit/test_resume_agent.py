@@ -45,6 +45,7 @@ def test_resume_agent_pauses_for_approval(mock_llm):
          patch("app.agents.resume_agent._persist_resume_document", return_value="doc-123") as persist, \
          patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"), \
          patch("app.core.model_router._build_llm", return_value=mock_llm), \
+         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})), \
          patch("app.core.event_bus.emit"):
         result = resume_agent_node(make_state())
 
@@ -66,6 +67,7 @@ def test_resume_agent_fails_without_fabricating_a_draft():
          patch("app.agents.resume_agent.retrieve", side_effect=Exception("pgvector down")), \
          patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"), \
          patch("app.agents.resume_agent._persist_resume_document", return_value="doc-456"), \
+         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})), \
          patch("app.core.event_bus.emit"):
         result = resume_agent_node(make_state())
 
@@ -85,6 +87,7 @@ def test_resume_agent_degrades_without_pdf_storage(mock_llm):
          patch("app.agents.resume_agent._persist_resume_document", side_effect=Exception("storage down")), \
          patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"), \
          patch("app.core.model_router._build_llm", return_value=mock_llm), \
+         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})), \
          patch("app.core.event_bus.emit"):
         result = resume_agent_node(make_state())
 

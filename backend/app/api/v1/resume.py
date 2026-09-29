@@ -41,6 +41,69 @@ class OptimizeResponse(BaseModel):
     keywords_missing: list[str] = Field(default_factory=list)
     changes_made: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Deterministic audit (resume_structure.review_resume) + form pre-fill.
+    review: dict | None = None
+    contact_suggestions: dict[str, str] = Field(default_factory=dict)
+
+
+TemplateName = Literal["modern", "classic", "technical"]
+_FIELD = 160
+_DATE_FIELD = 40
+
+
+class ContactFix(BaseModel):
+    email: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    location: str | None = Field(default=None, max_length=120)
+    linkedin: str | None = Field(default=None, max_length=200)
+    github: str | None = Field(default=None, max_length=200)
+    portfolio: str | None = Field(default=None, max_length=200)
+
+
+class ExperienceFix(BaseModel):
+    index: int = Field(ge=0, le=50)
+    role: str | None = Field(default=None, max_length=_FIELD)
+    employer: str | None = Field(default=None, max_length=_FIELD)
+    location: str | None = Field(default=None, max_length=_FIELD)
+    start: str | None = Field(default=None, max_length=_DATE_FIELD)
+    end: str | None = Field(default=None, max_length=_DATE_FIELD)
+
+
+class EducationFix(BaseModel):
+    index: int | None = Field(default=None, ge=0, le=20)
+    degree: str | None = Field(default=None, max_length=_FIELD)
+    institution: str | None = Field(default=None, max_length=_FIELD)
+    location: str | None = Field(default=None, max_length=_FIELD)
+    start: str | None = Field(default=None, max_length=_DATE_FIELD)
+    end: str | None = Field(default=None, max_length=_DATE_FIELD)
+    details: str | None = Field(default=None, max_length=300)
+
+
+class ResumeFixRequest(BaseModel):
+    """User-supplied facts for a tailored resume. Every field is optional;
+    ``resume_markdown`` replaces the whole text (manual edit) before the
+    structured fixes are applied."""
+
+    resume_markdown: str | None = Field(default=None, max_length=30000)
+    template: TemplateName | None = None
+    contact: ContactFix | None = None
+    experience: list[ExperienceFix] = Field(default_factory=list, max_length=30)
+    education: list[EducationFix] = Field(default_factory=list, max_length=10)
+    remember: bool = True
+
+
+class TailoredResumeResponse(BaseModel):
+    document_id: str
+    template: str
+    resume_markdown: str
+    summary: str | None = None
+    ats_score: int | None = None
+    keywords_matched: list[str] = Field(default_factory=list)
+    keywords_missing: list[str] = Field(default_factory=list)
+    changes_made: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    review: dict
+    contact_suggestions: dict[str, str] = Field(default_factory=dict)
 
 
 class AtsScoreRequest(BaseModel):
@@ -116,6 +179,7 @@ async def optimize_resume(
         )
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
+    suggestions = await _contact_suggestions(db, current_user)
     return OptimizeResponse(
         run_id=run_id,
         status=result_state["status"],
@@ -129,7 +193,190 @@ async def optimize_resume(
         keywords_missing=pending.get("keywords_missing", []),
         changes_made=pending.get("changes_made", []),
         warnings=pending.get("warnings", []),
+        review=pending.get("review"),
+        contact_suggestions=suggestions,
     )
+
+
+async def _contact_suggestions(db: AsyncSession, user: User) -> dict[str, str]:
+    from app.services.resume_facts import contact_suggestions, load_facts_row, load_profile
+
+    try:
+        profile = await load_profile(db, user.id)
+        row = await load_facts_row(db, user.id)
+        return contact_suggestions(profile, user, dict(row.answer or {}) if row else {})
+    except Exception:  # noqa: BLE001 — pre-fill is optional
+        logger.warning("Could not load resume contact suggestions", exc_info=True)
+        return {}
+
+
+async def _get_tailored_doc(db: AsyncSession, document_id: str, user: User) -> UserDocument:
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=404, detail="Document not found") from None
+    doc = (await db.execute(
+        select(UserDocument).where(
+            UserDocument.id == doc_uuid,
+            UserDocument.user_id == user.id,
+            UserDocument.doc_type == "resume_tailored",
+        )
+    )).scalar_one_or_none()
+    if not doc or not doc.raw_text:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
+def _tailored_response(doc: UserDocument, suggestions: dict[str, str]) -> TailoredResumeResponse:
+    from app.services.resume_structure import review_resume
+
+    data = doc.ats_data or {}
+    return TailoredResumeResponse(
+        document_id=str(doc.id),
+        template=data.get("template") or "modern",
+        resume_markdown=doc.raw_text or "",
+        summary=data.get("summary"),
+        ats_score=doc.ats_score,
+        keywords_matched=data.get("keywords_matched") or [],
+        keywords_missing=data.get("keywords_missing") or [],
+        changes_made=data.get("changes_made") or [],
+        warnings=data.get("warnings") or [],
+        review=review_resume(doc.raw_text or ""),
+        contact_suggestions=suggestions,
+    )
+
+
+@router.get("/tailored/{document_id}", response_model=TailoredResumeResponse)
+async def get_tailored_resume(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A saved tailored resume with its gap review, for re-opening and fixing."""
+    doc = await _get_tailored_doc(db, document_id, current_user)
+    return _tailored_response(doc, await _contact_suggestions(db, current_user))
+
+
+@router.post("/tailored/{document_id}/fix", response_model=TailoredResumeResponse)
+@limiter.limit("30/minute")
+async def fix_tailored_resume(
+    request: Request,
+    document_id: str,
+    payload: ResumeFixRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Apply user-typed facts (contact, dates, employer, education) or a manual
+    edit to a tailored resume, then re-render its PDF.
+
+    No model call: the edit is deterministic and uses only what the user
+    entered, so it cannot introduce invented content.
+    """
+    from app.services.ats_service import compute_ats_score
+    from app.services.pdf_service import generate_resume_pdf
+    from app.services.resume_facts import load_facts_row, merge_facts, save_facts
+    from app.services.resume_structure import (
+        apply_fixes,
+        clean_placeholders,
+        filter_resolved_warnings,
+        review_resume,
+    )
+    from app.services.storage_service import delete_file, upload_file
+
+    doc = await _get_tailored_doc(db, document_id, current_user)
+    data = dict(doc.ats_data or {})
+    template = payload.template or data.get("template") or "modern"
+    base = payload.resume_markdown if payload.resume_markdown is not None else doc.raw_text
+    before = review_resume(doc.raw_text or "")
+
+    contact = payload.contact.model_dump(exclude_unset=True) if payload.contact else None
+    experience = [f.model_dump(exclude_unset=True) for f in payload.experience]
+    education = [f.model_dump(exclude_unset=True) for f in payload.education]
+    try:
+        markdown = apply_fixes(
+            clean_placeholders(base or ""),
+            full_name=current_user.full_name or "",
+            contact=contact,
+            experience=experience,
+            education=education,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if not markdown.strip():
+        raise HTTPException(status_code=422, detail="Resume text cannot be empty")
+
+    try:
+        pdf_bytes = await asyncio.to_thread(
+            generate_resume_pdf, markdown,
+            full_name=current_user.full_name or "", template=template,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    new_path = upload_file(str(current_user.id), "resume.pdf", pdf_bytes, "application/pdf")
+    old_path = doc.storage_path
+    review = review_resume(markdown)
+    data["template"] = template
+    data["warnings"] = filter_resolved_warnings(list(data.get("warnings") or []), review)
+    jd_text = data.get("jd_text") or ""
+    if jd_text:
+        ats = await asyncio.to_thread(compute_ats_score, markdown, jd_text)
+        doc.ats_score = ats.composite_score
+        data["keywords_missing"] = list(ats.missing_keywords[:10])
+    doc.raw_text = markdown
+    doc.storage_path = new_path
+    doc.ats_data = data
+
+    try:
+        if payload.remember:
+            row = await load_facts_row(db, current_user.id)
+            facts = merge_facts(
+                dict(row.answer or {}) if row else {},
+                contact=contact,
+                experience=_experience_facts(experience, before, review),
+                education=[
+                    {k: v for k, v in e.items() if k != "index" and v}
+                    for e in education if e.get("index") is None
+                ],
+            )
+            await save_facts(db, current_user.id, facts)
+        await db.flush()
+    except Exception:
+        try:
+            delete_file(new_path, str(current_user.id))
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not clean up resume PDF %s", new_path)
+        raise
+
+    if old_path and old_path != new_path:
+        try:
+            delete_file(old_path, str(current_user.id))
+        except Exception:  # noqa: BLE001 — a stale file is harmless
+            logger.warning("Could not delete superseded resume PDF %s", old_path)
+
+    return _tailored_response(doc, await _contact_suggestions(db, current_user))
+
+
+def _experience_facts(fixes: list[dict], before: dict, after: dict) -> list[dict]:
+    """Saved-fact records for experience fixes: final values plus the
+    original employer text, which is what the next draft will contain."""
+    old = {e["index"]: e for e in before.get("experience", [])}
+    new = {e["index"]: e for e in after.get("experience", [])}
+    facts = []
+    for fix in fixes:
+        idx = fix["index"]
+        if idx not in new:
+            continue
+        entry, original = new[idx], old.get(idx, new[idx])
+        facts.append({
+            "role": entry["role"],
+            "employer_match": original["employer"] or entry["employer"],
+            "employer": entry["employer"],
+            "location": entry["location"],
+            "start": entry["start"],
+            "end": entry["end"],
+        })
+    return facts
 
 
 @router.get("/download/{document_id}")

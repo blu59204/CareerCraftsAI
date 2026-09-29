@@ -10,6 +10,14 @@ from app.agents.state import AgentState
 from app.services.ats_service import compute_ats_score
 from app.services.pdf_service import generate_resume_pdf
 from app.services.rag_service import retrieve
+from app.services.resume_structure import (
+    apply_fixes,
+    apply_saved_facts,
+    clean_placeholders,
+    ensure_contact,
+    filter_resolved_warnings,
+    review_resume,
+)
 from app.services.storage_service import upload_file
 
 logger = logging.getLogger(__name__)
@@ -47,6 +55,12 @@ def _persist_resume_document(
                     "template": template,
                     "keywords_matched": parsed.keywords_matched,
                     "keywords_missing": parsed.keywords_missing,
+                    "warnings": list(parsed.warnings or []),
+                    "summary": parsed.summary,
+                    "changes_made": list(parsed.changes_made or []),
+                    # Kept so fixes applied later can be re-scored against
+                    # the same job; this is the user's own input.
+                    "jd_text": (jd_text or "")[:20000],
                 },
             )
             session.add(doc)
@@ -58,6 +72,34 @@ def _persist_resume_document(
         except Exception as cleanup_exc:
             logger.warning("Orphan storage cleanup failed for %s: %s", storage_path, cleanup_exc)
         raise
+
+
+def _finalize_markdown(
+    parsed: "ResumeOutput",
+    full_name: str | None,
+    verified_contact: dict,
+    saved_facts: dict,
+) -> tuple["ResumeOutput", dict | None]:
+    """Deterministic clean-up after the model: strip placeholders, then fill
+    gaps from facts the user typed in (contact, saved dates/education).
+
+    Returns (parsed, review). review is None when there is no resume at all
+    (the model returned NOT_PROVIDED for an empty source).
+    """
+    markdown = clean_placeholders(parsed.resume_markdown or "")
+    if not markdown.strip():
+        return parsed, None
+    try:
+        markdown = apply_saved_facts(markdown, saved_facts)
+        markdown = ensure_contact(markdown, verified_contact)
+        if full_name:
+            markdown = apply_fixes(markdown, full_name=full_name)
+    except ValueError as exc:
+        logger.warning("Saved resume facts could not be applied: %s", exc)
+    parsed.resume_markdown = markdown
+    review = review_resume(markdown)
+    parsed.warnings = filter_resolved_warnings(list(parsed.warnings or []), review)
+    return parsed, review
 
 
 def _score_parsed_resume(parsed: "ResumeOutput", jd_text: str) -> "ResumeOutput":
@@ -107,6 +149,9 @@ def resume_agent_node(state: AgentState) -> AgentState:
             raise ValueError("No active model settings configured for user")
 
         full_name = fetch_user_full_name(user_id)
+        from app.services.resume_facts import fetch_resume_facts_sync
+
+        verified_contact, saved_facts = fetch_resume_facts_sync(user_id)
 
         emit(run_id, "tool_call", {"tool": "rag_retrieve", "input": {"doc_type": "resume", "query_len": len(jd_text)}})
         resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=8)
@@ -120,27 +165,41 @@ def resume_agent_node(state: AgentState) -> AgentState:
             llm,
             RESUME_JSON_SYSTEM_PROMPT,
             build_resume_json_prompt(
-                {"jd_text": jd_text, "tone": tone, "template": template},
+                {"jd_text": jd_text, "tone": tone, "template": template,
+                 "verified_facts": saved_facts},
                 chunk_texts,
             ),
             ResumeOutput,
         )
+        parsed, review = _finalize_markdown(parsed, full_name, verified_contact, saved_facts)
         parsed = _score_parsed_resume(parsed, jd_text)
 
-        emit(run_id, "thinking", {"step": "pdf", "message": "Generating PDF and storing..."})
-        emit(run_id, "tool_call", {"tool": "pdf_store", "input": {"template": template}})
-        pdf_bytes = generate_resume_pdf(parsed.resume_markdown, full_name=full_name, template=template)
-        try:
-            pdf_document_id = _persist_resume_document(
-                user_id, full_name, template, parsed, jd_text, pdf_bytes
+        pdf_document_id = None
+        if review is None:
+            # The source was empty/unreadable: there is no resume to render.
+            emit(run_id, "tool_result", {"tool": "pdf_store", "output": {"pdf_document_id": None}})
+        else:
+            emit(run_id, "thinking", {"step": "pdf", "message": "Generating PDF and storing..."})
+            emit(run_id, "tool_call", {"tool": "pdf_store", "input": {"template": template}})
+            pdf_bytes = generate_resume_pdf(
+                parsed.resume_markdown, full_name=full_name, template=template
             )
-        except Exception as se:
-            logger.warning("Resume PDF persist failed, continuing without download: %s", se)
-            pdf_document_id = None
-            parsed.warnings = list(parsed.warnings or []) + ["PDF storage unavailable — preview only."]
-        emit(run_id, "tool_result", {"tool": "pdf_store", "output": {"pdf_document_id": pdf_document_id}})
+            try:
+                pdf_document_id = _persist_resume_document(
+                    user_id, full_name, template, parsed, jd_text, pdf_bytes
+                )
+            except Exception as se:
+                logger.warning("Resume PDF persist failed, continuing without download: %s", se)
+                pdf_document_id = None
+                parsed.warnings = list(parsed.warnings or []) + [
+                    "PDF storage unavailable — preview only."
+                ]
+            emit(run_id, "tool_result",
+                 {"tool": "pdf_store", "output": {"pdf_document_id": pdf_document_id}})
 
         pending = _resume_pending_action(parsed, pdf_document_id)
+        pending["review"] = review
+        pending["template"] = template
         emit(run_id, "complete", {"result": pending})
         return {
             **state,
