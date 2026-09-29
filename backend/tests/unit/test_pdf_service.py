@@ -137,10 +137,192 @@ def test_placeholders_never_reach_the_pdf():
 
 
 def test_non_latin_characters_are_transliterated_not_dropped():
-    text = "# Jane\n## SUMMARY\nBuilt Zürich café app → shipped ✓"
+    # ₹ → ≥ ✓ Ł ź ı ş are all outside cp1252 (the core fonts' WinAnsi encoding).
+    text = "# Jane\n## SUMMARY\nZürich café: ₹15 LPA → 40% ✓ ≥ 3x; Łódź; Işık; e‑mail"
     pdf = generate_resume_pdf(text, full_name="Jane", template="modern")
     body = fitz.open(stream=pdf, filetype="pdf")[0].get_text()
-    assert "Zürich café app" in body
+    assert "Zürich café" in body  # cp1252 characters are kept as-is
+    assert "Rs.15 LPA -> 40%" in body
+    assert ">= 3x" in body
+    assert "Lódz" in body  # Ł has no NFKD decomposition; ó is cp1252
+    assert "Isik" in body
+    assert "e-mail" in body
+    assert "✓" not in body
+    # Foldable text keeps the core fonts.
+    assert all("Helvetica" in font for font, _, _ in _lines(pdf))
+
+
+def test_unicode_name_is_rendered_with_a_unicode_font():
+    from app.services import pdf_service
+
+    if pdf_service._unicode_family(False) is None:
+        pytest.skip("no Unicode TTF font available on this system")
+    text = "# Иван Петров\n## SUMMARY\nРазработчик backend, Python"
+    for template in TEMPLATES:
+        pdf = generate_resume_pdf(text, full_name="Иван Петров", template=template)
+        lines = _lines(pdf)
+        texts = [t for _, _, t in lines]
+        assert texts[0] == "Иван Петров"
+        assert "Разработчик backend, Python" in texts
+        core = {"Helvetica", "Helvetica-Bold", "Times-Roman", "Times-Bold"}
+        assert not any(font in core for font, _, _ in lines)
+
+
+def test_none_full_name_is_treated_as_empty():
+    pdf = generate_resume_pdf("# Jane Doe\n## SKILLS\nPython", full_name=None)  # type: ignore[arg-type]
+    assert _lines(pdf)[0][2] == "Jane Doe"
+
+
+# ── Inline emphasis (contract C4) ───────────────────────────────────────────
+
+def _spans(pdf: bytes) -> list[tuple[str, str]]:
+    out = []
+    for block in fitz.open(stream=pdf, filetype="pdf")[0].get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            out.extend((s["font"], s["text"]) for s in line["spans"] if s["text"].strip())
+    return out
+
+
+def _summary(line: str) -> bytes:
+    return generate_resume_pdf(f"# Jane\n## SUMMARY\n{line}", full_name="Jane")
+
+
+def _is_italic(font: str) -> bool:
+    return "Oblique" in font or "Italic" in font
+
+
+def test_crossing_emphasis_renders_bold_and_keeps_stray_stars():
+    pdf = _summary("**Led *core** platform*")
+    spans = _spans(pdf)
+    assert ("Helvetica-Bold", "Led *core") in spans
+    assert "Led *core platform*" in " ".join(t for _, _, t in _lines(pdf))
+
+
+def test_crossing_emphasis_markup_is_well_formed():
+    from app.services.pdf_service import _markup
+
+    assert _markup("**bold *x** y*") == "<b>bold *x</b> y*"
+
+
+def test_italic_containing_bold_nests():
+    spans = {text.strip(): font for font, text in _spans(_summary("*Led **Kafka** work*"))}
+    assert _is_italic(spans["Led"]) and "Bold" not in spans["Led"]
+    assert _is_italic(spans["Kafka"]) and "Bold" in spans["Kafka"]
+    assert _is_italic(spans["work"]) and "Bold" not in spans["work"]
+
+
+def test_bold_containing_italic_nests():
+    spans = {text.strip(): font for font, text in _spans(_summary("**bold *x* y**"))}
+    assert "Bold" in spans["bold"] and not _is_italic(spans["bold"])
+    assert "Bold" in spans["x"] and _is_italic(spans["x"])
+    assert "Bold" in spans["y"] and not _is_italic(spans["y"])
+
+
+def test_triple_star_is_bold_italic():
+    spans = _spans(_summary("***x***"))
+    x = [font for font, text in spans if text.strip() == "x"]
+    assert x and "Bold" in x[0] and _is_italic(x[0])
+    assert not any("*" in text for _, text in spans)
+
+
+@pytest.mark.parametrize("line", ["C* or 5*3", "*args and **kwargs", "2*3*4", "*Nix rocks"])
+def test_word_internal_and_unmatched_stars_stay_literal(line):
+    pdf = _summary(line)
+    assert line in [t for _, _, t in _lines(pdf)]
+    assert all(font == "Helvetica" for font, text in _spans(pdf) if text.strip() in line)
+
+
+def test_invalid_markup_degrades_to_plain_text():
+    from app.services.pdf_service import _Para, _Styles
+
+    para = _Para("<b>broken</i> &amp; kept", _Styles(THEMES["modern"]).body)
+    assert para.getPlainText() == "broken & kept"
+
+
+# ── Oversized content never fails the layout ────────────────────────────────
+
+def _assert_pdf(pdf: bytes) -> fitz.Document:
+    assert pdf[:4] == b"%PDF"
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    assert doc.page_count >= 1
+    return doc
+
+
+def test_huge_heading_renders():
+    heading = "### " + "Engineer " * 3000  # ~27k chars, no pipes
+    doc = _assert_pdf(generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{heading}\n- Did work"))
+    assert "Did work" in doc[0].get_text()
+    assert "..." in doc[0].get_text()
+
+
+def test_huge_date_part_renders():
+    dates = "2021 - 2022 " * 350  # ~4k chars of valid date tokens
+    text = f"# Jane\n## EXPERIENCE\n### Engineer | Acme | Remote | {dates}\n- Did work"
+    doc = _assert_pdf(generate_resume_pdf(text))
+    assert "Engineer" in doc[0].get_text()
+
+
+def test_huge_bullet_renders():
+    bullet = "- " + ("word " * 6000)[:30000]
+    doc = _assert_pdf(generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{bullet}"))
+    assert doc.page_count > 1
+
+
+def test_many_lines_render():
+    lines = "\n".join(f"### Role {i} | Acme | Remote | 2021 - 2022\n- Built thing {i}"
+                      for i in range(600))[:30000]
+    _assert_pdf(generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{lines}"))
+
+
+def test_split_row_splits_tall_left_cell():
+    from app.services.pdf_service import _Para, _SplitRow, _Styles
+
+    st = _Styles(THEMES["modern"])
+    row = _SplitRow(_Para("Engineer " * 3000, st.role), _Para("2021 - 2022", st.right))
+    parts = row.split(500, 200)
+    assert len(parts) == 2
+    assert isinstance(parts[0], _SplitRow) and parts[0].right is row.right
+    assert parts[0].wrap(500, 200)[1] <= 200
+    assert row.split(500, 1) == []  # not even one line fits
+
+
+def test_uncapped_huge_heading_splits_across_pages(monkeypatch):
+    from app.services import pdf_service
+
+    def no_fallback(*_a):
+        raise AssertionError("fallback rendering should not be needed")
+
+    monkeypatch.setattr(pdf_service, "_PART_LIMIT", 100_000)
+    monkeypatch.setattr(pdf_service, "_fallback_story", no_fallback)
+    heading = "### " + "Engineer " * 3000 + "| Acme | Remote | 2021 - 2022"
+    doc = _assert_pdf(generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{heading}\n- Did work"))
+    assert doc.page_count > 1
+    # The right cell stays with the first slice of the role text.
+    first = next(page.get_text() for page in doc if "Engineer" in page.get_text())
+    assert "2021 \u2013 2022" in first
+
+
+def test_layout_error_falls_back_to_plain_paragraphs(monkeypatch):
+    from app.services import pdf_service
+
+    # Simulate an unsplittable over-tall row (the original bug) by disabling
+    # both the heading cap and the row split.
+    monkeypatch.setattr(pdf_service, "_PART_LIMIT", 100_000)
+    monkeypatch.setattr(pdf_service._SplitRow, "split", lambda self, w, h: [])
+    heading = "### " + "Engineer " * 3000 + "| Acme"
+    doc = _assert_pdf(generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{heading}\n- Did work"))
+    assert "Engineer Engineer" in doc[0].get_text()
+
+
+def test_unrecoverable_layout_error_becomes_value_error(monkeypatch):
+    from app.services import pdf_service
+
+    monkeypatch.setattr(pdf_service, "_PART_LIMIT", 100_000)
+    monkeypatch.setattr(pdf_service._SplitRow, "split", lambda self, w, h: [])
+    monkeypatch.setattr(pdf_service, "_fallback_story", lambda story, *a: story)
+    heading = "### " + "Engineer " * 3000 + "| Acme"
+    with pytest.raises(ValueError, match="Resume layout could not be rendered"):
+        generate_resume_pdf(f"# Jane\n## EXPERIENCE\n{heading}")
 
 
 def test_model_text_is_escaped_not_interpreted_as_markup():

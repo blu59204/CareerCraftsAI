@@ -44,6 +44,8 @@ class OptimizeResponse(BaseModel):
     # Deterministic audit (resume_structure.review_resume) + form pre-fill.
     review: dict | None = None
     contact_suggestions: dict[str, str] = Field(default_factory=dict)
+    # The name the PDF prints (account full name); overrides the `# Name` line.
+    display_name: str = ""
 
 
 TemplateName = Literal["modern", "classic", "technical"]
@@ -87,12 +89,20 @@ class ResumeFixRequest(BaseModel):
     resume_markdown: str | None = Field(default=None, max_length=30000)
     template: TemplateName | None = None
     contact: ContactFix | None = None
-    experience: list[ExperienceFix] = Field(default_factory=list, max_length=30)
-    education: list[EducationFix] = Field(default_factory=list, max_length=10)
+    experience: list[ExperienceFix] = Field(
+        default_factory=list, max_length=30, description="At most 30 experience fixes."
+    )
+    education: list[EducationFix] = Field(
+        default_factory=list, max_length=10, description="At most 10 education entries."
+    )
     remember: bool = True
 
 
 class TailoredResumeResponse(BaseModel):
+    """A tailored resume. ``document_id`` may differ from the one requested
+    by /fix: a resume pinned by a pending application approval is saved as
+    a new version instead of being edited."""
+
     document_id: str
     template: str
     resume_markdown: str
@@ -104,6 +114,7 @@ class TailoredResumeResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     review: dict
     contact_suggestions: dict[str, str] = Field(default_factory=dict)
+    display_name: str = ""
 
 
 class AtsScoreRequest(BaseModel):
@@ -195,6 +206,7 @@ async def optimize_resume(
         warnings=pending.get("warnings", []),
         review=pending.get("review"),
         contact_suggestions=suggestions,
+        display_name=current_user.full_name or "",
     )
 
 
@@ -227,10 +239,13 @@ async def _get_tailored_doc(db: AsyncSession, document_id: str, user: User) -> U
     return doc
 
 
-def _tailored_response(doc: UserDocument, suggestions: dict[str, str]) -> TailoredResumeResponse:
-    from app.services.resume_structure import review_resume
+def _tailored_response(
+    doc: UserDocument, suggestions: dict[str, str], display_name: str = "",
+) -> TailoredResumeResponse:
+    from app.services.resume_structure import filter_resolved_warnings, review_resume
 
     data = doc.ats_data or {}
+    review = review_resume(doc.raw_text or "")
     return TailoredResumeResponse(
         document_id=str(doc.id),
         template=data.get("template") or "modern",
@@ -240,10 +255,68 @@ def _tailored_response(doc: UserDocument, suggestions: dict[str, str]) -> Tailor
         keywords_matched=data.get("keywords_matched") or [],
         keywords_missing=data.get("keywords_missing") or [],
         changes_made=data.get("changes_made") or [],
-        warnings=data.get("warnings") or [],
-        review=review_resume(doc.raw_text or ""),
+        # ats_data keeps the model's original warnings; hide the ones the
+        # current text has resolved (they come back if the gap reappears).
+        warnings=filter_resolved_warnings(list(data.get("warnings") or []), review),
+        review=review,
         contact_suggestions=suggestions,
+        display_name=display_name,
     )
+
+
+# Attempt states in which an application has pinned its resume PDF (by
+# sha256, captured when the attempt is reserved) and still has to upload or
+# submit it. Editing that PDF in place would make the approval fail.
+_PINNING_ATTEMPT_STATES = ("preparing", "awaiting_approval", "submitting")
+
+
+async def _pinned_by_pending_approval(db: AsyncSession, doc: UserDocument) -> bool:
+    """Whether an in-flight application approval references this PDF.
+
+    Two references exist: an ApplicationAttempt still in progress for a
+    JobApplication whose resume_id is this document, and an agent run
+    awaiting approval whose checkpoint recorded this document together with
+    its resume_sha256 (browser review stage, or the auto-apply pipeline's
+    ``actions_pending``).
+    """
+    from sqlalchemy import and_, or_
+
+    from app.models.db import AgentRun, ApplicationAttempt, JobApplication
+
+    attempt = (await db.execute(
+        select(ApplicationAttempt.id)
+        .join(JobApplication, JobApplication.id == ApplicationAttempt.job_application_id)
+        .where(
+            ApplicationAttempt.user_id == doc.user_id,
+            JobApplication.resume_id == doc.id,
+            ApplicationAttempt.state.in_(_PINNING_ATTEMPT_STATES),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+    if attempt is not None:
+        return True
+    doc_id = str(doc.id)
+    run = (await db.execute(
+        select(AgentRun.id)
+        .where(
+            AgentRun.user_id == doc.user_id,
+            AgentRun.status == "awaiting_approval",
+            or_(
+                and_(
+                    AgentRun.output.has_key("resume_sha256"),
+                    AgentRun.output.contains({"pdf_document_id": doc_id}),
+                ),
+                AgentRun.output.contains({"actions_pending": [{"pdf_document_id": doc_id}]}),
+            ),
+        )
+        .limit(1)
+    )).scalar_one_or_none()
+    return run is not None
+
+
+_RENDER_ERROR = (
+    "The resume could not be rendered as a PDF. Shorten very long lines and try again."
+)
 
 
 @router.get("/tailored/{document_id}", response_model=TailoredResumeResponse)
@@ -254,7 +327,9 @@ async def get_tailored_resume(
 ):
     """A saved tailored resume with its gap review, for re-opening and fixing."""
     doc = await _get_tailored_doc(db, document_id, current_user)
-    return _tailored_response(doc, await _contact_suggestions(db, current_user))
+    return _tailored_response(
+        doc, await _contact_suggestions(db, current_user), current_user.full_name or ""
+    )
 
 
 @router.post("/tailored/{document_id}/fix", response_model=TailoredResumeResponse)
@@ -271,40 +346,43 @@ async def fix_tailored_resume(
 
     No model call: the edit is deterministic and uses only what the user
     entered, so it cannot introduce invented content.
+
+    The document is edited in place unless a pending application approval
+    has pinned its PDF; then the fix is saved as a new document (the
+    response carries its id) and the original is left untouched.
     """
     from app.services.ats_service import compute_ats_score
     from app.services.pdf_service import generate_resume_pdf
     from app.services.resume_facts import load_facts_row, merge_facts, save_facts
-    from app.services.resume_structure import (
-        apply_fixes,
-        clean_placeholders,
-        filter_resolved_warnings,
-        review_resume,
-    )
+    from app.services.resume_structure import apply_fixes, clean_placeholders, review_resume
     from app.services.storage_service import delete_file, upload_file
 
     doc = await _get_tailored_doc(db, document_id, current_user)
     data = dict(doc.ats_data or {})
     template = payload.template or data.get("template") or "modern"
-    base = payload.resume_markdown if payload.resume_markdown is not None else doc.raw_text
+    base = clean_placeholders(
+        payload.resume_markdown if payload.resume_markdown is not None else doc.raw_text or ""
+    )
     # Check before apply_fixes: it re-inserts the name heading, so a blanked
     # manual edit would otherwise save a resume containing only the name.
-    if not clean_placeholders(base or "").strip():
+    if not base.strip():
         raise HTTPException(status_code=422, detail="Resume text cannot be empty")
-    before = review_resume(doc.raw_text or "")
+    # Fix indices refer to this text (the manual edit, when one was sent).
+    before = review_resume(base)
 
     contact = payload.contact.model_dump(exclude_unset=True) if payload.contact else None
     experience = [f.model_dump(exclude_unset=True) for f in payload.experience]
     education = [f.model_dump(exclude_unset=True) for f in payload.education]
     try:
         markdown = apply_fixes(
-            clean_placeholders(base or ""),
+            base,
             full_name=current_user.full_name or "",
             contact=contact,
             experience=experience,
             education=education,
         )
     except ValueError as exc:
+        # Our own messages (e.g. "No experience entry at index 5").
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if not markdown.strip():
         raise HTTPException(status_code=422, detail="Resume text cannot be empty")
@@ -314,24 +392,45 @@ async def fix_tailored_resume(
             generate_resume_pdf, markdown,
             full_name=current_user.full_name or "", template=template,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except Exception:  # noqa: BLE001 — ValueError, LayoutError, any ReportLab failure
+        # The real message can carry ReportLab markup and internals: log it only.
+        logger.exception("Resume PDF render failed for document %s", doc.id)
+        raise HTTPException(status_code=422, detail=_RENDER_ERROR) from None
 
-    new_path = upload_file(str(current_user.id), "resume.pdf", pdf_bytes, "application/pdf")
-    old_path = doc.storage_path
-    review = review_resume(markdown)
-    data["template"] = template
-    data["warnings"] = filter_resolved_warnings(list(data.get("warnings") or []), review)
+    # Score before uploading so a scoring failure cannot orphan a new file.
+    ats_score = doc.ats_score
     jd_text = data.get("jd_text") or ""
     if jd_text:
         ats = await asyncio.to_thread(compute_ats_score, markdown, jd_text)
-        doc.ats_score = ats.composite_score
+        ats_score = ats.composite_score
         data["keywords_missing"] = list(ats.missing_keywords[:10])
-    doc.raw_text = markdown
-    doc.storage_path = new_path
-    doc.ats_data = data
+    review = review_resume(markdown)
+    # data["warnings"] stays the model's original list; it is filtered when read.
+    data["template"] = template
+    pinned = await _pinned_by_pending_approval(db, doc)
 
+    new_path = upload_file(str(current_user.id), "resume.pdf", pdf_bytes, "application/pdf")
+    old_path = doc.storage_path
     try:
+        if pinned:
+            target = UserDocument(
+                id=uuid.uuid4(),
+                user_id=doc.user_id,
+                doc_type=doc.doc_type,
+                filename=doc.filename,
+                storage_path=new_path,
+                raw_text=markdown,
+                ats_score=ats_score,
+                ats_data=data,
+            )
+            db.add(target)
+        else:
+            target = doc
+            doc.raw_text = markdown
+            doc.storage_path = new_path
+            doc.ats_score = ats_score
+            doc.ats_data = data
+
         if payload.remember:
             row = await load_facts_row(db, current_user.id)
             facts = merge_facts(
@@ -345,6 +444,9 @@ async def fix_tailored_resume(
             )
             await save_facts(db, current_user.id, facts)
         await db.flush()
+        # Commit here, not in get_db after the response: the old PDF may only
+        # be deleted once the row pointing at the new one is durable.
+        await db.commit()
     except Exception:
         try:
             delete_file(new_path, str(current_user.id))
@@ -352,18 +454,28 @@ async def fix_tailored_resume(
             logger.warning("Could not clean up resume PDF %s", new_path)
         raise
 
-    if old_path and old_path != new_path:
+    if not pinned and old_path and old_path != new_path:
         try:
             delete_file(old_path, str(current_user.id))
         except Exception:  # noqa: BLE001 — a stale file is harmless
             logger.warning("Could not delete superseded resume PDF %s", old_path)
 
-    return _tailored_response(doc, await _contact_suggestions(db, current_user))
+    return _tailored_response(
+        target, await _contact_suggestions(db, current_user), current_user.full_name or ""
+    )
 
 
 def _experience_facts(fixes: list[dict], before: dict, after: dict) -> list[dict]:
-    """Saved-fact records for experience fixes: final values plus the
-    original employer text, which is what the next draft will contain."""
+    """Saved-fact records for experience fixes.
+
+    Only the keys the user submitted (non-empty) are facts, listed in
+    ``submitted``. ``role``/``employer_match`` let apply_saved_facts find the
+    entry in a later draft and ``match_role``/``match_employer`` record the
+    entry as it was before this fix; they may be model-written text and are
+    never presented as facts.
+    """
+    from app.services.resume_facts import EXPERIENCE_FACT_KEYS
+
     old = {e["index"]: e for e in before.get("experience", [])}
     new = {e["index"]: e for e in after.get("experience", [])}
     facts = []
@@ -372,14 +484,19 @@ def _experience_facts(fixes: list[dict], before: dict, after: dict) -> list[dict
         if idx not in new:
             continue
         entry, original = new[idx], old.get(idx, new[idx])
-        facts.append({
+        submitted = [k for k in EXPERIENCE_FACT_KEYS if (fix.get(k) or "").strip()]
+        if not submitted:
+            continue
+        record = {
             "role": entry["role"],
             "employer_match": original["employer"] or entry["employer"],
-            "employer": entry["employer"],
-            "location": entry["location"],
-            "start": entry["start"],
-            "end": entry["end"],
-        })
+            "match_role": original["role"] or entry["role"],
+            "match_employer": original["employer"],
+            "submitted": submitted,
+        }
+        # The value as it now stands in the resume (normalised by apply_fixes).
+        record.update({k: entry[k] or fix[k] for k in submitted})
+        facts.append(record)
     return facts
 
 

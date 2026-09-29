@@ -17,20 +17,29 @@ identically:
                spacing so skills and projects fit on one page
 """
 
+import bisect
+import functools
+import importlib.util
 import io
+import os
 import re
 import unicodedata
-from dataclasses import dataclass
-from html import escape
+from dataclasses import dataclass, replace
+from html import escape, unescape
+from pathlib import Path
 from typing import Literal
 
+import reportlab
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfbase.ttfonts import TTFError, TTFont
 from reportlab.platypus import Flowable, HRFlowable, Paragraph, SimpleDocTemplate
+from reportlab.platypus.doctemplate import LayoutError
 
 from app.services.resume_structure import clean_placeholders, split_heading
 
@@ -93,41 +102,274 @@ THEMES: dict[str, Theme] = {
 _ASCII_PUNCT = str.maketrans({
     "–": "-", "—": "-", "−": "-", "‘": "'", "’": "'", "“": '"', "”": '"',
     "\u00a0": " ", "\u2009": " ", "\u200b": "",
+    # Symbols the models like but ATS parsers and WinAnsi fonts do not.
+    "₹": "Rs.", "→": "->", "←": "<-", "≥": ">=", "≤": "<=", "≠": "!=",
+    "✓": "", "✔": "", "\u2011": "-", "\u2010": "-",
 })
+# Letters with no NFKD decomposition; applied only when the font lacks them.
+_LETTERS = {"Ł": "L", "ł": "l", "ı": "i", "İ": "I", "Đ": "D", "đ": "d"}
+_LINK = re.compile(r"\[([^]]+)\]\(([^)]+)\)")
+_TAG = re.compile(r"<[^>]*>")
+
+Glyphs = frozenset[int] | None  # code points covered by a Unicode TTF, None = core fonts
 
 
-def _winansi(value: str) -> str:
+def _winansi_ok(ch: str) -> bool:
+    try:
+        ch.encode("cp1252")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _fold(ch: str) -> str:
+    ch = _LETTERS.get(ch, ch)
+    return unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode()
+
+
+def _encode(value: str, glyphs: Glyphs = None) -> str:
     """Core PDF fonts use WinAnsi; fold anything outside it to ASCII.
 
     Unencodable characters would otherwise render as blank glyphs, which is
-    worse for an ATS than a transliteration.
+    worse for an ATS than a transliteration. With a Unicode font (`glyphs`),
+    every character the font covers is kept as-is.
     """
     out = []
-    for ch in value:
-        try:
-            ch.encode("cp1252")
-            out.append(ch)
-        except UnicodeEncodeError:
-            out.append(unicodedata.normalize("NFKD", ch).encode("ascii", "ignore").decode())
+    for ch in value.translate(_ASCII_PUNCT):
+        ok = _winansi_ok(ch) or (glyphs is not None and ord(ch) in glyphs)
+        out.append(ch if ok else _fold(ch))
     return "".join(out)
 
 
-def _markup(value: str) -> str:
+# ── Unicode fonts ───────────────────────────────────────────────────────────
+# (regular, bold, italic, bold-italic) file names, in preference order.
+_UNICODE_FONTS = {
+    "sans": [
+        ("DejaVuSans.ttf", "DejaVuSans-Bold.ttf", "DejaVuSans-Oblique.ttf",
+         "DejaVuSans-BoldOblique.ttf"),
+        ("NotoSans-Regular.ttf", "NotoSans-Bold.ttf", "NotoSans-Italic.ttf",
+         "NotoSans-BoldItalic.ttf"),
+        ("arial.ttf", "arialbd.ttf", "ariali.ttf", "arialbi.ttf"),
+    ],
+    "serif": [
+        ("DejaVuSerif.ttf", "DejaVuSerif-Bold.ttf", "DejaVuSerif-Italic.ttf",
+         "DejaVuSerif-BoldItalic.ttf"),
+        ("times.ttf", "timesbd.ttf", "timesi.ttf", "timesbi.ttf"),
+    ],
+}
+
+
+@functools.lru_cache(maxsize=1)
+def _font_dirs() -> tuple[Path, ...]:
+    dirs = [Path(reportlab.__file__).parent / "fonts"]
+    spec = importlib.util.find_spec("matplotlib")  # optional; not imported
+    if spec and spec.origin:
+        dirs.append(Path(spec.origin).parent / "mpl-data" / "fonts" / "ttf")
+    dirs.append(Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts")
+    return tuple(dirs)
+
+
+@functools.lru_cache(maxsize=1)
+def _system_fonts() -> dict[str, Path]:
+    root = Path("/usr/share/fonts")
+    if not root.is_dir():
+        return {}
+    return {p.name.lower(): p for p in root.rglob("*.ttf")}
+
+
+def _find_font(filename: str) -> Path | None:
+    for folder in _font_dirs():
+        path = folder / filename
+        if path.is_file():
+            return path
+    return _system_fonts().get(filename.lower())
+
+
+@functools.lru_cache(maxsize=2)
+def _unicode_family(serif: bool) -> tuple[str, frozenset[int]] | None:
+    """Register (once) the first available Unicode TTF family.
+
+    Returns the family's base font name and the code points it covers, or
+    None when no suitable font is installed.
+    """
+    kinds = ("serif", "sans") if serif else ("sans",)
+    for files in (f for kind in kinds for f in _UNICODE_FONTS[kind]):
+        regular = _find_font(files[0])
+        if regular is None:
+            continue
+        name = "CC-" + files[0].rsplit(".", 1)[0]
+        names = (name, f"{name}-Bold", f"{name}-Italic", f"{name}-BoldItalic")
+        try:
+            for font_name, filename in zip(names, files, strict=True):
+                path = _find_font(filename) or regular
+                pdfmetrics.registerFont(TTFont(font_name, str(path)))
+        except (OSError, TTFError):
+            continue
+        pdfmetrics.registerFontFamily(
+            name, normal=names[0], bold=names[1], italic=names[2], boldItalic=names[3],
+        )
+        return name, frozenset(pdfmetrics.getFont(name).face.charToGlyph)
+    return None
+
+
+def _document_fonts(theme: Theme, text: str) -> tuple[Theme, Glyphs]:
+    """Switch to a Unicode TTF only when folding would erase letters or digits
+    (Cyrillic, CJK, Devanagari, ...) that such a font can actually draw."""
+    lost = {
+        ord(ch) for ch in set(text.translate(_ASCII_PUNCT))
+        if unicodedata.category(ch)[0] in "LN" and not _winansi_ok(ch) and not _fold(ch)
+    }
+    if not lost:
+        return theme, None
+    family = _unicode_family(theme.regular.startswith("Times"))
+    if family is None or not lost & family[1]:
+        return theme, None
+    name, glyphs = family
+    return replace(theme, regular=name, bold=f"{name}-Bold", italic=f"{name}-Italic"), glyphs
+
+
+# ── Inline emphasis ─────────────────────────────────────────────────────────
+_SPAN = "\x00"  # stands in for a whole bold span while pairing italics
+
+
+def _is_word(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _bold_spans(text: str) -> list[tuple[int, int]]:
+    """Pair `**` markers left to right; unmatched markers stay literal.
+
+    After a `***` opener the closer is the last two stars of its run, so
+    `***x***` is bold around `*x*`.
+    """
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while (start := text.find("**", i)) != -1:
+        triple = text.startswith("*", start + 2)
+        end = text.find("**", start + 3)
+        while end != -1 and triple and text.startswith("*", end + 2):
+            end = text.find("**", end + 1)
+        if end == -1:
+            i = start + 2
+            continue
+        spans.append((start, end))
+        i = end + 2
+    return spans
+
+
+def _italic_pieces(text: str) -> list[tuple[str, bool]]:
+    """Split on `*x*`: a lone star that is not word-internal and has no
+    whitespace just inside it. Everything else stays literal."""
+    n = len(text)
+
+    def around(k: int) -> tuple[str, str]:
+        return (text[k - 1] if k else ""), (text[k + 1] if k + 1 < n else "")
+
+    def opens(k: int) -> bool:
+        prev, nxt = around(k)
+        return bool(nxt) and not nxt.isspace() and "*" not in (prev, nxt) and not _is_word(prev)
+
+    def closes(k: int) -> bool:
+        prev, nxt = around(k)
+        return bool(prev) and not prev.isspace() and "*" not in (prev, nxt) and not _is_word(nxt)
+
+    stars = [k for k, ch in enumerate(text) if ch == "*"]
+    closers = [k for k in stars if closes(k)]
+    pieces: list[tuple[str, bool]] = []
+    last = 0
+    for k in stars:
+        if k < last or not opens(k):
+            continue
+        idx = bisect.bisect_left(closers, k + 2)
+        if idx == len(closers):
+            continue
+        close = closers[idx]
+        if k > last:
+            pieces.append((text[last:k], False))
+        pieces.append((text[k + 1:close], True))
+        last = close + 1
+    if last < n:
+        pieces.append((text[last:], False))
+    return pieces
+
+
+def _inline(value: str) -> list[tuple[str, bool, bool]]:
+    """`(text, bold, italic)` runs for `**bold**` / `*italic*` (contract C4).
+
+    Bold spans are paired first; italics pair either inside one bold span or
+    around whole bold spans, so the result always nests. When spans cross
+    (`**a *b** c*`) bold wins and the unmatched stars stay literal.
+    """
+    text = value.replace(_SPAN, "")
+    bolds: list[str] = []
+    top: list[str] = []
+    last = 0
+    for start, end in _bold_spans(text):
+        top += [text[last:start], _SPAN]
+        bolds.append(text[start + 2:end])
+        last = end + 2
+    top.append(text[last:])
+    inner = iter(bolds)
+    runs: list[tuple[str, bool, bool]] = []
+    for piece, italic in _italic_pieces("".join(top)):
+        for k, chunk in enumerate(piece.split(_SPAN)):
+            if k:
+                runs += [(t, True, italic or i) for t, i in _italic_pieces(next(inner))]
+            if chunk:
+                runs.append((chunk, False, italic))
+    return runs
+
+
+def _markup(value: str, glyphs: Glyphs = None) -> str:
     """Keep basic Markdown emphasis while escaping all model-supplied text."""
-    value = re.sub(r"\[([^]]+)\]\(([^)]+)\)", r"\1 (\2)", value)
-    value = _winansi(value.translate(_ASCII_PUNCT))
-    value = escape(value.replace("`", ""), quote=False)
-    value = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", value).replace("**", "")
-    return re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<i>\1</i>", value)
+    value = _LINK.sub(r"\1 (\2)", value).replace("`", "")
+    out = []
+    for text, bold, italic in _inline(value):
+        text = escape(_encode(text, glyphs), quote=False)
+        if italic:
+            text = f"<i>{text}</i>"
+        out.append(f"<b>{text}</b>" if bold else text)
+    return "".join(out)
 
 
 def _plain(value: str) -> str:
     return re.sub(r"[*_`]", "", value).strip()
 
 
-def _dates(value: str) -> str:
+def _visible(markup: str) -> str:
+    return unescape(_TAG.sub("", markup))
+
+
+def _dates(value: str, glyphs: Glyphs = None) -> str:
     """One consistent range separator: an en dash with spaces."""
-    return re.sub(r"\s*-\s*", " \u2013 ", _markup(value))
+    return re.sub(r"\s*-\s*", " \u2013 ", _markup(value, glyphs))
+
+
+_PART_LIMIT = 300   # role / employer / location characters
+_DATES_LIMIT = 60
+
+
+def _cap(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[: limit - 3].rstrip() + "..."
+
+
+class _Para(Paragraph):
+    """A Paragraph that degrades to escaped plain text instead of failing the
+    whole agent run when its markup cannot be parsed or laid out."""
+
+    def __init__(self, text, style=None, *args, **kwargs):
+        try:
+            super().__init__(text, style, *args, **kwargs)
+        except ValueError:
+            super().__init__(escape(_visible(text or ""), quote=False), style, *args, **kwargs)
+
+    def wrap(self, avail_width, avail_height):
+        try:
+            return super().wrap(avail_width, avail_height)
+        except ValueError:
+            plain = escape(self.getPlainText(), quote=False)
+            Paragraph.__init__(self, plain, self.style, bulletText=self.bulletText)
+            return super().wrap(avail_width, avail_height)
 
 
 class _SplitRow(Flowable):
@@ -137,21 +379,41 @@ class _SplitRow(Flowable):
     left then right, which every ATS extracts in reading order.
     """
 
-    def __init__(
-        self, left: Paragraph, right: Paragraph | None, right_text: str, font: str, size: float,
-    ):
+    _GAP = 10
+    _RIGHT_SHARE = 0.42  # the right cell never takes more of the row
+
+    def __init__(self, left: Paragraph, right: Paragraph | None):
         super().__init__()
         self.left = left
         self.right = right
-        self._natural = stringWidth(right_text, font, size) + 2 if right is not None else 0
+        self._natural = 0.0
+        if right is not None:
+            style = right.style
+            self._natural = stringWidth(right.getPlainText(), style.fontName, style.fontSize) + 2
 
     def wrap(self, avail_width, avail_height):
-        self._rw = min(self._natural, avail_width * 0.42)
-        self._lw = avail_width - self._rw - (10 if self._rw else 0)
+        avail_width = max(avail_width, 1)
+        self._rw = min(self._natural, avail_width * self._RIGHT_SHARE)
+        self._lw = max(avail_width - self._rw - (self._GAP if self._rw else 0), 1)
         _, self._lh = self.left.wrap(self._lw, avail_height)
         self._rh = self.right.wrap(self._rw, avail_height)[1] if self.right is not None else 0
         self.width, self.height = avail_width, max(self._lh, self._rh)
         return self.width, self.height
+
+    def split(self, avail_width, avail_height):
+        """Break a too-tall row: the first slice of the left text keeps the
+        right cell, the rest continues as ordinary paragraph(s)."""
+        self.wrap(avail_width, avail_height)
+        if self.height <= avail_height:
+            return [self]
+        if self._rh > avail_height:
+            return []
+        parts = self.left.split(self._lw, avail_height)
+        if len(parts) < 2:
+            return []
+        first = _SplitRow(parts[0], self.right)
+        first.spaceBefore = self.getSpaceBefore()
+        return [first, *parts[1:]]
 
     def draw(self):
         self.left.drawOn(self.canv, 0, self.height - self._lh)
@@ -205,7 +467,7 @@ class _Styles:
         )
 
 
-def _entry_rows(line: str, theme: Theme, st: _Styles) -> list[Flowable]:
+def _entry_rows(line: str, st: _Styles, glyphs: Glyphs) -> list[Flowable]:
     """`Role | Employer | Location | Dates` → two rows:
 
         **Role**                                   Jan 2023 – Present
@@ -213,23 +475,23 @@ def _entry_rows(line: str, theme: Theme, st: _Styles) -> list[Flowable]:
     """
     parts = split_heading(line)
     if not (parts.role or parts.employer):
-        return [Paragraph(_markup(_plain(line)), st.role)]
+        return [_Para(_markup(_plain(line), glyphs), st.role)]
     rows: list[Flowable] = []
-    dates = parts.dates
+    role = _cap(parts.role or parts.employer, _PART_LIMIT)
+    dates = _cap(parts.dates, _DATES_LIMIT)
     top = _SplitRow(
-        Paragraph(_markup(parts.role or parts.employer), st.role),
-        Paragraph(_dates(dates), st.right) if dates else None,
-        _plain(_dates(dates)).replace("&amp;", "&"), theme.regular, theme.body_size - 0.4,
+        _Para(_markup(role, glyphs), st.role),
+        _Para(_dates(dates, glyphs), st.right) if dates else None,
     )
     top.spaceBefore = 5
     top.keepWithNext = True
     rows.append(top)
-    employer = parts.employer if parts.role else ""
-    if employer or parts.location:
+    employer = _cap(parts.employer, _PART_LIMIT) if parts.role else ""
+    location = _cap(parts.location, _PART_LIMIT)
+    if employer or location:
         second = _SplitRow(
-            Paragraph(_markup(employer), st.org),
-            Paragraph(_markup(parts.location), st.right_italic) if parts.location else None,
-            parts.location, theme.italic, theme.body_size - 0.4,
+            _Para(_markup(employer, glyphs), st.org),
+            _Para(_markup(location, glyphs), st.right_italic) if location else None,
         )
         second.spaceAfter = 1.5
         second.keepWithNext = True
@@ -237,11 +499,27 @@ def _entry_rows(line: str, theme: Theme, st: _Styles) -> list[Flowable]:
     return rows
 
 
+def _fallback_story(story: list[Flowable], width: float, height: float, style) -> list[Flowable]:
+    """Replace every flowable taller than a frame with plain paragraphs, which
+    ReportLab can always split across pages."""
+    out: list[Flowable] = []
+    for flowable in story:
+        if flowable.wrap(width, height)[1] <= height:
+            out.append(flowable)
+            continue
+        cells = [flowable.left, flowable.right] if isinstance(flowable, _SplitRow) else [flowable]
+        for cell in cells:
+            if isinstance(cell, Paragraph) and cell.getPlainText().strip():
+                out.append(Paragraph(escape(cell.getPlainText(), quote=False), style))
+    return out
+
+
 def generate_resume_pdf(
     resume_text: str,
     full_name: str = "",
     template: Template = "modern",
 ) -> bytes:
+    full_name = full_name or ""
     if not resume_text or not resume_text.strip():
         raise ValueError("resume_text cannot be empty")
     if template not in THEMES:
@@ -250,17 +528,25 @@ def generate_resume_pdf(
     if not cleaned.strip():
         raise ValueError("resume_text cannot be empty")
 
-    theme = THEMES[template]
+    theme, glyphs = _document_fonts(THEMES[template], f"{full_name}\n{cleaned}")
     st = _Styles(theme)
     ink = colors.HexColor(theme.ink)
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=letter,
-        leftMargin=theme.margin_x * inch, rightMargin=theme.margin_x * inch,
-        topMargin=theme.margin_y * inch, bottomMargin=theme.margin_y * inch,
-        title=f"{full_name or 'Resume'} - Resume", author=full_name or "",
-        subject="Resume", creator="CareerCraft AI",
-    )
+
+    def mk(value: str) -> str:
+        return _markup(value, glyphs)
+
+    def render(flowables: list[Flowable]) -> bytes:
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer, pagesize=letter,
+            leftMargin=theme.margin_x * inch, rightMargin=theme.margin_x * inch,
+            topMargin=theme.margin_y * inch, bottomMargin=theme.margin_y * inch,
+            title=f"{full_name or 'Resume'} - Resume", author=full_name,
+            subject="Resume", creator="CareerCraft AI",
+        )
+        doc.build(list(flowables))  # build() consumes the list it is given
+        return buffer.getvalue()
+
     story: list[Flowable] = []
     first_line = True
     in_header = True
@@ -282,7 +568,7 @@ def generate_resume_pdf(
         plain = _plain(line)
         if first_line:
             name = full_name.strip() or plain
-            story.append(Paragraph(_markup(name), st.name))
+            story.append(_Para(mk(name), st.name))
             first_line = False
             if plain.casefold() == name.casefold() or (level == 1 and full_name):
                 continue
@@ -296,7 +582,7 @@ def generate_resume_pdf(
         )
         if section.casefold() in _SECTIONS or (level == 2 and len(section) < 50) or caps_heading:
             in_header = False
-            story.append(Paragraph(_markup(section.upper()), st.section))
+            story.append(_Para(mk(section.upper()), st.section))
             if theme.heading_rule:
                 rule = HRFlowable(
                     width="100%", thickness=theme.heading_rule, color=ink,
@@ -308,24 +594,33 @@ def generate_resume_pdf(
         if in_header:
             if _CONTACT.search(plain):
                 contact = " | ".join(p.strip() for p in re.split(r"\s*[|·•]\s*", line) if p.strip())
-                story.append(Paragraph(_markup(contact), st.contact))
+                story.append(_Para(mk(contact), st.contact))
                 continue
             if level == 0 and not _BULLET.match(line) and len(plain) < 90:
-                story.append(Paragraph(_markup(line), st.headline))
+                story.append(_Para(mk(line), st.headline))
                 continue
         in_header = False
 
         bullet = _BULLET.match(line)
         if bullet:
-            story.append(Paragraph(_markup(line[bullet.end():]), st.bullet, bulletText="\u2022"))
+            story.append(_Para(mk(line[bullet.end():]), st.bullet, bulletText="\u2022"))
             continue
         is_entry = level >= 3 or (
             line.startswith("**") and "|" in line and _DATE.search(plain)
         )
         if is_entry:
-            story.extend(_entry_rows(line, theme, st))
+            story.extend(_entry_rows(line, st, glyphs))
             continue
-        story.append(Paragraph(_markup(line), st.body))
+        story.append(_Para(mk(line), st.body))
 
-    doc.build(story)
-    return buffer.getvalue()
+    try:
+        return render(story)
+    except LayoutError:
+        pass
+    # Frame = page minus margins minus the frame's 6 pt padding on each side.
+    width = letter[0] - 2 * theme.margin_x * inch - 12
+    height = letter[1] - 2 * theme.margin_y * inch - 12
+    try:
+        return render(_fallback_story(story, width, height, st.body))
+    except LayoutError as exc:
+        raise ValueError("Resume layout could not be rendered") from exc

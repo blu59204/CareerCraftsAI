@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.models.db import CandidateAnswer, CandidateProfile, User
+from app.services.resume_facts import FACTS_KEY
 
 router = APIRouter(prefix="/candidate-profile", tags=["candidate-profile"])
 
@@ -93,10 +94,18 @@ async def list_candidate_answers(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(CandidateAnswer).where(CandidateAnswer.user_id == current_user.id)
-    )
+    result = await db.execute(_answers_query(current_user.id))
     return result.scalars().all()
+
+
+def _answers_query(user_id: uuid.UUID):
+    """Saved application answers. The resume gap-fixer's facts record
+    (question_key "resume.facts") has its own shape and UI, so it is not
+    listed here; DELETE /answers/resume.facts still forgets it."""
+    return select(CandidateAnswer).where(
+        CandidateAnswer.user_id == user_id,
+        CandidateAnswer.question_key != FACTS_KEY,
+    )
 
 
 @router.delete("/answers/{question_key}")

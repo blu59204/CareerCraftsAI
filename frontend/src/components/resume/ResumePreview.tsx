@@ -1,4 +1,6 @@
-import type { CSSProperties, ReactNode } from "react";
+"use client";
+
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   parseResumeMarkdown,
   tokenizeInline,
@@ -163,21 +165,92 @@ function Item({ item, theme }: { item: ResumeItem; theme: Theme }) {
   );
 }
 
-export function ResumePreview({
+/** Dashed markers where the continuous HTML page crosses each 11in boundary. */
+function PageBreaks({ height, width }: { height: number; width: number }) {
+  if (!width || !height) return null;
+  const pageHeight = (width * PAGE_HEIGHT_PX) / PAGE_WIDTH_PX;
+  const count = Math.max(0, Math.ceil(height / pageHeight - 0.001) - 1);
+  if (!count) return null;
+  return (
+    <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+      {Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: pageHeight * (i + 1),
+            borderTop: "1px dashed #94A3B8",
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              right: 6,
+              top: 2,
+              padding: "0 6px",
+              borderRadius: 999,
+              background: "#F1F5F9",
+              color: "#475569",
+              fontFamily: SANS,
+              fontSize: 10,
+              lineHeight: "16px",
+            }}
+          >
+            Page {i + 2}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export interface ResumePreviewProps {
+  markdown: string;
+  template: ResumeTemplateId;
+  className?: string;
+  /** Thumbnail scale: lays out at full letter width, then transforms. */
+  scale?: number;
+  /** The name the PDF prints; when non-empty it replaces the parsed `# Name`. */
+  displayName?: string;
+  /** Overlay a dashed marker at every 11in of paper height (main preview). */
+  showPageBreaks?: boolean;
+  /** Zoom factor for the fit-to-width preview (1 = fit, capped at letter width). */
+  zoom?: number;
+  /** Minimum paper width in px at zoom 1 (the container scrolls horizontally). */
+  minWidth?: number;
+}
+
+function ResumePreviewImpl({
   markdown,
   template,
   className,
   scale = 1,
-}: {
-  markdown: string;
-  template: ResumeTemplateId;
-  className?: string;
-  scale?: number;
-}) {
+  displayName,
+  showPageBreaks = false,
+  zoom = 1,
+  minWidth,
+}: ResumePreviewProps) {
   const theme = THEMES[template] ?? THEMES.modern;
-  const resume = parseResumeMarkdown(markdown);
+  const resume = useMemo(() => parseResumeMarkdown(markdown), [markdown]);
+  const name = displayName?.trim() || resume.name;
   const scaled = scale > 0 && scale !== 1;
-  const isEmpty = !resume.name && !resume.sections.length && !resume.contact.length;
+  const isEmpty = !name && !resume.sections.length && !resume.contact.length;
+
+  const articleRef = useRef<HTMLElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const el = articleRef.current;
+    if (!showPageBreaks || !el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [showPageBreaks]);
 
   // Scaled thumbnails: the outer box takes the scaled page size (clipping to
   // page one) while the inner box lays out at full letter width.
@@ -188,9 +261,14 @@ export function ResumePreview({
         overflow: "hidden",
         flex: "0 0 auto",
       }
-    : { width: "100%", maxWidth: PAGE_WIDTH_PX };
+    : {
+        width: `${zoom * 100}%`,
+        maxWidth: PAGE_WIDTH_PX * zoom,
+        minWidth: minWidth ? minWidth * zoom : undefined,
+      };
   const containerStyle: CSSProperties = {
     containerType: "inline-size",
+    position: "relative",
     width: scaled ? PAGE_WIDTH_PX : "100%",
     transform: scaled ? `scale(${scale})` : undefined,
     transformOrigin: "top left",
@@ -200,6 +278,7 @@ export function ResumePreview({
     <div className={className} style={outerStyle}>
       <div style={containerStyle}>
         <article
+          ref={articleRef}
           role="document"
           aria-label="Resume preview"
           className="text-left"
@@ -224,10 +303,13 @@ export function ResumePreview({
             </p>
           ) : null}
 
-          {resume.name || resume.headline.length || resume.contact.length ? (
+          {name || resume.headline.length || resume.contact.length ? (
             <header style={{ textAlign: theme.align }}>
-              {resume.name ? (
-                <h1
+              {name ? (
+                // Not an <h1>: the preview sits under the page's "Preview" heading.
+                <p
+                  role="heading"
+                  aria-level={3}
                   style={{
                     margin: 0,
                     marginBottom: pt(3),
@@ -237,8 +319,8 @@ export function ResumePreview({
                     lineHeight: pt(theme.nameSize * 1.15),
                   }}
                 >
-                  <Inline text={resume.name} />
-                </h1>
+                  <Inline text={name} />
+                </p>
               ) : null}
               {resume.headline.map((line, i) => (
                 <p
@@ -277,7 +359,9 @@ export function ResumePreview({
           {resume.sections.map((section, s) => (
             <section key={s} aria-label={section.title || undefined}>
               {section.title ? (
-                <h2
+                <p
+                  role="heading"
+                  aria-level={4}
                   style={{
                     margin: 0,
                     marginTop: pt(theme.sectionGap),
@@ -293,7 +377,7 @@ export function ResumePreview({
                   }}
                 >
                   {section.title}
-                </h2>
+                </p>
               ) : null}
               {section.items.map((item, i) => (
                 <Item key={i} item={item} theme={theme} />
@@ -301,7 +385,10 @@ export function ResumePreview({
             </section>
           ))}
         </article>
+        {showPageBreaks ? <PageBreaks width={size.width} height={size.height} /> : null}
       </div>
     </div>
   );
 }
+
+export const ResumePreview = memo(ResumePreviewImpl);

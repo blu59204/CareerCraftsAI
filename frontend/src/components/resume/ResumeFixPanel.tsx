@@ -1,22 +1,36 @@
 "use client";
 
-import { useId, useState, type FormEvent, type HTMLAttributes, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type HTMLAttributes,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AlertTriangle, CheckCircle2, ChevronDown, Info, Loader2, Plus, Trash2 } from "lucide-react";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { apiClient, getApiErrorMessage } from "@/lib/api";
+import { getApiErrorMessage } from "@/lib/api";
+import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
 import { cn } from "@/lib/utils";
-import type {
-  ContactFieldKey,
-  ContactFields,
-  EducationFix,
-  ExperienceFix,
-  ResumeFixPayload,
-  ResumeReview,
-  ReviewEntry,
-  ReviewIssue,
-  TailoredResume,
+import {
+  countOpenIssues,
+  type ContactFieldKey,
+  type ContactFields,
+  type EducationFix,
+  type ExperienceFix,
+  type ResumeFixPayload,
+  type ResumeReview,
+  type ReviewEntry,
+  type ReviewIssue,
+  type TailoredResume,
 } from "@/lib/resume-types";
 
 // ---------------------------------------------------------------------------
@@ -28,7 +42,15 @@ export interface ResumeFixPanelProps {
   review: ResumeReview;
   contactSuggestions: Partial<ContactFields>;
   warnings: string[];
-  onFixed: (r: TailoredResume) => void;
+  /**
+   * Applies a fix result. `generation` is the value `getGeneration()` returned
+   * when the request started; returns false when the result was stale and ignored.
+   */
+  onFixed: (r: TailoredResume, generation: number) => boolean;
+  /** Current document generation (bumped by a new optimize / upload / history open). */
+  getGeneration: () => number;
+  /** Another resume request is in flight: submitting is blocked. */
+  disabled?: boolean;
 }
 
 /**
@@ -36,12 +58,33 @@ export interface ResumeFixPanelProps {
  * employer names, dates, education) and re-render the tailored PDF.
  *
  * Form state is reset whenever a new review arrives (e.g. after a successful
- * fix) by keying the inner form on the document id + review contents.
+ * fix) by keying the inner form on the document id + review contents. The
+ * wrapper outlives those remounts, so it owns the "Resume updated"
+ * announcement and moves focus to the new form's heading.
  */
-export function ResumeFixPanel(props: ResumeFixPanelProps) {
+function ResumeFixPanelImpl(props: ResumeFixPanelProps) {
   const formKey = `${props.documentId}:${JSON.stringify(props.review ?? null)}:${JSON.stringify(props.contactSuggestions ?? {})}`;
-  return <ResumeFixForm key={formKey} {...props} />;
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [fixCount, setFixCount] = useState(0);
+  const onApplied = useCallback(() => setFixCount((n) => n + 1), []);
+
+  // Runs after the commit that remounted the form, so the ref points at the
+  // new heading.
+  useEffect(() => {
+    if (fixCount > 0) headingRef.current?.focus();
+  }, [fixCount]);
+
+  return (
+    <>
+      <ResumeFixForm key={formKey} {...props} headingRef={headingRef} onApplied={onApplied} />
+      <p role="status" aria-live="polite" className="sr-only">
+        {fixCount > 0 ? <span key={fixCount}>Resume updated</span> : null}
+      </p>
+    </>
+  );
 }
+
+export const ResumeFixPanel = memo(ResumeFixPanelImpl);
 
 // ---------------------------------------------------------------------------
 // Styling
@@ -65,10 +108,12 @@ const MONTH_NAMES = [
   "july", "august", "september", "october", "november", "december",
 ] as const;
 const PRESENT_RE = /^(present|current|now|ongoing)$/i;
+const YEAR_RE = /\b(?:19|20)\d{2}\b/;
+const DATE_FORMAT_HINT = "Use a format like Jun 2025";
 
 /** "2025-06" -> "Jun 2025"; "" for anything else. */
 function monthInputToLabel(value: string): string {
-  const m = /^(\d{4})-(\d{2})$/.exec(value);
+  const m = /^(\d{4})-(\d{1,2})$/.exec(value.trim());
   if (!m) return "";
   const month = Number(m[2]);
   if (month < 1 || month > 12) return "";
@@ -80,7 +125,10 @@ function toMonthInput(year: string, month: number): string | null {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
-/** "Jun 2025" / "June 2025" / "2025-06" / "06/2025" -> "2025-06"; null if not month-precise. */
+/**
+ * "Jun 2025" / "June 2025" / "Sept. 2025" / "2025-6" / "2025-06" / "06/2025"
+ * -> "2025-06"; null when the value isn't month-precise.
+ */
 function labelToMonthInput(label: string): string | null {
   const s = label.trim().replace(/\s+/g, " ");
   const named = /^([A-Za-z]{3,9})\.?,? (\d{4})$/.exec(s);
@@ -96,22 +144,57 @@ function labelToMonthInput(label: string): string | null {
   return null;
 }
 
-/** A date field is a month picker unless the stored value can't be read as a month. */
+/**
+ * The label a date field sends: month-precise values are normalised to
+ * "Mon YYYY"; anything else (a year, "Spring 2023", half-typed text) is kept
+ * exactly as typed — a non-empty value is never turned into "".
+ */
+function normalizeDateLabel(raw: string): string {
+  const text = (raw ?? "").trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  const month = labelToMonthInput(text);
+  return month ? monthInputToLabel(month) : text;
+}
+
+/** Soft check for typed dates: month-precise, a year, or Present-style. */
+function looksLikeDate(raw: string): boolean {
+  const text = raw.trim();
+  return !text || !!labelToMonthInput(text) || YEAR_RE.test(text) || PRESENT_RE.test(text);
+}
+
+/** Browsers without a native month control (Firefox, desktop Safari) render type=month as text. */
+let monthInputSupport: boolean | null = null;
+function detectMonthInput(): boolean {
+  if (monthInputSupport === null) {
+    const input = document.createElement("input");
+    input.setAttribute("type", "month");
+    monthInputSupport = input.type === "month";
+  }
+  return monthInputSupport;
+}
+const subscribeNever = () => () => {};
+/** false during SSR/hydration (text mode), then the real client capability. */
+function useMonthInputSupported(): boolean {
+  return useSyncExternalStore(subscribeNever, detectMonthInput, () => false);
+}
+
+/**
+ * A date field. `text` is always the value as the user sees it ("Jun 2025",
+ * "2023", "Spring 2023"); month mode shows it in a native month picker when
+ * the text is month-precise.
+ */
 interface DateValue {
   mode: "month" | "text";
-  month: string; // "YYYY-MM" (month mode)
-  text: string; // free text (text mode)
+  text: string;
 }
 
 function dateFromLabel(raw: string): DateValue {
   const text = (raw ?? "").trim();
-  if (!text) return { mode: "month", month: "", text: "" };
-  const month = labelToMonthInput(text);
-  return month ? { mode: "month", month, text } : { mode: "text", month: "", text };
+  return { mode: !text || labelToMonthInput(text) ? "month" : "text", text };
 }
 
 function dateToLabel(value: DateValue): string {
-  return value.mode === "month" ? monthInputToLabel(value.month) : value.text.trim();
+  return normalizeDateLabel(value.text);
 }
 
 function dateOrder(label: string): { year: number; month: number | null } | null {
@@ -173,6 +256,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FIELD_MAX = 160;
 const DATE_MAX = 40;
 const DETAILS_MAX = 300;
+/** Backend limit on `education` fixes per request (indexed edits + new rows). */
+const MAX_EDUCATION_FIXES = 10;
 
 interface ExpState {
   role: string;
@@ -203,7 +288,7 @@ function expLabels(state: ExpState): ExpLabels {
 }
 
 interface NewEduRow {
-  id: number;
+  id: string;
   degree: string;
   institution: string;
   location: string;
@@ -211,10 +296,8 @@ interface NewEduRow {
   range: RangeState;
 }
 
-let eduRowSeq = 0;
-function blankEduRow(): NewEduRow {
-  eduRowSeq += 1;
-  return { id: eduRowSeq, degree: "", institution: "", location: "", details: "", range: rangeFrom("", "") };
+function blankEduRow(id: string): NewEduRow {
+  return { id, degree: "", institution: "", location: "", details: "", range: rangeFrom("", "") };
 }
 
 function isBlankEduRow(row: NewEduRow): boolean {
@@ -242,6 +325,8 @@ interface TextFieldProps {
   error?: string;
   hint?: ReactNode;
   warning?: boolean;
+  /** Rendered next to the label (e.g. a "Use" checkbox). */
+  labelAddon?: ReactNode;
   type?: "text" | "email" | "tel" | "url";
   placeholder?: string;
   autoComplete?: string;
@@ -250,16 +335,19 @@ interface TextFieldProps {
   className?: string;
 }
 
-function TextField({ label, value, onChange, onBlur, error, hint, warning, type = "text", className, ...rest }: TextFieldProps) {
+function TextField({ label, value, onChange, onBlur, error, hint, warning, labelAddon, type = "text", className, ...rest }: TextFieldProps) {
   const id = useId();
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
   return (
     <div className={cn("space-y-1", className)}>
-      <label htmlFor={id} className={LABEL}>
-        {label}
-      </label>
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={id} className={LABEL}>
+          {label}
+        </label>
+        {labelAddon}
+      </div>
       <input
         id={id}
         type={type}
@@ -293,67 +381,89 @@ interface DateFieldProps {
   disabled?: boolean;
   error?: string;
   warning?: boolean;
+  /** Extra ids for aria-describedby (e.g. the range's warning text). */
+  describedBy?: string;
 }
 
-function DateField({ label, value, onChange, disabled, error, warning }: DateFieldProps) {
+function DateField({ label, value, onChange, disabled, error, warning, describedBy }: DateFieldProps) {
   const id = useId();
   const errorId = `${id}-error`;
   const hintId = `${id}-hint`;
-  const isText = value.mode === "text";
+  const monthSupported = useMonthInputSupported();
+  const pickerMode = monthSupported && value.mode === "month";
+  const text = value.text;
+  const pickable = !text.trim() || !!labelToMonthInput(text);
+  const showFormatHint = !pickerMode && !disabled && !looksLikeDate(text);
+
   const toggle = () => {
     if (value.mode === "month") {
-      onChange({ mode: "text", month: value.month, text: dateToLabel(value) });
-    } else {
-      onChange({ mode: "month", month: labelToMonthInput(value.text) ?? "", text: value.text });
+      onChange({ mode: "text", text: dateToLabel(value) });
+    } else if (pickable) {
+      // Only month-precise (or empty) text can move into the picker; anything
+      // else stays as typed so the original date is never lost.
+      onChange({ mode: "month", text: value.text });
     }
   };
-  const describedBy = [isText && !disabled ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
-  const inputClass = cn(INPUT, warning && INPUT_WARNING, error && INPUT_ERROR);
+  const ariaDescribedBy =
+    [describedBy, showFormatHint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
+  const inputClass = cn(INPUT, (warning || showFormatHint) && INPUT_WARNING, error && INPUT_ERROR);
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
         <label htmlFor={id} className={LABEL}>
           {label}
         </label>
-        {!disabled && (
+        {!disabled && monthSupported && (
           <button
             type="button"
             onClick={toggle}
-            className="rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            // aria-disabled (not disabled) keeps focus and the explanation reachable.
+            aria-disabled={!pickerMode && !pickable ? true : undefined}
+            title={
+              !pickerMode && !pickable
+                ? `“${text.trim()}” isn’t a single month, so it stays as typed.`
+                : undefined
+            }
+            className="rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:no-underline"
           >
-            {isText ? "Use month picker" : "Type instead"}
+            {pickerMode ? "Type instead" : "Use month picker"}
           </button>
         )}
       </div>
-      {isText ? (
+      {pickerMode ? (
         <input
           id={id}
-          type="text"
-          value={value.text}
-          onChange={(e) => onChange({ ...value, text: e.target.value })}
+          type="month"
+          value={labelToMonthInput(text) ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            // "" only when the user cleared the picker.
+            onChange({ mode: "month", text: v ? monthInputToLabel(v) || v : "" });
+          }}
           disabled={disabled}
-          placeholder="Jun 2025"
-          maxLength={DATE_MAX}
+          placeholder="YYYY-MM"
           aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy}
+          aria-describedby={ariaDescribedBy}
           className={inputClass}
         />
       ) : (
         <input
           id={id}
-          type="month"
-          value={value.month}
-          onChange={(e) => onChange({ ...value, month: e.target.value })}
+          type="text"
+          value={text}
+          onChange={(e) => onChange({ ...value, text: e.target.value })}
           disabled={disabled}
-          placeholder="YYYY-MM"
+          placeholder="Jun 2025"
+          maxLength={DATE_MAX}
           aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy}
+          aria-describedby={ariaDescribedBy}
           className={inputClass}
         />
       )}
-      {isText && !disabled && (
-        <p id={hintId} className="text-xs text-muted-foreground">
-          Use the format Mon YYYY, e.g. Jun 2025.
+      {showFormatHint && (
+        <p id={hintId} className="flex items-start gap-1 text-xs text-warning">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>{DATE_FORMAT_HINT}.</span>
         </p>
       )}
       {error && (
@@ -365,7 +475,7 @@ function DateField({ label, value, onChange, disabled, error, warning }: DateFie
   );
 }
 
-const PRESENT_DISPLAY: DateValue = { mode: "text", month: "", text: "Present" };
+const PRESENT_DISPLAY: DateValue = { mode: "text", text: "Present" };
 
 interface DateRangeFieldsProps {
   range: RangeState;
@@ -378,10 +488,12 @@ interface DateRangeFieldsProps {
 
 function DateRangeFields({ range, onChange, currentLabel, endError, warning, warningText }: DateRangeFieldsProps) {
   const currentId = useId();
+  const warningId = useId();
+  const showWarning = !!warning && !!warningText;
   return (
     <div className="space-y-2 sm:col-span-2">
-      {warning && warningText && (
-        <p className="flex items-start gap-1 text-xs text-warning">
+      {showWarning && (
+        <p id={warningId} className="flex items-start gap-1 text-xs text-warning">
           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
           <span>{warningText}</span>
         </p>
@@ -391,6 +503,7 @@ function DateRangeFields({ range, onChange, currentLabel, endError, warning, war
           label="Start"
           value={range.start}
           warning={warning && !dateToLabel(range.start)}
+          describedBy={showWarning ? warningId : undefined}
           onChange={(start) => onChange({ ...range, start })}
         />
         <DateField
@@ -398,6 +511,7 @@ function DateRangeFields({ range, onChange, currentLabel, endError, warning, war
           value={range.current ? PRESENT_DISPLAY : range.end}
           disabled={range.current}
           error={endError}
+          describedBy={showWarning ? warningId : undefined}
           onChange={(end) => onChange({ ...range, end })}
         />
       </div>
@@ -421,13 +535,32 @@ function DateRangeFields({ range, onChange, currentLabel, endError, warning, war
 // The form
 // ---------------------------------------------------------------------------
 
-function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFixed }: ResumeFixPanelProps) {
+interface ResumeFixFormProps extends ResumeFixPanelProps {
+  headingRef: RefObject<HTMLHeadingElement | null>;
+  /** Called after a fix result was applied (drives focus + announcement). */
+  onApplied: () => void;
+}
+
+function ResumeFixForm({
+  documentId,
+  review,
+  contactSuggestions,
+  warnings,
+  onFixed,
+  getGeneration,
+  disabled = false,
+  headingRef,
+  onApplied,
+}: ResumeFixFormProps) {
   const headingId = useId();
   const contactRegionId = useId();
   const rememberId = useId();
   const contactHeadingId = useId();
   const expHeadingId = useId();
   const eduHeadingId = useId();
+  const eduIdPrefix = useId();
+  const eduSeq = useRef(0);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const issues: ReviewIssue[] = review?.issues ?? [];
   const reviewContact: Partial<ContactFields> = review?.contact ?? {};
@@ -439,7 +572,11 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
   const missingEducationIssue = issues.find((i) => i.code === "missing_education");
   const expWithIssues = experience.filter((e) => e.issues?.length);
   const eduDateEntries = education.filter((e) => e.issues?.includes("missing_dates"));
-  const openCount = issues.length + eduDateEntries.length;
+  const openCount = countOpenIssues(review);
+  const maxNewEdu = Math.max(0, MAX_EDUCATION_FIXES - eduDateEntries.length);
+
+  /** Fields the resume lacks but the profile has: offered, not sent unless used. */
+  const isSuggested = (key: ContactFieldKey) => !(reviewContact[key] ?? "").trim() && !!(suggestions[key] ?? "").trim();
 
   // --- state (initialised once; the parent re-keys us on a new review) ---
   const [contact, setContact] = useState<ContactFields>(() => {
@@ -447,6 +584,11 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
     for (const f of CONTACT_FIELDS) out[f.key] = reviewContact[f.key] || suggestions[f.key] || "";
     return out;
   });
+  // A suggestion is pre-ticked only when it closes an open issue.
+  const [useSuggestion, setUseSuggestion] = useState<Partial<Record<ContactFieldKey, boolean>>>(() => ({
+    email: isSuggested("email") && issues.some((i) => i.code === "missing_email"),
+    phone: isSuggested("phone") && issues.some((i) => i.code === "missing_phone"),
+  }));
   const [contactOpen, setContactOpen] = useState(false);
   const [showAllRoles, setShowAllRoles] = useState(false);
   const [initialExp] = useState<Record<number, ExpLabels>>(() =>
@@ -461,39 +603,47 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
   const [eduDates, setEduDates] = useState<Record<number, RangeState>>(() =>
     Object.fromEntries(eduDateEntries.map((e) => [e.index, rangeFrom(e.start ?? "", e.end ?? "")])),
   );
-  const [newEdu, setNewEdu] = useState<NewEduRow[]>(() => (missingEducationIssue ? [blankEduRow()] : []));
+  const [newEdu, setNewEdu] = useState<NewEduRow[]>(() =>
+    missingEducationIssue && maxNewEdu > 0 ? [blankEduRow(`${eduIdPrefix}-0`)] : [],
+  );
   const [remember, setRemember] = useState(true);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [invalidFocusRequest, setInvalidFocusRequest] = useState(0);
 
   const showContact = hasContactIssue || contactOpen;
   const visibleExp = showAllRoles ? experience : expWithIssues;
+  const visibleExpIndexes = new Set(visibleExp.map((e) => e.index));
   const showEducation = !!missingEducationIssue || eduDateEntries.length > 0 || newEdu.length > 0;
 
-  // --- derive payload + validation errors from the current state ---
+  // --- derive payload + validation errors from ALL state (visible or not) ---
   const errors: Record<string, string> = {};
   const payload: ResumeFixPayload = { remember };
   let changeCount = 0;
+  let hiddenChangeCount = 0;
 
-  if (showContact) {
-    const diff: Partial<ContactFields> = {};
-    for (const f of CONTACT_FIELDS) {
-      const value = contact[f.key].trim();
-      if (value !== (reviewContact[f.key] ?? "").trim()) diff[f.key] = value;
-    }
-    const email = contact.email.trim();
-    if (email && !EMAIL_RE.test(email)) errors["contact.email"] = "Enter a valid email address, e.g. name@example.com.";
-    const phone = contact.phone.trim();
-    if (phone && phone.replace(/\D/g, "").length < 7) errors["contact.phone"] = "A phone number needs at least 7 digits.";
-    const diffCount = Object.keys(diff).length;
-    if (diffCount) {
-      payload.contact = diff;
-      changeCount += diffCount;
-    }
+  /** The value a contact field would send; an unused suggestion keeps the resume's value. */
+  const effectiveContact = (key: ContactFieldKey) =>
+    isSuggested(key) && !useSuggestion[key] ? (reviewContact[key] ?? "").trim() : contact[key].trim();
+
+  const contactDiff: Partial<ContactFields> = {};
+  for (const f of CONTACT_FIELDS) {
+    const value = effectiveContact(f.key);
+    if (value !== (reviewContact[f.key] ?? "").trim()) contactDiff[f.key] = value;
+  }
+  const email = effectiveContact("email");
+  if (email && !EMAIL_RE.test(email)) errors["contact.email"] = "Enter a valid email address, e.g. name@example.com.";
+  const phone = effectiveContact("phone");
+  if (phone && phone.replace(/\D/g, "").length < 7) errors["contact.phone"] = "A phone number needs at least 7 digits.";
+  const contactDiffCount = Object.keys(contactDiff).length;
+  if (contactDiffCount) {
+    payload.contact = contactDiff;
+    changeCount += contactDiffCount;
+    if (!showContact) hiddenChangeCount += contactDiffCount;
   }
 
   const expFixes: ExperienceFix[] = [];
-  for (const entry of visibleExp) {
+  for (const entry of experience) {
     const state = exp[entry.index];
     const before = initialExp[entry.index];
     if (!state || !before) continue;
@@ -510,6 +660,7 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
     if (changed) {
       expFixes.push(fix);
       changeCount += changed;
+      if (!visibleExpIndexes.has(entry.index)) hiddenChangeCount += changed;
     }
   }
   if (expFixes.length) payload.experience = expFixes;
@@ -561,38 +712,61 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
   const submitError = (key: string) => (submitted ? errors[key] : undefined);
   const touch = (key: string) => () => setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
 
-  // --- mutation ---
-  const mutation = useMutation<TailoredResume, unknown, ResumeFixPayload>({
-    mutationFn: async (body) => {
-      const { data } = await apiClient.post<TailoredResume>(`/resume/tailored/${documentId}/fix`, body, {
-        timeout: 60_000,
-      });
-      return data;
-    },
-    onSuccess: (data) => {
-      toast.success("Resume updated");
-      onFixed(data);
-    },
-    onError: (err) => {
-      toast.error(getApiErrorMessage(err, "Could not update the resume"));
-    },
+  // After a failed submit, move focus to the first invalid field once it renders.
+  useEffect(() => {
+    if (!invalidFocusRequest) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [invalidFocusRequest]);
+
+  // --- mutation (shares the page's "resume-tailored" key for busy tracking) ---
+  const mutation = useMutation<TailoredResume, unknown, { body: ResumeFixPayload; generation: number }>({
+    mutationKey: [...RESUME_TAILORED_KEY, "fix"],
+    mutationFn: ({ body }) => postResumeFix(documentId, body),
   });
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSubmitted(true);
-    if (hasErrors || changeCount === 0 || mutation.isPending) return;
-    mutation.mutate(payload);
+    if (hasErrors) {
+      // Reveal collapsed sections that hold an invalid field, then focus it.
+      if (!showContact && Object.keys(errors).some((k) => k.startsWith("contact."))) setContactOpen(true);
+      if (experience.some((entry) => errors[`exp.${entry.index}.end`] && !visibleExpIndexes.has(entry.index))) {
+        setShowAllRoles(true);
+      }
+      setInvalidFocusRequest((n) => n + 1);
+      return;
+    }
+    if (disabled || changeCount === 0 || mutation.isPending) return;
+    // Per-call callbacks are skipped if this form unmounts before the reply.
+    mutation.mutate(
+      { body: payload, generation: getGeneration() },
+      {
+        onSuccess: (data, variables) => {
+          if (!onFixed(data, variables.generation)) return;
+          toast.success("Resume updated");
+          onApplied();
+        },
+        onError: (err) => {
+          toast.error(getApiErrorMessage(err, "Could not update the resume"));
+        },
+      },
+    );
   };
 
   // --- state updaters ---
   const setExpField = (index: number, patch: Partial<ExpState>) =>
     setExp((prev) => ({ ...prev, [index]: { ...prev[index], ...patch } }));
-  const setNewEduRow = (id: number, patch: Partial<NewEduRow>) =>
+  const setNewEduRow = (id: string, patch: Partial<NewEduRow>) =>
     setNewEdu((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const addEduRow = () => {
+    eduSeq.current += 1;
+    const id = `${eduIdPrefix}-${eduSeq.current}`;
+    setNewEdu((rows) => (rows.length >= maxNewEdu ? rows : [...rows, blankEduRow(id)]));
+  };
 
-  const showFooter = showContact || visibleExp.length > 0 || showEducation;
+  const showFooter = showContact || visibleExp.length > 0 || showEducation || changeCount > 0;
   const hiddenRoleCount = experience.length - expWithIssues.length;
+  const submitDisabled = disabled || mutation.isPending || changeCount === 0;
 
   return (
     <div className="space-y-4">
@@ -600,7 +774,7 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 id={headingId} className="font-medium">
+            <h3 id={headingId} ref={headingRef} tabIndex={-1} className="font-medium focus:outline-none">
               Fix resume gaps
             </h3>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -623,7 +797,7 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
           </div>
         )}
 
-        <form noValidate onSubmit={onSubmit} className="mt-5 space-y-6">
+        <form ref={formRef} noValidate onSubmit={onSubmit} className="mt-5 space-y-6">
           {/* Contact */}
           <div role="group" aria-labelledby={contactHeadingId} className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -653,33 +827,60 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
                   ))}
               </ul>
             )}
-            {showContact && (
-              <div id={contactRegionId} className="grid gap-3 sm:grid-cols-2">
-                {CONTACT_FIELDS.map((f) => {
-                  const fromProfile =
-                    !reviewContact[f.key] && !!suggestions[f.key] && contact[f.key] === suggestions[f.key];
-                  const missing = !contact[f.key].trim() && issues.some((i) => i.code === `missing_${f.key}`);
-                  return (
-                    <TextField
-                      key={f.key}
-                      label={f.label}
-                      type={f.type}
-                      value={contact[f.key]}
-                      onChange={(v) => setContact((c) => ({ ...c, [f.key]: v }))}
-                      onBlur={touch(`contact.${f.key}`)}
-                      error={textError(`contact.${f.key}`)}
-                      hint={fromProfile ? "from your profile" : undefined}
-                      warning={missing}
-                      placeholder={f.placeholder}
-                      autoComplete={f.autoComplete}
-                      inputMode={f.inputMode}
-                      maxLength={f.maxLength}
-                    />
-                  );
-                })}
-                <p className="text-xs text-muted-foreground sm:col-span-2">Clear a field to remove it from the contact line.</p>
-              </div>
-            )}
+            {/* Always rendered (hidden when collapsed) so aria-controls has a target. */}
+            <div
+              id={contactRegionId}
+              hidden={!showContact}
+              className={showContact ? "grid gap-3 sm:grid-cols-2" : "hidden"}
+            >
+              {CONTACT_FIELDS.map((f) => {
+                const suggested = isSuggested(f.key);
+                const used = !!useSuggestion[f.key];
+                const missing = !effectiveContact(f.key) && issues.some((i) => i.code === `missing_${f.key}`);
+                return (
+                  <TextField
+                    key={f.key}
+                    label={f.label}
+                    type={f.type}
+                    value={contact[f.key]}
+                    onChange={(v) => {
+                      setContact((c) => ({ ...c, [f.key]: v }));
+                      // Typing into a suggestion means the user wants it.
+                      if (suggested) setUseSuggestion((u) => (u[f.key] ? u : { ...u, [f.key]: true }));
+                    }}
+                    onBlur={touch(`contact.${f.key}`)}
+                    error={textError(`contact.${f.key}`)}
+                    hint={
+                      suggested
+                        ? used
+                          ? "From your profile — will be added."
+                          : "Suggested from your profile — tick Use to add it."
+                        : undefined
+                    }
+                    warning={missing}
+                    labelAddon={
+                      suggested ? (
+                        <label className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={used}
+                            onChange={(e) => setUseSuggestion((u) => ({ ...u, [f.key]: e.target.checked }))}
+                            aria-label={`Use the ${f.label.toLowerCase()} from your profile`}
+                            className="h-3.5 w-3.5 shrink-0 rounded border-border accent-primary"
+                          />
+                          Use
+                        </label>
+                      ) : null
+                    }
+                    placeholder={f.placeholder}
+                    autoComplete={f.autoComplete}
+                    inputMode={f.inputMode}
+                    maxLength={f.maxLength}
+                  />
+                );
+              })}
+              <p className="text-xs text-muted-foreground sm:col-span-2">Clear a field to remove it from the contact line.</p>
+            </div>
           </div>
 
           {/* Experience */}
@@ -768,8 +969,10 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
               <h4 id={eduHeadingId} className="text-sm font-medium">Education</h4>
               <button
                 type="button"
-                onClick={() => setNewEdu((rows) => [...rows, blankEduRow()])}
-                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                onClick={addEduRow}
+                disabled={newEdu.length >= maxNewEdu}
+                title={newEdu.length >= maxNewEdu ? `You can add up to ${maxNewEdu} education entries at a time.` : undefined}
+                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 Add education
@@ -812,7 +1015,7 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
             {newEdu.map((row, n) => (
               <div key={row.id} className={SUB_CARD}>
                 <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">New education entry {newEdu.length > 1 ? n + 1 : ""}</div>
+                  <div className="text-sm font-medium">New education entry{newEdu.length > 1 ? ` ${n + 1}` : ""}</div>
                   <button
                     type="button"
                     onClick={() => setNewEdu((rows) => rows.filter((r) => r.id !== row.id))}
@@ -888,7 +1091,7 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
                   type="submit"
                   tone="primary"
                   size="sm"
-                  disabled={mutation.isPending || changeCount === 0}
+                  disabled={submitDisabled}
                   aria-busy={mutation.isPending || undefined}
                 >
                   {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
@@ -897,10 +1100,17 @@ function ResumeFixForm({ documentId, review, contactSuggestions, warnings, onFix
                 <p aria-live="polite" className={cn("text-xs", submitted && hasErrors ? "text-danger" : "text-muted-foreground")}>
                   {submitted && hasErrors
                     ? "Fix the highlighted fields before applying."
-                    : changeCount === 0
-                      ? "Make a change to enable."
-                      : `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready.`}
+                    : disabled && !mutation.isPending
+                      ? "Wait for the current resume update to finish."
+                      : changeCount === 0
+                        ? "Make a change to enable."
+                        : `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready.`}
                 </p>
+                {hiddenChangeCount > 0 && (
+                  <p className="text-xs text-warning">
+                    {hiddenChangeCount} unsaved {hiddenChangeCount === 1 ? "change" : "changes"} (hidden)
+                  </p>
+                )}
               </div>
             </div>
           )}

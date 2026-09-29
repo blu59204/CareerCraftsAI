@@ -8,7 +8,7 @@ import zipfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +68,18 @@ def _safe_filename(filename: str | None) -> str:
     return (name or "upload.bin")[:255]
 
 
+_PRIVATE_ATS_KEYS = frozenset({"jd_text"})
+
+
+def _public_ats_data(data: dict | None) -> dict | None:
+    """ats_data without internal keys. Tailored resumes keep the job
+    description they were scored against (up to 20 KB of possibly scraped
+    text) for re-scoring; it is not part of the document listing."""
+    if data is None:
+        return None
+    return {k: v for k, v in data.items() if k not in _PRIVATE_ATS_KEYS}
+
+
 class DocumentResponse(BaseModel):
     id: uuid.UUID
     doc_type: str
@@ -79,6 +91,11 @@ class DocumentResponse(BaseModel):
     warning: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("ats_data")
+    @classmethod
+    def _strip_private_ats_data(cls, value: dict | None) -> dict | None:
+        return _public_ats_data(value)
 
 
 async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> None:

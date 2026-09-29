@@ -1,10 +1,12 @@
 """GET /resume/tailored/{id} and POST /resume/tailored/{id}/fix."""
 
+import asyncio
 import uuid
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from reportlab.platypus.doctemplate import LayoutError
 
 SPARSE_RESUME = """# Jane Doe
 jane@example.com
@@ -90,7 +92,15 @@ class _Harness:
         self.saved_facts: list[tuple] = []
         self.rendered: list[str] = []
         self.ats_calls: list[tuple] = []
+        self.added: list = []
+        # Ordered log of storage and session calls, to check commit ordering.
+        self.calls: list = []
         self.flushes = 0
+        self.commit_error: Exception | None = None
+        # Model name -> the document id an in-flight approval references.
+        self.pins: dict[str, uuid.UUID] = {}
+        self.render_error: Exception | None = None
+        self.ats_error: Exception | None = None
 
         from app.core.rate_limit import limiter
         from app.services import pdf_service
@@ -99,16 +109,20 @@ class _Harness:
         real_render = pdf_service.generate_resume_pdf
 
         def render(text, full_name="", template="modern"):
+            if self.render_error is not None:
+                raise self.render_error
             self.rendered.append(template)
             return real_render(text, full_name=full_name, template=template)
 
         def upload_file(user_id, filename, data, content_type):
             assert data.startswith(b"%PDF")
             self.uploaded.append((user_id, filename, content_type))
+            self.calls.append(("upload", "user-id/new.pdf"))
             return "user-id/new.pdf"
 
         def delete_file(path, user_id):
             self.deleted.append((path, user_id))
+            self.calls.append(("delete", path))
 
         async def load_facts_row(db, user_id):
             return self.facts_row
@@ -118,12 +132,15 @@ class _Harness:
 
         async def save_facts(db, user_id, facts):
             self.saved_facts.append((user_id, facts))
+            self.calls.append("save_facts")
 
         class _Ats:
             composite_score = 91
             missing_keywords = ["Azure"]
 
         def compute_ats_score(resume_text, jd_text):
+            if self.ats_error is not None:
+                raise self.ats_error
             self.ats_calls.append((resume_text, jd_text))
             return _Ats()
 
@@ -141,6 +158,7 @@ class _Harness:
 
     def _db(self):
         harness = self
+        from app.models.db import UserDocument
 
         class _Result:
             def __init__(self, value):
@@ -151,19 +169,39 @@ class _Harness:
 
         class _FakeDB:
             async def execute(self, stmt, *a, **k):
+                entity = stmt.column_descriptions[0].get("entity")
+                params = stmt.compile().params
+                if entity is not UserDocument:
+                    # Pending-approval lookups: answer only when the query
+                    # asks about the document that is actually pinned.
+                    pinned = harness.pins.get(entity.__name__)
+                    hit = pinned is not None and str(pinned) in repr(params)
+                    return _Result(uuid.uuid4() if hit else None)
                 # Honour the query's id/user filters so ownership is exercised.
-                params = set(stmt.compile().params.values())
+                values = set(params.values())
                 doc = harness.doc
-                if doc is None or doc.id not in params or doc.user_id not in params:
+                if doc is None or doc.id not in values or doc.user_id not in values:
                     return _Result(None)
                 return _Result(doc)
 
+            def add(self, obj):
+                harness.added.append(obj)
+
             async def flush(self):
                 harness.flushes += 1
+                harness.calls.append("flush")
+
+            async def commit(self):
+                harness.calls.append("commit")
+                if harness.commit_error is not None:
+                    raise harness.commit_error
+
+            async def rollback(self):
+                harness.calls.append("rollback")
 
         return _FakeDB()
 
-    async def request(self, method, document_id=None, json=None):
+    async def request(self, method, document_id=None, json=None, raise_app_exceptions=True):
         from app.api.v1.deps import get_current_user, get_db
         from app.models.db import User
 
@@ -181,7 +219,7 @@ class _Harness:
         if method == "POST":
             path += "/fix"
         try:
-            transport = ASGITransport(app=self.app)
+            transport = ASGITransport(app=self.app, raise_app_exceptions=raise_app_exceptions)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 return await client.request(
                     method, path, json=json, headers={"Authorization": "Bearer t"}
@@ -189,8 +227,10 @@ class _Harness:
         finally:
             self.app.dependency_overrides.clear()
 
-    async def fix(self, body, document_id=None):
-        return await self.request("POST", document_id, json=body)
+    async def fix(self, body, document_id=None, raise_app_exceptions=True):
+        return await self.request(
+            "POST", document_id, json=body, raise_app_exceptions=raise_app_exceptions
+        )
 
     async def get(self, document_id=None):
         return await self.request("GET", document_id)
@@ -263,8 +303,14 @@ async def test_fix_resolves_all_issues_and_remembers_facts(monkeypatch):
     assert exp["employer"] == FULL_EMPLOYER
     assert exp["employer_match"] == "Agentic Universe (Qultured Media Pvt."
     assert (exp["start"], exp["end"]) == ("Jun 2025", "Present")
+    # Only what the user typed counts as a fact; the role is a match key.
+    assert exp["submitted"] == ["employer", "location", "start", "end"]
+    assert exp["role"] == exp["match_role"] == "Prompt Engineer Intern"
     [edu] = facts["education"]
     assert edu["institution"] == "Savitribai Phule Pune University"
+    assert body["display_name"] == "Jane Doe"
+    assert body["document_id"] == str(doc.id)
+    assert h.added == []
 
 
 @pytest.mark.asyncio
@@ -380,4 +426,227 @@ async def test_resolved_warnings_are_filtered_and_skill_gaps_kept(monkeypatch):
     resp = await h.fix({"education": FULL_FIX["education"]})
     assert resp.status_code == 200, resp.text
     assert resp.json()["warnings"] == [AZURE_WARNING]
-    assert doc.ats_data["warnings"] == [AZURE_WARNING]
+    # Filtering happens when reading: the stored list is the model's original,
+    # so a warning comes back if its gap is reintroduced by a later edit.
+    assert doc.ats_data["warnings"] == [DATES_WARNING, EDUCATION_WARNING, AZURE_WARNING]
+    assert (await h.get()).json()["warnings"] == [AZURE_WARNING]
+
+    resp = await h.fix({"experience": [{"index": 0, "start": "", "end": ""}]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["warnings"] == [DATES_WARNING, AZURE_WARNING]
+
+
+@pytest.mark.asyncio
+async def test_get_filters_warnings_without_rewriting_them(monkeypatch):
+    warnings = [DATES_WARNING, EDUCATION_WARNING, AZURE_WARNING]
+    fixed = SPARSE_RESUME.replace(
+        "### Prompt Engineer Intern | Agentic Universe (Qultured Media Pvt.", FIXED_HEADING
+    )
+    doc = _doc(uuid.uuid4(), raw_text=fixed, ats_data={"warnings": list(warnings)})
+    h = _Harness(monkeypatch, doc)
+
+    body = (await h.get()).json()
+
+    assert body["warnings"] == [EDUCATION_WARNING, AZURE_WARNING]
+    assert body["display_name"] == "Jane Doe"
+    assert doc.ats_data["warnings"] == warnings
+
+
+# ── Commit ordering and cleanup ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_old_pdf_is_deleted_only_after_commit(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+
+    resp = await h.fix({**FULL_FIX, "remember": True})
+
+    assert resp.status_code == 200, resp.text
+    calls = h.calls
+    assert calls.index(("upload", "user-id/new.pdf")) < calls.index("save_facts")
+    assert calls.index("save_facts") < calls.index("commit")
+    assert calls.index("commit") < calls.index(("delete", "u/resume.pdf"))
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_removes_new_pdf_and_keeps_old(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    h.commit_error = RuntimeError("connection lost during commit")
+
+    resp = await h.fix({"template": "classic"}, raise_app_exceptions=False)
+
+    assert resp.status_code == 500
+    assert h.deleted == [("user-id/new.pdf", str(doc.user_id))]
+    assert ("delete", "u/resume.pdf") not in h.calls
+
+
+@pytest.mark.asyncio
+async def test_ats_failure_leaves_no_uploaded_pdf(monkeypatch):
+    doc = _doc(uuid.uuid4(), ats_data={"jd_text": "Python, Azure"})
+    h = _Harness(monkeypatch, doc)
+    h.ats_error = RuntimeError("scorer crashed")
+
+    resp = await h.fix({"template": "classic"}, raise_app_exceptions=False)
+
+    assert resp.status_code == 500
+    assert h.uploaded == [] and h.deleted == []
+    assert doc.storage_path == "u/resume.pdf"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make_error", [
+    lambda: LayoutError(
+        "Flowable <Paragraph at 0x1 frags=1>(<para>very long</para>) too large"
+    ),
+    lambda: ValueError("<font name='x'> unsupported"),
+    lambda: KeyError("style"),
+])
+async def test_render_failure_is_generic_422(monkeypatch, make_error):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    h.render_error = make_error()
+
+    resp = await h.fix({"template": "classic"})
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == (
+        "The resume could not be rendered as a PDF. Shorten very long lines and try again."
+    )
+    assert h.uploaded == [] and h.deleted == []
+    assert doc.raw_text == SPARSE_RESUME
+
+
+# ── Saved facts are only what the user typed ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_saved_experience_fact_has_only_submitted_keys(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+
+    resp = await h.fix({"experience": [{"index": 0, "start": "Jun 2025", "end": "Present"}]})
+
+    assert resp.status_code == 200, resp.text
+    [(_, facts)] = h.saved_facts
+    [exp] = facts["experience"]
+    assert exp["submitted"] == ["start", "end"]
+    assert (exp["start"], exp["end"]) == ("Jun 2025", "Present")
+    # The model's employer/location are not saved as facts.
+    assert "employer" not in exp and "location" not in exp
+    assert exp["employer_match"] == "Agentic Universe (Qultured Media Pvt."
+
+
+@pytest.mark.asyncio
+async def test_fact_match_keys_come_from_the_manual_edit(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    edited = SPARSE_RESUME.replace(
+        "### Prompt Engineer Intern | Agentic Universe (Qultured Media Pvt.",
+        "### Data Engineer | Beta Corp",
+    )
+
+    resp = await h.fix({
+        "resume_markdown": edited,
+        "experience": [{"index": 0, "location": "Pune"}],
+    })
+
+    assert resp.status_code == 200, resp.text
+    [(_, facts)] = h.saved_facts
+    [exp] = facts["experience"]
+    assert (exp["role"], exp["employer_match"]) == ("Data Engineer", "Beta Corp")
+    assert exp["submitted"] == ["location"]
+
+
+# ── Pending approvals pin the PDF ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["ApplicationAttempt", "AgentRun"])
+async def test_fix_of_pinned_resume_saves_a_new_version(monkeypatch, model):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    h.pins[model] = doc.id
+
+    resp = await h.fix({**FULL_FIX, "template": "classic"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    [new_doc] = h.added
+    assert body["document_id"] == str(new_doc.id) != str(doc.id)
+    assert new_doc.user_id == doc.user_id
+    assert (new_doc.doc_type, new_doc.filename) == ("resume_tailored", "resume.pdf")
+    assert new_doc.storage_path == "user-id/new.pdf"
+    assert new_doc.raw_text == body["resume_markdown"]
+    assert new_doc.ats_data["template"] == "classic"
+    assert new_doc.ats_data["summary"] == "Tailored."
+    # The approved row and its file are untouched.
+    assert doc.raw_text == SPARSE_RESUME
+    assert doc.storage_path == "u/resume.pdf"
+    assert doc.ats_data["template"] == "modern"
+    assert h.deleted == []
+    assert "commit" in h.calls
+
+
+@pytest.mark.asyncio
+async def test_approval_of_another_document_does_not_pin(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    h.pins = {"ApplicationAttempt": uuid.uuid4(), "AgentRun": uuid.uuid4()}
+
+    resp = await h.fix({"template": "classic"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["document_id"] == str(doc.id)
+    assert h.added == []
+    assert doc.storage_path == "user-id/new.pdf"
+    assert ("u/resume.pdf", str(doc.user_id)) in h.deleted
+
+
+def test_pin_queries_target_open_attempts_and_approval_checkpoints():
+    """The pin lookup SQL (Postgres) filters on the document and open states."""
+    from sqlalchemy.dialects import postgresql
+
+    from app.api.v1 import resume as resume_api
+
+    doc = _doc(uuid.uuid4())
+    seen = []
+
+    class _Result:
+        def scalar_one_or_none(self):
+            return None
+
+    class _DB:
+        async def execute(self, stmt):
+            seen.append(stmt.compile(dialect=postgresql.dialect()))
+            return _Result()
+
+    assert asyncio.run(resume_api._pinned_by_pending_approval(_DB(), doc)) is False
+    attempt_sql, run_sql = (str(s) for s in seen)
+    attempt_params, run_params = (s.params for s in seen)
+    assert "job_applications.resume_id" in attempt_sql
+    assert "application_attempts.state IN" in attempt_sql
+    assert doc.id in attempt_params.values()
+    assert {"preparing", "awaiting_approval", "submitting"} <= {
+        v for p in attempt_params.values() for v in (p if isinstance(p, list) else [p])
+        if isinstance(v, str)
+    }
+    assert "agent_runs.output @>" in run_sql and "agent_runs.output ?" in run_sql
+    assert "awaiting_approval" in run_params.values()
+    assert str(doc.id) in repr(run_params)
+
+
+# ── Limits ───────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_more_than_ten_education_entries_is_422(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+
+    resp = await h.fix({"education": [{"degree": f"Degree {i}"} for i in range(11)]})
+
+    assert resp.status_code == 422
+    assert "10" in str(resp.json()["detail"])
+    assert h.uploaded == []

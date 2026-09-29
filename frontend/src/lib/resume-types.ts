@@ -73,6 +73,8 @@ export interface TailoredResume {
   review: ResumeReview;
   /** Pre-fill values from the user's profile; may be {} when unavailable. */
   contact_suggestions: Partial<ContactFields>;
+  /** The name the PDF prints (account full name); "" falls back to `# Name`. */
+  display_name?: string;
 }
 
 /** POST /resume/optimize response. */
@@ -91,6 +93,19 @@ export interface ResumeOptimizeResponse {
   warnings?: string[];
   review?: ResumeReview | null;
   contact_suggestions?: Partial<ContactFields>;
+  /** The name the PDF prints (account full name); "" falls back to `# Name`. */
+  display_name?: string;
+}
+
+/**
+ * Number of open gaps shown to the user: resume-wide issues plus education
+ * entries without dates (those are reported per entry, not in `issues`).
+ */
+export function countOpenIssues(review: ResumeReview | null | undefined): number {
+  if (!review) return 0;
+  const issues = review.issues?.length ?? 0;
+  const eduDates = (review.education ?? []).filter((e) => e.issues?.includes("missing_dates")).length;
+  return issues + eduDates;
 }
 
 export interface ExperienceFix {
