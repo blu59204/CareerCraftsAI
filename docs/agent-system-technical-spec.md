@@ -395,7 +395,7 @@ POST /interview/answer (body: {session_id, question_index, answer_text})
 | DOCX parsing | ✅ | `python-docx` |
 | TXT parsing | ✅ | UTF-8 decode |
 | Chunking | ✅ | RecursiveCharacterTextSplitter, chunk_size=500, overlap=50 |
-| Embedding providers | ✅ | OpenAI (1536d), Google (768d), Ollama (768d), Anthropic/NVIDIA fallback to Ollama |
+| Embedding providers | ✅ | OpenAI (1536d), Google `gemini-embedding-001` (768d), Ollama `qwen3-embedding:0.6b` (1024d); chat-only providers use `EMBEDDING_PROVIDER` |
 | Collection naming | ✅ | `{user_id}_{doc_type}_{provider}_{dimension}d` (e.g. `usr123_resume_openai_1536d`) |
 | Store | ✅ | PGVector with psycopg connection |
 | HNSW index | ✅ | `_ensure_hnsw_index()` creates on `langchain_pg_embedding` table |

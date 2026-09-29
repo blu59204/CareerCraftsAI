@@ -307,8 +307,9 @@ flowchart LR
   Q["Agent query"] --> QE["embed query"] --> SS["similarity_search k=5"] --> AG["Agent context"]
 ```
 
-- **Dimensions:** `openai 1536` (`text-embedding-3-small`), `google 768`, `ollama 768` (`nomic-embed-text`); `EMBEDDING_DIMENSIONS` map; provider-namespaced collections prevent dim mismatch on provider switch.
-- **Embedding-capable:** `openai, google, openrouter (proxies openai), ollama`. Chat-only providers (anthropic, nvidia_nim, deepseek) fall back to alternate key (`fetch_embedding_capable_settings`) then local Ollama (3s probe → `EmbeddingsUnavailable` instead of 120s hang).
+- **Dimensions:** `openai 1536` (`text-embedding-3-small`), `google 768` (`gemini-embedding-001`, `output_dimensionality=768`), `ollama 1024` (`qwen3-embedding:0.6b`); `EMBEDDING_DIMENSIONS` map, keyed by the *effective* embedding provider; provider-namespaced collections prevent dim mismatch on provider switch. Changing a model's vector size therefore starts a new, empty collection — users re-upload documents to re-index.
+- **Query instruction (Ollama):** Qwen3-Embedding is instruction-aware, so `QwenOllamaEmbeddings` prefixes **queries** with `Instruct: {task}\nQuery:{query}`; documents are embedded bare.
+- **Embedding-capable:** `openai, google, ollama`. Chat-only providers (anthropic, nvidia_nim, deepseek, openrouter) use `EMBEDDING_PROVIDER`; the fallback never reuses the chat key — openai/google need `EMBEDDING_API_KEY`, ollama uses `EMBEDDING_OLLAMA_URL` (operator-set; a user's own `ollama_url` wins only when their provider is `ollama`; default `http://localhost:11434`).
 - **Doc types:** `resume, achievements, certifications, portfolio, notes`.
 - **Fallback:** resume retrieval failure → `fetch_user_profile_text()` raw-resume `Document`.
 

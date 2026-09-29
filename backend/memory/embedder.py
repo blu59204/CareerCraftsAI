@@ -1,8 +1,9 @@
 """
 memory/embedder.py — Routes embedding requests to the user's configured provider.
 
-Falls back to nomic-embed-text via Ollama if the primary provider fails.
-Uses Redis to cache embeddings for 1 hour to minimise duplicate API calls.
+Falls back to qwen3-embedding:0.6b via Ollama if the primary provider fails.
+Uses Redis to cache embeddings for 1 hour to minimise duplicate API calls;
+cache keys include the provider and model that produced the vector.
 """
 
 import hashlib
@@ -16,6 +17,25 @@ logger = logging.getLogger(__name__)
 
 # Target dimensionality for pgvector column (vector(1536))
 _DIMS = 1536
+
+# Keep in sync with app.services.rag_service.OLLAMA_EMBEDDING_MODEL.
+OLLAMA_EMBEDDING_MODEL = "qwen3-embedding:0.6b"
+GOOGLE_EMBEDDING_MODEL = "models/gemini-embedding-001"
+GOOGLE_EMBEDDING_DIMENSIONS = 768
+OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+NVIDIA_EMBEDDING_MODEL = "nvidia/nv-embedqa-e5-v5"
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+
+def _server_ollama_url() -> str:
+    """Operator-configured Ollama host (settings.EMBEDDING_OLLAMA_URL)."""
+    # memory.routes already depends on app.core.config; imported lazily so
+    # `import memory` stays usable without the app settings loaded.
+    try:
+        from app.core.config import settings
+    except Exception:  # noqa: BLE001 — settings unavailable (e.g. bare scripts)
+        return ""
+    return (settings.EMBEDDING_OLLAMA_URL or "").strip()
 
 
 class MemoryEmbedder:
@@ -33,7 +53,9 @@ class MemoryEmbedder:
     ) -> None:
         self.provider: str = user_settings.get("provider", "openai")
         self.api_key: str = user_settings.get("api_key", "")
-        self.ollama_url: str = user_settings.get("ollama_url") or "http://localhost:11434"
+        self.ollama_url: str = (
+            user_settings.get("ollama_url") or _server_ollama_url() or DEFAULT_OLLAMA_URL
+        )
         self.redis = redis_client
         self.DIMS = _DIMS
 
@@ -45,11 +67,14 @@ class MemoryEmbedder:
         """
         Embed a single text string.
 
-        Checks Redis cache first; stores result for 1 hour on success.
+        Checks Redis cache first; stores result for 1 hour on success, keyed
+        by the provider/model that actually produced the vector (so an Ollama
+        fallback vector is never served as the primary provider's).
         If all providers fail, returns a zero vector so callers can still
         save the memory row with NULL embedding.
         """
-        cache_key = self._cache_key(text)
+        primary = self._primary_model()
+        cache_key = self._cache_key(text, *primary)
 
         if self.redis:
             try:
@@ -64,15 +89,14 @@ class MemoryEmbedder:
         except Exception as e:
             logger.warning(
                 f"Primary embedding failed (provider={self.provider}): {e}. "
-                "Trying Ollama nomic-embed-text fallback."
+                f"Trying Ollama {OLLAMA_EMBEDDING_MODEL} fallback."
             )
             try:
                 vec = await self._ollama_embed(text)
             except Exception as e2:
-                logger.error(
-                    f"All embedding providers failed: {e2}. Returning zero vector."
-                )
+                logger.error(f"All embedding providers failed: {e2}. Returning zero vector.")
                 return [0.0] * self.DIMS
+            cache_key = self._cache_key(text, "ollama", OLLAMA_EMBEDDING_MODEL)
 
         vec = self._pad_to_dims(vec)
 
@@ -105,13 +129,21 @@ class MemoryEmbedder:
             # anthropic, ollama, unknown — all use Ollama
             return await self._ollama_embed(text)
 
+    def _primary_model(self) -> tuple[str, str]:
+        """(provider, model) that _embed_with_provider uses for this user."""
+        if self.provider == "openai":
+            return "openai", OPENAI_EMBEDDING_MODEL
+        if self.provider == "google":
+            return "google", GOOGLE_EMBEDDING_MODEL
+        if self.provider == "nvidia_nim":
+            return "nvidia_nim", NVIDIA_EMBEDDING_MODEL
+        return "ollama", OLLAMA_EMBEDDING_MODEL
+
     async def _openai_embed(self, text: str) -> list[float]:
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=self.api_key)
-        resp = await client.embeddings.create(
-            model="text-embedding-3-small", input=text
-        )
+        resp = await client.embeddings.create(model=OPENAI_EMBEDDING_MODEL, input=text)
         return resp.data[0].embedding
 
     async def _google_embed(self, text: str) -> list[float]:
@@ -126,7 +158,11 @@ class MemoryEmbedder:
 
         def _call() -> dict:
             genai.configure(api_key=self.api_key)
-            return genai.embed_content(model="models/embedding-001", content=text)
+            return genai.embed_content(
+                model=GOOGLE_EMBEDDING_MODEL,
+                content=text,
+                output_dimensionality=GOOGLE_EMBEDDING_DIMENSIONS,
+            )
 
         result = await asyncio.to_thread(_call)
         return result["embedding"]
@@ -134,10 +170,11 @@ class MemoryEmbedder:
     async def _ollama_embed(self, text: str) -> list[float]:
         import ollama
 
-        resp = await ollama.AsyncClient(host=self.ollama_url).embeddings(
-            model="nomic-embed-text", prompt=text
+        # /api/embed (ollama>=0.4); the legacy /api/embeddings endpoint is deprecated.
+        resp = await ollama.AsyncClient(host=self.ollama_url).embed(
+            model=OLLAMA_EMBEDDING_MODEL, input=text
         )
-        return resp["embedding"]
+        return list(resp["embeddings"][0])
 
     async def _nvidia_embed(self, text: str) -> list[float]:
         from openai import AsyncOpenAI
@@ -147,7 +184,7 @@ class MemoryEmbedder:
             base_url="https://integrate.api.nvidia.com/v1",
         )
         resp = await client.embeddings.create(
-            model="nvidia/nv-embedqa-e5-v5",
+            model=NVIDIA_EMBEDDING_MODEL,
             input=text,
             extra_body={"input_type": "query", "truncate": "END"},
         )
@@ -157,9 +194,9 @@ class MemoryEmbedder:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _cache_key(self, text: str) -> str:
+    def _cache_key(self, text: str, provider: str, model: str) -> str:
         digest = hashlib.sha256(text.encode()).hexdigest()
-        return f"emb:{digest}"
+        return f"emb:{provider}:{model}:{digest}"
 
     def _pad_to_dims(self, vec: list[float]) -> list[float]:
         """Truncate or zero-pad vector to self.DIMS dimensions."""

@@ -138,6 +138,20 @@ Tune `mem_limit` based on VPS size: 4 GB VPS → `2500m`, 8 GB VPS → `5000m`.
 
 ---
 
+## Embeddings
+
+Used by RAG (`app/services/rag_service.py`) and agent memory (`memory/embedder.py`).
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMBEDDING_PROVIDER` | *(empty)* | `openai`, `google` or `ollama`. Required when the user's chat provider has no embeddings API (Anthropic, DeepSeek, OpenRouter, NVIDIA NIM); otherwise uploads are saved but not indexed. |
+| `EMBEDDING_API_KEY` | *(empty)* | API key for the `openai`/`google` fallback. The chat provider's key is never reused. |
+| `EMBEDDING_OLLAMA_URL` | *(empty → `http://localhost:11434`)* | Server-side Ollama host for embeddings, e.g. `http://10.0.0.182:11434`. Used for `EMBEDDING_PROVIDER=ollama` and for memory embeddings when the user has no own Ollama URL; a user's own `ollama_url` wins only when their provider is `ollama`. Operator-set, so not checked against `OLLAMA_ALLOWED_HOSTS`. The host must have `qwen3-embedding:0.6b` pulled. |
+
+Models: OpenAI `text-embedding-3-small` (1536-d), Google `gemini-embedding-001` (768-d), Ollama `qwen3-embedding:0.6b` (1024-d). Collections are named per provider and dimension, so after a model or dimension change users must re-upload documents to re-index them.
+
+---
+
 ## Rate Limiting
 
 | Variable | Default | Description |

@@ -17,14 +17,63 @@ class EmbeddingUnavailable(RuntimeError):
     pass
 
 
-# Embedding dimension per provider — must match model output
+OLLAMA_EMBEDDING_MODEL = "qwen3-embedding:0.6b"
+GOOGLE_EMBEDDING_MODEL = "models/gemini-embedding-001"
+GOOGLE_EMBEDDING_DIMENSIONS = 768
+# Qwen3-Embedding is instruction-aware: queries carry a one-line task, documents
+# are embedded bare (per the model card).
+QWEN_QUERY_TASK = (
+    "Given a job description or role, retrieve relevant passages from the candidate's documents"
+)
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+# Vector size per *effective* embedding provider -- collection_name() is always
+# called with get_embedding_provider()'s result (openai, google or ollama),
+# never with a chat-only provider such as anthropic or deepseek.
 EMBEDDING_DIMENSIONS: dict[str, int] = {
     "openai": 1536,  # text-embedding-3-small
-    "google": 768,  # models/text-embedding-004
-    "ollama": 768,  # nomic-embed-text
-    "anthropic": 768,  # falls back to nomic-embed-text
-    "nvidia_nim": 768,  # falls back to nomic-embed-text
+    "google": GOOGLE_EMBEDDING_DIMENSIONS,  # gemini-embedding-001, truncated to 768
+    "ollama": 1024,  # qwen3-embedding:0.6b
 }
+
+
+class QwenOllamaEmbeddings(OllamaEmbeddings):
+    """OllamaEmbeddings that adds Qwen3-Embedding's query instruction."""
+
+    query_task: str = QWEN_QUERY_TASK
+
+    def _instruct(self, text: str) -> str:
+        return f"Instruct: {self.query_task}\nQuery:{text}"
+
+    def embed_query(self, text: str) -> list[float]:
+        return super().embed_query(self._instruct(text))
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return await super().aembed_query(self._instruct(text))
+
+
+class GeminiEmbeddings(GoogleGenerativeAIEmbeddings):
+    """gemini-embedding-001 truncated to GOOGLE_EMBEDDING_DIMENSIONS.
+
+    langchain-google-genai 2.1.x only takes output_dimensionality per call, so
+    it is defaulted here to keep the existing 768-d google collections valid.
+    """
+
+    def embed_documents(self, texts, **kwargs):
+        kwargs.setdefault("output_dimensionality", GOOGLE_EMBEDDING_DIMENSIONS)
+        return super().embed_documents(texts, **kwargs)
+
+    def embed_query(self, text, **kwargs):
+        kwargs.setdefault("output_dimensionality", GOOGLE_EMBEDDING_DIMENSIONS)
+        return super().embed_query(text, **kwargs)
+
+    async def aembed_documents(self, texts, **kwargs):
+        kwargs.setdefault("output_dimensionality", GOOGLE_EMBEDDING_DIMENSIONS)
+        return await super().aembed_documents(texts, **kwargs)
+
+    async def aembed_query(self, text, **kwargs):
+        kwargs.setdefault("output_dimensionality", GOOGLE_EMBEDDING_DIMENSIONS)
+        return await super().aembed_query(text, **kwargs)
 
 
 def collection_name(user_id: str, doc_type: str, provider: str = "openai") -> str:
@@ -80,14 +129,17 @@ def get_embedding_model(model_settings):
                 )
         if provider == "openai":
             return OpenAIEmbeddings(model="text-embedding-3-small", api_key=api_key)
-        return GoogleGenerativeAIEmbeddings(
-            model="models/text-embedding-004", google_api_key=api_key
-        )
+        return GeminiEmbeddings(model=GOOGLE_EMBEDDING_MODEL, google_api_key=api_key)
     if provider == "ollama":
-        base_url = (model_settings.ollama_url if native else None) or (
-            app_settings.EMBEDDING_OLLAMA_URL
+        # The user's own Ollama when they chose it; otherwise the operator's
+        # EMBEDDING_OLLAMA_URL (a trusted server setting, so not subject to the
+        # per-user OLLAMA_ALLOWED_HOSTS check).
+        base_url = (
+            (model_settings.ollama_url if native else None)
+            or app_settings.EMBEDDING_OLLAMA_URL.strip()
+            or DEFAULT_OLLAMA_URL
         )
-        return OllamaEmbeddings(model="nomic-embed-text", base_url=base_url)
+        return QwenOllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL, base_url=base_url)
     raise EmbeddingUnavailable(f"Unsupported embedding provider: {provider}")
 
 

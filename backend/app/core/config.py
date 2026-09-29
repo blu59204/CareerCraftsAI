@@ -217,7 +217,11 @@ class Settings(BaseSettings):
     # Used only when EMBEDDING_PROVIDER stands in for a chat provider that has
     # no embeddings API (the chat provider's own key is never reused).
     EMBEDDING_API_KEY: str = ""
-    EMBEDDING_OLLAMA_URL: str = "http://localhost:11434"
+    # Server-side Ollama for embeddings (e.g. http://10.0.0.182:11434) — used
+    # for EMBEDDING_PROVIDER=ollama and for memory embeddings when a user has no
+    # own Ollama URL. Empty = http://localhost:11434. Operator-set, so it is not
+    # checked against the per-user OLLAMA_ALLOWED_HOSTS list.
+    EMBEDDING_OLLAMA_URL: str = ""
 
     # ── Rate limiting ──────────────────────────────────────────────────
     RATE_LIMIT_DEFAULT: str = "60/minute"

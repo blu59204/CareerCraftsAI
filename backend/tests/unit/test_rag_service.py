@@ -37,11 +37,11 @@ def test_get_embedding_model_anthropic_uses_configured_ollama(monkeypatch):
     monkeypatch.setattr(
         "app.services.rag_service.app_settings.EMBEDDING_OLLAMA_URL", "http://ollama:11434"
     )
-    with patch("app.services.rag_service.OllamaEmbeddings") as mock_ollama:
+    with patch("app.services.rag_service.QwenOllamaEmbeddings") as mock_ollama:
         mock_ollama.return_value = MagicMock()
         get_embedding_model(settings_mock)
         mock_ollama.assert_called_once_with(
-            model="nomic-embed-text", base_url="http://ollama:11434"
+            model="qwen3-embedding:0.6b", base_url="http://ollama:11434"
         )
 
 
@@ -70,4 +70,4 @@ def test_collection_name_format():
     assert collection_name("usr_abc123", "jd") == "usr_abc123_jd_openai_1536d"
     # Different providers have different dimensions
     assert collection_name("usr_abc123", "resume", "google") == "usr_abc123_resume_google_768d"
-    assert collection_name("usr_abc123", "resume", "ollama") == "usr_abc123_resume_ollama_768d"
+    assert collection_name("usr_abc123", "resume", "ollama") == "usr_abc123_resume_ollama_1024d"

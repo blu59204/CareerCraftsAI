@@ -29,7 +29,7 @@ Common failure modes and resolution steps for all 15 agents, Playwright browser 
 |---|---|---|
 | `pgvector collection not found` | Collection auto-created but pgvector extension missing | Run in Supabase SQL Editor: `CREATE EXTENSION IF NOT EXISTS vector` |
 | `No chunks returned for retrieve` | User hasn't uploaded any documents | Upload a resume PDF/DOCX/TXT via the Documents page before using agents that need RAG |
-| Embedding model unavailable | Anthropic/NVIDIA users need local Ollama with `nomic-embed-text` | `ollama pull nomic-embed-text`. Ensure Ollama is running at `localhost:11434` |
+| Embedding model unavailable | Anthropic/NVIDIA/DeepSeek/OpenRouter users need `EMBEDDING_PROVIDER` set; with `ollama`, the server's Ollama needs `qwen3-embedding:0.6b` | `ollama pull qwen3-embedding:0.6b`. Ensure Ollama is reachable at `EMBEDDING_OLLAMA_URL` (default `localhost:11434`) |
 | OpenAI embedding dimension mismatch | User switched from OpenAI (1536d) to Google (768d) without re-embedding | Collections are namespaced by provider+dimension (`{user}_{type}_{provider}_{dim}d`). Re-upload documents after switching |
 | `HNSW index creation failed` | Insufficient disk space or PostgreSQL memory | Reduce `ef_construction` in `_ensure_hnsw_index()`. Check `shared_buffers` in Postgres config |
 
