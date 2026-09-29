@@ -19,9 +19,11 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
-from app.core.config import settings
-
 with workflow.unsafe.imports_passed_through():
+    # Config must be passed through: re-importing it inside the workflow
+    # sandbox makes pydantic-settings open .env (Path.expanduser), which the
+    # sandbox forbids, and the worker then refuses to start.
+    from app.core.config import settings
     from app.workflows.notification_activities import (
         create_notification_activity,
         mark_delivery_dead_activity,
