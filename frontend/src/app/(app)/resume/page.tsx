@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Upload, Download, Target, FileText, Wand2, CloudUpload, Loader2 } from "lucide-react";
+import { Upload, Download, Target, FileText, Wand2, CloudUpload, Loader2, Pencil, FolderOpen } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fadeUp, stagger } from "@/lib/motion-variants";
@@ -11,10 +11,21 @@ import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { AtsScoreRing } from "@/components/resume/AtsScoreRing";
 import { KeywordCoverage } from "@/components/resume/KeywordCoverage";
 import { SuggestionsList } from "@/components/resume/SuggestionsList";
+import { ResumePreview } from "@/components/resume/ResumePreview";
+import { ResumeFixPanel } from "@/components/resume/ResumeFixPanel";
+import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { apiClient } from "@/lib/api";
+import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { getResumeInsightData } from "@/lib/resume-insights";
 import { takePendingJd } from "@/lib/job-handoff";
+import type {
+  ContactFields,
+  ResumeFixPayload,
+  ResumeOptimizeResponse,
+  ResumeReview,
+  ResumeTemplateId,
+  TailoredResume,
+} from "@/lib/resume-types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,20 +49,8 @@ interface ResumeDoc {
   ats_data: AtsData | null;
 }
 
-interface OptimizeResult {
-  run_id: string;
-  status: string;
-  template?: string;
-  pdf_available?: boolean;
-  pdf_document_id?: string | null;
-  resume_markdown?: string;
-  summary?: string;
-  ats_score?: number | null;
-  keywords_matched?: string[];
-  keywords_missing?: string[];
-  changes_made?: string[];
-  warnings?: string[];
-}
+/** POST /resume/optimize response (includes review + contact_suggestions). */
+type OptimizeResult = ResumeOptimizeResponse;
 
 interface JobAtsAnalysis {
   composite_score: number;
@@ -76,59 +75,43 @@ interface AgentRun {
 const COVER_LETTER_TONES = ["Professional", "Enthusiastic", "Concise", "Story-driven"] as const;
 type CoverTone = (typeof COVER_LETTER_TONES)[number];
 
-type TemplateId = "classic" | "modern" | "technical";
+type TemplateId = ResumeTemplateId;
 
 const RESUME_TEMPLATES: Array<{
   id: TemplateId;
   name: string;
   description: string;
   badge: string;
-  preview: string[];
 }> = [
   {
     id: "modern",
     name: "Modern",
-    description: "Centered name, subtle navy headings, and a clear single-column layout",
+    description: "Arial-style sans, centered navy header, accent rules",
     badge: "Recommended",
-    preview: [
-      "Name",
-      "Contact · LinkedIn",
-      "─────────────────",
-      "EXPERIENCE",
-      "• Achieved X by doing Y",
-      "EDUCATION",
-      "• BS Computer Science",
-    ],
   },
   {
     id: "classic",
     name: "Classic",
-    description: "Conservative black-and-white layout with a left-aligned header",
+    description: "Times serif, black and white, the most conservative ATS choice",
     badge: "Taleo-Safe",
-    preview: [
-      "Name",
-      "email@you.com | LinkedIn",
-      "WORK EXPERIENCE",
-      "  Company Name",
-      "  Job Title | 2022–2024",
-      "EDUCATION",
-    ],
   },
   {
     id: "technical",
     name: "Technical",
-    description: "Compact teal-accented layout for engineering and technical roles",
+    description: "Compact sans with teal accents, fits dense skills and projects on one page",
     badge: "Dev-Focused",
-    preview: [
-      "Name",
-      "github.com/you | LinkedIn",
-      "TECHNICAL SKILLS",
-      "Python, FastAPI, React",
-      "EXPERIENCE",
-      "EDUCATION",
-    ],
   },
 ];
+
+/** Scale for template-card thumbnails (816px letter page → ~245px wide). */
+const TEMPLATE_THUMB_SCALE = 0.3;
+
+/** Backend limit for a manual markdown edit. */
+const MAX_MARKDOWN_LENGTH = 30_000;
+
+function isTemplateId(value: unknown): value is TemplateId {
+  return value === "modern" || value === "classic" || value === "technical";
+}
 
 // ---------------------------------------------------------------------------
 // Cover Letter Generator (sub-component)
@@ -298,13 +281,16 @@ function TemplateSelector({ selected, onSelect, onTailor, isTailoring, canTailor
                 isSelected ? "border-primary bg-primary/5" : "border-border bg-card/60"
               }`}
             >
-              {/* Mini text preview */}
-              <div className="h-48 w-full overflow-hidden rounded-2xl border border-border bg-background p-4 font-mono text-[10px] leading-relaxed text-muted-foreground">
-                {tpl.preview.map((line, i) => (
-                  <div key={i} className={i === 0 ? "font-semibold text-foreground text-xs" : ""}>
-                    {line}
-                  </div>
-                ))}
+              {/* Thumbnail rendered with the same layout as the PDF template */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none flex h-48 w-full select-none justify-center overflow-hidden rounded-2xl border border-border bg-muted/40 pt-3"
+              >
+                <ResumePreview
+                  markdown={SAMPLE_RESUME_MARKDOWN}
+                  template={tpl.id}
+                  scale={TEMPLATE_THUMB_SCALE}
+                />
               </div>
 
               <div className="mt-4 space-y-2">
@@ -357,9 +343,12 @@ interface HistoryTabProps {
   agentRuns: AgentRun[] | undefined;
   isLoading: boolean;
   onDownload: (runId: string) => void;
+  onOpen: (documentId: string) => void;
+  /** Document id currently being opened, if any. */
+  openingId: string | null;
 }
 
-function HistoryTab({ agentRuns, isLoading, onDownload }: HistoryTabProps) {
+function HistoryTab({ agentRuns, isLoading, onDownload, onOpen, openingId }: HistoryTabProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
@@ -388,38 +377,60 @@ function HistoryTab({ agentRuns, isLoading, onDownload }: HistoryTabProps) {
 
   return (
     <div className="space-y-3">
-      {agentRuns.map((run) => (
-        <div
-          key={run.id}
-          className="flex items-center justify-between rounded-3xl border border-border bg-card/60 px-5 py-4"
-        >
-          <div className="space-y-1">
-            <div className="text-sm font-medium">Resume Agent Run</div>
-            <div className="text-xs text-muted-foreground">
-              {new Date(run.started_at).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })}
+      {agentRuns.map((run) => {
+        const docId = typeof run.output?.pdf_document_id === "string" ? run.output.pdf_document_id : null;
+        const isOpening = docId !== null && openingId === docId;
+        return (
+          <div
+            key={run.id}
+            className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-border bg-card/60 px-5 py-4"
+          >
+            <div className="space-y-1">
+              <div className="text-sm font-medium">Resume Agent Run</div>
+              <div className="text-xs text-muted-foreground">
+                {new Date(run.started_at).toLocaleString(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[run.status] ?? "bg-muted text-muted-foreground"}`}
+              >
+                {run.status.replace("_", " ")}
+              </span>
+              {docId && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onOpen(docId)}
+                    disabled={openingId !== null}
+                    aria-label="Open this tailored resume in the builder"
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors disabled:opacity-60"
+                  >
+                    {isOpening ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <FolderOpen className="h-3.5 w-3.5" />
+                    )}
+                    {isOpening ? "Opening…" : "Open"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDownload(docId)}
+                    aria-label="Download this tailored resume as PDF"
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    PDF
+                  </button>
+                </>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[run.status] ?? "bg-muted text-muted-foreground"}`}
-            >
-              {run.status.replace("_", " ")}
-            </span>
-            {(run.output?.pdf_document_id as string | undefined) && (
-              <button
-                onClick={() => onDownload(run.output?.pdf_document_id as string)}
-                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors"
-              >
-                <Download className="h-3.5 w-3.5" />
-                PDF
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -460,9 +471,17 @@ export default function ResumePage() {
   const [lastMissingKeywords, setLastMissingKeywords] = useState<string[]>([]);
   const [lastWarnings, setLastWarnings] = useState<string[]>([]);
   const [resumePreviewText, setResumePreviewText] = useState<string | null>(null);
+  const [lastReview, setLastReview] = useState<ResumeReview | null>(null);
+  const [contactSuggestions, setContactSuggestions] = useState<Partial<ContactFields>>({});
+  /** Template the current tailored document was rendered with. */
+  const [lastTemplate, setLastTemplate] = useState<TemplateId | null>(null);
   const [aiChanges, setAiChanges] = useState<string[]>([]);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
   const [jobAts, setJobAts] = useState<{ documentId: string; jdText: string; data: JobAtsAnalysis } | null>(null);
+
+  // Manual markdown edit of the tailored resume
+  const [editingText, setEditingText] = useState(false);
+  const [draftMarkdown, setDraftMarkdown] = useState("");
 
   // Cover letter state (lifted so CoverLetterGenerator is stateless)
   const [coverJd, setCoverJd] = useState("");
@@ -515,6 +534,78 @@ export default function ResumePage() {
   });
 
   // -------------------------------------------------------------------------
+  // Tailored document: apply a server snapshot (fix / template / open)
+  // -------------------------------------------------------------------------
+  const applyTailored = (r: TailoredResume) => {
+    setResumePreviewText(r.resume_markdown);
+    setLastReview(r.review);
+    setLastWarnings(r.warnings ?? []);
+    setLastAtsScore(r.ats_score ?? null);
+    setLastMissingKeywords(r.keywords_missing ?? []);
+    setLastTemplate(isTemplateId(r.template) ? r.template : null);
+    setContactSuggestions(r.contact_suggestions ?? {});
+    setLastDocId(r.document_id);
+    setAiChanges(r.changes_made ?? []);
+    setAiSummary(r.summary ?? null);
+    queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
+  };
+
+  const postFix = async (documentId: string, payload: ResumeFixPayload) => {
+    // Re-renders the PDF server-side; allow more than the default 30s.
+    const { data } = await apiClient.post(`/resume/tailored/${documentId}/fix`, payload, { timeout: 60_000 });
+    return data as TailoredResume;
+  };
+
+  const templateMutation = useMutation<TailoredResume, unknown, TemplateId>({
+    mutationFn: async (template) => {
+      if (!lastDocId) throw new Error("Tailor your resume first.");
+      return postFix(lastDocId, { template });
+    },
+    onSuccess: (data, template) => {
+      applyTailored(data);
+      setSelectedTemplate(template);
+      toast.success(`Switched to the ${RESUME_TEMPLATES.find((t) => t.id === template)?.name ?? template} template`);
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, "Could not switch the template")),
+  });
+
+  const editTextMutation = useMutation<TailoredResume, unknown, string>({
+    mutationFn: async (markdown) => {
+      if (!lastDocId) throw new Error("Tailor your resume first.");
+      return postFix(lastDocId, { resume_markdown: markdown });
+    },
+    onSuccess: (data) => {
+      applyTailored(data);
+      setEditingText(false);
+      toast.success("Resume updated");
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, "Could not save your changes")),
+  });
+
+  const openTailoredMutation = useMutation<TailoredResume, unknown, string>({
+    mutationFn: async (documentId) => {
+      const { data } = await apiClient.get(`/resume/tailored/${documentId}`);
+      return data as TailoredResume;
+    },
+    onSuccess: (data) => {
+      setEditingText(false);
+      applyTailored(data);
+      setTab("builder");
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, "Could not open this resume")),
+  });
+
+  const startEditingText = () => {
+    setDraftMarkdown(resumePreviewText ?? "");
+    setEditingText(true);
+  };
+
+  const cancelEditingText = () => {
+    setDraftMarkdown(resumePreviewText ?? "");
+    setEditingText(false);
+  };
+
+  // -------------------------------------------------------------------------
   // Mutation: optimize/tailor resume
   // -------------------------------------------------------------------------
   const optimizeMutation = useMutation<OptimizeResult, Error, string>({
@@ -532,7 +623,13 @@ export default function ResumePage() {
     },
     onSuccess: async (data) => {
       if (data.resume_markdown) setResumePreviewText(data.resume_markdown);
-      if (data.pdf_document_id) setLastDocId(data.pdf_document_id);
+      // A new run replaces the previous document; without a stored PDF there
+      // is nothing to fix or download, so don't keep pointing at the old one.
+      setLastDocId(data.pdf_document_id ?? null);
+      setLastReview(data.review ?? null);
+      setContactSuggestions(data.contact_suggestions ?? {});
+      setLastTemplate(isTemplateId(data.template) ? data.template : selectedTemplate);
+      setEditingText(false);
       setAiChanges(data.changes_made ?? []);
       setAiSummary(data.summary ?? null);
       setLastAtsScore(data.ats_score ?? null);
@@ -541,7 +638,9 @@ export default function ResumePage() {
       if (data.resume_markdown && data.run_id) {
         await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
       }
-      if (data.warnings?.length) toast.warning(data.warnings[0]);
+      const reviewIssues = data.review?.issues.length ?? 0;
+      if (reviewIssues > 0) toast.warning(`Resume tailored — ${reviewIssues} detail(s) need your input below.`);
+      else if (data.warnings?.length) toast.warning(data.warnings[0]);
       else toast.success(data.ats_score != null ? `Resume tailored! ATS score ${data.ats_score}.` : "Resume tailored.");
       queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
       queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
@@ -603,6 +702,13 @@ export default function ResumePage() {
       });
       setLastDocId(null);
       setResumePreviewText(null);
+      setLastReview(null);
+      setContactSuggestions({});
+      setLastTemplate(null);
+      setLastWarnings([]);
+      setLastAtsScore(null);
+      setLastMissingKeywords([]);
+      setEditingText(false);
       setAiChanges([]);
       setAiSummary(null);
       setJobAts(null);
@@ -827,6 +933,8 @@ export default function ResumePage() {
             agentRuns={agentRuns}
             isLoading={runsLoading}
             onDownload={handleDownloadPdf}
+            onOpen={(id) => openTailoredMutation.mutate(id)}
+            openingId={openTailoredMutation.isPending ? (openTailoredMutation.variables ?? null) : null}
           />
         </motion.div>
       )}
@@ -932,8 +1040,21 @@ export default function ResumePage() {
             </aside>
 
             {/* Center: resume preview */}
-            <section className="rounded-3xl border border-border bg-card/40 p-6">
-              <div className="text-sm text-muted-foreground">Preview</div>
+            <section aria-labelledby="resume-preview-heading" className="min-w-0 rounded-3xl border border-border bg-card/40 p-6">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 id="resume-preview-heading" className="text-sm font-normal text-muted-foreground">Preview</h2>
+                {lastDocId && resumePreviewText && !editingText && (
+                  <button
+                    type="button"
+                    onClick={startEditingText}
+                    disabled={templateMutation.isPending}
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:opacity-60"
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    Edit text
+                  </button>
+                )}
+              </div>
               {lastAtsScore != null && (
                 <div className="mt-1 text-xs text-muted-foreground">
                   Tailored ATS score: <span className="font-medium text-foreground">{lastAtsScore}</span>
@@ -941,7 +1062,9 @@ export default function ResumePage() {
                     ` · missing: ${lastMissingKeywords.slice(0, 5).join(", ")}`}
                 </div>
               )}
-              {lastWarnings.length > 0 && (
+              {/* Without a stored document + review (PDF storage failed) nothing
+                  can be fixed, so fall back to listing the agent's warnings. */}
+              {!(lastDocId && lastReview) && lastWarnings.length > 0 && (
                 <div className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning" role="alert">
                   <p className="font-medium">Warnings</p>
                   <ul className="mt-2 list-disc space-y-1 pl-5">
@@ -950,15 +1073,103 @@ export default function ResumePage() {
                 </div>
               )}
               {aiSummary && <p className="mt-2 text-sm text-muted-foreground">{aiSummary}</p>}
-              <div className="mt-3 aspect-[8.5/11] w-full overflow-hidden rounded-2xl border border-border bg-background p-8 text-sm">
-                {resumePreviewText ? (
-                  <pre className="whitespace-pre-wrap text-sm font-sans leading-relaxed text-foreground">
-                    {resumePreviewText}
-                  </pre>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">Upload a resume, add a job description, then choose Tailor Resume to generate a real preview.</div>
-                )}
-              </div>
+
+              {lastDocId && resumePreviewText && !editingText && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span id="resume-template-label" className="text-xs text-muted-foreground">Template</span>
+                  <div role="group" aria-labelledby="resume-template-label" className="flex flex-wrap gap-1 rounded-full border border-border bg-muted/40 p-1">
+                    {RESUME_TEMPLATES.map((tpl) => {
+                      const active = (lastTemplate ?? selectedTemplate) === tpl.id;
+                      const pending = templateMutation.isPending && templateMutation.variables === tpl.id;
+                      return (
+                        <button
+                          key={tpl.id}
+                          type="button"
+                          aria-pressed={active}
+                          disabled={templateMutation.isPending}
+                          onClick={() => {
+                            if (!active) templateMutation.mutate(tpl.id);
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs transition-colors disabled:cursor-not-allowed ${
+                            active
+                              ? "bg-background font-medium text-foreground shadow-sm"
+                              : "text-muted-foreground hover:text-foreground disabled:opacity-60"
+                          }`}
+                        >
+                          {pending && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                          {tpl.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="sr-only" aria-live="polite">
+                    {templateMutation.isPending ? "Re-rendering the resume in the new template…" : ""}
+                  </span>
+                </div>
+              )}
+
+              {editingText ? (
+                <div className="mt-3 space-y-3">
+                  <label htmlFor="resume-markdown-editor" className="text-xs font-medium text-foreground">
+                    Resume text (markdown)
+                  </label>
+                  <textarea
+                    id="resume-markdown-editor"
+                    value={draftMarkdown}
+                    onChange={(e) => setDraftMarkdown(e.target.value)}
+                    maxLength={MAX_MARKDOWN_LENGTH}
+                    spellCheck
+                    disabled={editTextMutation.isPending}
+                    aria-describedby="resume-markdown-help"
+                    className="h-[32rem] w-full resize-y rounded-2xl border border-border bg-background/60 px-4 py-3 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+                  />
+                  <p id="resume-markdown-help" className="text-xs text-muted-foreground">
+                    Keep the structure: <code># Name</code>, a contact line, <code>## SECTION</code> headings,{" "}
+                    <code>### Role | Employer | Location | Mon YYYY - Present</code> and <code>- bullets</code>.{" "}
+                    {draftMarkdown.length.toLocaleString()}/{MAX_MARKDOWN_LENGTH.toLocaleString()} characters.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <LiquidGlassButton
+                      tone="primary"
+                      size="sm"
+                      disabled={
+                        editTextMutation.isPending ||
+                        !draftMarkdown.trim() ||
+                        draftMarkdown === resumePreviewText
+                      }
+                      onClick={() => editTextMutation.mutate(draftMarkdown)}
+                    >
+                      {editTextMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {editTextMutation.isPending ? "Saving…" : "Save changes"}
+                    </LiquidGlassButton>
+                    <LiquidGlassButton
+                      tone="ghost"
+                      size="sm"
+                      disabled={editTextMutation.isPending}
+                      onClick={cancelEditingText}
+                    >
+                      Cancel
+                    </LiquidGlassButton>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  aria-busy={templateMutation.isPending}
+                  className={`mt-3 max-h-[56rem] w-full overflow-auto rounded-2xl border border-border bg-muted/30 p-3 transition-opacity sm:p-4 ${
+                    templateMutation.isPending ? "opacity-60" : ""
+                  }`}
+                >
+                  {resumePreviewText ? (
+                    <ResumePreview
+                      markdown={resumePreviewText}
+                      template={lastTemplate ?? selectedTemplate}
+                      className="mx-auto"
+                    />
+                  ) : (
+                    <div className="flex aspect-[8.5/11] w-full items-center justify-center p-8 text-center text-sm text-muted-foreground">Upload a resume, add a job description, then choose Tailor Resume to generate a real preview.</div>
+                  )}
+                </div>
+              )}
             </section>
 
             {/* Right aside: AI suggestions */}
@@ -969,6 +1180,20 @@ export default function ResumePage() {
               {activeJobAts ? <SuggestionsList suggestions={insightData.suggestions} /> : <EmptyState title="No job analysis yet" description="Choose Analyze match to get keyword gaps and ATS recommendations for this job." />}
             </aside>
           </motion.div>
+
+          {/* Fix missing details — own full-width row so the form has room;
+              hidden while the raw text editor is open to avoid conflicting edits. */}
+          {lastDocId && lastReview && !editingText && (
+            <motion.div variants={fadeUp}>
+              <ResumeFixPanel
+                documentId={lastDocId}
+                review={lastReview}
+                contactSuggestions={contactSuggestions}
+                warnings={lastWarnings}
+                onFixed={applyTailored}
+              />
+            </motion.div>
+          )}
         </>
       )}
 

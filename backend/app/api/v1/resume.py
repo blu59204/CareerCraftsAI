@@ -287,6 +287,10 @@ async def fix_tailored_resume(
     data = dict(doc.ats_data or {})
     template = payload.template or data.get("template") or "modern"
     base = payload.resume_markdown if payload.resume_markdown is not None else doc.raw_text
+    # Check before apply_fixes: it re-inserts the name heading, so a blanked
+    # manual edit would otherwise save a resume containing only the name.
+    if not clean_placeholders(base or "").strip():
+        raise HTTPException(status_code=422, detail="Resume text cannot be empty")
     before = review_resume(doc.raw_text or "")
 
     contact = payload.contact.model_dump(exclude_unset=True) if payload.contact else None
