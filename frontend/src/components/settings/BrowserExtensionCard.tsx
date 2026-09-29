@@ -175,6 +175,24 @@ export function BrowserExtensionCard() {
         </div>
       </div>
 
+      {installedVersion === null ? (
+        // The bridge only runs by itself on the hosted site and localhost. On
+        // any other deployment the extension can't be detected until it has
+        // been paired once, so a connection code is the only way in.
+        <p className="mt-3 text-xs text-muted-foreground">
+          Using CareerCraft on a different address, or already installed and still not detected?{" "}
+          <button
+            type="button"
+            className="font-medium text-primary underline underline-offset-4 disabled:opacity-60"
+            disabled={pair.isPending}
+            onClick={() => pair.mutate()}
+          >
+            Get a connection code
+          </button>{" "}
+          and paste it in the extension popup.
+        </p>
+      ) : null}
+
       {installedVersion !== undefined ? (
         <details className="group mt-4 rounded-xl border border-border bg-background/40 p-4" open={!installedVersion}>
           <summary className="cursor-pointer text-sm font-medium">How to install and connect the extension</summary>
@@ -203,8 +221,8 @@ export function BrowserExtensionCard() {
         <div className="mt-4 rounded-xl border border-warning/40 bg-warning/10 p-4">
           <p className="text-sm font-medium">Paste this code in the extension popup</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Automatic connection did not finish. Open the extension popup and paste this code. Use this site's
-            address in the URL field if the popup asks for it. This code is shown only once.
+            Open the extension popup, enter {typeof window !== "undefined" ? window.location.origin : "this site's address"}{" "}
+            as the CareerCraft URL, and paste this code. It is shown only once.
           </p>
           <div className="mt-3 flex min-w-0 items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-lg border border-border bg-background px-3 py-2 text-xs">
