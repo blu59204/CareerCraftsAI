@@ -9,9 +9,14 @@ export type ApplicationItem = {
   id: string;
   company: string;
   role: string;
-  matchPercent: number;
+  matchPercent: number | null;
   stage: AppStage;
   nextFollowUp?: string;
+  location?: string | null;
+  jobUrl?: string | null;
+  jobDescription?: string | null;
+  appliedAt?: string | null;
+  notes?: string | null;
 };
 
 const COLUMNS: { stage: AppStage; label: string }[] = [
@@ -51,7 +56,7 @@ export function ApplicationKanban({ items, onSelect }: Props) {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate text-sm font-medium">{it.company}</span>
-                    <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">{it.matchPercent}%</span>
+                    {it.matchPercent != null && <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] text-primary">{it.matchPercent}%</span>}
                   </div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">{it.role}</div>
                   {it.nextFollowUp && (
