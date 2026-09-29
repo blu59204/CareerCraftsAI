@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import get_current_user, get_db
 from app.models.db import User, UserDocument, UserModelSettings
 from app.services.drive_service import DriveError, upload_to_drive
-from app.services.rag_service import extract_text, ingest_document
+from app.services.rag_service import EmbeddingUnavailable, extract_text, ingest_document
 from app.services.storage_service import delete_file, download_file, upload_file
 
 logger = logging.getLogger(__name__)
@@ -229,9 +229,16 @@ async def upload_document(
                 current_user.id,
                 exc,
             )
+            if isinstance(exc, EmbeddingUnavailable):
+                reason = (
+                    f"your {model_settings.provider} model can't create search embeddings "
+                    "and no embedding fallback is configured (EMBEDDING_PROVIDER)."
+                )
+            else:
+                reason = "the embedding service failed — check Settings → Models."
             upload_warning = (
                 (upload_warning + " ") if upload_warning else ""
-            ) + "Document saved but not indexed for AI search — check Settings → Models."
+            ) + f"Document saved but not indexed for AI search: {reason}"
             embedded_at = None
 
     doc = UserDocument(

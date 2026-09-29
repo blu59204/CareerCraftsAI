@@ -214,6 +214,10 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = 50
     RAG_TOP_K: int = 5
     EMBEDDING_PROVIDER: str = ""
+    # Used only when EMBEDDING_PROVIDER stands in for a chat provider that has
+    # no embeddings API (the chat provider's own key is never reused).
+    EMBEDDING_API_KEY: str = ""
+    EMBEDDING_OLLAMA_URL: str = "http://localhost:11434"
 
     # ── Rate limiting ──────────────────────────────────────────────────
     RATE_LIMIT_DEFAULT: str = "60/minute"
