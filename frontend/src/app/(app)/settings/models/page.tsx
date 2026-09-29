@@ -198,8 +198,11 @@ export default function SettingsModelsPage() {
               )}
             </div>
           }
-          aside={<SettingsNav />}
         />
+
+        <Reveal subtle>
+          <SettingsNav />
+        </Reveal>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:gap-8">
           {/* ── Left: add-provider form ─────────────────────────────── */}

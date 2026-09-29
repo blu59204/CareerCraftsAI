@@ -376,8 +376,11 @@ export default function ProfilePreferencesPage() {
               )}
             </div>
           }
-          aside={<SettingsNav />}
         />
+
+        <Reveal subtle>
+          <SettingsNav />
+        </Reveal>
 
         {isLoading ? (
           <ProfileSkeleton />
