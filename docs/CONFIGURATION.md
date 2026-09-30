@@ -45,6 +45,7 @@ All optional — features gracefully degrade if not set.
 | `PROXYCURL_API_KEY` | [proxycurl.com](https://proxycurl.com) | LinkedInAgent | Fetches LinkedIn profile data without scraping. |
 | `EXA_API_KEY` | [exa.ai](https://exa.ai) | CompanyResearchAgent, SalaryAgent, InterviewPrepAgent | Neural web search for research tasks. |
 | `RESEND_API_KEY` | [resend.com](https://resend.com) | ResendService | Sends transactional emails (account notifications, not job emails). |
+| `RESEND_FROM_EMAIL` | — | ResendService | Sender address, e.g. `noreply@careercraftsai.me`. Its domain must be verified in Resend or every send is rejected. Default `noreply@jobagent.ai`. |
 | `YOUTUBE_API_KEY` | [Google Cloud](https://console.cloud.google.com) | InterviewPrepAgent | Fetches interview prep videos (optional enrichment). |
 
 ---

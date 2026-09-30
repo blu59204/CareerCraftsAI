@@ -39,6 +39,21 @@ def test_send_transactional_email_success_sends_idempotency_header(monkeypatch):
     assert captured["headers"]["Idempotency-Key"] == "notification-email/abc"
 
 
+def test_send_transactional_email_uses_configured_sender(monkeypatch):
+    _settings_with_key(monkeypatch)
+    monkeypatch.setattr(resend_service.settings, "RESEND_FROM_EMAIL", "noreply@careercraftsai.me")
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["from"] = json["from"]
+        return httpx.Response(200, json={"id": "email_123"}, request=httpx.Request("POST", url))
+
+    with patch.object(resend_service.httpx, "post", side_effect=fake_post):
+        resend_service.send_transactional_email("a@b.com", "Subject", "<p>hi</p>")
+
+    assert captured["from"] == "noreply@careercraftsai.me"
+
+
 def test_send_transactional_email_429_raises_rate_limited_with_retry_after(monkeypatch):
     _settings_with_key(monkeypatch)
 

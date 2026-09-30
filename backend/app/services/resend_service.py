@@ -7,7 +7,6 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _RESEND_BASE = "https://api.resend.com"
-_FROM_EMAIL = "noreply@jobagent.ai"
 
 
 class EmailDeliveryError(RuntimeError):
@@ -56,7 +55,7 @@ def send_transactional_email(
         resp = httpx.post(
             f"{_RESEND_BASE}/emails",
             headers=headers,
-            json={"from": _FROM_EMAIL, "to": [to], "subject": subject, "html": html},
+            json={"from": settings.RESEND_FROM_EMAIL, "to": [to], "subject": subject, "html": html},
             timeout=10,
         )
     except httpx.HTTPError as exc:

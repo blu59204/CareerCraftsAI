@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     PROXYCURL_API_KEY: str = ""
     EXA_API_KEY: str = ""
     RESEND_API_KEY: str = ""
+    # Must be on a domain verified in the Resend account, or every send is rejected.
+    RESEND_FROM_EMAIL: str = "noreply@jobagent.ai"
     YOUTUBE_API_KEY: str = ""
     AGENTQL_API_KEY: str | None = None
     FIRECRAWL_API_KEY: str | None = None

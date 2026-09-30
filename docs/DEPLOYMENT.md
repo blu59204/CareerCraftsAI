@@ -60,7 +60,8 @@ later.
   root-owned, `chmod 600`):
   - `backend.env` — `DATABASE_URL`, `REDIS_URL`, `CLERK_SECRET_KEY`,
     `APP_SECRET_KEY`, `TEMPORAL_ADDRESS=127.0.0.1:7233`, `RESEND_API_KEY`
-    (notification emails are skipped without it), third-party API keys, etc.
+    (notification emails are skipped without it) and `RESEND_FROM_EMAIL`
+    (a sender on a domain verified in Resend, e.g. `noreply@careercraftsai.me`), third-party API keys, etc.
     Shared by `backend`, `temporal-worker` and `notification-worker`. A
     leftover `INTERNAL_SECRET` is ignored.
   - `public.env` — `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
