@@ -36,6 +36,7 @@ Reviewed 2026-10-01 in `D:/CareerCraft-agent-a`, branch `agent-a/resume`. Read `
 
 - **Windows backend:** 1,118 passed, 72 skipped. See backend-tests.txt.
 - **Linux rebuilt backend:** 1,115 passed, 75 skipped. See container-tests.txt. Repository SQL/scripts/frontend fixtures were supplied for tests; product logic was not changed for fixture lookup. Environment-dependent optional skips are not counted as passes.
+- **Python CI gates:** changed-line Ruff and changed-file Black pass across the full Agent A range. See python-lint.txt and python-format.txt.
 - **Frontend:** lint, typecheck, six regression tests and production build pass; 41 routes. See frontend-*.txt.
 - **Security:** isolated local and rebuilt container pip-audit zero known vulnerabilities; npm audit zero. Bandit reports 22 inherited LOW findings outside changed behavior, no HIGH/MEDIUM. Tool metadata pins deliberately conflict with audited versions: imports, JobSpy HTML conversion, suites and worker startup validate the tested runtime; pip-check is not claimed clean.
 - **Authenticated API:** nine groups pass against the user's deploy/local: persistence/score change, 200/409 concurrency, overflow rollback, deterministic general/job scoring, three templates ? two targets ? two formats, invalid uploads, safe missing-model response and cross-user read/edit/score/download 404. See live-results.json.

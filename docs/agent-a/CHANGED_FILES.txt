@@ -51,6 +51,8 @@ docs/agent-a/local.override.yml
 docs/agent-a/model-results.json
 docs/agent-a/npm-audit.json
 docs/agent-a/pip-audit.json
+docs/agent-a/python-format.txt
+docs/agent-a/python-lint.txt
 docs/agent-a/render-results.json
 docs/agent-a/render_review.py
 docs/agent-a/upgraded-pip-audit.json
