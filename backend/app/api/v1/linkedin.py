@@ -1,14 +1,14 @@
 import asyncio
 import logging
+import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.harness import get_harness
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import apply_harness_result
 from app.models.db import AgentRun, LinkedInOutreachQueue, User
@@ -17,6 +17,94 @@ router = APIRouter(prefix="/linkedin", tags=["linkedin"])
 logger = logging.getLogger(__name__)
 
 HARNESS_TIMEOUT_SECONDS = 120
+
+
+class ProfileOptimizeResponse(BaseModel):
+    run_id: str
+    status: str
+    sections: list[dict] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+@router.post("/profile/optimize", response_model=ProfileOptimizeResponse)
+async def optimize_uploaded_profile(
+    file: UploadFile = File(...),
+    target_role: str = Form(min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.core.llm_gateway import get_gateway_llm
+    from app.services.linkedin_profile import MAX_PROFILE_BYTES, analyze_profile, parse_profile_pdf
+
+    if not target_role.strip():
+        raise HTTPException(status_code=422, detail="Enter a target role.")
+    try:
+        if not (file.filename or "").lower().endswith(".pdf") or file.content_type not in (
+            "application/pdf",
+            "application/octet-stream",
+        ):
+            raise HTTPException(status_code=415, detail="Upload a LinkedIn profile PDF.")
+        content = await file.read(MAX_PROFILE_BYTES + 1)
+    finally:
+        await file.close()
+    if len(content) > MAX_PROFILE_BYTES:
+        raise HTTPException(status_code=413, detail="Profile PDF must be at most 5 MB.")
+    try:
+        profile, pages, warnings = await asyncio.to_thread(parse_profile_pdf, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    from app.core.config import settings
+
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    active = await db.execute(
+        select(AgentRun.id).where(
+            AgentRun.user_id == current_user.id,
+            AgentRun.status.in_(("queued", "running")),
+            AgentRun.agent_type != "apply_prepare",
+        )
+    )
+    if len(active.scalars().all()) >= settings.AGENT_MAX_CONCURRENT_PER_USER:
+        raise HTTPException(status_code=429, detail="Wait for your current agent runs to complete.")
+    run = AgentRun(
+        id=uuid.uuid4(),
+        user_id=current_user.id,
+        agent_type="linkedin_pdf",
+        status="running",
+        input={"bytes": len(content), "pages": pages, "target_role_length": len(target_role)},
+    )
+    db.add(run)
+    await db.commit()
+    start = time.monotonic()
+    try:
+        llm = await get_gateway_llm(str(current_user.id), db)
+        sections, tokens = await asyncio.wait_for(
+            analyze_profile(llm, profile, target_role.strip()), timeout=120
+        )
+        run.status = "completed"
+        run.output = {"sections": sections, "warnings": warnings}
+        run.tokens_used = tokens
+    except Exception as exc:
+        run.status = "failed"
+        run.output = {"error": "profile_analysis_failed"}
+        logger.warning("linkedin_pdf_failed run_id=%s error_type=%s", run.id, type(exc).__name__)
+        if isinstance(exc, HTTPException):
+            raise
+        if isinstance(exc, asyncio.TimeoutError):
+            raise HTTPException(
+                status_code=504, detail="Profile analysis timed out. Try again."
+            ) from None
+        raise HTTPException(
+            status_code=422,
+            detail="Could not produce grounded profile edits. "
+            "Check your model settings and try again.",
+        ) from None
+    finally:
+        run.duration_ms = int((time.monotonic() - start) * 1000)
+        run.completed_at = datetime.now(UTC)
+        await db.commit()
+    return ProfileOptimizeResponse(
+        run_id=str(run.id), status=run.status, sections=sections, warnings=warnings
+    )
 
 
 class OutreachIdentifyRequest(BaseModel):
@@ -35,6 +123,8 @@ async def identify_contacts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.agents.harness import get_harness
+
     """Find contacts at a company via Proxycurl, filter, and draft messages."""
     run_id = str(uuid.uuid4())
     agent_run = AgentRun(
@@ -59,11 +149,13 @@ async def identify_contacts(
             ),
             timeout=HARNESS_TIMEOUT_SECONDS,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
         await db.flush()
-        raise HTTPException(status_code=504, detail="LinkedIn outreach identification timed out") from None
+        raise HTTPException(
+            status_code=504, detail="LinkedIn outreach identification timed out"
+        ) from None
     apply_harness_result(agent_run, harness_result)
     await db.flush()
     return {"run_id": run_id, "status": agent_run.status}
@@ -76,10 +168,13 @@ async def get_outreach_queue(
 ):
     """View pending outreach messages."""
     result = await db.execute(
-        select(AgentRun).where(
+        select(AgentRun)
+        .where(
             AgentRun.user_id == current_user.id,
             AgentRun.agent_type == "linkedin_outreach",
-        ).order_by(AgentRun.started_at.desc().nulls_last()).limit(20)
+        )
+        .order_by(AgentRun.started_at.desc().nulls_last())
+        .limit(20)
     )
     return result.scalars().all()
 
@@ -127,7 +222,9 @@ async def approve_outreach(
             profile_url = item.get("profile_url")
             message = body.edited_message or item.get("message")
             if not profile_url or not message:
-                raise HTTPException(status_code=422, detail="Outreach message missing profile_url or message")
+                raise HTTPException(
+                    status_code=422, detail="Outreach message missing profile_url or message"
+                )
             try:
                 await linkedin_send_connection(
                     llm=llm,
@@ -151,8 +248,8 @@ async def approve_outreach(
                 queue_item = qres.scalar_one_or_none()
                 if queue_item:
                     queue_item.status = "sent"
-                    queue_item.approved_at = datetime.now(timezone.utc)
-                    queue_item.sent_at = datetime.now(timezone.utc)
+                    queue_item.approved_at = datetime.now(UTC)
+                    queue_item.sent_at = datetime.now(UTC)
                     if body.edited_message:
                         queue_item.message = body.edited_message
             sent.append({"profile_url": profile_url, "contact_name": item.get("contact_name")})
@@ -174,6 +271,6 @@ async def approve_outreach(
         run.status = "failed"
         run.output = {**output, "error": "Outreach rejected by user"}
 
-    run.completed_at = datetime.now(timezone.utc)
+    run.completed_at = datetime.now(UTC)
     await db.flush()
     return {"status": run.status, "run_id": str(run_id)}
