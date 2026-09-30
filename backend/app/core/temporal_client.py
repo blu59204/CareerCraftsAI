@@ -75,7 +75,9 @@ async def check_temporal_health() -> dict:
     activity_type = TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY
     return {
         "connected": True,
-        "workers": await _count_task_queue_pollers(client, settings.TEMPORAL_TASK_QUEUE, workflow_type),
+        "workers": await _count_task_queue_pollers(
+            client, settings.TEMPORAL_TASK_QUEUE, workflow_type
+        ),
         "task_queue": settings.TEMPORAL_TASK_QUEUE,
         # Reported only — not part of the ok/degraded decision, so an
         # environment that doesn't run app.notification_worker stays "ok".
