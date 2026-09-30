@@ -19,7 +19,9 @@ export function ProfilePdfUpload() {
       const body = new FormData();
       body.append("file", file);
       body.append("target_role", targetRole.trim());
-      const response = await apiClient.post("/linkedin/profile/optimize", body, { timeout: 130_000 });
+      const response = await apiClient.post("/linkedin/profile/optimize", body, {
+        headers: { "Content-Type": "multipart/form-data" }, timeout: 130_000,
+      });
       if (generation.current !== requestGeneration) throw new Error("The selected profile changed. Run analysis again.");
       return profileResultSchema.parse(response.data);
     },

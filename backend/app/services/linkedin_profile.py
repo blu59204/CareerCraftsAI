@@ -63,12 +63,13 @@ def parse_profile_pdf(content: bytes) -> tuple[dict[str, str], int, list[str]]:
                 raise ValueError("Profile PDF must contain between 1 and 20 pages.")
             count = len(document)
             all_text = ""
+            column_sections = [None, None]
             for page_index, page in enumerate(document):
                 blocks = page.get_text("blocks")
                 sidebar = [block for block in blocks if block[2] < page.rect.width * 0.4]
                 main = [block for block in blocks if block not in sidebar]
                 for column_index, column in enumerate((sidebar, main)):
-                    current = None
+                    current = column_sections[column_index]
                     header = []
                     for block in sorted(column, key=lambda value: (value[1], value[0])):
                         for raw in block[4].splitlines():
@@ -85,6 +86,7 @@ def parse_profile_pdf(content: bytes) -> tuple[dict[str, str], int, list[str]]:
                                 sections[current].append(line)
                             elif current is None and page_index == 0 and column_index == 1:
                                 header.append(line)
+                    column_sections[column_index] = current
                     if len(header) >= 2 and not sections["headline"]:
                         # First line is the profile name. Location/contact lines are excluded.
                         candidate = header[1]

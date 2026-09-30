@@ -34,7 +34,11 @@ async def optimize_uploaded_profile(
     current_user: User = Depends(get_current_user),
 ):
     from app.core.llm_gateway import get_gateway_llm
-    from app.services.linkedin_profile import MAX_PROFILE_BYTES, analyze_profile, parse_profile_pdf
+    from app.services.linkedin_profile import (
+        MAX_PROFILE_BYTES,
+        analyze_profile,
+        parse_profile_pdf,
+    )
 
     if not target_role.strip():
         raise HTTPException(status_code=422, detail="Enter a target role.")
@@ -70,13 +74,30 @@ async def optimize_uploaded_profile(
         user_id=current_user.id,
         agent_type="linkedin_pdf",
         status="running",
-        input={"bytes": len(content), "pages": pages, "target_role_length": len(target_role)},
+        tokens_used=0,
+        input={
+            "bytes": len(content),
+            "pages": pages,
+            "target_role_length": len(target_role),
+        },
     )
     db.add(run)
     await db.commit()
     start = time.monotonic()
+    from app.core.model_router import (
+        TokenTrackingCallback,
+        begin_token_tracking,
+        get_and_reset_tokens,
+    )
+    from app.services.llm_proxy_service import get_redaction_callback
+
+    begin_token_tracking()
     try:
         llm = await get_gateway_llm(str(current_user.id), db)
+        llm.callbacks = [
+            get_redaction_callback(),
+            TokenTrackingCallback(str(current_user.id)),
+        ]
         sections, tokens = await asyncio.wait_for(
             analyze_profile(llm, profile, target_role.strip()), timeout=120
         )
@@ -99,6 +120,7 @@ async def optimize_uploaded_profile(
             "Check your model settings and try again.",
         ) from None
     finally:
+        run.tokens_used = get_and_reset_tokens() or run.tokens_used or 0
         run.duration_ms = int((time.monotonic() - start) * 1000)
         run.completed_at = datetime.now(UTC)
         await db.commit()
@@ -143,7 +165,10 @@ async def identify_contacts(
             harness.run(
                 user_id=str(current_user.id),
                 task_type="linkedin_outreach",
-                context={"company_name": body.company_name, "role_context": body.role_context},
+                context={
+                    "company_name": body.company_name,
+                    "role_context": body.role_context,
+                },
                 user_settings={},
                 run_id=run_id,
             ),
@@ -223,7 +248,8 @@ async def approve_outreach(
             message = body.edited_message or item.get("message")
             if not profile_url or not message:
                 raise HTTPException(
-                    status_code=422, detail="Outreach message missing profile_url or message"
+                    status_code=422,
+                    detail="Outreach message missing profile_url or message",
                 )
             try:
                 await linkedin_send_connection(

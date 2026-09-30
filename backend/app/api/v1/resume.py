@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
@@ -164,7 +164,11 @@ async def optimize_resume(
         user_id=current_user.id,
         agent_type="resume",
         status="running",
-        input={"jd_text": payload.jd_text[:500]},
+        input={
+            "jd_text_length": len(payload.jd_text),
+            "template": payload.template,
+            "page_target": payload.page_target,
+        },
     )
     db.add(agent_run)
     await db.flush()
@@ -192,6 +196,9 @@ async def optimize_resume(
     start = time.monotonic()
     try:
         result_state = await asyncio.to_thread(resume_agent_node, state)
+    except Exception as exc:
+        logger.warning("resume_optimize_failed run_id=%s error_type=%s", run_id, type(exc).__name__)
+        result_state = {"status": "failed"}
     finally:
         agent_run.tokens_used = get_and_reset_tokens()
         agent_run.duration_ms = int((time.monotonic() - start) * 1000)
@@ -235,7 +242,11 @@ async def optimize_resume(
 
 
 async def _contact_suggestions(db: AsyncSession, user: User) -> dict[str, str]:
-    from app.services.resume_facts import contact_suggestions, load_facts_row, load_profile
+    from app.services.resume_facts import (
+        contact_suggestions,
+        load_facts_row,
+        load_profile,
+    )
 
     try:
         profile = await load_profile(db, user.id)
@@ -440,7 +451,11 @@ async def fix_tailored_resume(
     from app.services.ats_service import compute_ats_score
     from app.services.pdf_service import generate_resume_pdf
     from app.services.resume_facts import save_facts
-    from app.services.resume_structure import apply_fixes, clean_placeholders, review_resume
+    from app.services.resume_structure import (
+        apply_fixes,
+        clean_placeholders,
+        review_resume,
+    )
     from app.services.storage_service import delete_file, upload_file
 
     # Locked until the commit below: concurrent fixes of one document are
@@ -591,7 +606,9 @@ async def fix_tailored_resume(
             logger.warning("Could not delete superseded resume PDF %s", old_path)
 
     return _tailored_response(
-        target, await _contact_suggestions(db, current_user), current_user.full_name or ""
+        target,
+        await _contact_suggestions(db, current_user),
+        current_user.full_name or "",
     )
 
 
@@ -634,7 +651,7 @@ def _experience_facts(fixes: list[dict], before: dict, after: dict) -> list[dict
 async def download_pdf(
     document_id: str,
     format: Literal["pdf", "docx"] = "pdf",
-    pages: Literal[1, 2] | None = None,
+    pages: int | None = Query(default=None, ge=1, le=2),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -668,7 +685,11 @@ async def download_pdf(
             },
         )
     if format == "docx" or pages is not None or (doc.ats_data or {}).get("page_target"):
-        from app.services.resume_export import PageOverflow, fit_resume, generate_resume_docx
+        from app.services.resume_export import (
+            PageOverflow,
+            fit_resume,
+            generate_resume_docx,
+        )
 
         if not doc.raw_text or doc.doc_type not in ("resume", "resume_tailored"):
             raise HTTPException(
@@ -731,7 +752,8 @@ async def download_pdf(
             )
         except Exception:
             logger.exception(
-                "Resume re-render failed for document %s; serving stored PDF", document_id
+                "Resume re-render failed for document %s; serving stored PDF",
+                document_id,
             )
     if pdf_bytes is None:
         try:

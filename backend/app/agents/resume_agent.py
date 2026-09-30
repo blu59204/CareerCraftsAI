@@ -5,8 +5,11 @@ from langchain_core.messages import AIMessage
 from app.agents._llm_json import call_llm_json
 from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA as ResumeOutput
 from app.agents.prompts.resume_prompt import SYSTEM_PROMPT as RESUME_JSON_SYSTEM_PROMPT
-from app.agents.prompts.resume_prompt import build_user_prompt as build_resume_json_prompt
+from app.agents.prompts.resume_prompt import (
+    build_user_prompt as build_resume_json_prompt,
+)
 from app.agents.state import AgentState
+from app.services.ats_estimator import estimate_resume
 from app.services.ats_service import compute_ats_score
 from app.services.pdf_service import generate_resume_pdf
 from app.services.rag_service import retrieve
@@ -59,7 +62,7 @@ def _persist_resume_document(
                 ats_score=parsed.ats_score,
                 ats_data={
                     "page_target": page_target,
-                    "estimate": compute_ats_score(parsed.resume_markdown, jd_text).estimate,
+                    "estimate": estimate_resume(parsed.resume_markdown, jd_text),
                     "template": template,
                     "keywords_matched": parsed.keywords_matched,
                     "keywords_missing": parsed.keywords_missing,
@@ -125,7 +128,11 @@ def _finalize_markdown(
 
 def _score_parsed_resume(parsed: "ResumeOutput", jd_text: str) -> "ResumeOutput":
     """Overwrite the self-graded ATS score with the real computed score."""
-    if not jd_text:
+    if not jd_text.strip():
+        estimate = estimate_resume(parsed.resume_markdown)
+        parsed.ats_score = estimate["composite_score"]
+        parsed.keywords_missing = []
+        parsed.keywords_matched = []
         return parsed
     ats = compute_ats_score(parsed.resume_markdown, jd_text)
     parsed.ats_score = ats.composite_score
@@ -181,7 +188,10 @@ def resume_agent_node(state: AgentState) -> AgentState:
         emit(
             run_id,
             "tool_call",
-            {"tool": "rag_retrieve", "input": {"doc_type": "resume", "query_len": len(jd_text)}},
+            {
+                "tool": "rag_retrieve",
+                "input": {"doc_type": "resume", "query_len": len(jd_text)},
+            },
         )
         resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=8)
         chunk_texts = [
@@ -221,12 +231,24 @@ def resume_agent_node(state: AgentState) -> AgentState:
         if review is None:
             # The source was empty/unreadable: there is no resume to render
             # or score.
-            emit(run_id, "tool_result", {"tool": "pdf_store", "output": {"pdf_document_id": None}})
+            emit(
+                run_id,
+                "tool_result",
+                {"tool": "pdf_store", "output": {"pdf_document_id": None}},
+            )
         else:
             parsed = _score_parsed_resume(parsed, jd_text)
             parsed.warnings = filter_resolved_warnings(model_warnings, review)
-            emit(run_id, "thinking", {"step": "pdf", "message": "Generating PDF and storing..."})
-            emit(run_id, "tool_call", {"tool": "pdf_store", "input": {"template": template}})
+            emit(
+                run_id,
+                "thinking",
+                {"step": "pdf", "message": "Generating PDF and storing..."},
+            )
+            emit(
+                run_id,
+                "tool_call",
+                {"tool": "pdf_store", "input": {"template": template}},
+            )
             pdf_bytes = generate_resume_pdf(
                 parsed.resume_markdown,
                 full_name=full_name,
@@ -269,9 +291,9 @@ def resume_agent_node(state: AgentState) -> AgentState:
             + [AIMessage(content=parsed.resume_markdown[:200])],
         }
     except Exception as exc:
-        logger.exception("Resume agent failed for user %s", user_id)
+        logger.warning("resume_agent_failed user_id=%s error_type=%s", user_id, type(exc).__name__)
         return {
             **state,
             "status": "failed",
-            "error": f"Resume generation failed: {str(exc)[:200]}",
+            "error": "Resume generation failed. Check your model settings and try again.",
         }

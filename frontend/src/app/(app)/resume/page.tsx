@@ -65,7 +65,7 @@ import { scoreAnalysisSchema, tailoredResumeSchema } from "@/lib/profile-contrac
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
 import { getResumeInsightData } from "@/lib/resume-insights";
-import { selectResumeScore, isCurrentAnalysis } from "@/lib/resume-state";
+import { isCurrentAnalysis } from "@/lib/resume-state";
 import { takePendingJd } from "@/lib/job-handoff";
 import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
 import {
@@ -106,13 +106,7 @@ type OptimizeResult = ResumeOptimizeResponse;
 /** A tailored-document reply plus the document generation its request started on. */
 type Tailored = { data: TailoredResume; generation: number };
 
-interface JobAtsAnalysis {
-  estimate?: unknown;
-  composite_score: number;
-  matched_keywords: string[];
-  missing_keywords: string[];
-  suggestions: string[];
-}
+
 
 interface AgentRun {
   id: string;
@@ -717,7 +711,6 @@ export default function ResumePage() {
   const [savedSnapshot, setSavedSnapshot] = useState<TailoredResume | null>(null);
   const [pageTarget, setPageTarget] = useState<1 | 2>(2);
   const [exportFormat, setExportFormat] = useState<"pdf" | "docx">("pdf");
-  const [jobAts, setJobAts] = useState<{ documentId: string; contentVersion?: string; jdText: string; data: JobAtsAnalysis } | null>(null);
 
   // Bumped whenever the current document is replaced wholesale (new optimize,
   // new upload, history open). A tailored request captures it when it starts
@@ -774,24 +767,18 @@ export default function ResumePage() {
     retry: false,
     queryFn: async () => {
       const response = await apiClient.post("/resume/ats-score", { document_id: scoreDocumentId, jd_text: scoreTarget });
-      return scoreAnalysisSchema.parse(response.data);
+      const analysis = scoreAnalysisSchema.parse(response.data);
+      if (scoreVersion && analysis.content_version !== scoreVersion) {
+        throw new UserFacingError("This resume changed in another tab. Reopen it to view its current score.");
+      }
+      return analysis;
     },
   });
-  const activeJobAts = scoreTarget === jdText.trim() ? scoreQuery.data ?? (jobAts && isCurrentAnalysis(jobAts, scoreDocumentId, scoreVersion, jdText) ? jobAts.data : null) : null;
-  const insightData = getResumeInsightData(activeJobAts, selectResumeScore(
-    savedSnapshot ? { ats_score: savedSnapshot.ats_score, ats_data: null } : null, primaryDoc,
-  ));
-
-  const atsMutation = useMutation<JobAtsAnalysis, Error, { documentId: string; contentVersion?: string; jdText: string }>({
-    mutationFn: async ({ documentId, jdText: description }) => {
-      const { data } = await apiClient.post("/resume/ats-score", { document_id: documentId, jd_text: description });
-      return scoreAnalysisSchema.parse(data);
-    },
-    onSuccess: (data, variables) => setJobAts({ ...variables, data }),
-    onError: (err: unknown) => {
-      toast.error(getApiErrorMessage(err, "Could not analyze this resume and job description"));
-    },
-  });
+  const activeJobAts = !scoreQuery.isError && scoreQuery.data && isCurrentAnalysis(
+    { documentId: scoreDocumentId ?? "", contentVersion: scoreQuery.data.content_version, jdText: scoreTarget },
+    scoreDocumentId, scoreVersion ?? scoreQuery.data.content_version, jdText,
+  ) ? scoreQuery.data : null;
+  const insightData = getResumeInsightData(activeJobAts, null);
 
   // -------------------------------------------------------------------------
   // Query: agent runs for history tab
@@ -814,7 +801,6 @@ export default function ResumePage() {
     window.history.replaceState(null, "", location);
     setPageTarget(r.page_target ?? 2);
     setSavedSnapshot(r);
-    setJobAts(null);
     setResumePreviewText(r.resume_markdown);
     setLastReview(r.review);
     setLastWarnings(r.warnings ?? []);
@@ -1065,8 +1051,7 @@ export default function ResumePage() {
       setAiChanges([]);
       setAiSummary(null);
       setDisplayName("");
-      setJobAts(null);
-      toast.success(`Resume uploaded: ${file.name}`);
+        toast.success(`Resume uploaded: ${file.name}`);
       if ((data as { warning?: string }).warning) {
         toast.warning((data as { warning: string }).warning);
       }
@@ -1158,7 +1143,7 @@ export default function ResumePage() {
   const panelVariants = reduceMotion
     ? { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } }, exit: { opacity: 0, transition: { duration: 0.15 } } }
     : panelSwap;
-  const scoreComputing = tailoredPending || atsMutation.isPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !activeJobAts && !savedSnapshot);
+  const scoreComputing = tailoredPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !activeJobAts && !savedSnapshot);
   const canShowTemplateBar = !!(lastDocId && resumePreviewText && !editingText);
 
   const heroActions = (
@@ -1289,9 +1274,9 @@ export default function ResumePage() {
             <Bezel lifted coreClassName="p-5 md:p-6">
               <div className="flex items-center justify-between gap-3">
                 <h2 id="primary-resume-heading" className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Primary resume
+                  Current resume
                 </h2>
-                {primaryDoc && !docsLoading ? (
+                {scoreDocumentId && !docsLoading ? (
                   scoreComputing ? (
                     <StatusPill tone="primary" live>Scoring</StatusPill>
                   ) : activeJobAts ? (
@@ -1312,35 +1297,35 @@ export default function ResumePage() {
                       <p className="text-xs text-muted-foreground">Loading resume…</p>
                     </div>
                   </div>
-                ) : primaryDoc ? (
+                ) : scoreDocumentId ? (
                   <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
                     {!scoreComputing && insightData.score != null ? (
                       <AtsScoreRing score={insightData.score} size={136} />
                     ) : (
                       <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
                         <span className="flex flex-col items-center gap-2 text-center text-[11px] text-muted-foreground">
-                          <Spinner size={18} />
-                          Scoring…
+                          {!scoreQuery.isError && <Spinner size={18} />}
+                          {scoreQuery.isError ? "Score unavailable" : "Scoring…"}
                         </span>
                       </div>
                     )}
                     <div className="min-w-0 flex-1 space-y-3">
                       <div className="flex min-w-0 items-center gap-2">
                         <FilePdf size={16} weight="light" aria-hidden="true" className="shrink-0 text-muted-foreground" />
-                        <span className="truncate font-geist-mono text-xs text-foreground" title={primaryDoc.filename}>
-                          {primaryDoc.filename}
+                        <span className="truncate font-geist-mono text-xs text-foreground" title={savedSnapshot ? "Tailored resume" : primaryDoc?.filename}>
+                          {savedSnapshot ? "Tailored resume" : primaryDoc?.filename}
                         </span>
                       </div>
                       <Hairline />
                       {scoreQuery.isError && <p role="alert" className="text-sm text-danger">Could not calculate compatibility. <button type="button" className="underline" onClick={() => void scoreQuery.refetch()}>Retry</button></p>}
-                      {!scoreComputing && <ScoreExplanation estimate={activeJobAts?.estimate ?? savedSnapshot?.estimate} />}
+                      {!scoreComputing && <ScoreExplanation estimate={activeJobAts?.estimate} />}
                       {!scoreComputing && insightData.score != null ? (
                         <p className="text-xs leading-5 text-muted-foreground">
                           <span className="font-medium text-foreground">{insightData.scoreLabel}</span>
-                          {activeJobAts ? " for this job" : " · run Analyze match for job-specific results"}
+                          {activeJobAts?.estimate.mode === "target_job" ? " for this job" : " · general document assessment"}
                         </p>
                       ) : (
-                        <p className="text-xs leading-5 text-muted-foreground">Calculating your baseline ATS score…</p>
+                        <p className="text-xs leading-5 text-muted-foreground">{scoreQuery.isError ? "Reopen the resume or retry scoring." : "Calculating estimated ATS compatibility…"}</p>
                       )}
                     </div>
                   </div>
@@ -1494,11 +1479,11 @@ export default function ResumePage() {
                                 <IslandButton
                                   tone="ghost"
                                   size="sm"
-                                  disabled={!primaryDoc || atsMutation.isPending || !jdText.trim()}
-                                  onClick={() => scoreDocumentId && atsMutation.mutate({ documentId: scoreDocumentId, contentVersion: scoreVersion, jdText: jdText.trim() })}
-                                  icon={atsMutation.isPending ? <Spinner size={14} /> : <Crosshair size={14} weight="light" />}
+                                  disabled={!primaryDoc || scoreQuery.isFetching || !jdText.trim()}
+                                  onClick={() => void scoreQuery.refetch()}
+                                  icon={scoreQuery.isFetching ? <Spinner size={14} /> : <Crosshair size={14} weight="light" />}
                                 >
-                                  {atsMutation.isPending ? "Analyzing…" : "Analyze match"}
+                                  {scoreQuery.isFetching ? "Analyzing…" : "Analyze match"}
                                 </IslandButton>
                                 <IslandButton
                                   tone="primary"
