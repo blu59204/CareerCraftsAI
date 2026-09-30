@@ -77,7 +77,7 @@ def test_resume_agent_pauses_for_approval(mock_llm):
             "app.agents.resume_agent._persist_resume_document", return_value="doc-123"
         ) as persist,
         patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
-        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
         patch("app.core.event_bus.emit"),
     ):
@@ -129,7 +129,7 @@ def test_resume_agent_degrades_without_pdf_storage(mock_llm):
             side_effect=Exception("storage down"),
         ),
         patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
-        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
         patch("app.core.event_bus.emit"),
     ):
@@ -195,7 +195,7 @@ def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None):
         patch("app.agents.resume_agent.generate_resume_pdf", render),
         patch("app.agents.resume_agent._persist_resume_document", persist),
         patch("app.core.sync_db.fetch_user_full_name", return_value="Jane Doe"),
-        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=facts),
         patch(
             "app.agents.resume_agent.compute_ats_score",

@@ -191,3 +191,7 @@ Plan gate: internally consistent design complete; vendor access limitations and 
 ## Final review boundary
 
 See REVIEW.md for actual verification and findings. Phase 3 exit is not met; release is no-go pending shared gateway/dependency fixes and live model/browser proof. Frontend audited lock updates include Next.js 16.3.8 and DOMPurify fixes. No migration was needed.
+
+## Shared blocker ownership (2026-10-01)
+
+User authorized Agent A to coordinate and fix shared gateway/dependency blockers on agent-a/resume. Agent A owns core/llm_gateway.py, resume gateway integration, constraints/requirements needed for audited dependencies and their tests. B continues owning jobs, extension and GitHub. No B worktree files will be edited. Reuse model_router provider adapters inside the gateway transport, with session-only credentials exposed to agents; validate gateway requests and configured model identity.

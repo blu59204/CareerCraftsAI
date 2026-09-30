@@ -159,7 +159,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
     disk and downloaded via GET /resume/download/{document_id}.
     """
     from app.core.event_bus import emit
-    from app.core.model_router import _build_llm
+    from app.core.llm_gateway import build_gateway_llm
     from app.core.sync_db import fetch_model_settings, fetch_user_full_name
 
     run_id = state["run_id"]
@@ -203,7 +203,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
             {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}},
         )
 
-        llm = _build_llm(model_settings)
+        llm = build_gateway_llm(model_settings, user_id)
 
         emit(
             run_id,
