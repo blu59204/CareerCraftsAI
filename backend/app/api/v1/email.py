@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.messages import HumanMessage
@@ -77,7 +77,9 @@ async def list_drafts(
         company = inp.get("company", "")
         role = inp.get("role", "role")
         saved_subject = out.get("subject")
-        subject = saved_subject if isinstance(saved_subject, str) else f"Follow-up on {role} at {company}"
+        subject = (
+            saved_subject if isinstance(saved_subject, str) else f"Follow-up on {role} at {company}"
+        )
         body = out.get("body") if isinstance(out.get("body"), str) else ""
         recipient_email = out.get("recipient") if isinstance(out.get("recipient"), str) else None
         initial = company[0].upper() if company else "?"
@@ -97,7 +99,9 @@ async def list_drafts(
     return drafts
 
 
-async def _discard_drafts(db: AsyncSession, user_id: uuid.UUID, draft_id: uuid.UUID | None = None) -> int:
+async def _discard_drafts(
+    db: AsyncSession, user_id: uuid.UUID, draft_id: uuid.UUID | None = None
+) -> int:
     statement = update(AgentRun).where(
         AgentRun.agent_type == "email",
         AgentRun.user_id == user_id,
@@ -106,7 +110,7 @@ async def _discard_drafts(db: AsyncSession, user_id: uuid.UUID, draft_id: uuid.U
     if draft_id is not None:
         statement = statement.where(AgentRun.id == draft_id)
     result = await db.execute(
-        statement.values(status="cancelled", completed_at=datetime.now(timezone.utc)).returning(AgentRun.id)
+        statement.values(status="cancelled", completed_at=datetime.now(UTC)).returning(AgentRun.id)
     )
     deleted = len(result.scalars().all())
     if draft_id is not None and not deleted:
@@ -213,7 +217,9 @@ async def compose_email(
         agent_run.output = pending_action
 
     if result_state["status"] == "failed":
-        logger.warning("Email compose agent failed for run %s: %s", run_id, result_state.get("error"))
+        logger.warning(
+            "Email compose agent failed for run %s: %s", run_id, result_state.get("error")
+        )
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
     return {
@@ -286,9 +292,9 @@ async def list_inbox_cleanup(
                 **{"from": _header_value(headers, "From")},
                 subject=_header_value(headers, "Subject"),
                 date=_header_value(headers, "Date"),
-                unsubscribe_url=_first_https_unsubscribe_url(list_unsubscribe)
-                if list_unsubscribe
-                else None,
+                unsubscribe_url=(
+                    _first_https_unsubscribe_url(list_unsubscribe) if list_unsubscribe else None
+                ),
             )
         )
     return results
@@ -322,10 +328,12 @@ async def approve_and_send(
     # Locked so a second concurrent approval of the same run sees the
     # status flip below before it can read a stale "awaiting_approval".
     result = await db.execute(
-        select(AgentRun).where(
+        select(AgentRun)
+        .where(
             AgentRun.id == uuid.UUID(run_id),
             AgentRun.user_id == current_user.id,
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     run = result.scalar_one_or_none()
     if not run:
