@@ -1,0 +1,9 @@
+# Run this branch with the user's existing local replica and secret files.
+services:
+  backend:
+    build: D:/CareerCraft-agent-a/backend
+  temporal-worker:
+    build: D:/CareerCraft-agent-a/backend
+  frontend:
+    build:
+      context: D:/CareerCraft-agent-a/frontend

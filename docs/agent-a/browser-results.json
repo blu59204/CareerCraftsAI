@@ -1,0 +1,6 @@
+{
+  "status": "not_passed",
+  "reason": "Disposable Clerk ticket activation redirected the page, then the browser session readiness check timed out. Other attempts encountered Clerk API connection timeouts.",
+  "verified": [],
+  "api_auth_proof": "live-results.json"
+}
