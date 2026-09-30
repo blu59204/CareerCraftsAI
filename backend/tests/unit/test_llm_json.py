@@ -13,13 +13,18 @@ def test_call_llm_json_includes_schema_and_strips_fences():
 
         def invoke(self, messages):
             self.messages.append(messages)
-            return AIMessage(content='```json\n{"resume_markdown":"resume","summary":"summary","ats_score":1,"keywords_matched":[],"keywords_missing":[],"changes_made":[],"warnings":[]}\n```')
+            return AIMessage(
+                content='```json\n{"resume_markdown":"resume","summary":"summary","ats_score":1,"keywords_matched":[],"keywords_missing":[],"changes_made":[],"warnings":[]}\n```'
+            )
 
     llm = FakeLLM()
     result = call_llm_json(llm, "system", "human", OUTPUT_SCHEMA)
 
     assert result.summary == "summary"
-    assert json.dumps(OUTPUT_SCHEMA.model_json_schema(), separators=(",", ":")) in llm.messages[0][0].content
+    assert (
+        json.dumps(OUTPUT_SCHEMA.model_json_schema(), separators=(",", ":"))
+        in llm.messages[0][0].content
+    )
 
 
 def test_call_llm_json_retry_keeps_schema():
@@ -34,7 +39,9 @@ def test_call_llm_json_retry_keeps_schema():
             self.messages.append(messages)
             if len(self.messages) == 1:
                 return AIMessage(content="not json")
-            return AIMessage(content='{"resume_markdown":"resume","summary":"summary","ats_score":1,"keywords_matched":[],"keywords_missing":[],"changes_made":[],"warnings":[]}')
+            return AIMessage(
+                content='{"resume_markdown":"resume","summary":"summary","ats_score":1,"keywords_matched":[],"keywords_missing":[],"changes_made":[],"warnings":[]}'
+            )
 
     llm = FakeLLM()
     call_llm_json(llm, "system", "human", OUTPUT_SCHEMA)
@@ -45,3 +52,21 @@ def test_call_llm_json_retry_keeps_schema():
     # The retry shows the model its own invalid output so it repairs it.
     assert isinstance(llm.messages[1][-2], AIMessage)
     assert llm.messages[1][-2].content == "not json"
+
+
+def test_repair_log_does_not_echo_model_output(caplog):
+    from unittest.mock import Mock
+
+    from app.agents._llm_json import call_llm_json
+    from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA
+
+    llm = Mock()
+    llm.invoke.side_effect = [
+        AIMessage(content="private-source-secret"),
+        AIMessage(
+            content=json.dumps({"resume_markdown": "resume", "summary": "summary", "ats_score": 0})
+        ),
+    ]
+    call_llm_json(llm, "system", "human", OUTPUT_SCHEMA)
+    assert "private-source-secret" not in caplog.text
+    assert "llm_json_repair" in caplog.text
