@@ -1,67 +1,102 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import {
-  Bot,
-  Building2,
-  CheckCircle2,
-  Clock3,
-  DollarSign,
+  Article,
+  BracketsCurly,
+  Buildings,
+  ChatText,
+  ChatsCircle,
+  CheckCircle,
+  CircleNotch,
+  Clock,
+  ClockCounterClockwise,
+  Cpu,
+  CurrencyDollar,
+  EnvelopeSimple,
   FileText,
-  Mail,
-  MessageSquare,
-  MonitorCheck,
+  HandPalm,
+  LinkedinLogo,
+  MagnifyingGlass,
   Play,
-  Search,
-  Sparkles,
-  TriangleAlert,
+  Pulse,
+  Robot,
+  Sparkle,
+  Stack,
+  Tray,
   Users,
-} from "lucide-react";
-import { BrandLinkedin } from "@/components/icons/BrandIcons";
+  Warning,
+  type Icon,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { fadeUp, stagger } from "@/lib/motion-variants";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { CommandHeader } from "@/components/immersive/CommandHeader";
+import {
+  Bezel,
+  EmptyPanel,
+  Eyebrow,
+  Hairline,
+  IslandButton,
+  IslandLink,
+  Notice,
+  PageHero,
+  PanelTitle,
+  Reveal,
+  RevealGroup,
+  Screen,
+  Section,
+  Skeleton,
+  StatusPill,
+  Textarea,
+  listItem,
+  listStagger,
+  SPRING_SOFT,
+  type StatusTone,
+} from "@/components/vanguard";
 import { apiClient } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/store/agentStore";
 
-// Each agent previously carried its own hue — cyan, violet, fuchsia, indigo,
-// rose, lime and more across thirteen cards. Thirteen unrelated hues read as
-// decoration rather than meaning, and the purple/fuchsia/indigo gradients are
-// the most recognisable generative-UI tell there is.
-//
-// These four tints are near-neighbours of the brand green (146) plus one warm
-// complement, so the grid reads as one system, and the colour now encodes what
-// the agent *does* — shared tint means shared job.
-const ACCENT = {
-  // Moves an application forward.
-  pipeline: "from-[hsl(146_55%_45%/0.22)] to-[hsl(146_55%_45%/0.04)]",
-  // Produces something you will read and edit.
-  document: "from-[hsl(40_70%_50%/0.20)] to-[hsl(40_70%_50%/0.04)]",
-  // Talks to a human.
-  outreach: "from-[hsl(175_50%_42%/0.20)] to-[hsl(175_50%_42%/0.04)]",
-  // Gathers information you act on later.
-  intel: "from-[hsl(60_8%_45%/0.18)] to-[hsl(60_8%_45%/0.04)]",
-} as const;
+// The four purpose groups. Colour encodes what an agent *does* — shared tint
+// means shared job — but stays inside the brand's neutral + single-green
+// system: pipeline carries the brand green, documents a warm neutral,
+// outreach a faint green wash, intel an outlined neutral.
+type AgentGroup = "pipeline" | "document" | "outreach" | "intel";
 
-const AGENTS = [
-  { key: "auto_apply", label: "Auto Apply", icon: Bot, accent: ACCENT.pipeline, note: "Isolated browser + two reviews" },
-  { key: "resume_optimize", label: "Resume", icon: FileText, accent: ACCENT.document, note: "Tailored resume draft" },
-  { key: "job_search", label: "Job Search", icon: Search, accent: ACCENT.pipeline, note: "Fresh matching roles" },
-  { key: "nl_job_search", label: "NL Search", icon: Search, accent: ACCENT.pipeline, note: "Plain-English query parser" },
-  { key: "linkedin_optimize", label: "LinkedIn", icon: BrandLinkedin, accent: ACCENT.document, note: "Profile rewrite" },
-  { key: "linkedin_outreach", label: "Outreach", icon: Users, accent: ACCENT.outreach, note: "Recruiter drafts" },
-  { key: "email", label: "Email", icon: Mail, accent: ACCENT.outreach, note: "Reviewable draft" },
-  { key: "email_monitor", label: "Monitor", icon: MonitorCheck, accent: ACCENT.outreach, note: "Inbox status scan" },
-  { key: "interview_prep", label: "Interview Prep", icon: Sparkles, accent: ACCENT.document, note: "Question set" },
-  { key: "interview_coach", label: "Coach", icon: MessageSquare, accent: ACCENT.outreach, note: "Mock interview session" },
-  { key: "cover_letter", label: "Cover Letter", icon: FileText, accent: ACCENT.document, note: "Role-specific letter" },
-  { key: "salary_intelligence", label: "Salary", icon: DollarSign, accent: ACCENT.intel, note: "Market benchmark" },
-  { key: "company_research", label: "Company", icon: Building2, accent: ACCENT.intel, note: "Interview intel brief" },
+const ACCENT: Record<AgentGroup, string> = {
+  // Moves an application forward.
+  pipeline: "bg-primary/[0.12] text-primary ring-primary/20",
+  // Produces something you will read and edit.
+  document: "bg-foreground/[0.05] text-foreground/80 ring-foreground/[0.08] dark:bg-white/[0.06] dark:ring-white/10",
+  // Talks to a human.
+  outreach: "bg-primary/[0.05] text-foreground/80 ring-primary/15 dark:bg-primary/[0.08]",
+  // Gathers information you act on later.
+  intel: "bg-transparent text-muted-foreground ring-foreground/[0.12] dark:ring-white/15",
+};
+
+const GROUPS: ReadonlyArray<{ key: AgentGroup; label: string; blurb: string; span: string; tiles: string }> = [
+  { key: "pipeline", label: "Pipeline", blurb: "Moves an application forward", span: "lg:col-span-5", tiles: "sm:grid-cols-2" },
+  { key: "document", label: "Documents", blurb: "Drafts you read and edit", span: "lg:col-span-7", tiles: "sm:grid-cols-2" },
+  { key: "outreach", label: "Outreach", blurb: "Talks to a human for you", span: "lg:col-span-7", tiles: "sm:grid-cols-2" },
+  { key: "intel", label: "Intel", blurb: "Research you act on later", span: "lg:col-span-5", tiles: "grid-cols-1" },
+];
+
+const AGENTS: ReadonlyArray<{ key: string; label: string; icon: Icon; group: AgentGroup; note: string; wide?: boolean }> = [
+  { key: "auto_apply", label: "Auto Apply", icon: Robot, group: "pipeline", note: "Isolated browser + two reviews", wide: true },
+  { key: "resume_optimize", label: "Resume", icon: FileText, group: "document", note: "Tailored resume draft" },
+  { key: "job_search", label: "Job Search", icon: MagnifyingGlass, group: "pipeline", note: "Fresh matching roles" },
+  { key: "nl_job_search", label: "NL Search", icon: ChatText, group: "pipeline", note: "Plain-English query parser" },
+  { key: "linkedin_optimize", label: "LinkedIn", icon: LinkedinLogo, group: "document", note: "Profile rewrite" },
+  { key: "linkedin_outreach", label: "Outreach", icon: Users, group: "outreach", note: "Recruiter drafts" },
+  { key: "email", label: "Email", icon: EnvelopeSimple, group: "outreach", note: "Reviewable draft" },
+  { key: "email_monitor", label: "Monitor", icon: Tray, group: "outreach", note: "Inbox status scan" },
+  { key: "interview_prep", label: "Interview Prep", icon: Sparkle, group: "document", note: "Question set" },
+  { key: "interview_coach", label: "Coach", icon: ChatsCircle, group: "outreach", note: "Mock interview session" },
+  { key: "cover_letter", label: "Cover Letter", icon: Article, group: "document", note: "Role-specific letter" },
+  { key: "salary_intelligence", label: "Salary", icon: CurrencyDollar, group: "intel", note: "Market benchmark" },
+  { key: "company_research", label: "Company", icon: Buildings, group: "intel", note: "Interview intel brief" },
 ];
 
 const DEFAULT_CONTEXT: Record<string, Record<string, unknown>> = {
@@ -116,13 +151,26 @@ function runMessage(run: AgentRun): string {
   return run.status === "awaiting_approval" ? "Waiting for approval" : "Completed";
 }
 
-function runStatus(run?: AgentRun) {
-  if (!run) return { label: "Ready", icon: Clock3, className: "text-muted-foreground" };
-  if (run.status === "completed") return { label: "Last run succeeded", icon: CheckCircle2, className: "text-success" };
-  if (run.status === "failed") return { label: "Last run failed", icon: TriangleAlert, className: "text-danger" };
-  if (run.status === "awaiting_approval") return { label: "Review pending", icon: Clock3, className: "text-warning" };
-  return { label: "Running", icon: Clock3, className: "text-primary" };
+function runStatus(run?: AgentRun): { label: string; icon: Icon; tone: StatusTone; live: boolean } {
+  if (!run) return { label: "Ready", icon: Clock, tone: "neutral", live: false };
+  if (run.status === "completed") return { label: "Last run succeeded", icon: CheckCircle, tone: "success", live: false };
+  if (run.status === "failed") return { label: "Last run failed", icon: Warning, tone: "danger", live: false };
+  if (run.status === "awaiting_approval") return { label: "Review pending", icon: Clock, tone: "warning", live: true };
+  return { label: "Running", icon: CircleNotch, tone: "primary", live: true };
 }
+
+function agentLabel(agentType: string): string {
+  return AGENTS.find((a) => a.key === agentType)?.label ?? agentType.replace(/_/g, " ");
+}
+
+/** Tiny status dot shown on a tile when that agent has a recent run. */
+const DOT: Record<StatusTone, string> = {
+  neutral: "bg-muted-foreground/60",
+  primary: "bg-primary",
+  success: "bg-success",
+  warning: "bg-warning",
+  danger: "bg-danger",
+};
 
 export default function AgentsPage() {
   const [active, setActive] = useState("resume_optimize");
@@ -132,6 +180,9 @@ export default function AgentsPage() {
   const initRun = useAgentStore((s) => s.initRun);
   const storeActiveRunId = useAgentStore((s) => s.activeRunId);
   const setActiveRun = useAgentStore((s) => s.setActiveRun);
+  const tileIndicatorId = useId();
+  const contextFieldId = useId();
+  const contextHintId = useId();
   // Persisted run survives navigation + reload, so the panel reappears on return.
   const displayRunId = activeRunId ?? storeActiveRunId;
   useEffect(() => {
@@ -185,10 +236,9 @@ export default function AgentsPage() {
 
   const activeModel = userModels.find((m) => m.is_active);
   const primaryResume = ragDocs.find((d) => d.doc_type === "resume" && d.is_primary);
-  const filteredRuns = runs.filter(
-    (r) => r.agent_type === active
-  );
+  const filteredRuns = runs.filter((r) => r.agent_type === active);
   const activeAgent = AGENTS.find((a) => a.key === active) ?? AGENTS[0];
+  const activeGroup = GROUPS.find((g) => g.key === activeAgent.group) ?? GROUPS[0];
   const ActiveIcon = activeAgent.icon;
   const latestRun = filteredRuns[0];
   const latestStatus = runStatus(latestRun);
@@ -196,169 +246,383 @@ export default function AgentsPage() {
 
   // BUG 7: find the awaiting run to pass run_id to approval
   const awaitingRun = runs.find((r) => r.status === "awaiting_approval");
+  const showPendingCta = Boolean(awaitingRun && awaitingRun.id !== displayRunId);
+
+  // Latest run per agent (runs arrive newest-first) — drives the tile dots.
+  const latestByAgent = useMemo(() => {
+    const map = new Map<string, AgentRun>();
+    for (const run of runs) if (!map.has(run.agent_type)) map.set(run.agent_type, run);
+    return map;
+  }, [runs]);
+
+  const inFlight = runs.filter((r) => r.status === "queued" || r.status === "running").length;
+  const awaitingCount = runs.filter((r) => r.status === "awaiting_approval").length;
+
+  // Display-only validity hint; the mutation still performs the real check.
+  const contextIsObject = useMemo(() => {
+    try {
+      const parsed: unknown = JSON.parse(contextText);
+      return Boolean(parsed) && typeof parsed === "object" && !Array.isArray(parsed);
+    } catch {
+      return false;
+    }
+  }, [contextText]);
+
+  const selectAgent = (key: string) => {
+    setActive(key);
+    setContextText(JSON.stringify(DEFAULT_CONTEXT[key] ?? {}, null, 2));
+  };
+
+  const openRun = (id: string) => {
+    setActiveRunId(id);
+    setActiveRun(id);
+  };
 
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <motion.section variants={fadeUp} className="space-y-5">
-        <CommandHeader
-          eyebrow="Finlytic AI Agent"
-          title="Run workspace agents."
-          description="Coordinate resume, job search, LinkedIn, email, and interview agents from one approval-safe cockpit."
-          actions={
-            <div className={`hidden items-center gap-2 rounded-full border border-border bg-card/45 px-3 py-2 text-xs sm:flex ${latestStatus.className}`}>
-              <LatestStatusIcon className="h-4 w-4" />
-              {latestStatus.label}
-            </div>
-          }
-        />
-        <div className="rounded-2xl border border-border bg-card/50 p-3 shadow-sm">
-          <nav className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
-          {AGENTS.map((a) => {
-            const Icon = a.icon;
-            const isActive = active === a.key;
+    <Screen>
+      <PageHero
+        className="md:pb-8 md:pt-10"
+        eyebrow="Agent harness"
+        title="Agent cockpit."
+        description="Pick an agent, shape its context and run it. Nothing sends or submits until you approve it."
+        actions={
+          showPendingCta && awaitingRun ? (
+            <>
+              <IslandButton tone="primary" size="lg" trailing onClick={() => openRun(awaitingRun.id)}>
+                Open pending review
+              </IslandButton>
+              <StatusPill tone="warning" live>
+                {agentLabel(awaitingRun.agent_type)} is waiting on you
+              </StatusPill>
+            </>
+          ) : (
+            <StatusPill tone={latestStatus.tone} live={latestStatus.live} icon={<LatestStatusIcon size={13} weight="light" />}>
+              {activeAgent.label} · {latestStatus.label}
+            </StatusPill>
+          )
+        }
+        aside={
+          <Bezel size="md" coreClassName="grid grid-cols-3 divide-x divide-foreground/[0.06] dark:divide-white/[0.07]">
+            {[
+              { label: "In flight", value: inFlight },
+              { label: "Awaiting you", value: awaitingCount },
+              { label: "Recent runs", value: runs.length },
+            ].map((stat) => (
+              <div key={stat.label} className="min-w-0 px-4 py-5 md:px-5">
+                <p className="truncate text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{stat.label}</p>
+                <p
+                  className={cn(
+                    "mt-3 font-geist text-3xl font-semibold tabular-nums tracking-[-0.04em] text-foreground",
+                    stat.label === "Awaiting you" && stat.value > 0 && "text-warning",
+                  )}
+                >
+                  {runsLoading ? "—" : stat.value}
+                </p>
+              </div>
+            ))}
+          </Bezel>
+        }
+      />
+
+      {/* Agent bento — four purpose groups with asymmetric spans. */}
+      <Section aria-label="Choose an agent">
+        <h2 className="sr-only">Choose an agent</h2>
+        <RevealGroup className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-12">
+          {GROUPS.map((group) => {
+            const members = AGENTS.filter((a) => a.group === group.key);
+            const headingId = `${tileIndicatorId}-${group.key}`;
             return (
-              <button
-                key={a.key}
-                onClick={() => { setActive(a.key); setContextText(JSON.stringify(DEFAULT_CONTEXT[a.key] ?? {}, null, 2)); }}
-                className={`group min-h-[76px] rounded-xl border px-3 py-3 text-left transition ${
-                  isActive
-                    ? "border-primary/35 bg-primary/10 text-foreground shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]"
-                    : "border-transparent bg-background/30 text-muted-foreground hover:border-border hover:bg-card/70"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className={`grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br ${a.accent}`}>
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="text-sm font-medium">{a.label}</span>
-                </div>
-                <div className="mt-2 line-clamp-1 text-xs text-muted-foreground">{a.note}</div>
-              </button>
+              <motion.div key={group.key} variants={listItem} className={cn("min-w-0", group.span)}>
+                <Bezel coreClassName="p-3 md:p-4" role="group" aria-labelledby={headingId}>
+                  <div className="flex items-baseline justify-between gap-3 px-2 pb-3 pt-1">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span aria-hidden className={cn("h-2 w-2 shrink-0 rounded-full ring-1", ACCENT[group.key])} />
+                      <h3 id={headingId} className="font-geist text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+                        {group.label}
+                      </h3>
+                      <span className="truncate text-xs text-muted-foreground">{group.blurb}</span>
+                    </div>
+                    <span className="shrink-0 font-geist-mono text-[11px] tabular-nums text-muted-foreground/80">
+                      {String(members.length).padStart(2, "0")}
+                    </span>
+                  </div>
+                  <div className={cn("grid grid-cols-1 gap-1.5", group.tiles)}>
+                    {members.map((a) => {
+                      const Icon = a.icon;
+                      const isActive = active === a.key;
+                      const last = latestByAgent.get(a.key);
+                      const lastStatus = last ? runStatus(last) : null;
+                      return (
+                        <button
+                          key={a.key}
+                          type="button"
+                          aria-pressed={isActive}
+                          onClick={() => selectAgent(a.key)}
+                          className={cn(
+                            "group relative flex min-h-[68px] w-full items-center gap-3 rounded-[1.1rem] px-3 py-3 text-left",
+                            "transition-[background-color,transform] duration-500 ease-vanguard active:scale-[0.985]",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            !isActive && "hover:bg-foreground/[0.035] dark:hover:bg-white/[0.04]",
+                            a.wide && "sm:col-span-2",
+                          )}
+                        >
+                          {isActive ? (
+                            <motion.span
+                              layoutId={tileIndicatorId}
+                              transition={SPRING_SOFT}
+                              aria-hidden
+                              className="absolute inset-0 rounded-[1.1rem] bg-primary/[0.07] ring-1 ring-primary/25 shadow-bezel-core dark:bg-primary/[0.12] dark:shadow-bezel-core-dark"
+                            />
+                          ) : null}
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "relative grid h-9 w-9 shrink-0 place-items-center rounded-full ring-1 transition-transform duration-500 ease-vanguard group-hover:scale-105",
+                              ACCENT[a.group],
+                            )}
+                          >
+                            <Icon size={17} weight="light" />
+                          </span>
+                          <span className="relative block min-w-0 flex-1">
+                            <span className={cn("block truncate text-sm font-medium tracking-[-0.01em]", isActive ? "text-foreground" : "text-foreground/85")}>
+                              {a.label}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{a.note}</span>
+                          </span>
+                          {lastStatus ? (
+                            <span className="relative flex h-1.5 w-1.5 shrink-0" title={lastStatus.label}>
+                              {lastStatus.live ? (
+                                <span aria-hidden className={cn("absolute inset-0 animate-ping rounded-full opacity-60 motion-reduce:hidden", DOT[lastStatus.tone])} />
+                              ) : null}
+                              <span aria-hidden className={cn("relative h-1.5 w-1.5 rounded-full", DOT[lastStatus.tone])} />
+                              <span className="sr-only">, {lastStatus.label.toLowerCase()}</span>
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Bezel>
+              </motion.div>
             );
           })}
-          </nav>
-        </div>
+        </RevealGroup>
+      </Section>
 
-        <div className="rounded-2xl border border-border bg-card/50 p-5 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${activeAgent.accent}`}>
-                <ActiveIcon className="h-5 w-5 text-foreground" />
-              </span>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-semibold tracking-tight">{activeAgent.label} Agent</h2>
-                  <Bot className="h-4 w-4 text-primary" />
+      {/* Cockpit — span-8 run console + span-4 context rail. */}
+      <Section aria-label="Run console" id="run-console">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <Reveal className="min-w-0 lg:col-span-8">
+            <Bezel lifted coreClassName="p-5 md:p-7">
+              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 items-start gap-4">
+                  <span aria-hidden className={cn("grid h-12 w-12 shrink-0 place-items-center rounded-full ring-1", ACCENT[activeAgent.group])}>
+                    <ActiveIcon size={22} weight="light" />
+                  </span>
+                  <div className="min-w-0">
+                    <Eyebrow>{activeGroup.label}</Eyebrow>
+                    <h2 className="mt-3 font-geist text-2xl font-semibold tracking-[-0.035em] text-foreground md:text-3xl">
+                      {activeAgent.label} Agent
+                    </h2>
+                    <p className="mt-1.5 text-sm text-muted-foreground">{activeAgent.note}</p>
+                  </div>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">{activeAgent.note}</p>
+                <div className="flex flex-col items-stretch gap-3 sm:items-end">
+                  <IslandButton
+                    tone="primary"
+                    size="md"
+                    disabled={runMutation.isPending}
+                    aria-busy={runMutation.isPending}
+                    onClick={() => runMutation.mutate()}
+                    trailing={
+                      runMutation.isPending ? (
+                        <CircleNotch size={15} weight="light" className="animate-spin motion-reduce:animate-none" />
+                      ) : (
+                        <Play size={15} weight="light" />
+                      )
+                    }
+                    className="w-full sm:w-auto"
+                  >
+                    {runMutation.isPending ? "Running..." : "Run agent"}
+                  </IslandButton>
+                  <p aria-live="polite" className="flex items-center gap-1.5 text-xs text-muted-foreground sm:justify-end">
+                    <LatestStatusIcon aria-hidden size={13} weight="light" />
+                    {latestRun ? `${latestStatus.label} · ${relativeTime(latestRun.started_at)}` : "No runs yet for this agent"}
+                  </p>
+                </div>
               </div>
-            </div>
-            <LiquidGlassButton
-              tone="primary"
-              size="sm"
-              disabled={runMutation.isPending}
-              onClick={() => runMutation.mutate()}
-              className="w-full sm:w-auto"
-            >
-              <Play className="h-4 w-4" />
-              {runMutation.isPending ? "Running..." : "Run agent"}
-            </LiquidGlassButton>
-          </div>
 
-          <label className="mt-4 block text-sm font-medium">
-            Task context (JSON)
-            <textarea value={contextText} onChange={event => setContextText(event.target.value)}
-              className="mt-2 min-h-28 w-full rounded-lg border border-border bg-background p-3 font-mono text-xs"
-              spellCheck={false} />
-          </label>
-          <div className="mt-5 min-h-[240px] rounded-xl border border-border bg-background/45 p-4">
-          {/* BUG 12: mount AgentStatusStream when a run is active */}
-          {displayRunId ? (
-            <AgentStatusStream
-              runId={displayRunId}
-              onApprove={() => {
-                qc.invalidateQueries({ queryKey: ["agent-runs"] });
-              }}
-              onCancel={() => {
-                qc.invalidateQueries({ queryKey: ["agent-runs"] });
-                setActiveRunId(null);
-                setActiveRun(null);
-              }}
-            />
-          ) : (
-            <div className="flex min-h-[208px] items-center justify-center">
-              <div className="w-full max-w-md text-center">
-                <span className={`mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br ${activeAgent.accent}`}>
-                  <Sparkles className="h-6 w-6 text-foreground" />
-                </span>
-                <h3 className="mt-4 text-xl font-semibold tracking-tight">{latestStatus.label}</h3>
-                <p className="mt-2 text-sm text-muted-foreground">{latestRun ? runMessage(latestRun) : activeAgent.note}</p>
-              </div>
-            </div>
-          )}
-          </div>
-        </div>
-      </motion.section>
-
-      <motion.aside variants={fadeUp} className="space-y-4">
-        {/* BUG 19: dynamic context sidebar */}
-        <div className="rounded-2xl border border-border bg-card/50 p-4 text-sm shadow-sm">
-          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Context</div>
-          <div className="mt-4 space-y-3">
-            <div className="rounded-xl bg-background/45 p-3">
-              <div className="text-xs text-muted-foreground">Resume</div>
-              <div className="mt-1 truncate font-medium">{primaryResume?.filename ?? "No resume uploaded"}</div>
-            </div>
-            <div className="rounded-xl bg-background/45 p-3">
-              <div className="text-xs text-muted-foreground">Model</div>
-              <div className="mt-1 truncate font-medium">{activeModel?.model_name ?? activeModel?.provider ?? "Not configured"}</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-border bg-card/50 p-4 shadow-sm">
-          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Run history</div>
-          <div className="space-y-2">
-            {runsLoading ? (
-              <>
-                <div className="h-16 shimmer rounded-xl" />
-                <div className="h-16 shimmer rounded-xl" />
-              </>
-            ) : filteredRuns.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-                No runs yet.
-              </div>
-            ) : (
-              filteredRuns.map((run) => (
-                <button key={run.id} className="w-full text-left" onClick={() => { setActiveRunId(run.id); setActiveRun(run.id); }}>
-                <AgentStatusCard
-                  agentType={run.agent_type}
-                  status={
-                    run.status === "completed"
-                      ? "succeeded"
-                      : run.status === "failed"
-                        ? "failed"
-                        : run.status === "awaiting_approval"
-                          ? "awaiting_approval"
-                          : "running"
-                  }
-                  latestMessage={runMessage(run)}
-                  startedAt={relativeTime(run.started_at)}
+              <div className="mt-7 space-y-2">
+                <div className="flex items-center justify-between gap-3 pl-1">
+                  <label htmlFor={contextFieldId} className="flex items-center gap-2 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
+                    <BracketsCurly aria-hidden size={14} weight="light" />
+                    Task context (JSON)
+                  </label>
+                  <StatusPill tone={contextIsObject ? "success" : "danger"}>{contextIsObject ? "Valid object" : "Not a JSON object"}</StatusPill>
+                </div>
+                <Textarea
+                  id={contextFieldId}
+                  name="task_context"
+                  aria-describedby={contextHintId}
+                  aria-invalid={!contextIsObject}
+                  value={contextText}
+                  onChange={(event) => setContextText(event.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="min-h-36 font-geist-mono text-[12.5px] leading-6"
                 />
-                </button>
-              ))
-            )}
-          </div>
-        </div>
+                <p id={contextHintId} className="pl-1 text-xs leading-5 text-muted-foreground">
+                  Sent as the run&apos;s context. Switching agents resets it to that agent&apos;s defaults.
+                </p>
+              </div>
 
-        {/* BUG 7: wire approval callbacks with actual run_id — only show if NOT the same as activeRunId to avoid duplicates */}
-        {awaitingRun && awaitingRun.id !== displayRunId && (
-          <button className="w-full rounded-xl border border-border p-3 text-sm text-primary"
-            onClick={() => { setActiveRunId(awaitingRun.id); setActiveRun(awaitingRun.id); }}>
-            Open pending review · {awaitingRun.agent_type}
-          </button>
-        )}
-      </motion.aside>
-    </motion.div>
+              <Hairline className="my-7" />
+
+              <div className="flex items-center justify-between gap-3 pb-4">
+                <div className="flex items-center gap-2 text-[13px] font-medium text-foreground">
+                  <Pulse aria-hidden size={16} weight="light" className="text-muted-foreground" />
+                  Live run
+                </div>
+                <StatusPill tone={displayRunId ? "primary" : "neutral"} live={Boolean(displayRunId)}>
+                  {displayRunId ? "Stream attached" : "Idle"}
+                </StatusPill>
+              </div>
+              <Bezel size="md" tone="muted" coreClassName="min-h-[260px] p-4 md:p-5">
+                {/* BUG 12: mount AgentStatusStream when a run is active */}
+                {displayRunId ? (
+                  <AgentStatusStream
+                    runId={displayRunId}
+                    onApprove={() => {
+                      qc.invalidateQueries({ queryKey: ["agent-runs"] });
+                    }}
+                    onCancel={() => {
+                      qc.invalidateQueries({ queryKey: ["agent-runs"] });
+                      setActiveRunId(null);
+                      setActiveRun(null);
+                    }}
+                  />
+                ) : (
+                  <EmptyPanel
+                    compact
+                    className="min-h-[228px] justify-center"
+                    icon={<ActiveIcon size={24} weight="light" />}
+                    title={latestStatus.label}
+                    description={latestRun ? runMessage(latestRun) : activeAgent.note}
+                  />
+                )}
+              </Bezel>
+            </Bezel>
+          </Reveal>
+
+          <aside className="min-w-0 space-y-6 lg:col-span-4" aria-label="Run context and history">
+            {/* BUG 19: dynamic context sidebar */}
+            <Reveal delay={0.06}>
+              <Bezel coreClassName="p-5">
+                <PanelTitle title="Context" icon={<Stack size={15} weight="light" />} />
+                <dl className="mt-5 space-y-1">
+                  <div className="flex items-center gap-3 rounded-2xl px-2 py-2.5">
+                    <FileText aria-hidden size={16} weight="light" className="shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <dt className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Resume</dt>
+                      <dd className="mt-0.5 truncate text-sm font-medium text-foreground" title={primaryResume?.filename}>
+                        {primaryResume?.filename ?? "No resume uploaded"}
+                      </dd>
+                    </div>
+                    {!primaryResume ? (
+                      <IslandLink href="/resume" tone="ghost" size="sm">
+                        Upload
+                      </IslandLink>
+                    ) : null}
+                  </div>
+                  <Hairline />
+                  <div className="flex items-center gap-3 rounded-2xl px-2 py-2.5">
+                    <Cpu aria-hidden size={16} weight="light" className="shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <dt className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Model</dt>
+                      <dd className="mt-0.5 truncate font-geist-mono text-[13px] text-foreground">
+                        {activeModel?.model_name ?? activeModel?.provider ?? "Not configured"}
+                      </dd>
+                    </div>
+                    {!activeModel ? (
+                      <IslandLink href="/settings" tone="ghost" size="sm">
+                        Configure
+                      </IslandLink>
+                    ) : null}
+                  </div>
+                </dl>
+                <Notice className="mt-5 text-[13px] leading-5" icon={<HandPalm size={16} weight="light" />}>
+                  Agents prepare, you decide. Every send and submission waits at an approval gate.
+                </Notice>
+              </Bezel>
+            </Reveal>
+
+            <Reveal delay={0.12}>
+              <Bezel coreClassName="p-5">
+                <PanelTitle
+                  title="Run history"
+                  icon={<ClockCounterClockwise size={15} weight="light" />}
+                  meta={<span className="tabular-nums">{activeAgent.label} · {filteredRuns.length}</span>}
+                />
+                <div className="mt-5" aria-busy={runsLoading}>
+                  {runsLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-[76px] rounded-2xl" />
+                      <Skeleton className="h-[76px] rounded-2xl" />
+                    </div>
+                  ) : filteredRuns.length === 0 ? (
+                    <EmptyPanel
+                      compact
+                      icon={<ClockCounterClockwise size={22} weight="light" />}
+                      title="No runs yet."
+                      description={`Runs of the ${activeAgent.label} agent will collect here.`}
+                    />
+                  ) : (
+                    <motion.ul
+                      initial="hidden"
+                      animate="show"
+                      variants={listStagger}
+                      className="-m-1 space-y-2 p-1 lg:max-h-[34rem] lg:overflow-y-auto lg:overscroll-contain"
+                    >
+                      {filteredRuns.map((run) => {
+                        const selected = run.id === displayRunId;
+                        return (
+                          <motion.li key={run.id} variants={listItem}>
+                            <button
+                              type="button"
+                              aria-current={selected ? "true" : undefined}
+                              className={cn(
+                                "block w-full rounded-2xl text-left transition-[transform,box-shadow] duration-500 ease-vanguard active:scale-[0.99]",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                selected && "ring-2 ring-primary/35 ring-offset-2 ring-offset-card",
+                              )}
+                              onClick={() => openRun(run.id)}
+                            >
+                              <AgentStatusCard
+                                agentType={run.agent_type}
+                                status={
+                                  run.status === "completed"
+                                    ? "succeeded"
+                                    : run.status === "failed"
+                                      ? "failed"
+                                      : run.status === "awaiting_approval"
+                                        ? "awaiting_approval"
+                                        : "running"
+                                }
+                                latestMessage={runMessage(run)}
+                                startedAt={relativeTime(run.started_at)}
+                              />
+                            </button>
+                          </motion.li>
+                        );
+                      })}
+                    </motion.ul>
+                  )}
+                </div>
+              </Bezel>
+            </Reveal>
+          </aside>
+        </div>
+      </Section>
+    </Screen>
   );
 }

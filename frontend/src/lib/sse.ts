@@ -122,5 +122,5 @@ export function useAgentStream(runId: string | null) {
       if (retryTimer) clearTimeout(retryTimer);
       abortRef.current?.abort();
     };
-  }, [runId, addEvent, setRunStatus, setCheckpoint, setComplete, setError]);
+  }, [runId, addEvent, setRunStatus, setCheckpoint, setComplete, setError, setNeedsVerification]);
 }

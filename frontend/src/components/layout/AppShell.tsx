@@ -34,7 +34,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex min-w-0 flex-1 flex-col">
           <PendingDeletionBanner />
           <AppTopbar onMenuClick={() => setMobileNavOpen(true)} />
-          <main className="min-w-0 flex-1 overflow-x-hidden px-6 pb-8 pt-7 md:px-8">{children}</main>
+          {/* overflow-x-clip (not hidden) so sticky columns/save bars inside screens still stick. */}
+          <main className="min-w-0 flex-1 overflow-x-clip px-3 pb-4 pt-5 sm:px-5 lg:px-6">{children}</main>
         </div>
       </div>
     </div>

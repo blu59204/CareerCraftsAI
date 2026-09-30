@@ -1,12 +1,12 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.email_agent import email_agent_node
@@ -63,6 +63,7 @@ async def list_drafts(
         .where(
             AgentRun.agent_type == "email",
             AgentRun.user_id == current_user.id,
+            AgentRun.status == "awaiting_approval",
         )
         .order_by(desc(AgentRun.started_at))
         .limit(20)
@@ -76,7 +77,9 @@ async def list_drafts(
         company = inp.get("company", "")
         role = inp.get("role", "role")
         saved_subject = out.get("subject")
-        subject = saved_subject if isinstance(saved_subject, str) else f"Follow-up on {role} at {company}"
+        subject = (
+            saved_subject if isinstance(saved_subject, str) else f"Follow-up on {role} at {company}"
+        )
         body = out.get("body") if isinstance(out.get("body"), str) else ""
         recipient_email = out.get("recipient") if isinstance(out.get("recipient"), str) else None
         initial = company[0].upper() if company else "?"
@@ -94,6 +97,42 @@ async def list_drafts(
             )
         )
     return drafts
+
+
+async def _discard_drafts(
+    db: AsyncSession, user_id: uuid.UUID, draft_id: uuid.UUID | None = None
+) -> int:
+    statement = update(AgentRun).where(
+        AgentRun.agent_type == "email",
+        AgentRun.user_id == user_id,
+        AgentRun.status == "awaiting_approval",
+    )
+    if draft_id is not None:
+        statement = statement.where(AgentRun.id == draft_id)
+    result = await db.execute(
+        statement.values(status="cancelled", completed_at=datetime.now(UTC)).returning(AgentRun.id)
+    )
+    deleted = len(result.scalars().all())
+    if draft_id is not None and not deleted:
+        raise HTTPException(status_code=404, detail="Draft not found or no longer pending")
+    return deleted
+
+
+@router.delete("/drafts", response_model=dict)
+async def delete_all_drafts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {"deleted": await _discard_drafts(db, current_user.id)}
+
+
+@router.delete("/drafts/{draft_id}", response_model=dict)
+async def delete_draft(
+    draft_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {"deleted": await _discard_drafts(db, current_user.id, draft_id)}
 
 
 class ComposeRequest(BaseModel):
@@ -178,7 +217,9 @@ async def compose_email(
         agent_run.output = pending_action
 
     if result_state["status"] == "failed":
-        logger.warning("Email compose agent failed for run %s: %s", run_id, result_state.get("error"))
+        logger.warning(
+            "Email compose agent failed for run %s: %s", run_id, result_state.get("error")
+        )
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
 
     return {
@@ -251,9 +292,9 @@ async def list_inbox_cleanup(
                 **{"from": _header_value(headers, "From")},
                 subject=_header_value(headers, "Subject"),
                 date=_header_value(headers, "Date"),
-                unsubscribe_url=_first_https_unsubscribe_url(list_unsubscribe)
-                if list_unsubscribe
-                else None,
+                unsubscribe_url=(
+                    _first_https_unsubscribe_url(list_unsubscribe) if list_unsubscribe else None
+                ),
             )
         )
     return results
@@ -287,10 +328,12 @@ async def approve_and_send(
     # Locked so a second concurrent approval of the same run sees the
     # status flip below before it can read a stale "awaiting_approval".
     result = await db.execute(
-        select(AgentRun).where(
+        select(AgentRun)
+        .where(
             AgentRun.id == uuid.UUID(run_id),
             AgentRun.user_id == current_user.id,
-        ).with_for_update()
+        )
+        .with_for_update()
     )
     run = result.scalar_one_or_none()
     if not run:

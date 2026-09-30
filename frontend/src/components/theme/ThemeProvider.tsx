@@ -38,14 +38,17 @@ export function ThemeProvider({
   zoneDefault: Theme;
 }) {
   const [theme, setThemeState] = useState<Theme>(zoneDefault);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const saved = readSaved();
     const initial: Theme = saved ?? zoneDefault ?? systemTheme();
     setThemeState(initial);
+    setReady(true);
   }, [zoneDefault]);
 
   useEffect(() => {
+    if (!ready) return;
     try {
       window.localStorage?.setItem(STORAGE_KEY, theme);
     } catch {
@@ -53,17 +56,14 @@ export function ThemeProvider({
     }
     document.documentElement.classList.remove("light", "dark");
     document.documentElement.classList.add(theme);
-  }, [theme]);
+  }, [theme, ready]);
 
   const setTheme = useCallback((t: Theme) => {
     setThemeState(t);
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((current) => {
-      const domTheme: Theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
-      return (current === "dark" || domTheme === "dark") ? "light" : "dark";
-    });
+    setThemeState((current) => current === "dark" ? "light" : "dark");
   }, []);
 
   const value = useMemo(() => ({ theme, setTheme, toggleTheme }), [theme, setTheme, toggleTheme]);

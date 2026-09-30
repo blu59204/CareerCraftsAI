@@ -1,16 +1,43 @@
 "use client";
 
-import { useState, type DragEvent } from "react";
-import Link from "next/link";
+import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion } from "motion/react";
-import { Download, ExternalLink, Inbox, Search, Share2, X } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  ArrowSquareOut,
+  ArrowsLeftRight,
+  Briefcase,
+  CaretDown,
+  Export,
+  FileCsv,
+  MagnifyingGlass,
+  Rows,
+  SquaresFour,
+  Table,
+  Tray,
+  WarningCircle,
+  X,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { fadeUp, stagger } from "@/lib/motion-variants";
-import type { ApplicationItem, AppStage } from "@/components/apps/ApplicationKanban";
+import { cn } from "@/lib/utils";
+import { APP_STAGES, ApplicationKanban, ApplicationList, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationKanban";
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { CommandHeader } from "@/components/immersive/CommandHeader";
+import {
+  Bezel,
+  EmptyPanel,
+  IconButton,
+  IslandButton,
+  IslandLink,
+  Input,
+  PageHero,
+  Reveal,
+  SPRING_SOFT,
+  Screen,
+  Segmented,
+  Section,
+  Skeleton,
+  StatStrip,
+} from "@/components/vanguard";
 import { apiClient } from "@/lib/api";
 
 type AgentRun = {
@@ -36,16 +63,6 @@ type ApplicationRecord = {
   notes: string | null;
 };
 
-const STAGES: AppStage[] = ["saved", "applied", "viewed", "interview", "offer", "rejected"];
-const STAGE_LABELS: Record<AppStage, string> = {
-  saved: "Saved",
-  applied: "Applied",
-  viewed: "Viewed",
-  interview: "Interview",
-  offer: "Offer",
-  rejected: "Rejected",
-};
-
 function nextFollowUp(application: ApplicationRecord): string | undefined {
   const next = [application.followup_day5, application.followup_day12]
     .filter((date): date is string => !!date && new Date(date).getTime() > Date.now())
@@ -53,24 +70,12 @@ function nextFollowUp(application: ApplicationRecord): string | undefined {
   return next ? new Date(next).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : undefined;
 }
 
-function sourceLabel(url: string | null | undefined): string | null {
-  if (!url) return null;
-  try {
-    const parsed = new URL(url);
-    if (!["http:", "https:"].includes(parsed.protocol)) return null;
-    return parsed.hostname.replace(/^www\./, "");
-  } catch {
-    return null;
-  }
-}
-
 export default function ApplicationsPage() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverStage, setDragOverStage] = useState<AppStage | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"list" | "board">("list");
 
   const { data: items = [], isLoading, isError, refetch } = useQuery<ApplicationItem[]>({
     queryKey: ["applications"],
@@ -120,23 +125,6 @@ export default function ApplicationsPage() {
   const interviewCount = items.filter((item) => item.stage === "interview").length;
   const offerCount = items.filter((item) => item.stage === "offer").length;
 
-  const handleDragStart = (event: DragEvent<HTMLButtonElement>, id: string) => {
-    setDraggedId(id);
-    event.dataTransfer.effectAllowed = "move";
-  };
-
-  const handleDrop = (event: DragEvent<HTMLDivElement>, targetStage: AppStage) => {
-    event.preventDefault();
-    if (draggedId) {
-      const item = items.find((candidate) => candidate.id === draggedId);
-      if (item && item.stage !== targetStage) {
-        statusMutation.mutate({ id: draggedId, newStage: targetStage });
-      }
-    }
-    setDraggedId(null);
-    setDragOverStage(null);
-  };
-
   const exportToCSV = () => {
     const csvCell = (value: string | number | null | undefined) =>
       `"${String(value ?? "").replace(/"/g, '""')}"`;
@@ -154,142 +142,118 @@ export default function ApplicationsPage() {
     setShowExportMenu(false);
   };
 
-  return (
-    <motion.main initial="hidden" animate="show" variants={stagger} className="space-y-7">
-      <motion.div variants={fadeUp}>
-        <CommandHeader
-          eyebrow="Your job search"
-          title="Application tracker"
-          description="Keep each role, its original posting, and your next step in one place."
-          actions={
-            <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">
-              <label className="flex h-10 min-w-[15rem] flex-1 items-center gap-2 rounded-xl border border-border bg-card/70 px-3 text-muted-foreground focus-within:border-primary lg:flex-none">
-                <Search className="h-4 w-4 shrink-0" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search roles or companies"
-                  aria-label="Search applications"
-                  className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                />
-                {search && (
-                  <button type="button" onClick={() => setSearch("")} aria-label="Clear search" className="rounded p-1 hover:text-foreground">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </label>
-              <div className="relative">
-                <LiquidGlassButton tone="ghost" size="sm" onClick={() => setShowExportMenu((open) => !open)}>
-                  <Share2 className="h-4 w-4" /> Export
-                </LiquidGlassButton>
-                {showExportMenu && (
-                  <div className="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-xl border border-border bg-card shadow-xl">
-                    <button type="button" onClick={exportToCSV} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted">
-                      <Download className="h-4 w-4" /> Download CSV
-                    </button>
-                    <button type="button" onClick={() => { window.open("https://sheets.new", "_blank", "noopener,noreferrer"); setShowExportMenu(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted">
-                      <ExternalLink className="h-4 w-4" /> Open Sheets
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          }
-        />
-      </motion.div>
+  const openSheets = () => {
+    window.open("https://sheets.new", "_blank", "noopener,noreferrer");
+    setShowExportMenu(false);
+  };
 
-      <motion.section variants={fadeUp} aria-label="Application overview" className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-border bg-border sm:grid-cols-4">
-        {[
+  const boardStatus = isLoading
+    ? "Loading your board…"
+    : isError
+      ? "Board unavailable"
+      : search
+        ? `${filteredItems.length} matching ${filteredItems.length === 1 ? "role" : "roles"}`
+        : `${items.length} ${items.length === 1 ? "role" : "roles"} across ${APP_STAGES.length} stages`;
+
+  return (
+    <Screen>
+      <PageHero
+        eyebrow="Your job search"
+        title="Application tracker"
+        description="Your pipeline, from saved role to signed offer. Keep the next step in sight."
+        className="pb-0 md:pb-0"
+        actions={
+          <>
+            <IslandLink href="/jobs" tone="ghost" size="md" icon={<Briefcase size={16} weight="light" />} trailing>
+              Find roles
+            </IslandLink>
+          </>
+        }
+      />
+
+      <StatStrip
+        items={[
           { label: "All roles", value: items.length },
           { label: "In progress", value: activeCount },
           { label: "Interviews", value: interviewCount },
           { label: "Offers", value: offerCount },
-        ].map((stat) => (
-          <div key={stat.label} className="bg-card/80 px-5 py-4">
-            <p className="text-xs text-muted-foreground">{stat.label}</p>
-            <p className="mt-1 font-command text-3xl font-semibold tabular-nums text-foreground">{stat.value}</p>
-          </div>
-        ))}
-      </motion.section>
+        ]}
+      />
 
-      <motion.section variants={fadeUp} aria-label="Applications by stage">
-        {isLoading ? (
-          <div className="flex gap-4 overflow-hidden">
-            {STAGES.map((stage) => (
-              <div key={stage} className="min-w-[15rem] flex-1 space-y-3">
-                <div className="h-5 w-24 animate-pulse rounded bg-muted" />
-                <div className="h-32 animate-pulse rounded-xl bg-muted/60" />
-              </div>
+      <Section aria-label="Applications by stage" className="space-y-5 md:space-y-5">
+        <h2 className="sr-only">Applications by stage</h2>
+
+        <Bezel size="md" coreClassName="flex min-w-0 flex-wrap items-center gap-3 p-3">
+          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search company or role" aria-label="Search applications" trayClassName="w-full sm:flex-1 sm:min-w-[12rem]" leading={<MagnifyingGlass size={16} weight="light" />} trailing={search ? <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}><X size={13} weight="light" /></IconButton> : undefined} />
+          <Segmented value={view} onChange={setView} asTabs={false} ariaLabel="Application view" size="sm" options={[{ value: "list", label: "List", icon: <Rows size={14} /> }, { value: "board", label: "Board", icon: <SquaresFour size={14} /> }]} />
+          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onOpenSheets={openSheets} />
+        </Bezel>
+
+        <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
+          <p aria-live="polite" className="flex items-center gap-2 pl-1 text-[13px] text-muted-foreground">
+            <ArrowsLeftRight size={15} weight="light" aria-hidden />
+            <span className="tabular-nums">{boardStatus}</span>
+          </p>
+          <span className="text-xs text-muted-foreground">{view === "board" ? "Drag roles to update their stage" : "Select a role to view details"}</span>
+        </Reveal>
+
+        {isLoading && view === "list" ? (
+          <Bezel size="md" aria-busy="true" aria-label="Loading applications" coreClassName="space-y-3 p-4">
+            {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-16 w-full rounded-xl" />)}
+          </Bezel>
+        ) : isLoading ? (
+          <div aria-busy="true" aria-label="Loading applications" className="flex gap-4 overflow-hidden p-1">
+            {APP_STAGES.map((stage) => (
+              <Bezel key={stage} size="md" tone="muted" className="w-[17.25rem] shrink-0 md:w-[18.5rem]" coreClassName="min-h-[24rem] space-y-2.5 p-2.5">
+                <Skeleton className="mx-2 mb-3 mt-2 h-4 w-24 rounded-full" />
+                <Skeleton className="h-28 rounded-[1.15rem]" />
+                <Skeleton className="h-24 rounded-[1.15rem]" />
+              </Bezel>
             ))}
           </div>
         ) : isError ? (
-          <div className="rounded-2xl border border-border bg-card p-8 text-center">
-            <p className="font-medium">Could not load your applications.</p>
-            <button type="button" onClick={() => refetch()} className="mt-3 text-sm font-medium text-primary underline underline-offset-4">Try again</button>
-          </div>
+          <Reveal>
+            <Bezel role="alert" coreClassName="px-4">
+              <EmptyPanel
+                icon={<WarningCircle size={24} weight="light" />}
+                title="Could not load your applications."
+                description="The board could not reach the server. Your saved roles are safe."
+                action={
+                  <IslandButton tone="ghost" size="sm" onClick={() => refetch()}>
+                    Try again
+                  </IslandButton>
+                }
+              />
+            </Bezel>
+          </Reveal>
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-card/50 px-6 py-14 text-center">
-            <Inbox className="h-7 w-7 text-muted-foreground" />
-            <h2 className="mt-4 text-lg font-semibold">Your tracker is ready</h2>
-            <p className="mt-2 max-w-sm text-sm text-muted-foreground">Save a job from the Jobs page to keep its posting and description here.</p>
-            <Link href="/jobs" className="mt-5 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Explore jobs</Link>
-          </div>
+          <Reveal>
+            <Bezel coreClassName="px-4">
+              <EmptyPanel
+                icon={<Tray size={24} weight="light" />}
+                title="Your tracker is ready"
+                description="Save a job from the Jobs page to keep its posting and description here."
+                action={
+                  <IslandLink href="/jobs" size="md" trailing>
+                    Explore jobs
+                  </IslandLink>
+                }
+              />
+            </Bezel>
+          </Reveal>
+        ) : filteredItems.length === 0 ? (
+          <Bezel><EmptyPanel compact title="No matching applications" description="Try another company or role." action={<IslandButton tone="ghost" size="sm" onClick={() => setSearch("")}>Clear search</IslandButton>} /></Bezel>
+        ) : view === "list" ? (
+          <ApplicationList items={filteredItems} onSelect={setSelectedId} onStageChange={(id, newStage) => statusMutation.mutate({ id, newStage })} />
         ) : (
-          <>
-            {search && <p className="mb-3 text-sm text-muted-foreground">{filteredItems.length} matching {filteredItems.length === 1 ? "role" : "roles"}</p>}
-            <div className="flex snap-x gap-3 overflow-x-auto pb-4">
-              {STAGES.map((stage) => {
-                const columnItems = filteredItems.filter((item) => item.stage === stage);
-                return (
-                  <div
-                    key={stage}
-                    onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDragOverStage(stage); }}
-                    onDragLeave={() => setDragOverStage((current) => current === stage ? null : current)}
-                    onDrop={(event) => handleDrop(event, stage)}
-                    className={`min-h-[17rem] min-w-[15.5rem] flex-1 snap-start rounded-2xl border p-3.5 transition-colors ${dragOverStage === stage ? "border-primary bg-primary/5" : "border-border bg-card/35"}`}
-                  >
-                    <div className="mb-4 flex items-center justify-between px-1">
-                      <h2 className="text-sm font-semibold">{STAGE_LABELS[stage]}</h2>
-                      <span className="rounded-md bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">{columnItems.length}</span>
-                    </div>
-                    <div className="space-y-2.5">
-                      {columnItems.length === 0 ? (
-                        <p className="rounded-xl border border-dashed border-border/70 px-3 py-8 text-center text-xs text-muted-foreground">
-                          {search ? "No matching roles" : "No roles yet"}
-                        </p>
-                      ) : columnItems.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          draggable
-                          onDragStart={(event) => handleDragStart(event, item.id)}
-                          onDragEnd={() => { setDraggedId(null); setDragOverStage(null); }}
-                          onClick={() => setSelectedId(item.id)}
-                          className={`w-full cursor-grab rounded-xl border border-border/80 bg-card p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary active:cursor-grabbing ${draggedId === item.id ? "opacity-50" : ""}`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="min-w-0 text-xs font-medium text-muted-foreground">{item.company}</span>
-                            {item.matchPercent != null && (
-                              <span className="shrink-0 text-xs font-semibold tabular-nums text-primary">{item.matchPercent}%</span>
-                            )}
-                          </div>
-                          <p className="mt-1.5 line-clamp-2 text-sm font-semibold leading-snug text-foreground">{item.role}</p>
-                          {(item.location || sourceLabel(item.jobUrl)) && (
-                            <p className="mt-3 truncate text-xs text-muted-foreground">
-                              {[item.location, sourceLabel(item.jobUrl)].filter(Boolean).join(" · ")}
-                            </p>
-                          )}
-                          {item.nextFollowUp && <p className="mt-2 text-xs font-medium text-primary">Follow up {item.nextFollowUp}</p>}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
+          <ApplicationKanban
+            items={filteredItems}
+            onSelect={setSelectedId}
+            onStageChange={(id, newStage) => statusMutation.mutate({ id, newStage })}
+            emptyColumnLabel={search ? "No matching roles" : "No roles yet"}
+          />
         )}
-      </motion.section>
+      </Section>
 
       <ApplicationDrawer
         application={selected}
@@ -298,6 +262,106 @@ export default function ApplicationsPage() {
         onStageChange={(stage) => selected && statusMutation.mutate({ id: selected.id, newStage: stage })}
         activityRuns={activityRuns}
       />
-    </motion.main>
+    </Screen>
+  );
+}
+
+/** Export trigger with a floating Double-Bezel popover (CSV download / Google Sheets). */
+function ExportMenu({
+  open,
+  onOpenChange,
+  onDownloadCsv,
+  onOpenSheets,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDownloadCsv: () => void;
+  onOpenSheets: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const reduce = useReducedMotion();
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) onOpenChange(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onOpenChange]);
+
+  const options = [
+    { key: "csv", label: "Download CSV", hint: "Every role on the board as a file", icon: <FileCsv size={17} weight="light" />, onClick: onDownloadCsv, trailing: null },
+    { key: "sheets", label: "Open Sheets", hint: "Start a blank Google Sheet", icon: <Table size={17} weight="light" />, onClick: onOpenSheets, trailing: <ArrowSquareOut size={13} weight="light" /> },
+  ];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <IslandButton
+        tone="ghost"
+        size="sm"
+        icon={<Export size={15} weight="light" />}
+        trailing={
+          <CaretDown
+            size={12}
+            weight="light"
+            className={cn("transition-transform duration-500 ease-vanguard", open && "rotate-180")}
+          />
+        }
+        aria-expanded={open}
+        aria-controls={menuId}
+        onClick={() => onOpenChange(!open)}
+      >
+        Export
+      </IslandButton>
+
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            id={menuId}
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
+            animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.98 }}
+            transition={reduce ? { duration: 0.15 } : SPRING_SOFT}
+            className="absolute right-0 top-full z-20 mt-3 w-[min(17rem,calc(100vw-3rem))] origin-top-right"
+          >
+            <Bezel size="md" lifted coreClassName="p-1.5">
+              <ul className="space-y-0.5">
+                {options.map((option) => (
+                  <li key={option.key}>
+                    <button
+                      type="button"
+                      onClick={option.onClick}
+                      className="group flex w-full items-center gap-3 rounded-[1rem] px-3 py-2.5 text-left transition-colors duration-500 ease-vanguard hover:bg-foreground/[0.04] focus-visible:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/[0.05] dark:focus-visible:bg-white/[0.05]"
+                    >
+                      <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-foreground/[0.04] text-foreground/80 ring-1 ring-foreground/[0.06] dark:bg-white/[0.05] dark:ring-white/10">
+                        {option.icon}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-foreground">{option.label}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{option.hint}</span>
+                      </span>
+                      {option.trailing ? (
+                        <span aria-hidden className="text-muted-foreground transition-transform duration-500 ease-vanguard group-hover:-translate-y-[1px] group-hover:translate-x-0.5">
+                          {option.trailing}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </Bezel>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </div>
   );
 }

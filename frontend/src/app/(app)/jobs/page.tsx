@@ -1,39 +1,66 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion, type Variants } from "motion/react";
 import {
-  Search,
-  Filter,
+  MagnifyingGlass,
+  SlidersHorizontal,
   MapPin,
   Clock,
-  Bookmark,
-  ExternalLink,
-  Zap,
-  TrendingUp,
-  RefreshCw,
+  BookmarkSimple,
+  ArrowSquareOut,
+  Lightning,
   Globe,
   Copy,
-  ChevronDown,
-  Loader2,
+  Check,
+  CaretDown,
+  CircleNotch,
   X,
   Brain,
-  Save,
-  AlertCircle,
+  FloppyDisk,
+  WarningCircle,
   Briefcase,
-} from "lucide-react";
+  Sparkle,
+  Broadcast,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { fadeUp, stagger } from "@/lib/motion-variants";
 import { setPendingJd } from "@/lib/job-handoff";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { wakeExtension } from "@/lib/extension-bridge";
+import { cn } from "@/lib/utils";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
 import { useAgentStore } from "@/store/agentStore";
+import {
+  Bezel,
+  Chip,
+  EmptyPanel,
+  Eyebrow,
+  Field,
+  Hairline,
+  IconButton,
+  Input,
+  IslandButton,
+  Notice,
+  PageHero,
+  PanelTitle,
+  Reveal,
+  Screen,
+  Section,
+  SectionHeading,
+  Select,
+  Skeleton,
+  StatusPill,
+  Textarea,
+  Toggle,
+  listItem,
+  listStagger,
+  panelSwap,
+  EASE_VANGUARD,
+  SPRING_PANEL,
+  type StatusTone,
+} from "@/components/vanguard";
 
 const XRAY_TEMPLATES = [
   `site:linkedin.com/jobs "Frontend Engineer" "React" "Remote"`,
@@ -51,6 +78,20 @@ const DATE_FILTERS = ["Today", "Past week", "Past month"];
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
 const WORK_MODES = ["remote", "hybrid", "onsite"];
 const JOB_TYPES = ["full-time", "part-time", "contract", "internship"];
+
+const FILTER_GROUPS: ReadonlyArray<{ label: string; items: string[] }> = [
+  { label: "Location / Mode", items: ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"] },
+  { label: "Job type", items: JOB_TYPE_FILTERS },
+  { label: "Experience level", items: EXPERIENCE_FILTERS },
+  { label: "Date posted", items: DATE_FILTERS },
+];
+
+/** Reduced-motion stand-in for the kit's translate/blur variants. */
+const FADE_ONLY: Variants = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { duration: 0.2 } },
+  exit: { opacity: 0, transition: { duration: 0.15 } },
+};
 
 interface SavedJob {
   id: string;
@@ -152,6 +193,378 @@ function relativeTime(iso: string | null): string {
   return d === 1 ? "Yesterday" : `${d}d ago`;
 }
 
+function jobDomain(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace("www.", "");
+  } catch {
+    return null;
+  }
+}
+
+function clampScore(score: number | null): number {
+  return Math.max(0, Math.min(100, score ?? 0));
+}
+
+function matchFill(p: number) {
+  return p >= 80 ? "bg-primary" : p >= 60 ? "bg-warning" : "bg-danger";
+}
+
+function matchText(p: number) {
+  if (p <= 0) return "text-muted-foreground";
+  return p >= 80 ? "text-primary" : p >= 60 ? "text-warning" : "text-danger";
+}
+
+function statusTone(status: string): StatusTone {
+  if (status === "applied") return "success";
+  if (status === "saved") return "primary";
+  return "neutral";
+}
+
+function statusLabel(status: string) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Small presentational pieces                                               */
+/* -------------------------------------------------------------------------- */
+
+function MatchMeter({ percent, className }: { percent: number | null; className?: string }) {
+  const p = clampScore(percent);
+  return (
+    <div
+      role="meter"
+      aria-label="Match score"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={p}
+      className={cn("h-1.5 w-full overflow-hidden rounded-full bg-foreground/[0.06] dark:bg-white/10", className)}
+    >
+      <div
+        className={cn("h-full w-full origin-left rounded-full transition-transform duration-700 ease-vanguard", matchFill(p))}
+        style={{ transform: `scaleX(${p / 100})` }}
+      />
+    </div>
+  );
+}
+
+function JobMeta({ job, className }: { job: SavedJob; className?: string }) {
+  const domain = jobDomain(job.job_url);
+  return (
+    <ul className={cn("flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground", className)}>
+      {job.location && (
+        <li className="inline-flex min-w-0 items-center gap-1.5">
+          <MapPin size={13} weight="light" aria-hidden />
+          <span className="truncate">{job.location}</span>
+        </li>
+      )}
+      {domain && (
+        <li className="inline-flex min-w-0 items-center gap-1.5">
+          <Globe size={13} weight="light" aria-hidden />
+          <span className="truncate">{domain}</span>
+        </li>
+      )}
+      <li className="inline-flex items-center gap-1.5 tabular-nums">
+        <Clock size={13} weight="light" aria-hidden />
+        {relativeTime(job.applied_at)}
+      </li>
+    </ul>
+  );
+}
+
+/** Save + Apply pair shared by the featured card and the dense rows. */
+function JobActions({
+  job,
+  onPrepareApply,
+  size = "sm",
+  className,
+}: {
+  job: SavedJob;
+  onPrepareApply: (job: SavedJob) => void;
+  size?: "sm" | "md";
+  className?: string;
+}) {
+  return (
+    <div className={cn("relative flex min-w-0 flex-wrap items-center gap-2", className)}>
+      <IslandButton
+        tone="ghost"
+        size={size}
+        icon={<BookmarkSimple size={size === "sm" ? 14 : 16} weight="light" />}
+        onClick={(e) => e.stopPropagation()}
+      >
+        Save
+      </IslandButton>
+      {job.job_url ? (
+        <IslandButton
+          tone="primary"
+          size={size}
+          trailing={<ArrowSquareOut size={size === "sm" ? 13 : 15} weight="light" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            // Open the real job posting so the user can apply directly...
+            if (job.job_url) window.open(job.job_url, "_blank", "noopener,noreferrer");
+            // ...and kick off the human-in-the-loop auto-apply prep.
+            onPrepareApply(job);
+          }}
+        >
+          Apply
+        </IslandButton>
+      ) : (
+        <IslandButton tone="primary" size={size} disabled trailing={<ArrowSquareOut size={size === "sm" ? 13 : 15} weight="light" />}>
+          Apply
+        </IslandButton>
+      )}
+    </div>
+  );
+}
+
+/** Pill disclosure toggle (Filters / Advanced search). */
+function DisclosurePill({
+  open,
+  onToggle,
+  controls,
+  icon,
+  count,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  controls: string;
+  icon: ReactNode;
+  count?: number;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-controls={open ? controls : undefined}
+      onClick={onToggle}
+      className={cn(
+        "inline-flex h-9 items-center gap-2 rounded-full pl-3.5 pr-3 text-[13px] font-medium ring-1",
+        "transition-[background-color,color,box-shadow,transform] duration-500 ease-vanguard active:scale-[0.97]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        open
+          ? "bg-foreground text-background ring-foreground dark:bg-white dark:text-black dark:ring-white"
+          : "bg-card text-foreground ring-foreground/[0.08] hover:ring-foreground/20 dark:bg-white/[0.03] dark:ring-white/10",
+      )}
+    >
+      <span aria-hidden className="grid place-items-center">{icon}</span>
+      {children}
+      {count ? (
+        <span
+          className={cn(
+            "rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
+            open ? "bg-background/20" : "bg-foreground/[0.07] dark:bg-white/10",
+          )}
+        >
+          {count}
+        </span>
+      ) : null}
+      <CaretDown
+        size={13}
+        weight="light"
+        aria-hidden
+        className={cn("transition-transform duration-500 ease-vanguard", open && "rotate-180")}
+      />
+    </button>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Hero: search island + agent console                                       */
+/* -------------------------------------------------------------------------- */
+
+function SearchIsland({
+  query,
+  onQueryChange,
+  location,
+  onLocationChange,
+  onSubmit,
+  busy,
+  running,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  location: string;
+  onLocationChange: (value: string) => void;
+  onSubmit: () => void;
+  busy: boolean;
+  running: boolean;
+}) {
+  const queryId = useId();
+  const locationId = useId();
+  const segment =
+    "flex min-w-0 flex-1 items-center gap-3 rounded-[1.25rem] px-4 py-2.5 transition-[background-color,box-shadow] duration-500 ease-vanguard " +
+    "hover:bg-foreground/[0.025] focus-within:bg-foreground/[0.03] focus-within:ring-2 focus-within:ring-primary/35 dark:hover:bg-white/[0.03] dark:focus-within:bg-white/[0.04]";
+  const control =
+    "w-full min-w-0 text-ellipsis bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground/70";
+
+  return (
+    <Bezel
+      role="search"
+      aria-label="Search jobs"
+      lifted
+      coreClassName="flex flex-col gap-1 p-1.5 md:flex-row md:items-stretch"
+    >
+      <div className={segment}>
+        <MagnifyingGlass size={18} weight="light" aria-hidden className="shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <label htmlFor={queryId} className="block text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Role or keywords
+          </label>
+          <input
+            id={queryId}
+            name="query"
+            type="text"
+            autoComplete="off"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+            placeholder="Leave blank to use resume + saved preferences, or type custom role…"
+            className={control}
+          />
+        </div>
+      </div>
+
+      <Hairline vertical className="my-3 hidden md:block" />
+
+      <div className={cn(segment, "md:max-w-[15rem]")}>
+        <MapPin size={18} weight="light" aria-hidden className="shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <label htmlFor={locationId} className="block text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Where
+          </label>
+          <input
+            id={locationId}
+            name="location"
+            type="text"
+            autoComplete="off"
+            value={location}
+            onChange={(e) => onLocationChange(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && onSubmit()}
+            placeholder="Location or Remote"
+            className={control}
+          />
+        </div>
+      </div>
+
+      <IslandButton
+        size="lg"
+        onClick={onSubmit}
+        disabled={busy}
+        aria-label={running ? "Searching — Job Agent running" : "Search — Run Job Agent"}
+        icon={
+          busy ? (
+            <CircleNotch size={17} weight="light" className="animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Lightning size={17} weight="light" />
+          )
+        }
+        trailing={<MagnifyingGlass size={16} weight="light" />}
+        className="w-full md:w-auto md:self-center"
+      >
+        {running ? "Searching…" : "Search"}
+      </IslandButton>
+    </Bezel>
+  );
+}
+
+function AgentConsole({
+  running,
+  isLoading,
+  jobsCount,
+  avgMatch,
+  newToday,
+}: {
+  running: boolean;
+  isLoading: boolean;
+  jobsCount: number;
+  avgMatch: number;
+  newToday: number;
+}) {
+  const stats = [
+    { label: "Roles found", value: jobsCount },
+    { label: "Avg match", value: avgMatch > 0 ? `${avgMatch}%` : "—" },
+    { label: "New · 24h", value: newToday },
+  ];
+  return (
+    <Bezel lifted coreClassName="space-y-6 p-6">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Job search agent</span>
+        <StatusPill tone={running ? "primary" : "success"} live>
+          {running ? "Running" : "Ready"}
+        </StatusPill>
+      </div>
+      <p role="status" aria-live="polite" className="text-pretty text-sm leading-6 text-foreground/85">
+        {running
+          ? "Job Search Agent running — scanning boards for matching roles…"
+          : `Job Search Agent ready — ${jobsCount > 0 ? `${jobsCount} roles saved` : "run agent to discover roles"}`}
+      </p>
+      <Hairline />
+      <dl className="grid grid-cols-3 gap-4">
+        {stats.map((stat) => (
+          <div key={stat.label} className="min-w-0">
+            <dt className="truncate text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">{stat.label}</dt>
+            <dd className="mt-2 font-geist text-3xl font-semibold tabular-nums tracking-[-0.04em] text-foreground">
+              {isLoading ? <Skeleton className="h-8 w-12 rounded-lg" /> : stat.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Bezel>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Expandable panels                                                         */
+/* -------------------------------------------------------------------------- */
+
+function FilterPanel({
+  activeFilters,
+  onToggle,
+  onClear,
+}: {
+  activeFilters: Set<string>;
+  onToggle: (chip: string) => void;
+  onClear: () => void;
+}) {
+  const baseId = useId();
+  return (
+    <Bezel size="md" coreClassName="space-y-5 p-5 md:p-6">
+      <PanelTitle
+        title="Filters"
+        icon={<SlidersHorizontal size={15} weight="light" />}
+        meta={
+          activeFilters.size > 0 ? (
+            <IslandButton tone="quiet" size="sm" onClick={onClear} icon={<X size={13} weight="light" />}>
+              Clear all
+            </IslandButton>
+          ) : (
+            "None active"
+          )
+        }
+      />
+      <div className="grid gap-5 sm:grid-cols-2">
+        {FILTER_GROUPS.map((group, i) => (
+          <div key={group.label} role="group" aria-labelledby={`${baseId}-g${i}`} className="space-y-2.5">
+            <p id={`${baseId}-g${i}`} className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              {group.label}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {group.items.map((chip) => (
+                <Chip key={chip} active={activeFilters.has(chip)} onClick={() => onToggle(chip)}>
+                  {chip}
+                </Chip>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Bezel>
+  );
+}
+
 function XraySearchPanel({
   query,
   setQuery,
@@ -168,46 +581,51 @@ function XraySearchPanel({
   }
 
   return (
-    <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-4">
-      <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
-          <Globe className="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-foreground">X-ray Search</p>
-          <p className="text-xs text-muted-foreground">
-            Build Boolean search queries to find jobs directly via Google
-          </p>
-        </div>
+    <Bezel size="md" coreClassName="space-y-5 p-5 md:p-6">
+      <div className="space-y-1.5">
+        <PanelTitle title="X-ray search" icon={<Globe size={15} weight="light" />} />
+        <p className="pl-[2.625rem] text-xs leading-5 text-muted-foreground">
+          Build Boolean search queries to find jobs directly via Google
+        </p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div role="group" aria-label="Query templates" className="flex flex-wrap gap-2">
         {XRAY_TEMPLATES.map((tpl) => (
           <button
             key={tpl}
+            type="button"
+            title={tpl}
+            aria-pressed={query === tpl}
             onClick={() => setQuery(tpl)}
-            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+            className={cn(
+              "max-w-full truncate rounded-full px-3 py-1.5 font-geist-mono text-[11px] ring-1",
+              "transition-[background-color,color,box-shadow] duration-500 ease-vanguard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               query === tpl
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-            }`}
+                ? "bg-primary/10 text-primary ring-primary/25"
+                : "bg-card text-muted-foreground ring-foreground/[0.08] hover:text-foreground hover:ring-foreground/20 dark:bg-white/[0.03] dark:ring-white/10",
+            )}
           >
             {tpl.length > 52 ? tpl.slice(0, 52) + "…" : tpl}
           </button>
         ))}
       </div>
 
-      <textarea
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        rows={3}
-        className="w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 font-mono text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-      />
+      <Field label="Boolean query" hint="X-ray searches bypass job board algorithms and find hidden openings">
+        {(id) => (
+          <Textarea
+            id={id}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            rows={3}
+            className="min-h-24 resize-none font-geist-mono text-xs"
+          />
+        )}
+      </Field>
 
-      <div className="flex items-center gap-2">
-        <LiquidGlassButton
-          tone="primary"
+      <div className="flex flex-wrap items-center gap-2">
+        <IslandButton
           size="sm"
+          trailing
           onClick={() =>
             window.open(
               `https://www.google.com/search?q=${encodeURIComponent(query)}`,
@@ -215,128 +633,324 @@ function XraySearchPanel({
             )
           }
         >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Search on Google ↗
-        </LiquidGlassButton>
-        <LiquidGlassButton tone="ghost" size="sm" onClick={handleCopy}>
-          <Copy className="h-3.5 w-3.5" />
-          {copied ? "Copied!" : "Copy query"}
-        </LiquidGlassButton>
+          Search on Google
+        </IslandButton>
+        <IslandButton
+          tone="ghost"
+          size="sm"
+          onClick={handleCopy}
+          icon={copied ? <Check size={14} weight="light" /> : <Copy size={14} weight="light" />}
+        >
+          <span aria-live="polite">{copied ? "Copied" : "Copy query"}</span>
+        </IslandButton>
+      </div>
+    </Bezel>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Results: featured match, dense rows, detail panel                         */
+/* -------------------------------------------------------------------------- */
+
+function FeaturedJobCard({
+  job,
+  selected,
+  onOpenDetails,
+  onPrepareApply,
+}: {
+  job: SavedJob;
+  selected: boolean;
+  onOpenDetails: (job: SavedJob) => void;
+  onPrepareApply: (job: SavedJob) => void;
+}) {
+  const p = clampScore(job.match_score);
+  const excerpt = job.jd_text?.replace(/\s+/g, " ").trim();
+
+  return (
+    <article data-testid="job-card" className="job-card job-row-container group relative min-w-0">
+      <Bezel
+        tone="primary"
+        lifted
+        className={cn("transition-[box-shadow] duration-500 ease-vanguard", selected && "ring-primary/40")}
+        coreClassName="flex flex-col gap-7 p-6 md:p-8"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Eyebrow tone="primary">
+            <Sparkle size={11} weight="light" aria-hidden />
+            Top match
+          </Eyebrow>
+          <StatusPill tone={statusTone(job.status)}>{statusLabel(job.status)}</StatusPill>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <div className="min-w-0 space-y-3">
+            <p className="text-sm font-medium text-muted-foreground">{job.company}</p>
+            <h3 className="text-balance font-geist text-3xl font-semibold leading-[1.05] tracking-[-0.035em] text-foreground md:text-4xl">
+              <button
+                type="button"
+                onClick={() => onOpenDetails(job)}
+                aria-current={selected ? "true" : undefined}
+                className={cn(
+                  "text-left focus-visible:outline-none",
+                  "after:absolute after:inset-0 after:rounded-[calc(2rem-0.375rem)] after:content-['']",
+                  "focus-visible:after:ring-2 focus-visible:after:ring-primary/50",
+                )}
+              >
+                {job.role}
+              </button>
+            </h3>
+            <JobMeta job={job} />
+          </div>
+          <div className="flex items-baseline gap-1 md:flex-col md:items-end md:gap-0">
+            <span className={cn("font-geist text-6xl font-semibold leading-none tabular-nums tracking-[-0.05em]", matchText(p))}>
+              {p > 0 ? p : "—"}
+            </span>
+            <span className="text-xs text-muted-foreground">{p > 0 ? "% match" : "No score yet"}</span>
+          </div>
+        </div>
+
+        <MatchMeter percent={job.match_score} />
+
+        {excerpt ? (
+          <p className="line-clamp-3 max-w-[70ch] text-sm leading-6 text-muted-foreground">{excerpt}</p>
+        ) : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <JobActions job={job} onPrepareApply={onPrepareApply} size="md" />
+          <span aria-hidden className="hidden text-xs text-muted-foreground sm:inline">
+            Select to read the full description
+          </span>
+        </div>
+      </Bezel>
+    </article>
+  );
+}
+
+function JobRow({
+  job,
+  selected,
+  onOpenDetails,
+  onPrepareApply,
+}: {
+  job: SavedJob;
+  selected: boolean;
+  onOpenDetails: (job: SavedJob) => void;
+  onPrepareApply: (job: SavedJob) => void;
+}) {
+  const p = clampScore(job.match_score);
+  return (
+    <article data-testid="job-card" className="job-card group relative">
+      <Bezel
+        size="md"
+        className={cn("transition-[box-shadow] duration-500 ease-vanguard", selected && "ring-primary/35 dark:ring-primary/40")}
+        coreClassName={cn(
+          "job-row-grid grid grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 p-3 sm:p-4",
+          "transition-colors duration-500 ease-vanguard group-hover:bg-muted/40 dark:group-hover:bg-white/[0.04]",
+        )}
+      >
+        <div className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground/[0.03] ring-1 ring-foreground/[0.06] dark:bg-white/[0.04] dark:ring-white/10">
+          <div className="text-center leading-none">
+            <span className={cn("font-geist text-lg font-semibold tabular-nums tracking-[-0.03em]", matchText(p))}>
+              {p > 0 ? p : "—"}
+            </span>
+            <span className="mt-1 block text-[9px] uppercase tracking-[0.14em] text-muted-foreground">match</span>
+          </div>
+        </div>
+
+        <div className="min-w-0 space-y-1.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-xs font-medium text-muted-foreground">{job.company}</span>
+            <StatusPill tone={statusTone(job.status)} className="shrink-0 px-2 py-0.5 text-[10px]">
+              {statusLabel(job.status)}
+            </StatusPill>
+          </div>
+          <h3 className="truncate font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground md:text-base">
+            <button
+              type="button"
+              onClick={() => onOpenDetails(job)}
+              aria-current={selected ? "true" : undefined}
+              className={cn(
+                "text-left focus-visible:outline-none",
+                "after:absolute after:inset-0 after:rounded-[calc(1.5rem-0.25rem)] after:content-['']",
+                "focus-visible:after:ring-2 focus-visible:after:ring-primary/50",
+              )}
+            >
+              {job.role}
+            </button>
+          </h3>
+          <JobMeta job={job} />
+        </div>
+
+        <JobActions job={job} onPrepareApply={onPrepareApply} className="job-row-action col-span-2" />
+      </Bezel>
+    </article>
+  );
+}
+
+function JobDetailBody({ job, onClose, titleId }: { job: SavedJob; onClose?: () => void; titleId?: string }) {
+  const router = useRouter();
+  const p = clampScore(job.match_score);
+
+  const handleTailorResume = () => {
+    if (!job.jd_text) {
+      toast.error("No job description saved for this listing yet.");
+      return;
+    }
+    setPendingJd({ jdText: job.jd_text, role: job.role, company: job.company });
+    router.push("/resume");
+  };
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-muted-foreground">{job.company}</p>
+          <h3 id={titleId} className="mt-1 text-balance font-geist text-2xl font-semibold leading-tight tracking-[-0.03em] text-foreground">
+            {job.role}
+          </h3>
+        </div>
+        {onClose ? (
+          <IconButton aria-label="Close" onClick={onClose}>
+            <X size={16} weight="light" />
+          </IconButton>
+        ) : (
+          <StatusPill tone={statusTone(job.status)} className="shrink-0">
+            {statusLabel(job.status)}
+          </StatusPill>
+        )}
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        X-ray searches bypass job board algorithms and find hidden openings
-      </p>
+      <JobMeta job={job} className="mt-3" />
+
+      <div className="mt-6 space-y-2.5">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Match</span>
+          <span className={cn("font-geist text-2xl font-semibold tabular-nums tracking-[-0.03em]", matchText(p))}>
+            {job.match_score != null ? `${job.match_score}%` : "—"}
+          </span>
+        </div>
+        <MatchMeter percent={job.match_score} />
+      </div>
+
+      <div
+        role="region"
+        aria-label="Job description"
+        tabIndex={0}
+        className="mt-6 min-h-0 flex-1 overflow-y-auto rounded-[1.25rem] bg-foreground/[0.025] p-4 ring-1 ring-foreground/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-white/[0.03] dark:ring-white/[0.06] md:p-5"
+      >
+        {job.jd_text ? (
+          <p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">{job.jd_text}</p>
+        ) : (
+          <p className="text-sm leading-6 text-muted-foreground">
+            No description was saved for this listing. Open the original posting to read the full details.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-6 flex flex-wrap gap-2">
+        <IslandButton
+          className="flex-1"
+          onClick={handleTailorResume}
+          disabled={!job.jd_text}
+          icon={<Lightning size={16} weight="light" />}
+        >
+          Tailor resume for this job
+        </IslandButton>
+        {job.job_url && (
+          <IslandButton
+            tone="ghost"
+            icon={<ArrowSquareOut size={16} weight="light" />}
+            onClick={() => window.open(job.job_url!, "_blank", "noopener,noreferrer")}
+          >
+            Open original posting
+          </IslandButton>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Below lg the detail panel becomes a bottom sheet / centered dialog. */
+function JobDetailModal({ job, onClose }: { job: SavedJob; onClose: () => void }) {
+  const reduce = useReducedMotion();
+  const titleId = useId();
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.35, ease: EASE_VANGUARD }}
+      className="fixed inset-0 z-40 flex items-end justify-center bg-foreground/20 p-3 backdrop-blur-sm dark:bg-black/60 sm:items-center sm:p-6"
+      onClick={onClose}
+    >
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        initial={reduce ? { opacity: 0 } : { opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={reduce ? { opacity: 0 } : { opacity: 0, y: 24 }}
+        transition={reduce ? { duration: 0.2 } : SPRING_PANEL}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl"
+      >
+        <Bezel lifted coreClassName="flex max-h-[85dvh] flex-col p-5 sm:p-6">
+          <JobDetailBody job={job} onClose={onClose} titleId={titleId} />
+        </Bezel>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ResultsSkeleton() {
+  return (
+    <div aria-hidden className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <div className="space-y-4 lg:col-span-7">
+        <Bezel tone="primary" coreClassName="space-y-6 p-6 md:p-8">
+          <Skeleton className="h-6 w-28 rounded-full" />
+          <Skeleton className="h-10 w-3/4 rounded-xl" />
+          <Skeleton className="h-4 w-1/2 rounded-lg" />
+          <Skeleton className="h-1.5 w-full rounded-full" />
+          <div className="flex gap-2">
+            <Skeleton className="h-11 w-24 rounded-full" />
+            <Skeleton className="h-11 w-28 rounded-full" />
+          </div>
+        </Bezel>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <Bezel key={i} size="md" coreClassName="flex items-center gap-4 p-4 md:p-5">
+            <Skeleton className="h-14 w-14 shrink-0 rounded-2xl" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-3 w-24 rounded-md" />
+              <Skeleton className="h-4 w-2/3 rounded-md" />
+            </div>
+            <Skeleton className="hidden h-9 w-40 rounded-full md:block" />
+          </Bezel>
+        ))}
+      </div>
+      <div className="hidden lg:col-span-5 lg:block">
+        <Bezel coreClassName="space-y-5 p-6">
+          <Skeleton className="h-4 w-24 rounded-md" />
+          <Skeleton className="h-8 w-3/4 rounded-xl" />
+          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-11 w-full rounded-full" />
+        </Bezel>
+      </div>
     </div>
   );
 }
 
-function FilterPanel({
-  activeFilters,
-  onToggle,
-  onClear,
-}: {
-  activeFilters: Set<string>;
-  onToggle: (chip: string) => void;
-  onClear: () => void;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, height: 0 }}
-      animate={{ opacity: 1, height: "auto" }}
-      exit={{ opacity: 0, height: 0 }}
-      transition={{ duration: 0.25 }}
-      className="overflow-hidden"
-    >
-      <div className="rounded-3xl border border-border bg-card/60 p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold">Filters</span>
-          {activeFilters.size > 0 && (
-            <button onClick={onClear} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              <X className="h-3 w-3" /> Clear all
-            </button>
-          )}
-        </div>
-
-        <div>
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Location / Mode</p>
-          <div className="flex flex-wrap gap-2">
-            {["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"].map((chip) => (
-              <button
-                key={chip}
-                onClick={() => onToggle(chip)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  activeFilters.has(chip)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-                }`}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Job type</p>
-          <div className="flex flex-wrap gap-2">
-            {JOB_TYPE_FILTERS.map((chip) => (
-              <button
-                key={chip}
-                onClick={() => onToggle(chip)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  activeFilters.has(chip)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-                }`}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Experience level</p>
-          <div className="flex flex-wrap gap-2">
-            {EXPERIENCE_FILTERS.map((chip) => (
-              <button
-                key={chip}
-                onClick={() => onToggle(chip)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  activeFilters.has(chip)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-                }`}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Date posted</p>
-          <div className="flex flex-wrap gap-2">
-            {DATE_FILTERS.map((chip) => (
-              <button
-                key={chip}
-                onClick={() => onToggle(chip)}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  activeFilters.has(chip)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-                }`}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
+/* -------------------------------------------------------------------------- */
+/*  Search profile                                                            */
+/* -------------------------------------------------------------------------- */
 
 function ProfileSearchPanel({
   profile,
@@ -356,125 +970,118 @@ function ProfileSearchPanel({
   const suggestions = profile?.role_suggestions ?? [];
   const skills = profile?.skills ?? [];
   const missing = profile?.missing_fields ?? [];
+  const groupId = useId();
 
   return (
-    <motion.div variants={fadeUp} className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
-      <div className="glass-panel rounded-3xl p-6">
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Brain className="h-4 w-4 text-primary" />
-              Resume-first search profile
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Agents analyze resume, then you confirm fresher/years, role, location, and work mode.
-            </p>
-          </div>
-          <span className="rounded-full border border-border bg-card/40 px-3 py-1 text-xs text-muted-foreground">
-            {profile?.resume_found ? profile.resume_filename ?? "Resume found" : "No resume yet"}
-          </span>
-        </div>
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <Bezel className="lg:col-span-7" coreClassName="p-6 md:p-8">
+        <PanelTitle
+          title="Resume-first search profile"
+          icon={<Brain size={15} weight="light" />}
+          meta={
+            <StatusPill tone={profile?.resume_found ? "success" : "warning"}>
+              <span className="max-w-[14rem] truncate">
+                {profile?.resume_found ? profile.resume_filename ?? "Resume found" : "No resume yet"}
+              </span>
+            </StatusPill>
+          }
+        />
+        <p className="mt-2 max-w-[60ch] pl-[2.625rem] text-xs leading-5 text-muted-foreground">
+          Agents analyze resume, then you confirm fresher/years, role, location, and work mode.
+        </p>
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-            Target roles
-            <input
-              value={form.target_roles}
-              onChange={(e) => onChange("target_roles", e.target.value)}
-              placeholder="Frontend Engineer, React Developer"
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
-          <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-            Preferred locations
-            <input
-              value={form.preferred_locations}
-              onChange={(e) => onChange("preferred_locations", e.target.value)}
-              placeholder="Remote, Bangalore, Hyderabad"
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
-          <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-            Are you fresher or experienced?
-            <select
-              value={form.experience_level}
-              onChange={(e) =>
-                onChange("experience_level", e.target.value)
-              }
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              {EXPERIENCE_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {labelize(level)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-            Exact years
-            <input
-              type="number"
-              min={0}
-              max={60}
-              value={form.years_experience}
-              onChange={(e) => onChange("years_experience", e.target.value)}
-              placeholder="0 for fresher"
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </label>
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">Job type</div>
+        <div className="mt-7 grid gap-5 md:grid-cols-2">
+          <Field label="Target roles">
+            {(id) => (
+              <Input
+                id={id}
+                value={form.target_roles}
+                onChange={(e) => onChange("target_roles", e.target.value)}
+                placeholder="Frontend Engineer, React Developer"
+              />
+            )}
+          </Field>
+          <Field label="Preferred locations">
+            {(id) => (
+              <Input
+                id={id}
+                value={form.preferred_locations}
+                onChange={(e) => onChange("preferred_locations", e.target.value)}
+                placeholder="Remote, Bangalore, Hyderabad"
+              />
+            )}
+          </Field>
+          <Field label="Are you fresher or experienced?">
+            {(id) => (
+              <Select id={id} value={form.experience_level} onChange={(e) => onChange("experience_level", e.target.value)}>
+                {EXPERIENCE_LEVELS.map((level) => (
+                  <option key={level} value={level}>
+                    {labelize(level)}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Exact years">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                min={0}
+                max={60}
+                value={form.years_experience}
+                onChange={(e) => onChange("years_experience", e.target.value)}
+                placeholder="0 for fresher"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
+          <div role="group" aria-labelledby={`${groupId}-type`} className="space-y-2.5">
+            <p id={`${groupId}-type`} className="pl-1 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
+              Job type
+            </p>
             <div className="flex flex-wrap gap-2">
               {JOB_TYPES.map((type) => (
-                <button
+                <Chip
                   key={type}
-                  type="button"
+                  active={splitCsv(form.job_type).includes(type)}
                   onClick={() => onChange("job_type", toggleCsvValue(form.job_type, type))}
-                  aria-pressed={splitCsv(form.job_type).includes(type)}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                    splitCsv(form.job_type).includes(type)
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-                  }`}
                 >
                   {labelize(type)}
-                </button>
+                </Chip>
               ))}
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">Work mode</div>
+          <div role="group" aria-labelledby={`${groupId}-mode`} className="space-y-2.5">
+            <p id={`${groupId}-mode`} className="pl-1 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
+              Work mode
+            </p>
             <div className="flex flex-wrap gap-2">
               {WORK_MODES.map((mode) => (
-                <button
+                <Chip
                   key={mode}
-                  type="button"
+                  active={splitCsv(form.work_mode).includes(mode)}
                   onClick={() => onChange("work_mode", toggleCsvValue(form.work_mode, mode))}
-                  aria-pressed={splitCsv(form.work_mode).includes(mode)}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors ${
-                    splitCsv(form.work_mode).includes(mode)
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-                  }`}
                 >
                   {labelize(mode)}
-                </button>
+                </Chip>
               ))}
             </div>
           </div>
         </div>
 
         {suggestions.length > 0 && (
-          <div className="mt-4">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">Resume role suggestions</div>
+          <div className="mt-6 space-y-2.5">
+            <p className="pl-1 text-[12px] font-medium text-muted-foreground">Resume role suggestions</p>
             <div className="flex flex-wrap gap-2">
               {suggestions.map((role) => (
                 <button
                   key={role}
                   type="button"
                   onClick={() => onChange("target_roles", role)}
-                  className="rounded-full border border-primary/35 bg-primary/10 px-3 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1.5 text-xs font-medium text-primary ring-1 ring-primary/20 transition-[background-color,transform] duration-500 ease-vanguard hover:bg-primary/15 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
+                  <Sparkle size={12} weight="light" aria-hidden />
                   {role}
                 </button>
               ))}
@@ -482,298 +1089,103 @@ function ProfileSearchPanel({
           </div>
         )}
 
-        <div className="mt-5 flex flex-wrap gap-2">
-          <LiquidGlassButton tone="primary" size="sm" onClick={onRun}>
-            <Search className="h-4 w-4" />
+        <Hairline className="my-7" />
+
+        <div className="flex flex-wrap gap-2">
+          <IslandButton onClick={onRun} icon={<MagnifyingGlass size={16} weight="light" />} trailing>
             Search with this profile
-          </LiquidGlassButton>
-          <LiquidGlassButton tone="ghost" size="sm" onClick={onSave} disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          </IslandButton>
+          <IslandButton
+            tone="ghost"
+            onClick={onSave}
+            disabled={saving}
+            icon={
+              saving ? (
+                <CircleNotch size={16} weight="light" className="animate-spin motion-reduce:animate-none" />
+              ) : (
+                <FloppyDisk size={16} weight="light" />
+              )
+            }
+          >
             Save preferences
-          </LiquidGlassButton>
+          </IslandButton>
         </div>
-      </div>
+      </Bezel>
 
-      <div className="glass-panel rounded-3xl p-6">
-        <div className="mb-4 flex items-center gap-2 text-sm font-semibold">
-          <Briefcase className="h-4 w-4 text-primary" />
-          Search plan
+      <Bezel tone="muted" className="lg:col-span-5" coreClassName="flex flex-col gap-6 p-6 md:p-8">
+        <PanelTitle title="Search plan" icon={<Briefcase size={15} weight="light" />} />
+
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Query preview</p>
+          <p className="mt-2 text-balance font-geist text-2xl font-semibold leading-tight tracking-[-0.03em] text-foreground">
+            {profile?.search_query_preview || "Set target role"}
+          </p>
         </div>
-        <div className="space-y-3 text-sm">
-          <div className="rounded-2xl border border-border bg-card/35 p-3">
-            <p className="text-xs text-muted-foreground">Query preview</p>
-            <p className="mt-1 font-medium text-foreground">{profile?.search_query_preview || "Set target role"}</p>
+
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[1.25rem] bg-foreground/[0.06] ring-1 ring-foreground/[0.06] dark:bg-white/[0.06] dark:ring-white/10">
+          <div className="bg-card px-4 py-4">
+            <dt className="text-[11px] text-muted-foreground">Location</dt>
+            <dd className="mt-1 truncate text-sm font-medium text-foreground">
+              {profile?.location_preview || form.preferred_locations || "Any"}
+            </dd>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-2xl border border-border bg-card/35 p-3">
-              <p className="text-xs text-muted-foreground">Location</p>
-              <p className="mt-1 font-medium">{profile?.location_preview || form.preferred_locations || "Any"}</p>
-            </div>
-            <div className="rounded-2xl border border-border bg-card/35 p-3">
-              <p className="text-xs text-muted-foreground">Experience</p>
-              <p className="mt-1 font-medium">
-                {form.years_experience ? `${form.years_experience} yr` : "Confirm"} · {labelize(form.experience_level)}
-              </p>
-            </div>
+          <div className="bg-card px-4 py-4">
+            <dt className="text-[11px] text-muted-foreground">Experience</dt>
+            <dd className="mt-1 truncate text-sm font-medium tabular-nums text-foreground">
+              {form.years_experience ? `${form.years_experience} yr` : "Confirm"} · {labelize(form.experience_level)}
+            </dd>
           </div>
+        </dl>
 
-          {skills.length > 0 && (
-            <div>
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Skills found in resume</p>
-              <div className="flex flex-wrap gap-2">
-                {skills.map((skill) => (
-                  <span key={skill} className="rounded-full border border-border bg-card/35 px-2.5 py-1 text-xs">
-                    {skill}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+        {skills.length > 0 && (
+          <div>
+            <p className="mb-2.5 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Skills found in resume</p>
+            <ul className="flex flex-wrap gap-1.5">
+              {skills.map((skill) => (
+                <li
+                  key={skill}
+                  className="rounded-full bg-card px-2.5 py-1 text-xs text-foreground/85 ring-1 ring-foreground/[0.07] dark:bg-white/[0.04] dark:ring-white/10"
+                >
+                  {skill}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
-          {missing.length > 0 && (
-            <div className="rounded-2xl border border-warning/30 bg-warning/10 p-3 text-warning">
-              <div className="mb-1 flex items-center gap-2 text-xs font-semibold">
-                <AlertCircle className="h-3.5 w-3.5" />
-                Needs confirmation
-              </div>
-              <p className="text-xs">{missing.join(", ")}</p>
-            </div>
-          )}
+        {missing.length > 0 && (
+          <Notice tone="warning" icon={<WarningCircle size={16} weight="light" />}>
+            <p className="text-xs font-semibold">Needs confirmation</p>
+            <p className="text-xs">{missing.join(", ")}</p>
+          </Notice>
+        )}
 
-          {(profile?.analysis_notes ?? []).map((note) => (
-            <p key={note} className="text-xs text-muted-foreground">
-              {note}
-            </p>
-          ))}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function MatchBar({ percent }: { percent: number | null }) {
-  const p = percent ?? 0;
-  const fillColor = p >= 80 ? "bg-primary" : p >= 60 ? "bg-warning" : "bg-danger";
-
-  return (
-    <div className="mt-4">
-      <div className="mb-1 flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">Match</span>
-        <span className="font-medium">{p > 0 ? `${p}%` : "—"}</span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-primary/20">
-        <div
-          className={`h-1.5 rounded-full ${fillColor} transition-all`}
-          style={{ width: `${p}%` }}
-        />
-      </div>
+        {(profile?.analysis_notes ?? []).length > 0 && (
+          <ul className="space-y-1.5">
+            {(profile?.analysis_notes ?? []).map((note) => (
+              <li key={note} className="text-xs leading-5 text-muted-foreground">
+                {note}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Bezel>
     </div>
   );
 }
 
-function JobCard({
-  job,
-  onPrepareApply,
-  onOpenDetails,
-}: {
-  job: SavedJob;
-  onPrepareApply: (job: SavedJob) => void;
-  onOpenDetails: (job: SavedJob) => void;
-}) {
-  const domain = job.job_url
-    ? (() => {
-        try {
-          return new URL(job.job_url).hostname.replace("www.", "");
-        } catch {
-          return null;
-        }
-      })()
-    : null;
-
-  return (
-    <motion.div
-      variants={fadeUp}
-      role="button"
-      tabIndex={0}
-      onClick={() => onOpenDetails(job)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onOpenDetails(job);
-      }}
-      className="cursor-pointer rounded-3xl border border-border bg-card/60 p-6 hover:shadow-md transition-shadow flex flex-col gap-3"
-    >
-      <div>
-        <div className="text-sm font-semibold text-muted-foreground">{job.company}</div>
-        <div className="mt-0.5 text-xl font-medium leading-snug">{job.role}</div>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {job.location && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-            <MapPin className="h-3 w-3" />
-            {job.location}
-          </span>
-        )}
-        {domain && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-            <ExternalLink className="h-3 w-3" />
-            {domain}
-          </span>
-        )}
-        <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-          <Clock className="h-3 w-3" />
-          {relativeTime(job.applied_at)}
-        </span>
-        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${
-          job.status === "applied" ? "bg-success/15 text-success"
-          : job.status === "saved" ? "bg-primary/15 text-primary"
-          : "bg-secondary text-secondary-foreground"
-        }`}>
-          {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
-        </span>
-      </div>
-
-      <MatchBar percent={job.match_score} />
-
-      <div className="mt-auto flex gap-2 pt-1">
-        <LiquidGlassButton tone="ghost" size="sm" className="flex-1 gap-1.5" onClick={(e) => e.stopPropagation()}>
-          <Bookmark className="h-3.5 w-3.5" />
-          Save
-        </LiquidGlassButton>
-        {job.job_url ? (
-          <LiquidGlassButton
-            tone="primary"
-            size="sm"
-            className="flex-1 gap-1.5"
-            onClick={(e) => {
-              e.stopPropagation();
-              // Open the real job posting so the user can apply directly...
-              if (job.job_url) window.open(job.job_url, "_blank", "noopener,noreferrer");
-              // ...and kick off the human-in-the-loop auto-apply prep.
-              onPrepareApply(job);
-            }}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            Apply
-          </LiquidGlassButton>
-        ) : (
-          <LiquidGlassButton tone="primary" size="sm" className="flex-1 gap-1.5" disabled>
-            <ExternalLink className="h-3.5 w-3.5" />
-            Apply
-          </LiquidGlassButton>
-        )}
-      </div>
-    </motion.div>
-  );
-}
-
-function JobDetailModal({ job, onClose }: { job: SavedJob; onClose: () => void }) {
-  const router = useRouter();
-
-  const domain = job.job_url
-    ? (() => {
-        try {
-          return new URL(job.job_url).hostname.replace("www.", "");
-        } catch {
-          return null;
-        }
-      })()
-    : null;
-
-  const handleTailorResume = () => {
-    if (!job.jd_text) {
-      toast.error("No job description saved for this listing yet.");
-      return;
-    }
-    setPendingJd({ jdText: job.jd_text, role: job.role, company: job.company });
-    router.push("/resume");
-  };
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98 }}
-        transition={{ duration: 0.2 }}
-        onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-border bg-card p-6"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-sm font-semibold text-muted-foreground">{job.company}</div>
-            <div className="mt-0.5 text-xl font-medium leading-snug">{job.role}</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {job.location && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-                  <MapPin className="h-3 w-3" />
-                  {job.location}
-                </span>
-              )}
-              {domain && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
-                  <ExternalLink className="h-3 w-3" />
-                  {domain}
-                </span>
-              )}
-              {job.match_score != null && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-medium text-primary">
-                  {job.match_score}% match
-                </span>
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="mt-5 flex-1 overflow-y-auto rounded-2xl border border-border/60 bg-background/40 p-4">
-          {job.jd_text ? (
-            <p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">{job.jd_text}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No description was saved for this listing. Open the original posting to read the full details.
-            </p>
-          )}
-        </div>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <LiquidGlassButton tone="primary" size="md" className="flex-1 gap-1.5" onClick={handleTailorResume} disabled={!job.jd_text}>
-            <Zap className="h-4 w-4" />
-            Tailor resume for this job
-          </LiquidGlassButton>
-          {job.job_url && (
-            <LiquidGlassButton
-              tone="ghost"
-              size="md"
-              className="gap-1.5"
-              onClick={() => window.open(job.job_url!, "_blank", "noopener,noreferrer")}
-            >
-              <ExternalLink className="h-4 w-4" />
-              Open original posting
-            </LiquidGlassButton>
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
+/* -------------------------------------------------------------------------- */
+/*  Page                                                                      */
+/* -------------------------------------------------------------------------- */
 
 export default function JobsPage() {
   const router = useRouter();
   const qc = useQueryClient();
+  const reduce = useReducedMotion();
+  const itemVariants = reduce ? FADE_ONLY : listItem;
+  const swapVariants = reduce ? FADE_ONLY : panelSwap;
   const [detailJob, setDetailJob] = useState<SavedJob | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(["Full-time"]),
   );
@@ -781,6 +1193,7 @@ export default function JobsPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [xrayQuery, setXrayQuery] = useState(XRAY_TEMPLATES[0]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchLocation, setSearchLocation] = useState("");
   const [agentRunning, setAgentRunning] = useState(false);
   const [liveBrowser, setLiveBrowser] = useState(true);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -1022,6 +1435,23 @@ export default function JobsPage() {
     (j) => j.applied_at && new Date(j.applied_at).getTime() > oneDayAgo,
   ).length;
 
+  // Asymmetric results: the highest-scoring role is featured, the rest stay in API order.
+  const featuredJob =
+    jobs.length > 0
+      ? jobs.reduce((best, j) => ((j.match_score ?? -1) > (best.match_score ?? -1) ? j : best), jobs[0])
+      : null;
+  const otherJobs = featuredJob ? jobs.filter((j) => j.id !== featuredJob.id) : [];
+  const selectedJob = jobs.find((j) => j.id === selectedId) ?? featuredJob;
+
+  const searchBusy = searchMutation.isPending || agentRunning;
+  const planLabel = searchQuery.trim()
+    ? "Custom search"
+    : splitCsv(profileForm.target_roles)[0]
+      ? `Using profile: ${splitCsv(profileForm.target_roles)[0]}`
+      : searchProfile?.search_query_preview
+        ? `Resume plan: ${searchProfile.search_query_preview}`
+        : "Using resume/profile";
+
   function toggleFilter(chip: string) {
     setActiveFilters((prev) => {
       const next = new Set(prev);
@@ -1047,8 +1477,18 @@ export default function JobsPage() {
     }));
   }
 
+  /** Desktop: show in the side panel. Below lg: open the detail sheet. */
+  function openJobDetails(job: SavedJob) {
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      setSelectedId(job.id);
+    } else {
+      setDetailJob(job);
+    }
+  }
+
   function handleRunAgent() {
     const query = searchQuery.trim();
+    const typedLocation = searchLocation.trim();
     const manualRoles = splitCsv(profileForm.target_roles);
     const manualLocations = splitCsv(profileForm.preferred_locations);
     const selectedLocation = Array.from(activeFilters).find((f) =>
@@ -1064,7 +1504,10 @@ export default function JobsPage() {
     const primaryWorkMode = primaryCsvValue(workMode);
     searchMutation.mutate({
       search_query: query,
-      location: primaryWorkMode === "remote" ? "Remote" : (selectedLocation ?? locationFromProfile) || "Any",
+      // An explicitly typed location wins; otherwise fall back to filters/profile as before.
+      location:
+        typedLocation ||
+        (primaryWorkMode === "remote" ? "Remote" : (selectedLocation ?? locationFromProfile) || "Any"),
       max_results: 10,
       live_browser: liveBrowser,
       work_mode: workMode,
@@ -1076,267 +1519,224 @@ export default function JobsPage() {
     });
   }
 
+  const prepareApply = (selected: SavedJob) => prepareApplyMutation.mutate(selected);
+
   return (
     <>
-    <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      <CommandHeader
-        eyebrow="Grow AI Talent Platform"
-        title="Find your next role."
-        description="Resume is analyzed first. Confirm fresher/years, target roles, location, and work mode before agents search."
-        actions={
-        <div className="flex flex-wrap gap-2">
-          <LiquidGlassButton
-            tone={showFilters ? "primary" : "ghost"}
-            size="sm"
-            onClick={() => setShowFilters((v) => !v)}
-          >
-            <Filter className="h-4 w-4" />
-            Filters
-            {activeFilters.size > 0 && (
-              <span className="ml-1 rounded-full bg-current/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                {activeFilters.size}
-              </span>
-            )}
-          </LiquidGlassButton>
-          <LiquidGlassButton
-            tone="ghost"
-            size="sm"
-            onClick={() => setShowAdvanced((v) => !v)}
-          >
-            <ChevronDown
-              className={`h-4 w-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`}
+      <Screen>
+        <PageHero
+          eyebrow="Job search agent"
+          title="Find your next role."
+          description="Your resume is read first. Confirm experience, roles, location and work mode, then let the agent scan the boards."
+          className="lg:items-start"
+          actions={
+            <div className="w-full space-y-5">
+              <SearchIsland
+                query={searchQuery}
+                onQueryChange={setSearchQuery}
+                location={searchLocation}
+                onLocationChange={setSearchLocation}
+                onSubmit={handleRunAgent}
+                busy={searchBusy}
+                running={agentRunning}
+              />
+
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+                <label className="inline-flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-foreground/85">
+                  <Toggle checked={liveBrowser} onChange={setLiveBrowser} label="Watch browser" />
+                  Watch browser
+                </label>
+                <StatusPill tone="neutral" icon={<Sparkle size={12} weight="light" />} className="min-w-0 max-w-full sm:max-w-[22rem]">
+                  <span className="min-w-0 truncate">{planLabel}</span>
+                </StatusPill>
+                <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                  <DisclosurePill
+                    open={showFilters}
+                    onToggle={() => setShowFilters((v) => !v)}
+                    controls="jobs-filter-panel"
+                    icon={<SlidersHorizontal size={14} weight="light" />}
+                    count={activeFilters.size}
+                  >
+                    Filters
+                  </DisclosurePill>
+                  <DisclosurePill
+                    open={showAdvanced}
+                    onToggle={() => setShowAdvanced((v) => !v)}
+                    controls="jobs-xray-panel"
+                    icon={<Globe size={14} weight="light" />}
+                  >
+                    Advanced search
+                  </DisclosurePill>
+                </div>
+              </div>
+
+              <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-2">
+                {FILTER_CHIPS.map((chip) => (
+                  <Chip key={chip} active={activeFilters.has(chip)} onClick={() => toggleFilter(chip)}>
+                    {chip}
+                  </Chip>
+                ))}
+              </div>
+
+              <AnimatePresence initial={false}>
+                {showFilters && (
+                  <motion.div key="filters" id="jobs-filter-panel" variants={swapVariants} initial="hidden" animate="show" exit="exit">
+                    <FilterPanel
+                      activeFilters={activeFilters}
+                      onToggle={toggleFilter}
+                      onClear={() => setActiveFilters(new Set())}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <AnimatePresence initial={false}>
+                {showAdvanced && (
+                  <motion.div key="xray-panel" id="jobs-xray-panel" variants={swapVariants} initial="hidden" animate="show" exit="exit">
+                    <XraySearchPanel query={xrayQuery} setQuery={setXrayQuery} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          }
+          aside={
+            <AgentConsole
+              running={agentRunning}
+              isLoading={isLoading}
+              jobsCount={jobs.length}
+              avgMatch={avgMatch}
+              newToday={newToday}
             />
-            Advanced search ↓
-          </LiquidGlassButton>
-          <LiquidGlassButton
-            tone="primary"
-            size="sm"
-            onClick={handleRunAgent}
-            disabled={searchMutation.isPending || agentRunning}
-          >
-            {searchMutation.isPending || agentRunning ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Zap className="h-4 w-4" />
-            )}
-            {agentRunning ? "Searching…" : "Run Job Agent"}
-          </LiquidGlassButton>
-        </div>
-        }
-      />
+          }
+        />
 
-      <ProfileSearchPanel
-        profile={searchProfile}
-        form={profileForm}
-        saving={saveProfileMutation.isPending}
-        onChange={updateProfileForm}
-        onSave={() => saveProfileMutation.mutate()}
-        onRun={handleRunAgent}
-      />
-
-      {/* Search + active filter chips */}
-      <motion.div variants={fadeUp} className="space-y-3">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleRunAgent()}
-            placeholder="Leave blank to use resume + saved preferences, or type custom role…"
-            className="h-11 w-full rounded-full border border-border bg-card/40 pl-11 pr-4 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-border bg-card/40 px-3 py-1 text-xs text-muted-foreground">
-            {searchQuery.trim()
-              ? "Custom search"
-              : splitCsv(profileForm.target_roles)[0]
-                ? `Using profile: ${splitCsv(profileForm.target_roles)[0]}`
-                : searchProfile?.search_query_preview
-                  ? `Resume plan: ${searchProfile.search_query_preview}`
-                  : "Using resume/profile"}
-          </span>
-          <button
-            type="button"
-            onClick={() => setLiveBrowser((v) => !v)}
-            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors ${
-              liveBrowser
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-            }`}
-          >
-            <span className="relative flex h-2 w-2">
-              {liveBrowser && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-current opacity-60" />}
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
-            </span>
-            Watch browser
-          </button>
-          {FILTER_CHIPS.map((chip) => (
-            <button
-              key={chip}
-              onClick={() => toggleFilter(chip)}
-              className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                activeFilters.has(chip)
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card/40 text-muted-foreground hover:bg-card/70"
-              }`}
-            >
-              {chip}
-            </button>
-          ))}
-          {activeFilters.size > 0 && (
-            <span className="rounded-full bg-secondary px-2.5 py-1 text-xs text-secondary-foreground">
-              Active filters: {activeFilters.size}
-            </span>
+        <Section aria-label="Matches">
+          {displayRunId && (
+            <motion.div variants={swapVariants} initial="hidden" animate="show">
+              <Bezel lifted coreClassName="space-y-5 p-5 md:p-7">
+                <PanelTitle
+                  title="Live agent run"
+                  icon={<Broadcast size={15} weight="light" />}
+                  meta={liveBrowser ? "Browser view on" : "Log only"}
+                />
+                <AgentStatusStream
+                  runId={displayRunId}
+                  onApprove={() => {
+                    qc.invalidateQueries({ queryKey: ["jobs-saved"] });
+                    setActiveRunId(null);
+                    setActiveRun(null);
+                  }}
+                  onCancel={() => {
+                    setActiveRunId(null);
+                    setActiveRun(null);
+                  }}
+                />
+              </Bezel>
+            </motion.div>
           )}
-        </div>
-      </motion.div>
 
-      {/* Filter panel */}
-      <AnimatePresence>
-        {showFilters && (
-          <FilterPanel
-            activeFilters={activeFilters}
-            onToggle={toggleFilter}
-            onClear={() => setActiveFilters(new Set())}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Advanced Search (X-ray) */}
-      <AnimatePresence>
-        {showAdvanced && (
-          <motion.div
-            key="xray-panel"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="overflow-hidden"
-          >
-            <XraySearchPanel query={xrayQuery} setQuery={setXrayQuery} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {displayRunId && (
-        <motion.div variants={fadeUp}>
-          <AgentStatusStream
-            runId={displayRunId}
-            onApprove={() => {
-              qc.invalidateQueries({ queryKey: ["jobs-saved"] });
-              setActiveRunId(null);
-              setActiveRun(null);
-            }}
-            onCancel={() => {
-              setActiveRunId(null);
-              setActiveRun(null);
-            }}
-          />
-        </motion.div>
-      )}
-
-      {/* Metrics strip */}
-      <motion.div variants={fadeUp} className="grid grid-cols-3 gap-4">
-        <div className="rounded-3xl border border-border bg-card/60 p-6">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Roles found</span>
-            <Search className="h-4 w-4 text-muted-foreground" />
-          </div>
-          {isLoading ? (
-            <div className="mt-4 h-8 w-12 shimmer rounded-xl" />
-          ) : (
-            <div className="mt-4 text-3xl font-medium">{jobs.length}</div>
-          )}
-        </div>
-
-        <div className="rounded-3xl border border-border bg-card/60 p-6">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Average match</span>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </div>
-          {isLoading ? (
-            <div className="mt-4 h-8 w-16 shimmer rounded-xl" />
-          ) : (
-            <div className="mt-4 text-3xl font-medium">{avgMatch > 0 ? `${avgMatch}%` : "—"}</div>
-          )}
-        </div>
-
-        <div className="rounded-3xl border border-border bg-card/60 p-6">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">New since yesterday</span>
-            <RefreshCw className="h-4 w-4 text-muted-foreground" />
-          </div>
-          {isLoading ? (
-            <div className="mt-4 h-8 w-8 shimmer rounded-xl" />
-          ) : (
-            <div className="mt-4 text-3xl font-medium">{newToday}</div>
-          )}
-        </div>
-      </motion.div>
-
-      {/* Job cards grid */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-48 shimmer rounded-3xl" />
-          ))}
-        </div>
-      ) : jobs.length === 0 ? (
-        <motion.div variants={fadeUp}>
-          <EmptyState
-            icon={<Search className="h-6 w-6" />}
-            title="No jobs found yet."
-            description="Click Run Job Agent to start searching for roles matching your profile."
-            action={
-              <LiquidGlassButton tone="primary" onClick={handleRunAgent}>
-                <Zap className="h-4 w-4" />
-                Run Job Agent
-              </LiquidGlassButton>
+          <SectionHeading
+            eyebrow="Saved matches"
+            title="Ranked against your resume"
+            description="Select a role to read the full description, tailor your resume, or start a supervised application."
+            actions={
+              jobs.length > 0 ? (
+                <StatusPill tone="primary" className="tabular-nums">
+                  {jobs.length} {jobs.length === 1 ? "role" : "roles"}
+                </StatusPill>
+              ) : null
             }
           />
-        </motion.div>
-      ) : (
-        <motion.div
-          variants={stagger}
-          className="grid grid-cols-1 gap-4 lg:grid-cols-2"
-        >
-          {jobs.map((job) => (
-            <JobCard
-              key={job.id}
-              job={job}
-              onPrepareApply={(selected) => prepareApplyMutation.mutate(selected)}
-              onOpenDetails={setDetailJob}
-            />
-          ))}
-        </motion.div>
-      )}
 
-      {/* Agent status bar */}
-      <motion.div
-        variants={fadeUp}
-        className="flex items-center gap-3 rounded-2xl border border-border bg-card/40 px-5 py-3 text-sm text-muted-foreground"
-      >
-        {agentRunning ? (
-          <>
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
-            Job Search Agent running — scanning boards for matching roles…
-          </>
-        ) : (
-          <>
-            <span className="relative flex h-2 w-2 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            Job Search Agent ready — {jobs.length > 0 ? `${jobs.length} roles saved` : "run agent to discover roles"}
-          </>
-        )}
-      </motion.div>
-    </motion.div>
-    <AnimatePresence>
-      {detailJob && <JobDetailModal job={detailJob} onClose={() => setDetailJob(null)} />}
-    </AnimatePresence>
+          {isLoading ? (
+            <ResultsSkeleton />
+          ) : jobs.length === 0 || !featuredJob ? (
+            <Reveal>
+              <Bezel coreClassName="p-2">
+                <EmptyPanel
+                  icon={<Briefcase size={24} weight="light" />}
+                  title="No jobs found yet."
+                  description="Search above, or let the agent use your resume and saved preferences to find matching roles."
+                  action={
+                    <IslandButton onClick={handleRunAgent} disabled={searchBusy} icon={<Lightning size={16} weight="light" />} trailing>
+                      Search with my resume
+                    </IslandButton>
+                  }
+                />
+              </Bezel>
+            </Reveal>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
+              <div className="min-w-0 space-y-6 lg:col-span-7">
+                <motion.div key={featuredJob.id} variants={itemVariants} initial="hidden" animate="show">
+                  <FeaturedJobCard
+                    job={featuredJob}
+                    selected={selectedJob?.id === featuredJob.id}
+                    onOpenDetails={openJobDetails}
+                    onPrepareApply={prepareApply}
+                  />
+                </motion.div>
+
+                {otherJobs.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="pl-1 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                      More matches · <span className="tabular-nums">{otherJobs.length}</span>
+                    </p>
+                    <motion.ul variants={listStagger} initial="hidden" animate="show" className="space-y-3">
+                      {otherJobs.map((job) => (
+                        <motion.li key={job.id} variants={itemVariants}>
+                          <JobRow
+                            job={job}
+                            selected={selectedJob?.id === job.id}
+                            onOpenDetails={openJobDetails}
+                            onPrepareApply={prepareApply}
+                          />
+                        </motion.li>
+                      ))}
+                    </motion.ul>
+                  </div>
+                )}
+              </div>
+
+              <aside aria-label="Selected job" className="hidden min-w-0 lg:sticky lg:top-24 lg:col-span-5 lg:block">
+                <AnimatePresence mode="wait" initial={false}>
+                  {selectedJob && (
+                    <motion.div key={selectedJob.id} variants={swapVariants} initial="hidden" animate="show" exit="exit">
+                      <Bezel lifted coreClassName="flex max-h-[calc(100dvh-8rem)] flex-col p-6 md:p-7">
+                        <JobDetailBody job={selectedJob} />
+                      </Bezel>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </aside>
+            </div>
+          )}
+        </Section>
+
+        <Section aria-label="Search profile">
+          <Reveal>
+            <SectionHeading
+              eyebrow="Search profile"
+              title="Tune what the agent looks for"
+              description="Edits here shape every search. Save them to reuse across sessions."
+            />
+          </Reveal>
+          <Reveal delay={0.05}>
+            <ProfileSearchPanel
+              profile={searchProfile}
+              form={profileForm}
+              saving={saveProfileMutation.isPending}
+              onChange={updateProfileForm}
+              onSave={() => saveProfileMutation.mutate()}
+              onRun={handleRunAgent}
+            />
+          </Reveal>
+        </Section>
+      </Screen>
+
+      <AnimatePresence>
+        {detailJob && <JobDetailModal job={detailJob} onClose={() => setDetailJob(null)} />}
+      </AnimatePresence>
     </>
   );
 }

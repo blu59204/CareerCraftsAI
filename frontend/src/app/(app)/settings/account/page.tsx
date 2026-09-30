@@ -1,16 +1,56 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion } from "motion/react";
-import { User, Check, Globe, AlertTriangle, LogOut, Download } from "lucide-react";
-import { BrandGithub } from "@/components/icons/BrandIcons";
+import { AnimatePresence, motion } from "motion/react";
+import {
+  ArrowCounterClockwise,
+  Bell,
+  Brain,
+  Briefcase,
+  Camera,
+  Check,
+  Database,
+  Desktop,
+  DownloadSimple,
+  Fingerprint,
+  GithubLogo,
+  GoogleLogo,
+  IdentificationCard,
+  LinkedinLogo,
+  Lock,
+  Palette,
+  Password,
+  Plugs,
+  SealCheck,
+  ShieldCheck,
+  SignOut,
+  Trash,
+  UserCircle,
+  Warning,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { fadeUp, stagger } from "@/lib/motion-variants";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { CommandHeader } from "@/components/immersive/CommandHeader";
 import { SettingsNav } from "@/components/settings/SettingsNav";
+import {
+  Bezel,
+  Eyebrow,
+  Field,
+  Hairline,
+  IslandButton,
+  IslandLink,
+  Input,
+  Notice,
+  PageHero,
+  PanelTitle,
+  Reveal,
+  Screen,
+  Segmented,
+  Skeleton,
+  StatusPill,
+  Toggle,
+  panelSwap,
+} from "@/components/vanguard";
 import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { connectGmail } from "@/lib/nango-connect";
@@ -33,38 +73,11 @@ interface UserProfile {
   deletion_cooldown_until: string | null;
 }
 
-interface ToggleProps {
-  enabled: boolean;
-  onToggle: () => void;
-}
-
 interface NotificationPreferences {
   notify_email: boolean;
   notify_agent_alerts: boolean;
   notify_followup_reminders: boolean;
   notify_weekly_digest: boolean;
-}
-
-function Toggle({ enabled, onToggle }: ToggleProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      onClick={onToggle}
-      className={cn(
-        "relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none",
-        enabled ? "bg-primary" : "bg-muted",
-      )}
-    >
-      <span
-        className={cn(
-          "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-md ring-0 transition-transform",
-          enabled ? "translate-x-5" : "translate-x-0",
-        )}
-      />
-    </button>
-  );
 }
 
 function getInitials(fullName: string | null | undefined): string {
@@ -75,6 +88,14 @@ function getInitials(fullName: string | null | undefined): string {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+}
+
+function formatLongDate(value: string): string {
+  return new Date(value).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 // Preset monogram colors — like Google/Slack's default-avatar color picker.
@@ -112,6 +133,40 @@ async function renderPresetAvatar(color: string, initials: string): Promise<Blob
   });
 }
 
+/** Pill styling for the <label> that wraps the hidden file input (matches IslandButton ghost/sm). */
+const UPLOAD_LABEL_CLASS =
+  "group relative inline-flex h-9 cursor-pointer select-none items-center justify-center gap-2 whitespace-nowrap rounded-full bg-card px-4 text-[13px] font-medium tracking-[-0.01em] text-foreground " +
+  "ring-1 ring-foreground/10 shadow-bezel-core dark:ring-white/10 dark:shadow-bezel-core-dark " +
+  "transition-[background-color,color,box-shadow,transform,opacity] duration-500 ease-vanguard hover:bg-muted/60 active:scale-[0.98] " +
+  "focus-within:ring-2 focus-within:ring-ring";
+
+/** Icon medallion used in list rows. */
+function Medallion({ children, tone = "default" }: { children: ReactNode; tone?: "default" | "danger" }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "grid h-10 w-10 shrink-0 place-items-center rounded-full ring-1",
+        tone === "danger"
+          ? "bg-danger/10 text-danger ring-danger/20"
+          : "bg-foreground/[0.04] text-foreground/80 ring-foreground/[0.06] dark:bg-white/[0.05] dark:ring-white/10",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Title + description block used at the top of each right-column section. */
+function SectionIntro({ icon, title, description, meta }: { icon: ReactNode; title: string; description?: ReactNode; meta?: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <PanelTitle icon={icon} title={title} meta={meta} />
+      {description ? <p className="max-w-[62ch] pl-[2.625rem] text-sm leading-6 text-muted-foreground">{description}</p> : null}
+    </div>
+  );
+}
+
 export default function AccountSettingsPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -122,6 +177,7 @@ export default function AccountSettingsPage() {
   const { refresh: refreshUserStatus } = useUserStatus();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [deletionActionPending, setDeletionActionPending] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const { data: notifyPrefs } = useQuery<NotificationPreferences>({
     queryKey: ["preferences"],
     queryFn: async () => (await apiClient.get("/users/me/preferences")).data ?? {},
@@ -145,7 +201,8 @@ export default function AccountSettingsPage() {
     };
     saveNotifyPrefs.mutate({ ...current, [key]: !current[key] });
   };
-  const [twoFactor, setTwoFactor] = useState(false);
+  // Two-factor state is owned by the identity provider; the switch only explains that.
+  const [twoFactor] = useState(false);
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [presetPickerOpen, setPresetPickerOpen] = useState(false);
 
@@ -190,6 +247,31 @@ export default function AccountSettingsPage() {
   const googlePhotoUrl = googleAccount?.imageUrl || null;
   const usingGooglePhoto = !!googlePhotoUrl && authUser?.imageUrl === googlePhotoUrl;
 
+  const displayName = user?.full_name || authUser?.fullName || "Add your name";
+  const initials = getInitials(user?.full_name || authUser?.fullName);
+  const connectionCount = [!!connectedAccounts?.google, hasLinkedIn, hasGithub].filter(Boolean).length;
+  const deletionScheduled = !!(user?.deletion_requested_at && user.deletion_scheduled_for);
+
+  const handleAvatarFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      toast.error("Choose an image smaller than 5 MB.");
+      return;
+    }
+    if (!authUser) return;
+    setAvatarSaving(true);
+    try {
+      await authUser.setProfileImage({ file });
+      toast.success("Profile photo updated");
+    } catch {
+      toast.error("Could not update profile photo.");
+    } finally {
+      setAvatarSaving(false);
+    }
+  };
+
   const applyPreset = async (color: string) => {
     if (!authUser) return;
     setAvatarSaving(true);
@@ -229,6 +311,86 @@ export default function AccountSettingsPage() {
     router.push("/");
   };
 
+  const handleConnectGoogle = async () => {
+    const { error } = await connectGmail("/settings/account");
+    if (error) toast.error(error.message);
+  };
+
+  const handleExportData = async () => {
+    setExporting(true);
+    try {
+      const response = await apiClient.get("/users/me/export", {
+        responseType: "blob",
+      });
+      const blob = new Blob([response.data], { type: "application/zip" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const disposition = response.headers["content-disposition"] as string | undefined;
+      const match = disposition?.match(/filename="?([^"]+)"?/);
+      a.download = match?.[1] ?? "careercraft-data-export.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Download started");
+    } catch {
+      toast.error("Failed to export your data — please try again");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleCancelDeletion = async () => {
+    setDeletionActionPending(true);
+    try {
+      await apiClient.post("/users/me/cancel-deletion");
+      toast.success("Account deletion cancelled");
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      refreshUserStatus();
+    } catch {
+      toast.error("Couldn't cancel deletion — please try again");
+    } finally {
+      setDeletionActionPending(false);
+    }
+  };
+
+  const handleScheduleDeletion = async () => {
+    if (
+      !confirm(
+        "Delete your account? Your data will be permanently removed after a 15-day grace period, which you can cancel any time before then.",
+      )
+    ) {
+      return;
+    }
+    setDeletionActionPending(true);
+    try {
+      await apiClient.delete("/users/me");
+      try {
+        sessionStorage.setItem("cc-deletion-seen", "1");
+      } catch {
+        // ignore — nothing more we can do without storage
+      }
+      toast.success("Account deletion scheduled — you can still cancel it below.");
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      refreshUserStatus();
+    } catch (err) {
+      const detail = (
+        err as {
+          response?: { status?: number; data?: { detail?: { cooldown_until?: string } } };
+        }
+      )?.response;
+      if (detail?.status === 429 && detail.data?.detail?.cooldown_until) {
+        const until = formatLongDate(detail.data.detail.cooldown_until);
+        toast.error(`You cancelled a deletion recently — try again after ${until}.`);
+      } else {
+        toast.error("Failed to delete account — please try again or contact support");
+      }
+    } finally {
+      setDeletionActionPending(false);
+    }
+  };
+
   const updateMutation = useMutation({
     mutationFn: async () => {
       const { data } = await apiClient.patch("/users/me", {
@@ -255,545 +417,584 @@ export default function AccountSettingsPage() {
     onError: () => toast.error("Could not disconnect Google"),
   });
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "account", label: "Account" },
-    { id: "security", label: "Security" },
-    { id: "notifications", label: "Notifications" },
+  const tabs: { id: Tab; label: string; icon: ReactNode }[] = [
+    { id: "account", label: "Account", icon: <IdentificationCard size={15} weight="light" /> },
+    { id: "security", label: "Security", icon: <ShieldCheck size={15} weight="light" /> },
+    { id: "notifications", label: "Notifications", icon: <Bell size={15} weight="light" /> },
   ];
 
+  const notificationItems = [
+    { key: "notify_email" as const, label: "Email notifications", sub: "Receive updates via email", enabled: emailNotifs },
+    { key: "notify_agent_alerts" as const, label: "Agent completion alerts", sub: "Notify when agents finish running", enabled: agentAlerts },
+    { key: "notify_followup_reminders" as const, label: "Follow-up reminders", sub: "Reminders to follow up with leads", enabled: followUpReminders },
+    { key: "notify_weekly_digest" as const, label: "Weekly digest", sub: "A weekly summary of your activity", enabled: weeklyDigest },
+  ];
+  const enabledNotificationCount = notificationItems.filter((item) => item.enabled).length;
+
+  const connectedPill = (
+    <StatusPill tone="success" icon={<Check size={11} weight="light" />}>
+      Connected
+    </StatusPill>
+  );
+
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="mx-auto w-full max-w-6xl space-y-8">
-      <motion.div variants={fadeUp}>
-        <CommandHeader
-          eyebrow="Aurora Onboard"
-          title="Account Settings"
-          description="Manage identity, OAuth connections, security, and notifications."
-        />
-      </motion.div>
-
-      <motion.div variants={fadeUp}>
-        <SettingsNav />
-      </motion.div>
-
-      {/* Tab navigation */}
-      <motion.div variants={fadeUp} className="flex gap-1 rounded-2xl border border-border bg-card/40 p-1 w-fit">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "rounded-xl px-4 py-2 text-sm font-medium transition-colors",
-              activeTab === tab.id
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </motion.div>
-
-      {/* Account tab */}
-      {activeTab === "account" && (
-        <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-6">
-          {/* Profile card */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-6 text-sm font-medium">Profile</div>
-            <div className="flex items-center gap-4 mb-6">
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-primary/15 text-lg font-semibold text-primary">
-                {authUser?.imageUrl ? (
-                  <img src={authUser.imageUrl} alt="Profile" className="h-full w-full object-cover" />
-                ) : isLoading ? "…" : getInitials(user?.full_name || authUser?.fullName)}
+    <Screen className="space-y-6 md:space-y-8">
+      <PageHero
+        eyebrow="Settings"
+        title="Account Settings"
+        description="Your identity, sign-in security, connected accounts and the alerts CareerCraft sends you."
+        aside={
+          <Bezel size="md" lifted coreClassName="p-5 md:p-6">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">At a glance</p>
+            <dl className="mt-4 space-y-3.5 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Sign-in email</dt>
+                <dd>
+                  {signInEmailVerified ? (
+                    <StatusPill tone="success">Verified</StatusPill>
+                  ) : (
+                    <StatusPill tone="neutral">Unverified</StatusPill>
+                  )}
+                </dd>
               </div>
-              <div>
-                <div className="font-medium">
-                  {isLoading ? (
-                    <span className="inline-block h-4 w-32 animate-pulse rounded bg-muted" />
+              <Hairline />
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Linked accounts</dt>
+                <dd className="font-medium tabular-nums text-foreground">{connectionCount} of 3</dd>
+              </div>
+              <Hairline />
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-muted-foreground">Status</dt>
+                <dd>
+                  {deletionScheduled ? (
+                    <StatusPill tone="danger" live>Deletion pending</StatusPill>
                   ) : (
-                    user?.full_name || authUser?.fullName || "Add your name"
+                    <StatusPill tone="primary">Active</StatusPill>
                   )}
+                </dd>
+              </div>
+            </dl>
+          </Bezel>
+        }
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:gap-10">
+        {/* ── Left: sticky identity column ─────────────────────────────── */}
+        <aside aria-label="Your identity" className="min-w-0 lg:col-span-4 lg:self-start lg:sticky lg:top-24">
+          <div className="space-y-6">
+            <Reveal>
+              <Bezel lifted coreClassName="p-6 md:p-7">
+                <div className="flex items-start gap-4 lg:flex-col lg:gap-5">
+                  <div className="relative shrink-0">
+                    <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-[1.4rem] bg-primary/10 text-xl font-semibold tracking-[-0.02em] text-primary ring-1 ring-primary/15 lg:h-24 lg:w-24 lg:rounded-[1.6rem]">
+                      {authUser?.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- Clerk-hosted avatar, dynamic origin
+                        <img src={authUser.imageUrl} alt="Profile" className="h-full w-full object-cover" />
+                      ) : isLoading ? (
+                        <Skeleton className="h-full w-full rounded-none" />
+                      ) : (
+                        initials
+                      )}
+                    </div>
+                    {avatarSaving ? (
+                      <span aria-hidden className="absolute inset-0 overflow-hidden rounded-[1.4rem] bg-background/50 lg:rounded-[1.6rem]">
+                        <Skeleton className="h-full w-full rounded-none opacity-70" />
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-geist text-xl font-semibold tracking-[-0.03em] text-foreground">
+                      {isLoading ? <Skeleton className="h-6 w-36 rounded-full" /> : displayName}
+                    </div>
+                    <div className="mt-1 break-all text-sm text-muted-foreground">
+                      {isLoading ? <Skeleton className="mt-1 h-4 w-48 rounded-full" /> : signInEmail || user?.email || ""}
+                    </div>
+                    {signInEmailVerified ? (
+                      <StatusPill tone="success" icon={<SealCheck size={12} weight="light" />} className="mt-3">
+                        Verified sign-in email
+                      </StatusPill>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {isLoading ? (
-                    <span className="inline-block h-3 w-44 animate-pulse rounded bg-muted" />
-                  ) : (
-                    signInEmail || user?.email || ""
-                  )}
-                </div>
-                {signInEmailVerified ? (
-                  <span className="mt-1 inline-flex rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-success">
-                    Verified sign-in email
-                  </span>
-                ) : null}
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <label className="inline-flex cursor-pointer items-center rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted focus-within:ring-2 focus-within:ring-ring">
-                    {avatarSaving ? "Uploading photo…" : "Upload photo"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="sr-only"
-                      disabled={avatarSaving}
-                      onChange={async (event) => {
-                        const file = event.currentTarget.files?.[0];
-                        event.currentTarget.value = "";
-                        if (!file) return;
-                        if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
-                          toast.error("Choose an image smaller than 5 MB.");
-                          return;
-                        }
-                        if (!authUser) return;
-                        setAvatarSaving(true);
-                        try {
-                          await authUser.setProfileImage({ file });
-                          toast.success("Profile photo updated");
-                        } catch {
-                          toast.error("Could not update profile photo.");
-                        } finally {
-                          setAvatarSaving(false);
-                        }
-                      }}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    disabled={avatarSaving}
-                    onClick={() => setPresetPickerOpen((v) => !v)}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-60"
-                  >
-                    Choose a preset
-                  </button>
-                  {googlePhotoUrl && !usingGooglePhoto && (
-                    <button
-                      type="button"
-                      disabled={avatarSaving}
-                      onClick={applyGooglePhoto}
-                      className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-60"
-                    >
-                      Use Google photo
-                    </button>
-                  )}
-                </div>
-                {presetPickerOpen && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {AVATAR_PRESETS.map((color) => (
-                      <button
-                        key={color}
-                        type="button"
+
+                <Hairline className="my-6" />
+
+                <div className="space-y-3">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Profile photo</p>
+                  <div className="flex flex-wrap gap-2">
+                    <label className={cn(UPLOAD_LABEL_CLASS, avatarSaving && "pointer-events-none opacity-50")}>
+                      <Camera aria-hidden size={14} weight="light" />
+                      {avatarSaving ? "Uploading photo…" : "Upload photo"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="sr-only"
                         disabled={avatarSaving}
-                        onClick={() => applyPreset(color)}
-                        aria-label={`Use ${color} preset avatar`}
-                        className="flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold text-white ring-2 ring-transparent transition hover:ring-ring disabled:opacity-60"
-                        style={{ backgroundColor: color }}
-                      >
-                        {getInitials(user?.full_name || authUser?.fullName)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">Name</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Your full name"
-                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">Contact email</label>
-                <input
-                  type="email"
-                  value={email}
-                  readOnly
-                  placeholder="Your sign-in email"
-                  className="w-full cursor-not-allowed rounded-2xl border border-border bg-muted/40 px-4 py-2.5 text-sm text-muted-foreground"
-                />
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  Your sign-in email is managed by your identity provider and can’t be changed here.
-                </p>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">Headline</label>
-                <input
-                  type="text"
-                  value={headline}
-                  onChange={(e) => setHeadline(e.target.value)}
-                  placeholder="e.g. Senior Software Engineer at Stripe"
-                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">Phone</label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+1 555 000 0000"
-                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium">LinkedIn URL</label>
-                <input
-                  type="url"
-                  value={linkedinUrl}
-                  onChange={(e) => setLinkedinUrl(e.target.value)}
-                  placeholder="https://linkedin.com/in/your-profile"
-                  className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <LiquidGlassButton
-                tone="primary"
-                size="sm"
-                onClick={() => updateMutation.mutate()}
-                disabled={updateMutation.isPending}
-              >
-                {updateMutation.isPending ? "Saving…" : "Save changes"}
-              </LiquidGlassButton>
-            </div>
-          </motion.div>
-
-          {/* Job preferences link */}
-          {/* Job preferences link */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-2 text-sm font-medium">Job preferences</div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Set your target role, experience level, work mode and salary preferences.
-            </p>
-            <a href="/settings/profile">
-              <LiquidGlassButton tone="ghost" size="sm">Manage preferences →</LiquidGlassButton>
-            </a>
-          </motion.div>
-
-          {/* AI model & API keys */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-2 text-sm font-medium">AI models &amp; API keys</div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Add your Anthropic, OpenAI, Google, or Ollama API key. Agents use your key — BYOK.
-            </p>
-            <a href="/settings/models">
-              <LiquidGlassButton tone="ghost" size="sm">Manage models →</LiquidGlassButton>
-            </a>
-          </motion.div>
-
-          {/* Connected accounts */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-6 flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">Connected accounts</span>
-              <a href="/settings/integrations" className="text-xs text-primary hover:underline">Manage integrations</a>
-            </div>
-            <div className="space-y-4">
-              {/* Google */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-card border border-border">
-                    <Globe className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">Google</div>
-                    <div className="text-xs text-muted-foreground">Used for Gmail agent</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {connectedAccounts?.google ? (
-                    <>
-                      <span className="flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-                        <Check className="h-3 w-3" /> Connected
-                      </span>
-                      <LiquidGlassButton
-                        tone="ghost"
-                        size="sm"
-                        onClick={() => disconnectGoogleMutation.mutate()}
-                      >
-                        Disconnect
-                      </LiquidGlassButton>
-                    </>
-                  ) : (
-                    <LiquidGlassButton
-                      tone="primary"
+                        onChange={handleAvatarFile}
+                      />
+                    </label>
+                    <IslandButton
+                      tone="ghost"
                       size="sm"
-                      onClick={async () => {
-                        const { error } = await connectGmail("/settings/account");
-                        if (error) toast.error(error.message);
-                      }}
+                      disabled={avatarSaving}
+                      aria-expanded={presetPickerOpen}
+                      aria-controls="avatar-preset-picker"
+                      icon={<Palette size={14} weight="light" />}
+                      onClick={() => setPresetPickerOpen((v) => !v)}
                     >
-                      Connect
-                    </LiquidGlassButton>
-                  )}
-                </div>
-              </div>
-              {/* LinkedIn */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-card border border-border">
-                    <User className="h-4 w-4" />
+                      Choose a preset
+                    </IslandButton>
+                    {googlePhotoUrl && !usingGooglePhoto && (
+                      <IslandButton
+                        tone="quiet"
+                        size="sm"
+                        disabled={avatarSaving}
+                        icon={<GoogleLogo size={14} weight="light" />}
+                        onClick={applyGooglePhoto}
+                      >
+                        Use Google photo
+                      </IslandButton>
+                    )}
                   </div>
-                  <div>
-                    <div className="text-sm font-medium">LinkedIn</div>
-                    <div className="text-xs text-muted-foreground">For profile optimization</div>
-                  </div>
+                  <AnimatePresence initial={false}>
+                    {presetPickerOpen && (
+                      <motion.div
+                        id="avatar-preset-picker"
+                        key="preset-picker"
+                        variants={panelSwap}
+                        initial="hidden"
+                        animate="show"
+                        exit="exit"
+                        role="group"
+                        aria-label="Preset avatars"
+                        className="grid grid-cols-8 gap-2 rounded-2xl bg-foreground/[0.03] p-2 ring-1 ring-foreground/[0.06] dark:bg-white/[0.03] dark:ring-white/10 lg:grid-cols-4"
+                      >
+                        {AVATAR_PRESETS.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            disabled={avatarSaving}
+                            onClick={() => applyPreset(color)}
+                            aria-label={`Use ${color} preset avatar`}
+                            className="mx-auto grid aspect-square w-full max-w-10 place-items-center rounded-full text-[11px] font-semibold text-white ring-2 ring-transparent ring-offset-2 ring-offset-card transition-[transform,box-shadow] duration-500 ease-vanguard hover:scale-105 hover:ring-ring focus-visible:outline-none focus-visible:ring-ring active:scale-95 disabled:opacity-60"
+                            style={{ backgroundColor: color }}
+                          >
+                            {initials}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <p aria-live="polite" className="sr-only">
+                    {avatarSaving ? "Updating profile photo" : ""}
+                  </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  {hasLinkedIn && (
-                    <span className="flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-                      <Check className="h-3 w-3" /> Connected
-                    </span>
-                  )}
-                  <LiquidGlassButton tone="primary" size="sm" onClick={handleManageAuth}>
-                    {hasLinkedIn ? "Manage" : "Connect"}
-                  </LiquidGlassButton>
-                </div>
-              </div>
-              {/* GitHub */}
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-card border border-border">
-                    <BrandGithub className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">GitHub</div>
-                    <div className="text-xs text-muted-foreground">Portfolio &amp; projects</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {hasGithub ? (
-                    <>
-                      <span className="flex items-center gap-1 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-                        <Check className="h-3 w-3" /> Connected
-                      </span>
-                      <LiquidGlassButton tone="ghost" size="sm" onClick={handleManageAuth}>Manage</LiquidGlassButton>
-                    </>
-                  ) : (
-                    <LiquidGlassButton tone="primary" size="sm" onClick={handleManageAuth}>Connect</LiquidGlassButton>
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
+              </Bezel>
+            </Reveal>
 
-          {/* Your data */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-              <Download className="h-4 w-4" />
-              Your data
-            </div>
-            <p className="mb-4 text-sm text-muted-foreground">
-              Download every record CareerCraft AI stores for your account — profile, resumes,
-              applications, agent runs, and more — as a ZIP of JSON files. Encrypted credentials
-              (API keys, saved LinkedIn sign-in) are excluded for your own security.
-            </p>
-            <LiquidGlassButton
-              tone="primary"
-              size="sm"
-              onClick={async () => {
-                try {
-                  const response = await apiClient.get("/users/me/export", {
-                    responseType: "blob",
-                  });
-                  const blob = new Blob([response.data], { type: "application/zip" });
-                  const url = window.URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  const disposition = response.headers["content-disposition"] as
-                    | string
-                    | undefined;
-                  const match = disposition?.match(/filename="?([^"]+)"?/);
-                  a.download = match?.[1] ?? "careercraft-data-export.zip";
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  window.URL.revokeObjectURL(url);
-                  toast.success("Download started");
-                } catch {
-                  toast.error("Failed to export your data — please try again");
-                }
-              }}
-            >
-              Download my data (.zip)
-            </LiquidGlassButton>
-          </motion.div>
+            <Reveal delay={0.06} className="settings-nav-vertical space-y-3">
+              <Eyebrow>All settings</Eyebrow>
+              <SettingsNav />
+            </Reveal>
+          </div>
+        </aside>
 
-          {/* Danger zone */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-danger/30 bg-card/60 p-6">
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-danger">
-              <AlertTriangle className="h-4 w-4" />
-              Danger zone
-            </div>
-            {user?.deletion_requested_at && user.deletion_scheduled_for ? (
-              <>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  Your account is scheduled for deletion on{" "}
-                  <strong className="text-foreground">
-                    {new Date(user.deletion_scheduled_for).toLocaleDateString(undefined, {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                  </strong>
-                  . You can cancel any time before then.
-                </p>
-                <LiquidGlassButton
-                  tone="ghost"
-                  size="sm"
-                  disabled={deletionActionPending}
-                  onClick={async () => {
-                    setDeletionActionPending(true);
-                    try {
-                      await apiClient.post("/users/me/cancel-deletion");
-                      toast.success("Account deletion cancelled");
-                      queryClient.invalidateQueries({ queryKey: ["me"] });
-                      refreshUserStatus();
-                    } catch {
-                      toast.error("Couldn't cancel deletion — please try again");
-                    } finally {
-                      setDeletionActionPending(false);
-                    }
-                  }}
-                >
-                  {deletionActionPending ? "Cancelling…" : "Cancel deletion"}
-                </LiquidGlassButton>
-              </>
-            ) : (
-              <>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  Deleting your account starts a 15-day grace period — your data isn't removed
-                  immediately, and you can cancel any time before then. If you cancel, you'll need
-                  to wait 30 days before requesting deletion again.
-                </p>
-                <LiquidGlassButton
-                  tone="ghost"
-                  size="sm"
-                  disabled={deletionActionPending}
-                  className="bg-danger text-primary-foreground hover:bg-danger/90 hover:opacity-100"
-                  onClick={async () => {
-                    if (
-                      !confirm(
-                        "Delete your account? Your data will be permanently removed after a 15-day grace period, which you can cancel any time before then.",
-                      )
-                    ) {
-                      return;
-                    }
-                    setDeletionActionPending(true);
-                    try {
-                      await apiClient.delete("/users/me");
-                      try {
-                        sessionStorage.setItem("cc-deletion-seen", "1");
-                      } catch {
-                        // ignore — nothing more we can do without storage
-                      }
-                      toast.success("Account deletion scheduled — you can still cancel it below.");
-                      queryClient.invalidateQueries({ queryKey: ["me"] });
-                      refreshUserStatus();
-                    } catch (err) {
-                      const detail = (
-                        err as {
-                          response?: { status?: number; data?: { detail?: { cooldown_until?: string } } };
-                        }
-                      )?.response;
-                      if (detail?.status === 429 && detail.data?.detail?.cooldown_until) {
-                        const until = new Date(detail.data.detail.cooldown_until).toLocaleDateString(
-                          undefined,
-                          { year: "numeric", month: "long", day: "numeric" },
-                        );
-                        toast.error(`You cancelled a deletion recently — try again after ${until}.`);
-                      } else {
-                        toast.error("Failed to delete account — please try again or contact support");
-                      }
-                    } finally {
-                      setDeletionActionPending(false);
-                    }
-                  }}
-                >
-                  {deletionActionPending ? "Scheduling…" : "Delete my account"}
-                </LiquidGlassButton>
-              </>
-            )}
-          </motion.div>
-        </motion.div>
-      )}
-
-      {/* Security tab */}
-      {activeTab === "security" && (
-        <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-6">
-          {/* Password change */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-6 text-sm font-medium">Change password</div>
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Passwords and connected login methods are managed by your identity provider.
-              </p>
-              <LiquidGlassButton
-                tone="primary"
-                size="sm"
-                onClick={() => toast.info("Use the password reset flow on the login page to change your password.")}
-              >
-                Manage password
-              </LiquidGlassButton>
-            </div>
-          </motion.div>
-
-          {/* 2FA */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium">Two-factor authentication</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  Currently: {twoFactor ? "enabled" : "disabled"}
-                </div>
-              </div>
-              <Toggle enabled={twoFactor} onToggle={() => toast.info("Two-factor authentication is managed by your identity provider.")} />
-            </div>
-          </motion.div>
-
-          {/* Active sessions */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-4 text-sm font-medium">Active sessions</div>
-            <div className="flex items-center justify-between rounded-2xl bg-card/40 border border-border px-4 py-3">
-              <div className="text-sm">
-                <span className="font-medium">Current session</span>
-                <span className="text-muted-foreground"> · Chrome · Windows</span>
-              </div>
-              <span className="rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-                Active
+        {/* ── Right: working column ────────────────────────────────────── */}
+        <div className="min-w-0 space-y-6 lg:col-span-8">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Segmented<Tab>
+              ariaLabel="Settings view"
+              value={activeTab}
+              onChange={setActiveTab}
+              options={tabs.map((t) => ({ value: t.id, label: t.label, icon: t.icon }))}
+            />
+            {activeTab === "notifications" ? (
+              <span aria-live="polite" className="text-xs text-muted-foreground">
+                {saveNotifyPrefs.isPending ? "Saving…" : `${enabledNotificationCount} of ${notificationItems.length} on`}
               </span>
-            </div>
-            <div className="mt-4">
-              <LiquidGlassButton tone="ghost" size="sm" onClick={handleSignOut}>
-                <LogOut className="h-4 w-4" />
-                Log out
-              </LiquidGlassButton>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
+            ) : null}
+          </div>
 
-      {/* Notifications tab */}
-      {activeTab === "notifications" && (
-        <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-4">
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6 space-y-5">
-            <div className="text-sm font-medium">Notification preferences</div>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeTab}
+              role="tabpanel"
+              aria-label={tabs.find((t) => t.id === activeTab)?.label}
+              variants={panelSwap}
+              initial="hidden"
+              animate="show"
+              exit="exit"
+              className="space-y-6"
+            >
+              {/* ── Account tab ─────────────────────────────────────── */}
+              {activeTab === "account" && (
+                <>
+                  <Reveal subtle>
+                    <Bezel coreClassName="p-6 md:p-8">
+                      <SectionIntro
+                        icon={<UserCircle size={16} weight="light" />}
+                        title="Profile"
+                        description="How agents introduce you in outreach, cover letters and applications."
+                      />
+                      <form
+                        noValidate
+                        className="mt-7 space-y-5"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          updateMutation.mutate();
+                        }}
+                      >
+                        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                          <Field label="Name">
+                            {(id) => (
+                              <Input
+                                id={id}
+                                type="text"
+                                autoComplete="name"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                placeholder="Your full name"
+                              />
+                            )}
+                          </Field>
+                          <Field
+                            label="Contact email"
+                            hint="Your sign-in email is managed by your identity provider and can’t be changed here."
+                          >
+                            {(id) => (
+                              <Input
+                                id={id}
+                                type="email"
+                                value={email}
+                                readOnly
+                                placeholder="Your sign-in email"
+                                className="cursor-not-allowed text-muted-foreground"
+                                trailing={<Lock aria-hidden size={14} weight="light" className="text-muted-foreground" />}
+                              />
+                            )}
+                          </Field>
+                        </div>
+                        <Field label="Headline">
+                          {(id) => (
+                            <Input
+                              id={id}
+                              type="text"
+                              value={headline}
+                              onChange={(e) => setHeadline(e.target.value)}
+                              placeholder="e.g. Senior Software Engineer at Stripe"
+                            />
+                          )}
+                        </Field>
+                        <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                          <Field label="Phone">
+                            {(id) => (
+                              <Input
+                                id={id}
+                                type="tel"
+                                autoComplete="tel"
+                                value={phone}
+                                onChange={(e) => setPhone(e.target.value)}
+                                placeholder="+1 555 000 0000"
+                                className="tabular-nums"
+                              />
+                            )}
+                          </Field>
+                          <Field label="LinkedIn URL">
+                            {(id) => (
+                              <Input
+                                id={id}
+                                type="url"
+                                value={linkedinUrl}
+                                onChange={(e) => setLinkedinUrl(e.target.value)}
+                                placeholder="https://linkedin.com/in/your-profile"
+                              />
+                            )}
+                          </Field>
+                        </div>
+                        <Hairline />
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs text-muted-foreground">Changes apply to every agent on its next run.</p>
+                          <IslandButton type="submit" size="md" disabled={updateMutation.isPending} trailing={<Check size={15} weight="light" />}>
+                            {updateMutation.isPending ? "Saving…" : "Save changes"}
+                          </IslandButton>
+                        </div>
+                      </form>
+                    </Bezel>
+                  </Reveal>
 
-            {[
-              { label: "Email notifications", sub: "Receive updates via email", enabled: emailNotifs, toggle: () => toggleNotifyPref("notify_email") },
-              { label: "Agent completion alerts", sub: "Notify when agents finish running", enabled: agentAlerts, toggle: () => toggleNotifyPref("notify_agent_alerts") },
-              { label: "Follow-up reminders", sub: "Reminders to follow up with leads", enabled: followUpReminders, toggle: () => toggleNotifyPref("notify_followup_reminders") },
-              { label: "Weekly digest", sub: "A weekly summary of your activity", enabled: weeklyDigest, toggle: () => toggleNotifyPref("notify_weekly_digest") },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between gap-4">
-                <div>
-                  <div className="text-sm font-medium">{item.label}</div>
-                  <div className="text-xs text-muted-foreground">{item.sub}</div>
-                </div>
-                <Toggle enabled={item.enabled} onToggle={item.toggle} />
-              </div>
-            ))}
-          </motion.div>
-        </motion.div>
-      )}
-    </motion.div>
+                  {/* Shortcuts: job preferences + models — asymmetric pair */}
+                  <div className="grid grid-cols-1 gap-6 md:grid-cols-5">
+                    <Reveal subtle className="md:col-span-3">
+                      <Bezel size="md" tone="primary" className="h-full" coreClassName="flex h-full flex-col p-6">
+                        <PanelTitle icon={<Briefcase size={16} weight="light" />} title="Job preferences" />
+                        <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
+                          Set your target role, experience level, work mode and salary preferences.
+                        </p>
+                        <div className="mt-5">
+                          <IslandLink href="/settings/profile" tone="ghost" size="sm" trailing>
+                            Manage preferences
+                          </IslandLink>
+                        </div>
+                      </Bezel>
+                    </Reveal>
+                    <Reveal subtle delay={0.05} className="md:col-span-2">
+                      <Bezel size="md" className="h-full" coreClassName="flex h-full flex-col p-6">
+                        <PanelTitle icon={<Brain size={16} weight="light" />} title="AI models & API keys" />
+                        <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
+                          Add your Anthropic, OpenAI, Google, or Ollama API key. Agents use your key — BYOK.
+                        </p>
+                        <div className="mt-5">
+                          <IslandLink href="/settings/models" tone="ghost" size="sm" trailing>
+                            Manage models
+                          </IslandLink>
+                        </div>
+                      </Bezel>
+                    </Reveal>
+                  </div>
+
+                  {/* Connected accounts */}
+                  <Reveal subtle>
+                    <Bezel coreClassName="p-6 md:p-8">
+                      <SectionIntro
+                        icon={<Plugs size={16} weight="light" />}
+                        title="Connected accounts"
+                        meta={
+                          <IslandLink href="/settings/integrations" tone="quiet" size="sm">
+                            Manage integrations
+                          </IslandLink>
+                        }
+                      />
+                      <ul className="mt-6 divide-y divide-foreground/[0.07] dark:divide-white/[0.07]">
+                        <li className="flex flex-col gap-4 py-4 first:pt-0 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center gap-3.5">
+                            <Medallion><GoogleLogo size={18} weight="light" /></Medallion>
+                            <div>
+                              <p className="text-sm font-medium text-foreground">Google</p>
+                              <p className="text-xs text-muted-foreground">Used for Gmail agent</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2.5 pl-[3.5rem] sm:pl-0">
+                            {connectedAccounts?.google ? (
+                              <>
+                                {connectedPill}
+                                <IslandButton
+                                  tone="ghost"
+                                  size="sm"
+                                  disabled={disconnectGoogleMutation.isPending}
+                                  onClick={() => disconnectGoogleMutation.mutate()}
+                                >
+                                  Disconnect
+                                </IslandButton>
+                              </>
+                            ) : (
+                              <IslandButton tone="primary" size="sm" onClick={handleConnectGoogle}>
+                                Connect
+                              </IslandButton>
+                            )}
+                          </div>
+                        </li>
+                        <li className="flex flex-col gap-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center gap-3.5">
+                            <Medallion><LinkedinLogo size={18} weight="light" /></Medallion>
+                            <div>
+                              <p className="text-sm font-medium text-foreground">LinkedIn</p>
+                              <p className="text-xs text-muted-foreground">For profile optimization</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2.5 pl-[3.5rem] sm:pl-0">
+                            {hasLinkedIn && connectedPill}
+                            <IslandButton tone={hasLinkedIn ? "ghost" : "primary"} size="sm" onClick={handleManageAuth}>
+                              {hasLinkedIn ? "Manage" : "Connect"}
+                            </IslandButton>
+                          </div>
+                        </li>
+                        <li className="flex flex-col gap-4 py-4 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center gap-3.5">
+                            <Medallion><GithubLogo size={18} weight="light" /></Medallion>
+                            <div>
+                              <p className="text-sm font-medium text-foreground">GitHub</p>
+                              <p className="text-xs text-muted-foreground">Portfolio &amp; projects</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2.5 pl-[3.5rem] sm:pl-0">
+                            {hasGithub ? (
+                              <>
+                                {connectedPill}
+                                <IslandButton tone="ghost" size="sm" onClick={handleManageAuth}>Manage</IslandButton>
+                              </>
+                            ) : (
+                              <IslandButton tone="primary" size="sm" onClick={handleManageAuth}>Connect</IslandButton>
+                            )}
+                          </div>
+                        </li>
+                      </ul>
+                    </Bezel>
+                  </Reveal>
+
+                  {/* Your data */}
+                  <Reveal subtle>
+                    <Bezel tone="muted" coreClassName="grid grid-cols-1 gap-6 p-6 md:grid-cols-[1fr_auto] md:items-center md:p-8">
+                      <SectionIntro
+                        icon={<Database size={16} weight="light" />}
+                        title="Your data"
+                        description="Download every record CareerCraft AI stores for your account — profile, resumes, applications, agent runs, and more — as a ZIP of JSON files. Encrypted credentials (API keys, saved LinkedIn sign-in) are excluded for your own security."
+                      />
+                      <IslandButton
+                        tone="primary"
+                        size="sm"
+                        disabled={exporting}
+                        aria-busy={exporting}
+                        icon={<DownloadSimple size={14} weight="light" />}
+                        onClick={handleExportData}
+                        className="justify-self-start md:justify-self-end"
+                      >
+                        Download my data (.zip)
+                      </IslandButton>
+                    </Bezel>
+                  </Reveal>
+
+                  {/* Danger zone */}
+                  <Reveal subtle>
+                    <Bezel tone="danger" coreClassName="p-6 md:p-8">
+                      <div className="flex items-center gap-2.5">
+                        <Medallion tone="danger"><Warning size={16} weight="light" /></Medallion>
+                        <h3 className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-danger">Danger zone</h3>
+                      </div>
+                      {deletionScheduled && user?.deletion_scheduled_for ? (
+                        <div className="mt-5 space-y-5">
+                          <Notice tone="warning" icon={<Warning size={16} weight="light" />}>
+                            Your account is scheduled for deletion on{" "}
+                            <strong className="font-semibold text-foreground">{formatLongDate(user.deletion_scheduled_for)}</strong>
+                            . You can cancel any time before then.
+                          </Notice>
+                          <IslandButton
+                            tone="ghost"
+                            size="sm"
+                            disabled={deletionActionPending}
+                            icon={<ArrowCounterClockwise size={14} weight="light" />}
+                            onClick={handleCancelDeletion}
+                          >
+                            {deletionActionPending ? "Cancelling…" : "Cancel deletion"}
+                          </IslandButton>
+                        </div>
+                      ) : (
+                        <div className="mt-4 grid grid-cols-1 gap-5 md:grid-cols-[1fr_auto] md:items-end">
+                          <p className="max-w-[62ch] text-sm leading-6 text-muted-foreground">
+                            Deleting your account starts a 15-day grace period — your data isn&apos;t removed
+                            immediately, and you can cancel any time before then. If you cancel, you&apos;ll need
+                            to wait 30 days before requesting deletion again.
+                          </p>
+                          <IslandButton
+                            tone="danger"
+                            size="sm"
+                            disabled={deletionActionPending}
+                            icon={<Trash size={14} weight="light" />}
+                            onClick={handleScheduleDeletion}
+                            className="justify-self-start md:justify-self-end"
+                          >
+                            {deletionActionPending ? "Scheduling…" : "Delete my account"}
+                          </IslandButton>
+                        </div>
+                      )}
+                    </Bezel>
+                  </Reveal>
+                </>
+              )}
+
+              {/* ── Security tab ────────────────────────────────────── */}
+              {activeTab === "security" && (
+                <>
+                  <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                    <Reveal subtle>
+                      <Bezel className="h-full" coreClassName="flex h-full flex-col p-6 md:p-7">
+                        <PanelTitle icon={<Password size={16} weight="light" />} title="Change password" />
+                        <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
+                          Passwords and connected login methods are managed by your identity provider.
+                        </p>
+                        <div className="mt-6">
+                          <IslandButton
+                            tone="primary"
+                            size="sm"
+                            onClick={() => toast.info("Use the password reset flow on the login page to change your password.")}
+                          >
+                            Manage password
+                          </IslandButton>
+                        </div>
+                      </Bezel>
+                    </Reveal>
+                    <Reveal subtle delay={0.05}>
+                      <Bezel className="h-full" coreClassName="flex h-full flex-col p-6 md:p-7">
+                        <PanelTitle icon={<Fingerprint size={16} weight="light" />} title="Two-factor authentication" />
+                        <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
+                          A second step at sign-in, handled by your identity provider.
+                        </p>
+                        <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl bg-foreground/[0.03] px-4 py-3 ring-1 ring-foreground/[0.06] dark:bg-white/[0.03] dark:ring-white/10">
+                          <span className="text-sm text-muted-foreground">
+                            Currently: <span className="font-medium text-foreground">{twoFactor ? "enabled" : "disabled"}</span>
+                          </span>
+                          <Toggle
+                            label="Two-factor authentication"
+                            checked={twoFactor}
+                            onChange={() => toast.info("Two-factor authentication is managed by your identity provider.")}
+                          />
+                        </div>
+                      </Bezel>
+                    </Reveal>
+                  </div>
+
+                  <Reveal subtle>
+                    <Bezel coreClassName="p-6 md:p-8">
+                      <SectionIntro icon={<Desktop size={16} weight="light" />} title="Active sessions" />
+                      <div className="mt-6 flex flex-col gap-3 rounded-2xl bg-foreground/[0.03] px-4 py-3.5 ring-1 ring-foreground/[0.06] dark:bg-white/[0.03] dark:ring-white/10 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-sm">
+                          <span className="font-medium text-foreground">Current session</span>
+                          <span className="text-muted-foreground"> · Chrome · Windows</span>
+                        </div>
+                        <StatusPill tone="success" live>Active</StatusPill>
+                      </div>
+                      <Hairline className="my-6" />
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-xs text-muted-foreground">Signing out ends this session on this device.</p>
+                        <IslandButton tone="ghost" size="sm" icon={<SignOut size={14} weight="light" />} onClick={handleSignOut}>
+                          Log out
+                        </IslandButton>
+                      </div>
+                    </Bezel>
+                  </Reveal>
+                </>
+              )}
+
+              {/* ── Notifications tab ───────────────────────────────── */}
+              {activeTab === "notifications" && (
+                <Reveal subtle>
+                  <Bezel coreClassName="p-6 md:p-8">
+                    <SectionIntro
+                      icon={<Bell size={16} weight="light" />}
+                      title="Notification preferences"
+                      description="Choose what CareerCraft tells you about. Changes save instantly."
+                    />
+                    <ul className="mt-6 divide-y divide-foreground/[0.07] dark:divide-white/[0.07]">
+                      {notificationItems.map((item) => (
+                        <li key={item.key} className="flex items-center justify-between gap-6 py-4 first:pt-0 last:pb-0">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">{item.label}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{item.sub}</p>
+                          </div>
+                          <Toggle
+                            label={item.label}
+                            checked={item.enabled}
+                            onChange={() => toggleNotifyPref(item.key)}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </Bezel>
+                </Reveal>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+    </Screen>
   );
 }

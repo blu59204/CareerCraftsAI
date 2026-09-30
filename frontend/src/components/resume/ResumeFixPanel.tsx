@@ -16,8 +16,42 @@ import {
 } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, ChevronDown, Info, Loader2, Plus, Trash2 } from "lucide-react";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { motion, useReducedMotion, type Variants } from "motion/react";
+import {
+  ArrowsClockwise,
+  Briefcase,
+  CalendarBlank,
+  CaretDown,
+  Check,
+  CheckCircle,
+  CircleNotch,
+  Eraser,
+  GraduationCap,
+  IdentificationCard,
+  Info,
+  Lightbulb,
+  Plus,
+  TextT,
+  Trash,
+  Warning,
+} from "@phosphor-icons/react";
+import {
+  Bezel,
+  Eyebrow,
+  Hairline,
+  Input,
+  IslandButton,
+  Notice,
+  Reveal,
+  RevealGroup,
+  Segmented,
+  StatusPill,
+  Toggle,
+  EASE_OUT_EXPO,
+  listItem,
+  listStagger,
+  reveal,
+} from "@/components/vanguard";
 import { getApiErrorMessage } from "@/lib/api";
 import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
 import { cn } from "@/lib/utils";
@@ -81,16 +115,23 @@ function ResumeFixPanelImpl(props: ResumeFixPanelProps) {
 export const ResumeFixPanel = memo(ResumeFixPanelImpl);
 
 // ---------------------------------------------------------------------------
-// Styling
+// Styling (Vanguard: recessed trays, hairline sub-surfaces, no 1px gray boxes)
 // ---------------------------------------------------------------------------
 
-const INPUT =
-  "w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-60";
-const INPUT_WARNING = "border-warning/60 bg-warning/10";
-const INPUT_ERROR = "border-danger/60";
-const LABEL = "text-xs font-medium text-foreground";
-const CHECKBOX = "h-4 w-4 shrink-0 rounded border-border accent-primary";
-const SUB_CARD = "rounded-2xl border border-border bg-background/40 p-4";
+const LABEL = "block pl-1 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground";
+/** Tray overrides for the kit Input: amber wash for gaps, danger ring for errors. */
+const TRAY_WARNING = "bg-warning/[0.07] ring-warning/45 dark:bg-warning/[0.08] dark:ring-warning/45";
+const TRAY_ERROR = "ring-danger/55 dark:ring-danger/55";
+/** Entry surface inside a section bezel: hairline ring, faint tint, concentric radius. */
+const SUB_SURFACE =
+  "rounded-[1.25rem] bg-foreground/[0.02] p-4 ring-1 ring-foreground/[0.05] dark:bg-white/[0.02] dark:ring-white/[0.06] sm:p-5";
+const LINK_BUTTON =
+  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium text-muted-foreground " +
+  "transition-colors duration-500 ease-vanguard hover:bg-foreground/[0.05] hover:text-foreground dark:hover:bg-white/[0.06] " +
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+const ARIA_DISABLED = "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:active:scale-100";
+/** Reduced-motion stand-in for the kit's translate/blur entrances. */
+const FADE_ONLY: Variants = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } } };
 
 // ---------------------------------------------------------------------------
 // Dates: <input type="month"> "YYYY-MM"  <->  resume "Mon YYYY"
@@ -312,6 +353,104 @@ function entryTitle(entry: ReviewEntry, fallback: string): string {
   return entry.role || entry.heading || fallback;
 }
 
+/** "01", "02"… for section and entry numbering. */
+function ordinal(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+// ---------------------------------------------------------------------------
+// Presentational pieces
+// ---------------------------------------------------------------------------
+
+/** Small inline note under a field (warning / muted). */
+function FieldNote({ id, tone = "muted", children }: { id?: string; tone?: "muted" | "warning"; children: ReactNode }) {
+  return (
+    <p
+      id={id}
+      className={cn(
+        "flex items-start gap-1.5 pl-1 text-xs leading-5",
+        tone === "warning" ? "text-warning" : "text-muted-foreground",
+      )}
+    >
+      {tone === "warning" ? <Warning size={13} weight="light" className="mt-[3px] shrink-0" aria-hidden="true" /> : null}
+      <span>{children}</span>
+    </p>
+  );
+}
+
+/** Numbered section header inside a section bezel. */
+function SectionHead({
+  id,
+  no,
+  icon,
+  title,
+  status,
+  action,
+}: {
+  id: string;
+  no: string;
+  icon: ReactNode;
+  title: string;
+  status?: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex min-w-0 items-center gap-3.5">
+        <span
+          aria-hidden="true"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-foreground/[0.04] text-foreground/80 shadow-bezel-core ring-1 ring-foreground/[0.06] dark:bg-white/[0.05] dark:shadow-bezel-core-dark dark:ring-white/10"
+        >
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <p aria-hidden="true" className="font-geist-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/80 tabular-nums">
+            {no}
+          </p>
+          <h3 id={id} className="font-geist text-[17px] font-semibold leading-6 tracking-[-0.02em] text-foreground">
+            {title}
+          </h3>
+        </div>
+        {status ? <div className="shrink-0">{status}</div> : null}
+      </div>
+      {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}
+    </div>
+  );
+}
+
+/** Section completion pill. */
+function SectionStatus({ open, noun }: { open: number; noun?: string }) {
+  return open > 0 ? (
+    <StatusPill tone="warning">
+      {open} {noun ?? "to fix"}
+    </StatusPill>
+  ) : (
+    <StatusPill tone="success" icon={<Check size={11} weight="light" />}>
+      Complete
+    </StatusPill>
+  );
+}
+
+/** Switch row: the visible text is the label wrapper, so clicking it flips the switch. */
+function SwitchRow({
+  checked,
+  onChange,
+  label,
+  className,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <label className={cn("inline-flex cursor-pointer select-none items-center gap-3 pl-1 text-sm text-foreground", className)}>
+      <Toggle checked={checked} onChange={onChange} label={label} className="h-6 w-10 [&>span]:h-4 [&>span]:w-4" />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Field components
 // ---------------------------------------------------------------------------
@@ -342,14 +481,14 @@ function TextField({ label, value, onChange, onBlur, error, hint, warning, muted
   const errorId = `${id}-error`;
   const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
   return (
-    <div className={cn("space-y-1", className)}>
-      <div className="flex items-center justify-between gap-2">
+    <div className={cn("min-w-0 space-y-2", className)}>
+      <div className="flex min-h-6 items-center justify-between gap-2">
         <label htmlFor={id} className={LABEL}>
           {label}
         </label>
         {labelAddon}
       </div>
-      <input
+      <Input
         id={id}
         type={type}
         value={value}
@@ -357,21 +496,53 @@ function TextField({ label, value, onChange, onBlur, error, hint, warning, muted
         onBlur={onBlur}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
-        className={cn(INPUT, warning && INPUT_WARNING, error && INPUT_ERROR, muted && "text-muted-foreground")}
+        trayClassName={cn(warning && TRAY_WARNING, error && TRAY_ERROR)}
+        className={cn(muted && "text-muted-foreground")}
         {...rest}
       />
       {hint && (
-        <p id={hintId} className={cn("flex items-start gap-1 text-xs", warning ? "text-warning" : "text-muted-foreground")}>
-          {warning && <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />}
-          <span>{hint}</span>
-        </p>
+        <FieldNote id={hintId} tone={warning ? "warning" : "muted"}>
+          {hint}
+        </FieldNote>
       )}
       {error && (
-        <p id={errorId} className="text-xs text-danger">
+        <p id={errorId} className="pl-1 text-xs leading-5 text-danger">
           {error}
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Pill checkbox for "Use this profile value". A real (visually hidden)
+ * checkbox keeps native semantics and the per-field accessible name.
+ */
+function UsePill({ checked, onChange, ariaLabel }: { checked: boolean; onChange: (next: boolean) => void; ariaLabel: string }) {
+  return (
+    <label
+      className={cn(
+        "relative inline-flex cursor-pointer select-none items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium ring-1",
+        "transition-[background-color,color,box-shadow] duration-500 ease-vanguard has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+        checked
+          ? "bg-primary/10 text-primary ring-primary/25"
+          : "text-muted-foreground ring-foreground/10 hover:text-foreground dark:ring-white/10",
+      )}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={ariaLabel}
+        className="sr-only"
+      />
+      {checked ? (
+        <Check size={11} weight="light" aria-hidden="true" />
+      ) : (
+        <Plus size={11} weight="light" aria-hidden="true" />
+      )}
+      Use
+    </label>
   );
 }
 
@@ -422,24 +593,23 @@ function DateField({ label, value, onChange, disabled, error, warning, described
   };
   const ariaDescribedBy =
     [describedBy, showFormatHint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
-  const inputClass = cn(INPUT, (warning || showFormatHint) && INPUT_WARNING, error && INPUT_ERROR);
-  const linkButton =
-    "rounded text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
+  const trayClass = cn((warning || showFormatHint) && TRAY_WARNING, error && TRAY_ERROR);
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
+    <div className="min-w-0 space-y-2">
+      <div className="flex min-h-6 items-center justify-between gap-2">
         <label htmlFor={id} className={LABEL}>
           {label}
         </label>
         {!disabled && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0.5">
             {canClear && (
               <button
                 type="button"
                 onClick={clear}
                 aria-label={`Clear ${label.toLowerCase()} date`}
-                className={linkButton}
+                className={LINK_BUTTON}
               >
+                <Eraser size={12} weight="light" aria-hidden="true" />
                 Clear
               </button>
             )}
@@ -450,11 +620,13 @@ function DateField({ label, value, onChange, disabled, error, warning, described
                 // aria-disabled (not disabled) keeps focus and the explanation reachable.
                 aria-disabled={toggleBlocked || undefined}
                 aria-describedby={toggleBlocked ? reasonId : undefined}
-                className={cn(
-                  linkButton,
-                  "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:no-underline",
-                )}
+                className={cn(LINK_BUTTON, "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-transparent")}
               >
+                {pickerMode ? (
+                  <TextT size={12} weight="light" aria-hidden="true" />
+                ) : (
+                  <CalendarBlank size={12} weight="light" aria-hidden="true" />
+                )}
                 {pickerMode ? "Type instead" : "Use month picker"}
               </button>
             )}
@@ -462,7 +634,7 @@ function DateField({ label, value, onChange, disabled, error, warning, described
         )}
       </div>
       {pickerMode ? (
-        <input
+        <Input
           id={id}
           type="month"
           value={labelToMonthInput(text) ?? ""}
@@ -483,10 +655,11 @@ function DateField({ label, value, onChange, disabled, error, warning, described
           placeholder="YYYY-MM"
           aria-invalid={error ? true : undefined}
           aria-describedby={ariaDescribedBy}
-          className={inputClass}
+          trayClassName={trayClass}
+          className="tabular-nums"
         />
       ) : (
-        <input
+        <Input
           id={id}
           type="text"
           value={text}
@@ -497,22 +670,22 @@ function DateField({ label, value, onChange, disabled, error, warning, described
           maxLength={DATE_MAX}
           aria-invalid={error ? true : undefined}
           aria-describedby={ariaDescribedBy}
-          className={inputClass}
+          trayClassName={trayClass}
+          className="tabular-nums"
         />
       )}
       {toggleBlocked && monthSupported && !disabled && (
-        <p id={reasonId} className="text-[11px] text-muted-foreground">
+        <p id={reasonId} className="pl-1 text-[11px] leading-5 text-muted-foreground">
           “{text.trim()}” isn’t a single month, so the month picker is off and it stays as typed.
         </p>
       )}
       {showFormatHint && (
-        <p id={hintId} className="flex items-start gap-1 text-xs text-warning">
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <span>{DATE_FORMAT_HINT}.</span>
-        </p>
+        <FieldNote id={hintId} tone="warning">
+          {DATE_FORMAT_HINT}.
+        </FieldNote>
       )}
       {error && (
-        <p id={errorId} className="text-xs text-danger">
+        <p id={errorId} className="pl-1 text-xs leading-5 text-danger">
           {error}
         </p>
       )}
@@ -532,18 +705,16 @@ interface DateRangeFieldsProps {
 }
 
 function DateRangeFields({ range, onChange, currentLabel, endError, warning, warningText }: DateRangeFieldsProps) {
-  const currentId = useId();
   const warningId = useId();
   const showWarning = !!warning && !!warningText;
   return (
-    <div className="space-y-2 sm:col-span-2">
+    <div className="space-y-3 sm:col-span-2">
       {showWarning && (
-        <p id={warningId} className="flex items-start gap-1 text-xs text-warning">
-          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-          <span>{warningText}</span>
-        </p>
+        <FieldNote id={warningId} tone="warning">
+          {warningText}
+        </FieldNote>
       )}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <DateField
           label="Start"
           value={range.start}
@@ -560,18 +731,7 @@ function DateRangeFields({ range, onChange, currentLabel, endError, warning, war
           onChange={(end) => onChange({ ...range, end })}
         />
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          id={currentId}
-          type="checkbox"
-          checked={range.current}
-          onChange={(e) => onChange({ ...range, current: e.target.checked })}
-          className={CHECKBOX}
-        />
-        <label htmlFor={currentId} className="text-sm text-foreground">
-          {currentLabel}
-        </label>
-      </div>
+      <SwitchRow checked={range.current} onChange={(current) => onChange({ ...range, current })} label={currentLabel} />
     </div>
   );
 }
@@ -599,13 +759,16 @@ function ResumeFixForm({
 }: ResumeFixFormProps) {
   const headingId = useId();
   const contactRegionId = useId();
-  const rememberId = useId();
   const contactHeadingId = useId();
   const expHeadingId = useId();
   const eduHeadingId = useId();
   const eduIdPrefix = useId();
   const eduSeq = useRef(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const reduceMotion = useReducedMotion();
+  // The kit variants translate/blur; under reduced motion collapse to a fade.
+  const sectionIn: Variants = reduceMotion ? FADE_ONLY : reveal;
+  const itemIn: Variants = reduceMotion ? FADE_ONLY : listItem;
 
   const issues: ReviewIssue[] = review?.issues ?? [];
   const reviewContact: Partial<ContactFields> = review?.contact ?? {};
@@ -828,418 +991,602 @@ function ResumeFixForm({
   const addEduBlocked = newEdu.length >= maxNewEdu;
   const addEduReasonId = `${eduHeadingId}-add-reason`;
 
+  // --- presentation-only summaries (the rail checklist + section pills) ---
+  const contactIssues = issues.filter((i) => i.code === "missing_email" || i.code === "missing_phone");
+  const eduOpen = eduDateEntries.length + uneditableEduCount + (missingEducationIssue ? 1 : 0);
+  const contactNo = ordinal(1);
+  const expNo = ordinal(2);
+  const eduNo = ordinal(experience.length > 0 ? 3 : 2);
+  const checklist: Array<{ no: string; label: string; open: number }> = [
+    { no: contactNo, label: "Contact details", open: contactIssues.length },
+    ...(experience.length > 0 ? [{ no: expNo, label: "Experience", open: expWithIssues.length }] : []),
+    { no: eduNo, label: "Education", open: eduOpen },
+  ];
+  const contactOnResume = CONTACT_FIELDS.map((f) => (reviewContact[f.key] ?? "").trim()).filter(Boolean);
+  const statusIsError = (submitted && hasErrors) || tooManyExpFixes;
+  const statusMessage =
+    submitted && hasErrors
+      ? "Fix the highlighted fields before applying."
+      : tooManyExpFixes
+        ? `Up to ${MAX_EXPERIENCE_FIXES} roles can be changed at a time — undo some changes, apply, then continue.`
+        : disabled && !mutation.isPending
+          ? "Wait for the current resume update to finish."
+          : changeCount === 0
+            ? "Make a change to enable."
+            : `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready.`;
+
   return (
-    <div className="space-y-4">
-      <section aria-labelledby={headingId} className="rounded-3xl border border-border bg-card/60 p-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 id={headingId} ref={headingRef} tabIndex={-1} className="font-medium focus:outline-none">
-              Fix resume gaps
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Add the details the Resume Agent couldn’t find. The PDF is regenerated with your facts — nothing is invented.
-            </p>
-          </div>
-          {openCount > 0 ? (
-            <span className="shrink-0 rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
-              {openCount} open {openCount === 1 ? "issue" : "issues"}
-            </span>
-          ) : (
-            <span className="shrink-0 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">All set</span>
-          )}
-        </div>
+    <div className="space-y-6">
+      <section aria-labelledby={headingId}>
+        <form
+          ref={formRef}
+          noValidate
+          onSubmit={onSubmit}
+          className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:grid-rows-[auto_1fr]"
+        >
+          {/* ── Summary rail (row 1, left) ─────────────────────────────── */}
+          <Reveal className="min-w-0 lg:col-span-4 lg:row-start-1">
+            <Bezel tone={openCount > 0 ? "primary" : "default"} coreClassName="p-6 md:p-7">
+              <Eyebrow tone={openCount > 0 ? "primary" : "default"}>Resume review</Eyebrow>
+              <h2
+                id={headingId}
+                ref={headingRef}
+                tabIndex={-1}
+                className="mt-5 font-geist text-[1.75rem] font-semibold leading-[1.05] tracking-[-0.035em] text-foreground focus:outline-none"
+              >
+                Fix resume gaps
+              </h2>
+              <p className="mt-3 max-w-[44ch] text-pretty text-sm leading-6 text-muted-foreground">
+                Add the details the Resume Agent couldn’t find. The PDF is regenerated with your facts — nothing is invented.
+              </p>
 
-        {openCount === 0 && (
-          <div role="status" className="mt-4 flex items-start gap-2 rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-success">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>No missing details — your resume has contact info, dates and education.</span>
-          </div>
-        )}
+              <div className="mt-7 flex items-end justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="font-geist text-5xl font-semibold leading-none tracking-[-0.05em] text-foreground tabular-nums">
+                    {openCount}
+                  </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    open {openCount === 1 ? "issue" : "issues"}
+                  </p>
+                </div>
+                {openCount > 0 ? (
+                  <StatusPill tone="warning" live>
+                    {openCount} open {openCount === 1 ? "issue" : "issues"}
+                  </StatusPill>
+                ) : (
+                  <StatusPill tone="success" icon={<CheckCircle size={12} weight="light" />}>
+                    All set
+                  </StatusPill>
+                )}
+              </div>
 
-        <form ref={formRef} noValidate onSubmit={onSubmit} className="mt-5 space-y-6">
-          {/* Contact */}
-          <div role="group" aria-labelledby={contactHeadingId} className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 id={contactHeadingId} className="text-sm font-medium">Contact details</h3>
-              {!hasContactIssue && (
-                <button
-                  type="button"
-                  aria-expanded={contactOpen}
-                  aria-controls={contactRegionId}
-                  onClick={() => setContactOpen((v) => !v)}
-                  className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                >
-                  Edit contact
-                  <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", contactOpen && "rotate-180")} aria-hidden="true" />
-                </button>
+              {openCount === 0 && (
+                <div role="status" className="mt-5">
+                  <Notice tone="success" icon={<CheckCircle size={16} weight="light" />}>
+                    No missing details — your resume has contact info, dates and education.
+                  </Notice>
+                </div>
               )}
-            </div>
-            {hasContactIssue && (
-              <ul className="space-y-1 text-xs text-warning">
-                {issues
-                  .filter((i) => i.code === "missing_email" || i.code === "missing_phone")
-                  .map((i) => (
-                    <li key={i.code} className="flex items-start gap-1">
-                      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                      <span>{i.message}</span>
-                    </li>
-                  ))}
+
+              <Hairline className="my-6" />
+
+              <ul aria-label="Review checklist" className="space-y-1">
+                {checklist.map((item) => (
+                  <li key={item.label} className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="flex min-w-0 items-center gap-3 text-sm text-foreground">
+                      <span aria-hidden="true" className="font-geist-mono text-[11px] text-muted-foreground/70 tabular-nums">
+                        {item.no}
+                      </span>
+                      <span className="truncate">{item.label}</span>
+                    </span>
+                    <SectionStatus open={item.open} />
+                  </li>
+                ))}
               </ul>
-            )}
-            {/* Always rendered (hidden when collapsed) so aria-controls has a target. */}
-            <div
-              id={contactRegionId}
-              hidden={!showContact}
-              className={showContact ? "grid gap-3 sm:grid-cols-2" : "hidden"}
-            >
-              {CONTACT_FIELDS.map((f) => {
-                const suggested = isSuggested(f.key);
-                const used = !!useSuggestion[f.key];
-                // Once the user edits a suggestion it's their own value, not the profile's.
-                const edited = suggested && contact[f.key].trim() !== (suggestions[f.key] ?? "").trim();
-                const missing = !effectiveContact(f.key) && issues.some((i) => i.code === `missing_${f.key}`);
-                return (
-                  <TextField
-                    key={f.key}
-                    label={f.label}
-                    type={f.type}
-                    value={contact[f.key]}
-                    onChange={(v) => {
-                      setContact((c) => ({ ...c, [f.key]: v }));
-                      // Typing into a suggestion means the user wants it.
-                      if (suggested) setUseSuggestion((u) => (u[f.key] ? u : { ...u, [f.key]: true }));
-                    }}
-                    onBlur={touch(`contact.${f.key}`)}
-                    error={textError(`contact.${f.key}`)}
-                    hint={
-                      suggested
-                        ? !used
-                          ? "Not included — tick Use to add it."
-                          : edited
-                            ? undefined
-                            : "From your profile — will be added."
-                        : undefined
-                    }
-                    muted={suggested && !used}
-                    warning={missing}
-                    labelAddon={
-                      suggested ? (
-                        <label className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <input
-                            type="checkbox"
-                            checked={used}
-                            onChange={(e) => setUseSuggestion((u) => ({ ...u, [f.key]: e.target.checked }))}
-                            aria-label={
-                              edited
-                                ? `Include this ${f.label.toLowerCase()}`
-                                : `Use the ${f.label.toLowerCase()} from your profile`
-                            }
-                            className="h-3.5 w-3.5 shrink-0 rounded border-border accent-primary"
-                          />
-                          Use
-                        </label>
+            </Bezel>
+          </Reveal>
+
+          {/* ── Working surface (right, spans both rows) ────────────────── */}
+          <RevealGroup className="min-w-0 space-y-6 lg:col-span-8 lg:col-start-5 lg:row-span-2 lg:row-start-1">
+            {/* Contact */}
+            <motion.div variants={sectionIn}>
+              <Bezel coreClassName="p-5 sm:p-7">
+                <div role="group" aria-labelledby={contactHeadingId} className="space-y-5">
+                  <SectionHead
+                    id={contactHeadingId}
+                    no={contactNo}
+                    icon={<IdentificationCard size={18} weight="light" />}
+                    title="Contact details"
+                    status={hasContactIssue ? <SectionStatus open={contactIssues.length} noun="missing" /> : null}
+                    action={
+                      !hasContactIssue ? (
+                        <IslandButton
+                          tone="ghost"
+                          size="sm"
+                          aria-expanded={contactOpen}
+                          aria-controls={contactRegionId}
+                          onClick={() => setContactOpen((v) => !v)}
+                          trailing={
+                            <CaretDown
+                              size={13}
+                              weight="light"
+                              className={cn("transition-transform duration-500 ease-vanguard", contactOpen && "rotate-180")}
+                            />
+                          }
+                        >
+                          Edit contact
+                        </IslandButton>
                       ) : null
                     }
-                    placeholder={f.placeholder}
-                    autoComplete={f.autoComplete}
-                    inputMode={f.inputMode}
-                    maxLength={f.maxLength}
                   />
-                );
-              })}
-              <p className="text-xs text-muted-foreground sm:col-span-2">Clear a field to remove it from the contact line.</p>
-            </div>
-          </div>
 
-          {/* Experience */}
-          {experience.length > 0 && (
-            <div role="group" aria-labelledby={expHeadingId} className="space-y-3 border-t border-border pt-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 id={expHeadingId} className="text-sm font-medium">Experience</h3>
-                {hiddenRoleCount > 0 && (
-                  <button
-                    type="button"
-                    aria-pressed={showAllRoles}
-                    onClick={() => setShowAllRoles((v) => !v)}
-                    className={cn(
-                      "rounded-full px-3 py-1 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
-                      showAllRoles ? "bg-primary/10 font-medium text-primary" : "border border-border text-muted-foreground hover:bg-card",
-                    )}
-                  >
-                    {showAllRoles ? "Show roles with issues" : "Edit all roles"}
-                  </button>
-                )}
-              </div>
-              {visibleExp.length === 0 && (
-                <p className="text-sm text-muted-foreground">Every role has an employer and dates.</p>
-              )}
-              {uneditableExpCount > 0 && (
-                <p className="flex items-start gap-1 text-xs text-muted-foreground">
-                  <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                  <span>
-                    {uneditableExpCount} more {uneditableExpCount === 1 ? "role isn’t" : "roles aren’t"} listed here
-                    (only the first {MAX_EXPERIENCE_INDEX + 1} can be fixed in this form) — use Edit text to change{" "}
-                    {uneditableExpCount === 1 ? "it" : "them"}.
-                  </span>
-                </p>
-              )}
-              {visibleExp.map((entry, n) => {
-                const state = exp[entry.index];
-                if (!state) return null;
-                const employerIssue = entry.issues.includes("missing_employer")
-                  ? entryIssueMessage(issues, entry.index, ["missing_employer"], "The employer is missing.")
-                  : entry.issues.includes("truncated_employer")
-                    ? entryIssueMessage(issues, entry.index, ["truncated_employer"], "The employer name looks cut off — enter the full name.")
-                    : undefined;
-                const datesIssue = entry.issues.includes("missing_dates")
-                  ? entryIssueMessage(issues, entry.index, ["missing_dates"], "Add start and end dates.")
-                  : undefined;
-                return (
-                  <div key={entry.index} className={SUB_CARD}>
-                    <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                      <div className="text-sm font-medium">{entryTitle(entry, `Role ${n + 1}`)}</div>
-                      {entry.section && <div className="text-xs uppercase tracking-wide text-muted-foreground">{entry.section}</div>}
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <TextField
-                        label="Role"
-                        value={state.role}
-                        onChange={(role) => setExpField(entry.index, { role })}
-                        placeholder="Software Engineer"
-                        maxLength={FIELD_MAX}
-                      />
-                      <TextField
-                        label="Employer"
-                        value={state.employer}
-                        onChange={(employer) => setExpField(entry.index, { employer })}
-                        warning={!!employerIssue}
-                        hint={employerIssue}
-                        placeholder="Company legal name"
-                        autoComplete="organization"
-                        maxLength={FIELD_MAX}
-                      />
-                      <TextField
-                        label="Location"
-                        value={state.location}
-                        onChange={(location) => setExpField(entry.index, { location })}
-                        placeholder="City, Country or Remote"
-                        maxLength={FIELD_MAX}
-                        className="sm:col-span-2"
-                      />
-                      <DateRangeFields
-                        range={state.range}
-                        onChange={(range) => setExpField(entry.index, { range })}
-                        currentLabel="I currently work here"
-                        endError={errors[`exp.${entry.index}.end`]}
-                        warning={!!datesIssue}
-                        warningText={datesIssue}
-                      />
-                    </div>
+                  {!showContact && (
+                    <p className="truncate pl-1 font-geist-mono text-xs text-muted-foreground">
+                      {contactOnResume.length ? contactOnResume.join("  ·  ") : "No contact details on the resume yet."}
+                    </p>
+                  )}
+
+                  {hasContactIssue && (
+                    <ul className="space-y-2">
+                      {contactIssues.map((i) => (
+                        <li key={i.code}>
+                          <Notice tone="warning" icon={<Warning size={15} weight="light" />} className="py-2.5 text-[13px]">
+                            {i.message}
+                          </Notice>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {/* Always rendered (hidden when collapsed) so aria-controls has a target. */}
+                  <div id={contactRegionId} hidden={!showContact}>
+                    <motion.div
+                      initial={false}
+                      animate={showContact ? { opacity: 1, y: 0 } : { opacity: 0, y: reduceMotion ? 0 : 10 }}
+                      transition={{ duration: reduceMotion ? 0.15 : 0.55, ease: EASE_OUT_EXPO }}
+                      className="grid gap-x-4 gap-y-5 sm:grid-cols-2"
+                    >
+                      {CONTACT_FIELDS.map((f) => {
+                        const suggested = isSuggested(f.key);
+                        const used = !!useSuggestion[f.key];
+                        // Once the user edits a suggestion it's their own value, not the profile's.
+                        const edited = suggested && contact[f.key].trim() !== (suggestions[f.key] ?? "").trim();
+                        const missing = !effectiveContact(f.key) && issues.some((i) => i.code === `missing_${f.key}`);
+                        return (
+                          <TextField
+                            key={f.key}
+                            label={f.label}
+                            type={f.type}
+                            value={contact[f.key]}
+                            onChange={(v) => {
+                              setContact((c) => ({ ...c, [f.key]: v }));
+                              // Typing into a suggestion means the user wants it.
+                              if (suggested) setUseSuggestion((u) => (u[f.key] ? u : { ...u, [f.key]: true }));
+                            }}
+                            onBlur={touch(`contact.${f.key}`)}
+                            error={textError(`contact.${f.key}`)}
+                            hint={
+                              suggested
+                                ? !used
+                                  ? "Not included — tick Use to add it."
+                                  : edited
+                                    ? undefined
+                                    : "From your profile — will be added."
+                                : undefined
+                            }
+                            muted={suggested && !used}
+                            warning={missing}
+                            labelAddon={
+                              suggested ? (
+                                <UsePill
+                                  checked={used}
+                                  onChange={(next) => setUseSuggestion((u) => ({ ...u, [f.key]: next }))}
+                                  ariaLabel={
+                                    edited
+                                      ? `Include this ${f.label.toLowerCase()}`
+                                      : `Use the ${f.label.toLowerCase()} from your profile`
+                                  }
+                                />
+                              ) : null
+                            }
+                            placeholder={f.placeholder}
+                            autoComplete={f.autoComplete}
+                            inputMode={f.inputMode}
+                            maxLength={f.maxLength}
+                          />
+                        );
+                      })}
+                      <p className="pl-1 text-xs text-muted-foreground sm:col-span-2">
+                        Clear a field to remove it from the contact line.
+                      </p>
+                    </motion.div>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                </div>
+              </Bezel>
+            </motion.div>
 
-          {/* Education */}
-          <div role="group" aria-labelledby={eduHeadingId} className="space-y-3 border-t border-border pt-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 id={eduHeadingId} className="text-sm font-medium">Education</h3>
-              <button
-                type="button"
-                onClick={addEduRow}
-                // aria-disabled (not disabled) keeps the button and its reason reachable.
-                aria-disabled={addEduBlocked || undefined}
-                aria-describedby={addEduBlocked ? addEduReasonId : undefined}
-                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-              >
-                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                Add education
-              </button>
-            </div>
-            {addEduBlocked && (
-              <p id={addEduReasonId} className="text-xs text-muted-foreground">
-                {maxNewEdu === 0
-                  ? `Up to ${MAX_EDUCATION_FIXES} education changes can be sent at a time — add the dates below first.`
-                  : `You can add up to ${maxNewEdu} education ${maxNewEdu === 1 ? "entry" : "entries"} at a time.`}
-              </p>
-            )}
-            {uneditableEduCount > 0 && (
-              <p className="flex items-start gap-1 text-xs text-muted-foreground">
-                <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                <span>
-                  {uneditableEduCount} more education {uneditableEduCount === 1 ? "entry needs" : "entries need"} dates
-                  but {uneditableEduCount === 1 ? "isn’t" : "aren’t"} listed here (only the first{" "}
-                  {MAX_EDUCATION_INDEX + 1} can be fixed in this form) — use Edit text.
-                </span>
-              </p>
-            )}
-            {missingEducationIssue && (
-              <p className="flex items-start gap-1 text-xs text-warning">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                <span>
-                  {missingEducationIssue.message}
-                  {!review?.has_education_section && " An Education section will be added."}
-                </span>
-              </p>
-            )}
-            {!showEducation && uneditableEduCount === 0 && (
-              <p className="text-sm text-muted-foreground">Your education entries have dates.</p>
-            )}
-
-            {eduDateEntries.map((entry, n) => {
-              const range = eduDates[entry.index];
-              if (!range) return null;
-              const title = [entry.role, entry.employer].filter(Boolean).join(" — ") || entry.heading || `Education ${n + 1}`;
-              return (
-                <div key={`edu-${entry.index}`} className={SUB_CARD}>
-                  <div className="mb-3 text-sm font-medium">{title}</div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <DateRangeFields
-                      range={range}
-                      onChange={(next) => setEduDates((prev) => ({ ...prev, [entry.index]: next }))}
-                      currentLabel="I’m currently studying here"
-                      endError={errors[`edu.${entry.index}.end`]}
-                      warning
-                      warningText="Add the start and graduation dates."
+            {/* Experience */}
+            {experience.length > 0 && (
+              <motion.div variants={sectionIn}>
+                <Bezel coreClassName="p-5 sm:p-7">
+                  <div role="group" aria-labelledby={expHeadingId} className="space-y-5">
+                    <SectionHead
+                      id={expHeadingId}
+                      no={expNo}
+                      icon={<Briefcase size={18} weight="light" />}
+                      title="Experience"
+                      status={<SectionStatus open={expWithIssues.length} />}
+                      action={
+                        hiddenRoleCount > 0 ? (
+                          <Segmented
+                            size="sm"
+                            asTabs={false}
+                            ariaLabel="Roles to show"
+                            value={showAllRoles ? "all" : "issues"}
+                            onChange={(next) => setShowAllRoles(next === "all")}
+                            options={[
+                              { value: "issues", label: "Needs fixing", count: expWithIssues.length },
+                              { value: "all", label: "All roles", count: experience.length },
+                            ]}
+                          />
+                        ) : null
+                      }
                     />
+
+                    {visibleExp.length === 0 && (
+                      <p className="flex items-center gap-2 pl-1 text-sm text-muted-foreground">
+                        <CheckCircle size={16} weight="light" className="shrink-0 text-success" aria-hidden="true" />
+                        Every role has an employer and dates.
+                      </p>
+                    )}
+                    {uneditableExpCount > 0 && (
+                      <Notice icon={<Info size={15} weight="light" />} className="py-2.5 text-[13px]">
+                        {uneditableExpCount} more {uneditableExpCount === 1 ? "role isn’t" : "roles aren’t"} listed here
+                        (only the first {MAX_EXPERIENCE_INDEX + 1} can be fixed in this form) — use Edit text to change{" "}
+                        {uneditableExpCount === 1 ? "it" : "them"}.
+                      </Notice>
+                    )}
+
+                    <div className="space-y-4">
+                      {visibleExp.map((entry, n) => {
+                        const state = exp[entry.index];
+                        if (!state) return null;
+                        const employerIssue = entry.issues.includes("missing_employer")
+                          ? entryIssueMessage(issues, entry.index, ["missing_employer"], "The employer is missing.")
+                          : entry.issues.includes("truncated_employer")
+                            ? entryIssueMessage(issues, entry.index, ["truncated_employer"], "The employer name looks cut off — enter the full name.")
+                            : undefined;
+                        const datesIssue = entry.issues.includes("missing_dates")
+                          ? entryIssueMessage(issues, entry.index, ["missing_dates"], "Add start and end dates.")
+                          : undefined;
+                        const flagged = entry.issues.length > 0;
+                        return (
+                          <motion.div key={entry.index} variants={itemIn} initial="hidden" animate="show" className={SUB_SURFACE}>
+                            <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex min-w-0 items-center gap-3">
+                                <span
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "grid h-7 min-w-7 place-items-center rounded-full px-1.5 font-geist-mono text-[10px] tabular-nums ring-1",
+                                    flagged
+                                      ? "bg-warning/10 text-warning ring-warning/25"
+                                      : "bg-foreground/[0.04] text-muted-foreground ring-foreground/[0.06] dark:bg-white/[0.05] dark:ring-white/10",
+                                  )}
+                                >
+                                  {ordinal(n + 1)}
+                                </span>
+                                <p className="truncate text-sm font-medium tracking-[-0.01em] text-foreground">
+                                  {entryTitle(entry, `Role ${n + 1}`)}
+                                </p>
+                              </div>
+                              {entry.section && (
+                                <span className="font-geist-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                                  {entry.section}
+                                </span>
+                              )}
+                            </div>
+                            <div className="grid gap-x-4 gap-y-5 sm:grid-cols-2">
+                              <TextField
+                                label="Role"
+                                value={state.role}
+                                onChange={(role) => setExpField(entry.index, { role })}
+                                placeholder="Software Engineer"
+                                maxLength={FIELD_MAX}
+                              />
+                              <TextField
+                                label="Employer"
+                                value={state.employer}
+                                onChange={(employer) => setExpField(entry.index, { employer })}
+                                warning={!!employerIssue}
+                                hint={employerIssue}
+                                placeholder="Company legal name"
+                                autoComplete="organization"
+                                maxLength={FIELD_MAX}
+                              />
+                              <TextField
+                                label="Location"
+                                value={state.location}
+                                onChange={(location) => setExpField(entry.index, { location })}
+                                placeholder="City, Country or Remote"
+                                maxLength={FIELD_MAX}
+                                className="sm:col-span-2"
+                              />
+                              <DateRangeFields
+                                range={state.range}
+                                onChange={(range) => setExpField(entry.index, { range })}
+                                currentLabel="I currently work here"
+                                endError={errors[`exp.${entry.index}.end`]}
+                                warning={!!datesIssue}
+                                warningText={datesIssue}
+                              />
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                </Bezel>
+              </motion.div>
+            )}
 
-            {newEdu.map((row, n) => (
-              <div key={row.id} className={SUB_CARD}>
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className="text-sm font-medium">New education entry{newEdu.length > 1 ? ` ${n + 1}` : ""}</div>
-                  <button
-                    type="button"
-                    onClick={() => setNewEdu((rows) => rows.filter((r) => r.id !== row.id))}
-                    aria-label={`Remove new education entry ${n + 1}`}
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    Remove
-                  </button>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <TextField
-                    label="Degree"
-                    value={row.degree}
-                    onChange={(degree) => setNewEduRow(row.id, { degree })}
-                    error={submitError(`new.${row.id}.degree`)}
-                    placeholder="B.Tech, Computer Science"
-                    maxLength={FIELD_MAX}
+            {/* Education */}
+            <motion.div variants={sectionIn}>
+              <Bezel coreClassName="p-5 sm:p-7">
+                <div role="group" aria-labelledby={eduHeadingId} className="space-y-5">
+                  <SectionHead
+                    id={eduHeadingId}
+                    no={eduNo}
+                    icon={<GraduationCap size={18} weight="light" />}
+                    title="Education"
+                    status={<SectionStatus open={eduOpen} />}
+                    action={
+                      <IslandButton
+                        tone="ghost"
+                        size="sm"
+                        onClick={addEduRow}
+                        // aria-disabled (not disabled) keeps the button and its reason reachable.
+                        aria-disabled={addEduBlocked || undefined}
+                        aria-describedby={addEduBlocked ? addEduReasonId : undefined}
+                        icon={<Plus size={14} weight="light" />}
+                        className={ARIA_DISABLED}
+                      >
+                        Add education
+                      </IslandButton>
+                    }
                   />
-                  <TextField
-                    label="Institution"
-                    value={row.institution}
-                    onChange={(institution) => setNewEduRow(row.id, { institution })}
-                    placeholder="University or college"
-                    autoComplete="organization"
-                    maxLength={FIELD_MAX}
-                  />
-                  <TextField
-                    label="Location"
-                    value={row.location}
-                    onChange={(location) => setNewEduRow(row.id, { location })}
-                    placeholder="City, Country"
-                    maxLength={FIELD_MAX}
-                    className="sm:col-span-2"
-                  />
-                  <DateRangeFields
-                    range={row.range}
-                    onChange={(range) => setNewEduRow(row.id, { range })}
-                    currentLabel="I’m currently studying here"
-                    endError={errors[`new.${row.id}.end`]}
-                  />
-                  <TextField
-                    label="Details"
-                    value={row.details}
-                    onChange={(details) => setNewEduRow(row.id, { details })}
-                    placeholder="CGPA 8.6/10, First Class with Distinction"
-                    hint="Optional — CGPA, honours, relevant coursework."
-                    maxLength={DETAILS_MAX}
-                    className="sm:col-span-2"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
 
-          {/* Footer */}
+                  {addEduBlocked && (
+                    <p id={addEduReasonId} className="pl-1 text-xs leading-5 text-muted-foreground">
+                      {maxNewEdu === 0
+                        ? `Up to ${MAX_EDUCATION_FIXES} education changes can be sent at a time — add the dates below first.`
+                        : `You can add up to ${maxNewEdu} education ${maxNewEdu === 1 ? "entry" : "entries"} at a time.`}
+                    </p>
+                  )}
+                  {uneditableEduCount > 0 && (
+                    <Notice icon={<Info size={15} weight="light" />} className="py-2.5 text-[13px]">
+                      {uneditableEduCount} more education {uneditableEduCount === 1 ? "entry needs" : "entries need"} dates
+                      but {uneditableEduCount === 1 ? "isn’t" : "aren’t"} listed here (only the first{" "}
+                      {MAX_EDUCATION_INDEX + 1} can be fixed in this form) — use Edit text.
+                    </Notice>
+                  )}
+                  {missingEducationIssue && (
+                    <Notice tone="warning" icon={<Warning size={15} weight="light" />} className="py-2.5 text-[13px]">
+                      {missingEducationIssue.message}
+                      {!review?.has_education_section && " An Education section will be added."}
+                    </Notice>
+                  )}
+                  {!showEducation && uneditableEduCount === 0 && (
+                    <p className="flex items-center gap-2 pl-1 text-sm text-muted-foreground">
+                      <CheckCircle size={16} weight="light" className="shrink-0 text-success" aria-hidden="true" />
+                      Your education entries have dates.
+                    </p>
+                  )}
+
+                  {(eduDateEntries.length > 0 || newEdu.length > 0) && (
+                    <div className="space-y-4">
+                      {eduDateEntries.map((entry, n) => {
+                        const range = eduDates[entry.index];
+                        if (!range) return null;
+                        const title = [entry.role, entry.employer].filter(Boolean).join(" — ") || entry.heading || `Education ${n + 1}`;
+                        return (
+                          <motion.div key={`edu-${entry.index}`} variants={itemIn} initial="hidden" animate="show" className={SUB_SURFACE}>
+                            <div className="mb-5 flex min-w-0 items-center gap-3">
+                              <span
+                                aria-hidden="true"
+                                className="grid h-7 min-w-7 place-items-center rounded-full bg-warning/10 px-1.5 font-geist-mono text-[10px] text-warning ring-1 ring-warning/25 tabular-nums"
+                              >
+                                {ordinal(n + 1)}
+                              </span>
+                              <p className="truncate text-sm font-medium tracking-[-0.01em] text-foreground">{title}</p>
+                            </div>
+                            <div className="grid gap-x-4 gap-y-5 sm:grid-cols-2">
+                              <DateRangeFields
+                                range={range}
+                                onChange={(next) => setEduDates((prev) => ({ ...prev, [entry.index]: next }))}
+                                currentLabel="I’m currently studying here"
+                                endError={errors[`edu.${entry.index}.end`]}
+                                warning
+                                warningText="Add the start and graduation dates."
+                              />
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+
+                      {newEdu.map((row, n) => (
+                        <motion.div key={row.id} variants={itemIn} initial="hidden" animate="show" className={SUB_SURFACE}>
+                          <div className="mb-5 flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span
+                                aria-hidden="true"
+                                className="grid h-7 w-7 place-items-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/20"
+                              >
+                                <Plus size={12} weight="light" />
+                              </span>
+                              <p className="truncate text-sm font-medium tracking-[-0.01em] text-foreground">
+                                New education entry{newEdu.length > 1 ? ` ${n + 1}` : ""}
+                              </p>
+                            </div>
+                            <IslandButton
+                              tone="quiet"
+                              size="sm"
+                              onClick={() => setNewEdu((rows) => rows.filter((r) => r.id !== row.id))}
+                              aria-label={`Remove new education entry ${n + 1}`}
+                              icon={<Trash size={14} weight="light" />}
+                              className="h-8 px-3 hover:text-danger"
+                            >
+                              Remove
+                            </IslandButton>
+                          </div>
+                          <div className="grid gap-x-4 gap-y-5 sm:grid-cols-2">
+                            <TextField
+                              label="Degree"
+                              value={row.degree}
+                              onChange={(degree) => setNewEduRow(row.id, { degree })}
+                              error={submitError(`new.${row.id}.degree`)}
+                              placeholder="B.Tech, Computer Science"
+                              maxLength={FIELD_MAX}
+                            />
+                            <TextField
+                              label="Institution"
+                              value={row.institution}
+                              onChange={(institution) => setNewEduRow(row.id, { institution })}
+                              placeholder="University or college"
+                              autoComplete="organization"
+                              maxLength={FIELD_MAX}
+                            />
+                            <TextField
+                              label="Location"
+                              value={row.location}
+                              onChange={(location) => setNewEduRow(row.id, { location })}
+                              placeholder="City, Country"
+                              maxLength={FIELD_MAX}
+                              className="sm:col-span-2"
+                            />
+                            <DateRangeFields
+                              range={row.range}
+                              onChange={(range) => setNewEduRow(row.id, { range })}
+                              currentLabel="I’m currently studying here"
+                              endError={errors[`new.${row.id}.end`]}
+                            />
+                            <TextField
+                              label="Details"
+                              value={row.details}
+                              onChange={(details) => setNewEduRow(row.id, { details })}
+                              placeholder="CGPA 8.6/10, First Class with Distinction"
+                              hint="Optional — CGPA, honours, relevant coursework."
+                              maxLength={DETAILS_MAX}
+                              className="sm:col-span-2"
+                            />
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </Bezel>
+            </motion.div>
+          </RevealGroup>
+
+          {/* ── Commit dock (row 2, left; sticky on desktop, last on mobile) ── */}
           {showFooter && (
-            <div className="space-y-3 border-t border-border pt-5">
-              <div className="flex items-center gap-2">
-                <input
-                  id={rememberId}
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(e) => setRemember(e.target.checked)}
-                  className={CHECKBOX}
-                />
-                <label htmlFor={rememberId} className="text-sm text-foreground">
-                  Remember these details for future resumes
-                </label>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <LiquidGlassButton
+            <Reveal className="min-w-0 lg:sticky lg:top-6 lg:col-span-4 lg:col-start-1 lg:row-start-2 lg:self-start">
+              <Bezel coreClassName="space-y-5 p-6">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-geist-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Apply</p>
+                  <StatusPill tone={changeCount > 0 ? "primary" : "neutral"} className="tabular-nums">
+                    {changeCount} {changeCount === 1 ? "change" : "changes"}
+                  </StatusPill>
+                </div>
+
+                <SwitchRow checked={remember} onChange={setRemember} label="Remember these details for future resumes" />
+
+                <Hairline />
+
+                <IslandButton
                   type="submit"
                   tone="primary"
-                  size="sm"
+                  size="md"
+                  className="w-full"
                   disabled={submitDisabled}
                   aria-busy={mutation.isPending || undefined}
+                  icon={
+                    mutation.isPending ? (
+                      <CircleNotch size={16} weight="light" className="animate-spin motion-reduce:animate-none" />
+                    ) : (
+                      <ArrowsClockwise size={16} weight="light" />
+                    )
+                  }
                 >
-                  {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
                   {mutation.isPending ? "Regenerating…" : "Apply & regenerate PDF"}
-                </LiquidGlassButton>
-                <p className={cn("text-xs", (submitted && hasErrors) || tooManyExpFixes ? "text-danger" : "text-muted-foreground")}>
-                  {submitted && hasErrors
-                    ? "Fix the highlighted fields before applying."
-                    : tooManyExpFixes
-                      ? `Up to ${MAX_EXPERIENCE_FIXES} roles can be changed at a time — undo some changes, apply, then continue.`
-                      : disabled && !mutation.isPending
-                        ? "Wait for the current resume update to finish."
-                        : changeCount === 0
-                          ? "Make a change to enable."
-                          : `${changeCount} ${changeCount === 1 ? "change" : "changes"} ready.`}
-                </p>
-                {/* Announced once per failed submit, not on every keystroke;
-                    success is announced by the "Resume updated" toast. */}
-                <p aria-live="polite" className="sr-only">
-                  {invalidFocusRequest > 0 ? (
-                    <span key={invalidFocusRequest}>Fix the highlighted fields before applying.</span>
-                  ) : null}
-                </p>
-                {hiddenChangeCount > 0 && (
-                  <p className="text-xs text-warning">
-                    {hiddenChangeCount} unsaved {hiddenChangeCount === 1 ? "change" : "changes"} (hidden)
+                </IslandButton>
+
+                <div className="space-y-1.5">
+                  <p className={cn("text-xs leading-5", statusIsError ? "text-danger" : "text-muted-foreground")}>
+                    {statusMessage}
                   </p>
-                )}
-              </div>
-            </div>
+                  {/* Announced once per failed submit, not on every keystroke;
+                      success is announced by the "Resume updated" toast. */}
+                  <p aria-live="polite" className="sr-only">
+                    {invalidFocusRequest > 0 ? (
+                      <span key={invalidFocusRequest}>Fix the highlighted fields before applying.</span>
+                    ) : null}
+                  </p>
+                  {hiddenChangeCount > 0 && (
+                    <p className="flex items-center gap-1.5 text-xs text-warning">
+                      <Warning size={13} weight="light" className="shrink-0" aria-hidden="true" />
+                      {hiddenChangeCount} unsaved {hiddenChangeCount === 1 ? "change" : "changes"} (hidden)
+                    </p>
+                  )}
+                </div>
+              </Bezel>
+            </Reveal>
           )}
         </form>
       </section>
 
       {warnings.length > 0 && (
-        <section aria-label="Notes from the Resume Agent" className="rounded-3xl border border-border bg-card/60 p-6">
-          <div className="flex items-center gap-2">
-            <Info className="h-4 w-4 text-warning" aria-hidden="true" />
-            <h2 className="text-sm font-medium">Notes from the Resume Agent</h2>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            These can’t be fixed by editing — they’re genuine gaps versus the job. Address them in a cover letter or by building the skill.
-          </p>
-          <ul className="mt-3 space-y-2">
-            {warnings.map((warning, i) => (
-              <li key={`${i}-${warning}`} className="rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning">
-                {warning}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <Reveal>
+          <section aria-label="Notes from the Resume Agent">
+            <Bezel tone="muted" coreClassName="grid grid-cols-1 gap-6 p-6 md:p-8 lg:grid-cols-12 lg:gap-10">
+              <div className="min-w-0 lg:col-span-4">
+                <span
+                  aria-hidden="true"
+                  className="grid h-10 w-10 place-items-center rounded-full bg-warning/10 text-warning ring-1 ring-warning/25"
+                >
+                  <Lightbulb size={18} weight="light" />
+                </span>
+                <Eyebrow className="mt-5">Agent notes</Eyebrow>
+                <h2 className="mt-3 font-geist text-lg font-semibold tracking-[-0.02em] text-foreground">
+                  Notes from the Resume Agent
+                </h2>
+                <p className="mt-2 max-w-[40ch] text-sm leading-6 text-muted-foreground">
+                  These can’t be fixed by editing — they’re genuine gaps versus the job. Address them in a cover letter or by building the skill.
+                </p>
+              </div>
+              <motion.ul
+                variants={listStagger}
+                initial="hidden"
+                whileInView="show"
+                viewport={{ once: true, amount: 0.1 }}
+                className="grid min-w-0 content-start gap-3 sm:grid-cols-2 lg:col-span-8"
+              >
+                {warnings.map((warning, i) => (
+                  <motion.li
+                    key={`${i}-${warning}`}
+                    variants={itemIn}
+                    className="flex items-start gap-3 rounded-2xl bg-warning/[0.07] px-4 py-3.5 text-sm leading-6 text-warning ring-1 ring-warning/20"
+                  >
+                    <span aria-hidden="true" className="mt-[3px] font-geist-mono text-[10px] tabular-nums opacity-70">
+                      {ordinal(i + 1)}
+                    </span>
+                    <span className="min-w-0">{warning}</span>
+                  </motion.li>
+                ))}
+              </motion.ul>
+            </Bezel>
+          </section>
+        </Reveal>
       )}
     </div>
   );

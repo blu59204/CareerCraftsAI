@@ -107,7 +107,7 @@ def test_salary_report_awaits_approval(authenticated_page):
 
     # p25/p50/p75 values must be non-zero (a real market benchmark, not an
     # empty/failed contract silently mapped to zeros).
-    percentile_values = page.locator("span.font-mono").all_text_contents()
+    percentile_values = page.locator("[data-testid='salary-percentile-value']").all_text_contents()
     assert percentile_values, "expected p25/p50/p75 values to render"
     assert all(
         v not in ("$0", "") for v in percentile_values
@@ -131,7 +131,7 @@ def test_interview_coach_start_answer_and_next_question(authenticated_page):
     question 0) must not resurface: after answering question 1, the UI must
     show question 2, not a repeat of question 1."""
     page = authenticated_page
-    page.goto(f"{WEB_URL}/interview")
+    page.goto(f"{WEB_URL}/interview?tab=coach")
     page.get_by_placeholder("Target Role *").fill("Senior Backend Engineer")
     page.get_by_role("button", name="Start Session").click()
 
@@ -139,7 +139,7 @@ def test_interview_coach_start_answer_and_next_question(authenticated_page):
 
     # start_session_node's LLM call + session write can take a while.
     expect(page.get_by_text("Question 1")).to_be_visible(timeout=180_000)
-    first_question = page.locator("p.text-lg.font-medium").inner_text()
+    first_question = page.locator("[data-testid='interview-question']").inner_text()
     assert first_question.strip(), "expected the first question's text to render"
 
     page.get_by_placeholder("Type your answer (minimum 10 words)...").fill(
@@ -186,7 +186,7 @@ def test_interview_prep_practice_uses_generated_plan_question(authenticated_page
     and must stay disabled with "Generate an interview plan first" until a
     plan exists."""
     page = authenticated_page
-    page.goto(f"{WEB_URL}/interview-prep")
+    page.goto(f"{WEB_URL}/interview?tab=prep")
 
     start_button = page.get_by_role("button", name="Start mock interview")
     expect(start_button).to_be_disabled()
@@ -197,10 +197,10 @@ def test_interview_prep_practice_uses_generated_plan_question(authenticated_page
     expect(page.get_by_text("AI-generated", exact=False)).to_be_visible(timeout=180_000)
     expect(start_button).to_be_enabled()
 
-    first_question = page.locator("p.text-sm.font-medium.leading-relaxed").first.inner_text()
+    first_question = page.locator("[data-testid='prep-question-text']").first.inner_text()
 
     start_button.click()
-    modal_question = page.locator(".rounded-2xl.bg-primary\\/5 p").first.inner_text()
+    modal_question = page.locator("[data-testid='mock-question-text']").first.inner_text()
     assert (
         modal_question.strip() == first_question.strip()
     ), "expected the mock interview's first question to come from the generated plan"
@@ -322,15 +322,11 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
     previously_active_provider = None
     previously_active_model_name = None
     if had_previously_active:
-        active_row = active_badge.first.locator(
-            "xpath=ancestor::div[contains(@class,'rounded-2xl')][1]"
-        )
+        active_row = active_badge.first.locator("xpath=ancestor::*[@data-testid='model-row'][1]")
         previously_active_provider = active_row.locator(
-            "div.text-sm.font-medium.truncate"
+            "[data-testid='model-provider']"
         ).inner_text()
-        previously_active_model_name = active_row.locator(
-            "div.text-xs.text-muted-foreground.truncate"
-        ).inner_text()
+        previously_active_model_name = active_row.locator("[data-testid='model-name']").inner_text()
 
     responses: list = []
     page.on(
@@ -371,7 +367,7 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
         # Model-test action: must resolve to a visible pass/fail, not hang.
         # The new (now-active) DeepSeek entry is the one with the "Active" badge.
         new_row = page.get_by_text("Active", exact=True).first.locator(
-            "xpath=ancestor::div[contains(@class,'rounded-2xl')][1]"
+            "xpath=ancestor::*[@data-testid='model-row'][1]"
         )
         new_row.get_by_role("button", name="Test").click()
         expect(new_row.get_by_role("button", name="Testing…")).to_have_count(0, timeout=60_000)
@@ -392,7 +388,7 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
         if model_added:
             try:
                 new_row = page.get_by_text("Active", exact=True).first.locator(
-                    "xpath=ancestor::div[contains(@class,'rounded-2xl')][1]"
+                    "xpath=ancestor::*[@data-testid='model-row'][1]"
                 )
                 page.once("dialog", lambda dialog: dialog.accept())
                 new_row.get_by_role("button", name="Delete").click()
@@ -403,7 +399,7 @@ def test_settings_models_deepseek_key_never_leaks_and_test_returns_result(authen
             if had_previously_active:
                 try:
                     restored_row = page.locator(
-                        "div.rounded-2xl.border", has_text=previously_active_provider
+                        "[data-testid='model-row']", has_text=previously_active_provider
                     ).filter(has_text=previously_active_model_name)
                     restore_button = restored_row.get_by_role("button", name="Set active")
                     if restore_button.count() > 0:
@@ -586,7 +582,7 @@ def test_interview_prep_plan_reflects_target_company(authenticated_page):
     fixture_company = "Quokka Fjord Robotics"
     fixture_role = "Senior Kubernetes Whisperer"
 
-    page.goto(f"{WEB_URL}/interview-prep")
+    page.goto(f"{WEB_URL}/interview?tab=prep")
     page.get_by_placeholder("Company").fill(fixture_company)
     page.get_by_placeholder("Role").fill(fixture_role)
 
@@ -901,12 +897,12 @@ def test_lead_creation_and_status_update_persist_after_reload(authenticated_page
         page.reload()
         expect(page.get_by_text(lead_name, exact=True)).to_be_visible(timeout=30_000)
 
-        lead_row = page.locator("div.glass-panel", has_text=lead_name)
+        lead_row = page.get_by_test_id("lead-row").filter(has_text=lead_name)
         lead_row.get_by_role("button", name="Reach out").click()
         expect(page.get_by_text("Lead status updated")).to_be_visible(timeout=30_000)
 
         page.reload()
-        lead_row = page.locator("div.glass-panel", has_text=lead_name)
+        lead_row = page.get_by_test_id("lead-row").filter(has_text=lead_name)
         expect(lead_row.get_by_text("Contacted", exact=True)).to_be_visible(timeout=30_000)
     finally:
         if "id" in lead_id_holder:
@@ -1109,7 +1105,7 @@ def test_linkedin_outreach_identify_and_reject_draft(authenticated_page, api_cli
         # awaiting_approval) this run's own card — just started — is the
         # first, not the last.
         queue_card = (
-            page.locator("div.glass-panel", has_text=company)
+            page.locator("[data-testid='outreach-queue-card']", has_text=company)
             .filter(has=page.get_by_text("awaiting approval", exact=True))
             .first
         )

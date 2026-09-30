@@ -1,15 +1,44 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { motion } from "motion/react";
-import { Briefcase, MapPin, DollarSign, Target, Loader2, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { fadeUp, stagger } from "@/lib/motion-variants";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { CommandHeader } from "@/components/immersive/CommandHeader";
+import {
+  ArrowLeft,
+  Briefcase,
+  Browser,
+  Check,
+  CircleNotch,
+  CurrencyDollar,
+  FloppyDisk,
+  MapPin,
+  Plus,
+  Sparkle,
+  SuitcaseSimple,
+  Target,
+  TextAlignLeft,
+  X,
+} from "@phosphor-icons/react";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { SettingsNav } from "@/components/settings/SettingsNav";
+import {
+  Bezel,
+  Chip,
+  Field,
+  Hairline,
+  Input,
+  IslandButton,
+  IslandLink,
+  PageHero,
+  PanelTitle,
+  Reveal,
+  Screen,
+  Skeleton,
+  StatusPill,
+  Textarea,
+  Toggle,
+} from "@/components/vanguard";
 
 interface UserPreferences {
   experience_level: string | null;
@@ -68,6 +97,36 @@ const POPULAR_ROLES = [
   "Security Engineer",
 ];
 
+const DEFAULT_FORM: FormState = {
+  current_title: "",
+  experience_level: "mid",
+  years_experience: "",
+  job_type: "full-time",
+  work_mode: "remote",
+  salary_min: "",
+  salary_max: "",
+  target_roles: "",
+  preferred_locations: "",
+  bio: "",
+  prefer_live_browser: false,
+};
+
+function prefsToForm(prefs: UserPreferences): FormState {
+  return {
+    current_title: prefs.current_title ?? "",
+    experience_level: prefs.experience_level ?? "mid",
+    years_experience: prefs.years_experience != null ? String(prefs.years_experience) : "",
+    job_type: prefs.job_type ?? "full-time",
+    work_mode: prefs.work_mode ?? "remote",
+    salary_min: prefs.salary_min != null ? String(prefs.salary_min) : "",
+    salary_max: prefs.salary_max != null ? String(prefs.salary_max) : "",
+    target_roles: (prefs.target_roles ?? []).join(", "),
+    preferred_locations: (prefs.preferred_locations ?? []).join(", "),
+    bio: prefs.bio ?? "",
+    prefer_live_browser: Boolean(prefs.prefer_live_browser),
+  };
+}
+
 function splitCsv(value: string | null | undefined): string[] {
   return (value ?? "")
     .split(",")
@@ -83,45 +142,100 @@ function toggleCsvValue(value: string, item: string) {
   return [...values, item].join(", ");
 }
 
-function PillButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "rounded-full border px-3 py-1 text-xs font-medium capitalize transition-colors",
-        active
-          ? "border-primary bg-primary text-primary-foreground"
-          : "border-border bg-card/40 text-muted-foreground hover:bg-card/70",
-      )}
-    >
-      {label}
-    </button>
-  );
+const compactUsd = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+function formatSalary(value: string): string | null {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? compactUsd.format(n) : null;
 }
 
+/** Removable tag for parsed target roles / locations. */
 function TagPill({ label, onRemove }: { label: string; onRemove: () => void }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs">
+    <span className="inline-flex items-center gap-1 rounded-full bg-foreground/[0.04] py-1 pl-3 pr-1 text-xs font-medium text-foreground ring-1 ring-foreground/[0.08] dark:bg-white/[0.05] dark:ring-white/10">
       {label}
       <button
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="ml-0.5 text-muted-foreground hover:text-foreground"
+        className="grid h-5 w-5 place-items-center rounded-full text-muted-foreground transition-[background-color,color] duration-500 ease-vanguard hover:bg-foreground/[0.08] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/10"
       >
-        <X className="h-3 w-3" />
+        <X aria-hidden size={11} weight="light" />
       </button>
     </span>
+  );
+}
+
+/** Small uppercase group label used above chip rows. */
+function GroupLabel({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <p id={id} className="pl-1 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
+      {children}
+    </p>
+  );
+}
+
+/** One bento cell: a Reveal wrapper carrying the grid span, holding a full-height Bezel. */
+function PrefCard({
+  className,
+  icon,
+  title,
+  meta,
+  tone = "default",
+  delay = 0,
+  children,
+}: {
+  className?: string;
+  icon: ReactNode;
+  title: ReactNode;
+  meta?: ReactNode;
+  tone?: "default" | "muted" | "primary";
+  delay?: number;
+  children: ReactNode;
+}) {
+  return (
+    <Reveal delay={delay} className={cn("min-w-0", className)}>
+      <Bezel tone={tone} className="h-full" coreClassName="flex flex-col p-6 md:p-7">
+        <PanelTitle icon={icon} title={title} meta={meta} />
+        <div className="mt-6 flex-1 space-y-5">{children}</div>
+      </Bezel>
+    </Reveal>
+  );
+}
+
+function ProfileSkeleton() {
+  const cells = [
+    "lg:col-span-7 h-72",
+    "lg:col-span-5 h-72",
+    "lg:col-span-8 lg:row-span-2 h-[26rem] lg:h-auto",
+    "lg:col-span-4 h-60",
+    "lg:col-span-4 h-52",
+    "lg:col-span-7 h-56",
+    "lg:col-span-5 h-56",
+  ];
+  return (
+    <div role="status" aria-live="polite" className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <span className="sr-only">Loading preferences…</span>
+      {cells.map((cls, i) => (
+        <Bezel key={i} className={cn("min-w-0", cls)} coreClassName="p-6 md:p-7">
+          <div className="flex items-center gap-2.5">
+            <Skeleton className="h-8 w-8 rounded-full" />
+            <Skeleton className="h-4 w-32 rounded-full" />
+          </div>
+          <Skeleton className="mt-6 h-11 w-full rounded-2xl" />
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Skeleton className="h-7 w-16 rounded-full" />
+            <Skeleton className="h-7 w-20 rounded-full" />
+            <Skeleton className="h-7 w-14 rounded-full" />
+          </div>
+        </Bezel>
+      ))}
+    </div>
   );
 }
 
@@ -136,38 +250,14 @@ export default function ProfilePreferencesPage() {
     },
   });
 
-  const [form, setForm] = useState<FormState>({
-    current_title: "",
-    experience_level: "mid",
-    years_experience: "",
-    job_type: "full-time",
-    work_mode: "remote",
-    salary_min: "",
-    salary_max: "",
-    target_roles: "",
-    preferred_locations: "",
-    bio: "",
-    prefer_live_browser: false,
-  });
+  const [form, setForm] = useState<FormState>(DEFAULT_FORM);
 
   const [suggestingRoles, setSuggestingRoles] = useState(false);
   const [suggestedRoles, setSuggestedRoles] = useState<string[]>([]);
 
   useEffect(() => {
     if (prefs) {
-      setForm({
-        current_title: prefs.current_title ?? "",
-        experience_level: prefs.experience_level ?? "mid",
-        years_experience: prefs.years_experience != null ? String(prefs.years_experience) : "",
-        job_type: prefs.job_type ?? "full-time",
-        work_mode: prefs.work_mode ?? "remote",
-        salary_min: prefs.salary_min != null ? String(prefs.salary_min) : "",
-        salary_max: prefs.salary_max != null ? String(prefs.salary_max) : "",
-        target_roles: (prefs.target_roles ?? []).join(", "),
-        preferred_locations: (prefs.preferred_locations ?? []).join(", "),
-        bio: prefs.bio ?? "",
-        prefer_live_browser: Boolean(prefs.prefer_live_browser),
-      });
+      setForm(prefsToForm(prefs));
     }
   }, [prefs]);
 
@@ -255,298 +345,426 @@ export default function ProfilePreferencesPage() {
     onError: () => toast.error("Save failed"),
   });
 
+  const baseline = prefs ? prefsToForm(prefs) : DEFAULT_FORM;
+  const isDirty = JSON.stringify(form) !== JSON.stringify(baseline);
+  const salaryMinLabel = formatSalary(form.salary_min);
+  const salaryMaxLabel = formatSalary(form.salary_max);
+
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      <motion.div variants={fadeUp}>
-        <CommandHeader
-          eyebrow="HR SaaS Hero"
+    <Screen>
+      <div className="space-y-6 md:space-y-8">
+        <PageHero
+          className="pb-4 md:pb-6"
+          eyebrow="Agent brief"
           title="Job Preferences"
+          accent="What every agent works from."
           description="Tell agents what you want. Search, resume tailoring, and outreach use these preferences first."
+          actions={
+            <div role="status" aria-live="polite">
+              {isLoading ? (
+                <StatusPill tone="neutral" live>
+                  Loading preferences…
+                </StatusPill>
+              ) : (
+                <StatusPill tone={parsedRoles.length > 0 ? "primary" : "warning"}>
+                  <span className="tabular-nums">{parsedRoles.length}</span>
+                  {parsedRoles.length === 1 ? "target role" : "target roles"}
+                  <span aria-hidden className="opacity-50">·</span>
+                  <span className="tabular-nums">{parsedLocations.length}</span>
+                  {parsedLocations.length === 1 ? "location" : "locations"}
+                </StatusPill>
+              )}
+            </div>
+          }
         />
-      </motion.div>
 
-      {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading preferences…
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {/* Current title */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Briefcase className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Current title</span>
-            </div>
-            <input
-              type="text"
-              value={form.current_title}
-              onChange={(e) => set("current_title", e.target.value)}
-              placeholder="e.g. Software Engineer, Product Manager…"
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </motion.div>
+        <Reveal subtle>
+          <SettingsNav />
+        </Reveal>
 
-          {/* Experience, job type, work mode */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6 space-y-5">
-            <div className="text-sm font-medium">Experience &amp; work type</div>
+        {isLoading ? (
+          <ProfileSkeleton />
+        ) : (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+              {/* A — role & seniority */}
+              <PrefCard
+                className="lg:col-span-7"
+                icon={<Briefcase size={16} weight="light" />}
+                title="Role & seniority"
+              >
+                <Field label="Current title">
+                  {(id) => (
+                    <Input
+                      id={id}
+                      name="current_title"
+                      type="text"
+                      value={form.current_title}
+                      onChange={(e) => set("current_title", e.target.value)}
+                      placeholder="e.g. Software Engineer, Product Manager…"
+                    />
+                  )}
+                </Field>
 
-            <div>
-              <label className="mb-2 block text-xs text-muted-foreground">Experience level</label>
-              <div className="flex flex-wrap gap-2">
-                {EXPERIENCE_LEVELS.map((lvl) => (
-                  <PillButton
-                    key={lvl}
-                    label={lvl}
-                    active={form.experience_level === lvl}
-                    onClick={() => set("experience_level", lvl)}
+                <div className="space-y-2.5">
+                  <GroupLabel id="pref-experience-level">Experience level</GroupLabel>
+                  <div role="group" aria-labelledby="pref-experience-level" className="flex flex-wrap gap-2">
+                    {EXPERIENCE_LEVELS.map((lvl) => (
+                      <Chip
+                        key={lvl}
+                        className="capitalize"
+                        active={form.experience_level === lvl}
+                        onClick={() => set("experience_level", lvl)}
+                      >
+                        {lvl}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+
+                <Field
+                  label="Exact years of experience"
+                  hint="Used by job search and application forms. Set 0 for fresher."
+                >
+                  {(id) => (
+                    <Input
+                      id={id}
+                      name="years_experience"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={60}
+                      className="tabular-nums"
+                      trayClassName="max-w-[12rem]"
+                      value={form.years_experience}
+                      onChange={(e) => set("years_experience", e.target.value)}
+                      placeholder={form.experience_level === "fresher" ? "0" : "e.g. 3"}
+                    />
+                  )}
+                </Field>
+              </PrefCard>
+
+              {/* B — salary */}
+              <PrefCard
+                className="lg:col-span-5"
+                delay={0.05}
+                icon={<CurrencyDollar size={16} weight="light" />}
+                title="Salary range"
+                meta="USD / year"
+              >
+                <p
+                  aria-hidden
+                  className="font-geist text-4xl font-semibold tabular-nums tracking-[-0.045em] text-foreground md:text-5xl"
+                >
+                  {salaryMinLabel ?? "—"}
+                  <span className="mx-2 text-muted-foreground/50">–</span>
+                  {salaryMaxLabel ?? "—"}
+                </p>
+                <Hairline />
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Minimum (USD/yr)">
+                    {(id) => (
+                      <Input
+                        id={id}
+                        name="salary_min"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        className="tabular-nums"
+                        leading={<span className="text-sm">$</span>}
+                        value={form.salary_min}
+                        onChange={(e) => set("salary_min", e.target.value)}
+                        placeholder="80000"
+                      />
+                    )}
+                  </Field>
+                  <Field label="Maximum (USD/yr)">
+                    {(id) => (
+                      <Input
+                        id={id}
+                        name="salary_max"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        className="tabular-nums"
+                        leading={<span className="text-sm">$</span>}
+                        value={form.salary_max}
+                        onChange={(e) => set("salary_max", e.target.value)}
+                        placeholder="150000"
+                      />
+                    )}
+                  </Field>
+                </div>
+              </PrefCard>
+
+              {/* C — target roles (tall) */}
+              <PrefCard
+                className="lg:col-span-8 lg:row-span-2"
+                delay={0.08}
+                icon={<Target size={16} weight="light" />}
+                title="Target roles"
+                meta={
+                  <IslandButton
+                    tone="ghost"
+                    size="sm"
+                    onClick={handleSuggestRoles}
+                    disabled={suggestingRoles}
+                    aria-busy={suggestingRoles}
+                    icon={
+                      suggestingRoles ? (
+                        <CircleNotch size={14} weight="light" className="animate-spin motion-reduce:animate-none" />
+                      ) : (
+                        <Sparkle size={14} weight="light" />
+                      )
+                    }
+                  >
+                    {suggestingRoles ? "Analyzing…" : "Suggest from resume"}
+                  </IslandButton>
+                }
+              >
+                <Field label="Roles you want" hint="Comma-separated. Click chips below to add.">
+                  {(id) => (
+                    <Input
+                      id={id}
+                      name="target_roles"
+                      type="text"
+                      value={form.target_roles}
+                      onChange={(e) => set("target_roles", e.target.value)}
+                      placeholder="Frontend Engineer, Full Stack Developer, React Developer"
+                    />
+                  )}
+                </Field>
+
+                {parsedRoles.length > 0 && (
+                  <ul aria-label="Selected target roles" className="flex flex-wrap gap-2">
+                    {parsedRoles.map((role) => (
+                      <li key={role}>
+                        <TagPill label={role} onRemove={() => removeRole(role)} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {suggestedRoles.length > 0 && (
+                  <div
+                    aria-live="polite"
+                    className="space-y-3 rounded-2xl bg-primary/[0.05] p-4 ring-1 ring-primary/15"
+                  >
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                      <Sparkle aria-hidden size={13} weight="light" />
+                      AI suggestions — click to add
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {suggestedRoles.map((r) => {
+                        const included = parsedRoles.includes(r);
+                        return (
+                          <Chip
+                            key={r}
+                            onClick={() => addRole(r)}
+                            disabled={included}
+                            active={included}
+                            className={cn(!included && "text-primary ring-primary/30 hover:text-primary hover:ring-primary/50")}
+                            icon={included ? <Check size={12} weight="light" /> : <Plus size={12} weight="light" />}
+                          >
+                            {r}
+                          </Chip>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <Hairline />
+                  <GroupLabel id="pref-popular-roles">Popular roles — click to add</GroupLabel>
+                  <div role="group" aria-labelledby="pref-popular-roles" className="flex flex-wrap gap-2">
+                    {POPULAR_ROLES.map((r) => {
+                      const included = parsedRoles.includes(r);
+                      return (
+                        <Chip
+                          key={r}
+                          onClick={() => addRole(r)}
+                          disabled={included}
+                          active={included}
+                          icon={included ? <Check size={12} weight="light" /> : undefined}
+                        >
+                          {r}
+                        </Chip>
+                      );
+                    })}
+                  </div>
+                </div>
+              </PrefCard>
+
+              {/* D — work type */}
+              <PrefCard
+                className="lg:col-span-4"
+                delay={0.1}
+                icon={<SuitcaseSimple size={16} weight="light" />}
+                title="Work type"
+              >
+                <div className="space-y-2.5">
+                  <GroupLabel id="pref-job-type">Job type</GroupLabel>
+                  <div role="group" aria-labelledby="pref-job-type" className="flex flex-wrap gap-2">
+                    {JOB_TYPES.map((jt) => (
+                      <Chip
+                        key={jt}
+                        className="capitalize"
+                        active={selectedJobTypes.includes(jt)}
+                        onClick={() => set("job_type", toggleCsvValue(form.job_type, jt))}
+                      >
+                        {jt}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  <GroupLabel id="pref-work-mode">Work mode</GroupLabel>
+                  <div role="group" aria-labelledby="pref-work-mode" className="flex flex-wrap gap-2">
+                    {WORK_MODES.map((wm) => (
+                      <Chip
+                        key={wm}
+                        className="capitalize"
+                        active={selectedWorkModes.includes(wm)}
+                        onClick={() => set("work_mode", toggleCsvValue(form.work_mode, wm))}
+                      >
+                        {wm}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+              </PrefCard>
+
+              {/* E — locations */}
+              <PrefCard
+                className="lg:col-span-4"
+                delay={0.12}
+                icon={<MapPin size={16} weight="light" />}
+                title="Preferred locations"
+              >
+                <Field label="Locations" hint="Comma-separated list of locations">
+                  {(id) => (
+                    <Input
+                      id={id}
+                      name="preferred_locations"
+                      type="text"
+                      value={form.preferred_locations}
+                      onChange={(e) => set("preferred_locations", e.target.value)}
+                      placeholder="Remote, Bangalore, San Francisco, New York"
+                    />
+                  )}
+                </Field>
+                {parsedLocations.length > 0 && (
+                  <ul aria-label="Selected locations" className="flex flex-wrap gap-2">
+                    {parsedLocations.map((loc) => (
+                      <li key={loc}>
+                        <TagPill label={loc} onRemove={() => removeLocation(loc)} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </PrefCard>
+
+              {/* F — bio */}
+              <PrefCard
+                className="lg:col-span-7"
+                delay={0.06}
+                icon={<TextAlignLeft size={16} weight="light" />}
+                title="Bio"
+                meta={<span className="font-geist-mono tabular-nums">{form.bio.length} chars</span>}
+              >
+                <Field label="About you" hint="Agents quote this when drafting outreach and cover letters.">
+                  {(id) => (
+                    <Textarea
+                      id={id}
+                      name="bio"
+                      rows={4}
+                      className="resize-none"
+                      value={form.bio}
+                      onChange={(e) => set("bio", e.target.value)}
+                      placeholder="A short summary about yourself, your skills, and what you're looking for in your next role…"
+                    />
+                  )}
+                </Field>
+              </PrefCard>
+
+              {/* G — live browser */}
+              <PrefCard
+                className="lg:col-span-5"
+                delay={0.1}
+                tone={form.prefer_live_browser ? "primary" : "muted"}
+                icon={<Browser size={16} weight="light" />}
+                title="Live browser"
+                meta={
+                  <Toggle
+                    checked={form.prefer_live_browser}
+                    onChange={(next) => set("prefer_live_browser", next)}
+                    label="Open a visible browser for autonomous runs"
                   />
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-xs text-muted-foreground">Exact years of experience</label>
-              <input
-                type="number"
-                min={0}
-                max={60}
-                value={form.years_experience}
-                onChange={(e) => set("years_experience", e.target.value)}
-                placeholder={form.experience_level === "fresher" ? "0" : "e.g. 3"}
-                className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                Used by job search and application forms. Set 0 for fresher.
-              </p>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-xs text-muted-foreground">Job type</label>
-              <div className="flex flex-wrap gap-2">
-                {JOB_TYPES.map((jt) => (
-                  <PillButton
-                    key={jt}
-                    label={jt}
-                    active={selectedJobTypes.includes(jt)}
-                    onClick={() => set("job_type", toggleCsvValue(form.job_type, jt))}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-xs text-muted-foreground">Work mode</label>
-              <div className="flex flex-wrap gap-2">
-                {WORK_MODES.map((wm) => (
-                  <PillButton
-                    key={wm}
-                    label={wm}
-                    active={selectedWorkModes.includes(wm)}
-                    onClick={() => set("work_mode", toggleCsvValue(form.work_mode, wm))}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Live browser toggle — visible Chromium for autonomous runs */}
-            <div className="rounded-2xl border border-border bg-background/40 p-4">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4 rounded border-border accent-primary"
-                  checked={form.prefer_live_browser}
-                  onChange={(e) => set("prefer_live_browser", e.target.checked)}
-                />
-                <div className="flex-1">
-                  <div className="text-sm font-medium">Open a visible browser for autonomous runs</div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    When on, the daily search and the &ldquo;Prepare Apply&rdquo; step open a real Chromium window that streams to the
-                    page below. You&rsquo;ll see the agent click and type. When off (default), CareerCraft uses
-                    the fast headless job-board APIs — invisible to you, but no CAPTCHAs and no extra LLM
-                    tokens. You can always force the visible browser for a single run from the job card.
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Open a visible browser for autonomous runs
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, the daily search and the &ldquo;Prepare Apply&rdquo; step open a real Chromium window that
+                    streams to the page below. You&rsquo;ll see the agent click and type. When off (default),
+                    CareerCraft uses the fast headless job-board APIs — invisible to you, but no CAPTCHAs and no extra
+                    LLM tokens. You can always force the visible browser for a single run from the job card.
                   </p>
                 </div>
-              </label>
+                <StatusPill tone={form.prefer_live_browser ? "primary" : "neutral"}>
+                  {form.prefer_live_browser ? "Visible Chromium" : "Headless (default)"}
+                </StatusPill>
+              </PrefCard>
             </div>
-          </motion.div>
 
-          {/* Salary range */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Salary range</span>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1.5 block text-xs text-muted-foreground">Minimum (USD/yr)</label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.salary_min}
-                    onChange={(e) => set("salary_min", e.target.value)}
-                    placeholder="80000"
-                    className="w-full rounded-2xl border border-border bg-card/40 pl-7 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            {/* Sticky save bar */}
+            <div className="sticky bottom-4 z-20 md:bottom-6">
+              <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 rounded-full bg-card/80 p-1.5 pl-5 shadow-ambient ring-1 ring-foreground/[0.08] backdrop-blur-xl dark:bg-background/70 dark:ring-white/10">
+                <p role="status" aria-live="polite" className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full transition-colors duration-500 ease-vanguard",
+                      isDirty ? "bg-warning" : "bg-success",
+                    )}
                   />
-                </div>
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs text-muted-foreground">Maximum (USD/yr)</label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.salary_max}
-                    onChange={(e) => set("salary_max", e.target.value)}
-                    placeholder="150000"
-                    className="w-full rounded-2xl border border-border bg-card/40 pl-7 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                </div>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* Target roles */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Target className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Target roles</span>
-              </div>
-              <button
-                type="button"
-                onClick={handleSuggestRoles}
-                disabled={suggestingRoles}
-                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:opacity-50"
-              >
-                {suggestingRoles ? (
-                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                ) : (
-                  <Sparkles className="h-3 w-3" />
-                )}
-                {suggestingRoles ? "Analyzing…" : "Suggest from resume"}
-              </button>
-            </div>
-            <input
-              type="text"
-              value={form.target_roles}
-              onChange={(e) => set("target_roles", e.target.value)}
-              placeholder="Frontend Engineer, Full Stack Developer, React Developer"
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            <p className="mt-1.5 text-xs text-muted-foreground">Comma-separated. Click chips below to add.</p>
-            {parsedRoles.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {parsedRoles.map((role) => (
-                  <TagPill key={role} label={role} onRemove={() => removeRole(role)} />
-                ))}
-              </div>
-            )}
-            {suggestedRoles.length > 0 && (
-              <div className="mt-4">
-                <div className="mb-2 text-xs font-medium text-primary">AI suggestions — click to add</div>
-                <div className="flex flex-wrap gap-2">
-                  {suggestedRoles.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => addRole(r)}
-                      disabled={parsedRoles.includes(r)}
-                      className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                        parsedRoles.includes(r)
-                          ? "border-primary/30 bg-primary/5 text-primary/50 cursor-default"
-                          : "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10"
-                      }`}
-                    >
-                      {parsedRoles.includes(r) ? `✓ ${r}` : `+ ${r}`}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="mt-4">
-              <div className="mb-2 text-xs text-muted-foreground">Popular roles — click to add</div>
-              <div className="flex flex-wrap gap-2">
-                {POPULAR_ROLES.map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => addRole(r)}
-                    disabled={parsedRoles.includes(r)}
-                    className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                      parsedRoles.includes(r)
-                        ? "border-primary/30 bg-primary/5 text-primary/50 cursor-default"
-                        : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                    }`}
+                  <span className="truncate">{isDirty ? "Unsaved changes" : "Everything saved"}</span>
+                </p>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <IslandLink
+                    href="/settings/account"
+                    tone="quiet"
+                    size="sm"
+                    className="hidden sm:inline-flex"
+                    icon={<ArrowLeft size={14} weight="light" />}
                   >
-                    {parsedRoles.includes(r) ? `✓ ${r}` : r}
-                  </button>
-                ))}
+                    Back to account
+                  </IslandLink>
+                  <IslandButton
+                    tone="primary"
+                    size="sm"
+                    onClick={() => saveMutation.mutate()}
+                    disabled={saveMutation.isPending}
+                    aria-busy={saveMutation.isPending}
+                    trailing={
+                      saveMutation.isPending ? (
+                        <CircleNotch size={14} weight="light" className="animate-spin motion-reduce:animate-none" />
+                      ) : (
+                        <FloppyDisk size={14} weight="light" />
+                      )
+                    }
+                  >
+                    {saveMutation.isPending ? "Saving…" : "Save preferences"}
+                  </IslandButton>
+                </div>
               </div>
             </div>
-          </motion.div>
-
-          {/* Preferred locations */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Preferred locations</span>
-            </div>
-            <input
-              type="text"
-              value={form.preferred_locations}
-              onChange={(e) => set("preferred_locations", e.target.value)}
-              placeholder="Remote, Bangalore, San Francisco, New York"
-              className="w-full rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            <p className="mt-1.5 text-xs text-muted-foreground">Comma-separated list of locations</p>
-            {parsedLocations.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {parsedLocations.map((loc) => (
-                  <TagPill key={loc} label={loc} onRemove={() => removeLocation(loc)} />
-                ))}
-              </div>
-            )}
-          </motion.div>
-
-          {/* Bio */}
-          <motion.div variants={fadeUp} className="rounded-3xl border border-border bg-card/60 p-6">
-            <div className="mb-4 text-sm font-medium">Bio</div>
-            <textarea
-              rows={4}
-              value={form.bio}
-              onChange={(e) => set("bio", e.target.value)}
-              placeholder="A short summary about yourself, your skills, and what you're looking for in your next role…"
-              className="w-full resize-none rounded-2xl border border-border bg-card/40 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </motion.div>
-
-          {/* Save */}
-          <motion.div variants={fadeUp} className="flex items-center gap-3">
-            <LiquidGlassButton
-              tone="primary"
-              size="md"
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
-            >
-              {saveMutation.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                "Save preferences"
-              )}
-            </LiquidGlassButton>
-            <a href="/settings/account" className="text-sm text-muted-foreground hover:text-foreground">
-              ← Back to account
-            </a>
-          </motion.div>
-        </div>
-      )}
-    </motion.div>
+          </div>
+        )}
+      </div>
+    </Screen>
   );
 }

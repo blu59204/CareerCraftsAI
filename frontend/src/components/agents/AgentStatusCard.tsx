@@ -1,34 +1,38 @@
 "use client";
 
-import { motion } from "motion/react";
-import { CheckCircle2, Clock3, Loader2, SearchCheck, TriangleAlert } from "lucide-react";
-import { cardHover } from "@/lib/motion-variants";
+import { CheckCircle, CircleNotch, Clock, MagnifyingGlass, Warning, type Icon } from "@phosphor-icons/react";
+import { cn } from "@/lib/utils";
 
 export type AgentRunStatus =
   | "queued" | "running" | "succeeded" | "completed" | "failed"
   | "awaiting_approval" | "needs_verification";
 
-const STATUS_STYLES: Record<AgentRunStatus, string> = {
-  queued: "border-muted bg-muted/20 text-muted-foreground",
-  running: "border-primary/30 bg-primary/10 text-primary",
-  succeeded: "border-success/30 bg-success/10 text-success",
-  completed: "border-success/30 bg-success/10 text-success",
-  failed: "border-danger/30 bg-danger/10 text-danger",
-  awaiting_approval: "border-warning/30 bg-warning/10 text-warning",
+// Medallion + pill tints per status. Semantic tokens only (success / warning /
+// danger / primary) so the card reads identically in light and dark mode.
+const STATUS_STYLES: Record<AgentRunStatus, { medallion: string; pill: string }> = {
+  queued: {
+    medallion: "bg-foreground/[0.04] text-muted-foreground ring-foreground/[0.08] dark:bg-white/[0.05] dark:ring-white/10",
+    pill: "bg-foreground/[0.04] text-muted-foreground ring-foreground/[0.08] dark:bg-white/[0.05] dark:ring-white/10",
+  },
+  running: { medallion: "bg-primary/10 text-primary ring-primary/20", pill: "bg-primary/10 text-primary ring-primary/20" },
+  succeeded: { medallion: "bg-success/10 text-success ring-success/25", pill: "bg-success/10 text-success ring-success/25" },
+  completed: { medallion: "bg-success/10 text-success ring-success/25", pill: "bg-success/10 text-success ring-success/25" },
+  failed: { medallion: "bg-danger/10 text-danger ring-danger/25", pill: "bg-danger/10 text-danger ring-danger/25" },
+  awaiting_approval: { medallion: "bg-warning/10 text-warning ring-warning/25", pill: "bg-warning/10 text-warning ring-warning/25" },
   // Distinct from "failed": an external action (e.g. a submit click) may
   // have gone through with no way to confirm it — never auto-retried, so
   // the color/copy must read as "go check", not "broken".
-  needs_verification: "border-warning/30 bg-warning/10 text-warning",
+  needs_verification: { medallion: "bg-warning/10 text-warning ring-warning/25", pill: "bg-warning/10 text-warning ring-warning/25" },
 };
 
-const STATUS_ICONS: Record<AgentRunStatus, typeof Clock3> = {
-  queued: Clock3,
-  running: Loader2,
-  succeeded: CheckCircle2,
-  completed: CheckCircle2,
-  failed: TriangleAlert,
-  awaiting_approval: Clock3,
-  needs_verification: SearchCheck,
+const STATUS_ICONS: Record<AgentRunStatus, Icon> = {
+  queued: Clock,
+  running: CircleNotch,
+  succeeded: CheckCircle,
+  completed: CheckCircle,
+  failed: Warning,
+  awaiting_approval: Clock,
+  needs_verification: MagnifyingGlass,
 };
 
 const AGENT_LABELS: Record<string, string> = {
@@ -42,7 +46,6 @@ function displayName(value: string) {
   return AGENT_LABELS[value] ?? value.replace(/_/g, " ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
-
 type Props = {
   agentType: string;
   status: AgentRunStatus;
@@ -50,26 +53,46 @@ type Props = {
   startedAt?: string;
 };
 
+/**
+ * Compact run row: status medallion, agent name, status pill, latest message
+ * and start time. Built from phrasing elements (spans) only, so it is valid
+ * both standalone (dashboard) and nested inside a <button> (agents history).
+ */
 export function AgentStatusCard({ agentType, status, latestMessage, startedAt }: Props) {
   const normalizedStatus: AgentRunStatus = STATUS_ICONS[status] ? status : "queued";
   const StatusIcon = STATUS_ICONS[normalizedStatus];
+  const styles = STATUS_STYLES[normalizedStatus];
   return (
-    <motion.div {...cardHover} className="rounded-xl border border-border bg-background/45 p-3">
-      <div className="flex items-start gap-3">
-        <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg border ${STATUS_STYLES[normalizedStatus]}`}>
-          <StatusIcon className={`h-4 w-4 ${normalizedStatus === "running" ? "animate-spin" : ""}`} />
+    <span
+      className={cn(
+        "block rounded-2xl bg-card px-4 py-3.5 ring-1 ring-foreground/[0.06] shadow-bezel-core dark:ring-white/10 dark:shadow-bezel-core-dark",
+        "transition-[background-color,transform] duration-500 ease-vanguard hover:bg-muted/40",
+      )}
+    >
+      <span className="flex items-start gap-3">
+        <span aria-hidden className={cn("mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full ring-1", styles.medallion)}>
+          <StatusIcon
+            size={15}
+            weight="light"
+            className={normalizedStatus === "running" ? "animate-spin motion-reduce:animate-none" : undefined}
+          />
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <div className="truncate text-sm font-medium">{displayName(agentType)}</div>
-            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${STATUS_STYLES[normalizedStatus]}`}>
+        <span className="block min-w-0 flex-1">
+          <span className="flex items-center justify-between gap-2">
+            <span className="truncate font-geist text-sm font-medium tracking-[-0.01em] text-foreground">{displayName(agentType)}</span>
+            <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1", styles.pill)}>
               {displayName(normalizedStatus)}
             </span>
-          </div>
-          {latestMessage && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{latestMessage}</p>}
-          {startedAt && <div className="mt-2 text-[11px] text-muted-foreground">Started {startedAt}</div>}
-        </div>
-      </div>
-    </motion.div>
+          </span>
+          {latestMessage && <span className="mt-1 line-clamp-2 block text-xs leading-5 text-muted-foreground">{latestMessage}</span>}
+          {startedAt && (
+            <span className="mt-2 flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/80">
+              <Clock aria-hidden size={12} weight="light" />
+              Started {startedAt}
+            </span>
+          )}
+        </span>
+      </span>
+    </span>
   );
 }

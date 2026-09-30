@@ -1,24 +1,47 @@
 "use client";
 
+import { useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
-  ArrowUpRight,
-  BriefcaseBusiness,
-  CalendarDays,
-  Clock3,
-  ExternalLink,
+  ArrowSquareOut,
+  CalendarBlank,
+  ClockCountdown,
+  EnvelopeSimple,
   FileText,
-  Mail,
+  Globe,
+  Gauge,
+  Lightning,
   MapPin,
-  Sparkles,
+  Note,
+  Pulse,
+  Sparkle,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
+import { cn } from "@/lib/utils";
 import { setPendingJd } from "@/lib/job-handoff";
-import type { ApplicationItem, AppStage } from "./ApplicationKanban";
+import {
+  Bezel,
+  EASE_VANGUARD,
+  Eyebrow,
+  Hairline,
+  IconButton,
+  IslandButton,
+  IslandLink,
+  Notice,
+  PanelTitle,
+  Segmented,
+  SPRING_PANEL,
+  StatusPill,
+  bezelCore,
+  bezelShell,
+  listItem,
+  listStagger,
+  type StatusTone,
+} from "@/components/vanguard";
+import { APP_STAGES, STAGE_LABELS, STAGE_TONE, type ApplicationItem, type AppStage } from "./ApplicationKanban";
 
 type AgentRun = {
   id: string;
@@ -36,21 +59,11 @@ type Props = {
   activityRuns: AgentRun[];
 };
 
-const STAGES: AppStage[] = ["saved", "applied", "viewed", "interview", "offer", "rejected"];
-const STAGE_LABELS: Record<AppStage, string> = {
-  saved: "Saved",
-  applied: "Applied",
-  viewed: "Viewed",
-  interview: "Interview",
-  offer: "Offer",
-  rejected: "Rejected",
-};
-
 const AI_SUGGESTIONS: Partial<Record<AppStage, { label: string; copy: string; href: string }>> = {
   interview: {
     label: "Prepare for interview",
     copy: "Practice role specific questions and plan your stories.",
-    href: "/interview-prep",
+    href: "/interview?tab=prep",
   },
   offer: {
     label: "Review compensation",
@@ -58,6 +71,8 @@ const AI_SUGGESTIONS: Partial<Record<AppStage, { label: string; copy: string; hr
     href: "/salary",
   },
 };
+
+const STAGE_OPTIONS = APP_STAGES.map((stage) => ({ value: stage, label: STAGE_LABELS[stage] }));
 
 function safeSource(url: string | null | undefined): { href: string; label: string } | null {
   if (!url) return null;
@@ -78,16 +93,30 @@ function dateLabel(value: string | null | undefined): string | null {
     : date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function runTone(status: string): StatusTone {
+  const s = status.toLowerCase();
+  if (["completed", "complete", "succeeded", "success", "approved"].includes(s)) return "success";
+  if (["failed", "error", "cancelled", "canceled", "rejected"].includes(s)) return "danger";
+  if (["awaiting_approval", "pending", "queued"].includes(s)) return "warning";
+  if (["running", "in_progress", "started"].includes(s)) return "primary";
+  return "neutral";
+}
+
+type Fact = { key: string; label: string; icon: ReactNode; value: ReactNode };
+
 export function ApplicationDrawer({ application, open, onClose, onStageChange, activityRuns }: Props) {
   const router = useRouter();
-  if (!application) return null;
+  const reduce = useReducedMotion();
+  // Keep the last shown application so the drawer can finish its exit
+  // animation after the parent clears the selection.
+  const [shown, setShown] = useState<ApplicationItem | null>(application);
+  if (application && application !== shown) setShown(application);
+  const app = application ?? shown;
 
-  const source = safeSource(application.jobUrl);
-  const suggestion = AI_SUGGESTIONS[application.stage];
-  const appliedDate = dateLabel(application.appliedAt);
+  const visible = open && app !== null;
 
   function customizeResume() {
-    const current = application;
+    const current = app;
     if (!current?.jobDescription?.trim()) {
       toast.error("This saved role has no description to tailor against.");
       return;
@@ -101,196 +130,302 @@ export function ApplicationDrawer({ application, open, onClose, onStageChange, a
     router.push("/resume");
   }
 
+  const panelMotion = reduce
+    ? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.2 } }
+    : { initial: { x: "104%" }, animate: { x: 0 }, exit: { x: "104%" }, transition: SPRING_PANEL };
+
   return (
-    <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm" />
-        <Dialog.Content
-          aria-describedby="application-details-description"
-          className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-border bg-background shadow-2xl sm:max-w-xl"
-        >
-          <header className="border-b border-border px-5 pb-5 pt-6 sm:px-7">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <BriefcaseBusiness className="h-3.5 w-3.5" />
-                  Application details
-                </div>
-                <Dialog.Title className="text-balance font-command text-2xl font-semibold leading-tight tracking-tight sm:text-3xl">
-                  {application.role}
-                </Dialog.Title>
-                <Dialog.Description id="application-details-description" className="mt-1 text-sm text-muted-foreground">
-                  {application.company}
-                  {application.matchPercent != null && <> <span aria-hidden="true">·</span> {application.matchPercent}% match</>}
-                </Dialog.Description>
-              </div>
-              <Dialog.Close asChild>
-                <button
-                  type="button"
-                  aria-label="Close application details"
-                  className="rounded-lg p-2 text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+    <Dialog.Root open={visible} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      <AnimatePresence>
+        {visible && app ? (
+          <Dialog.Portal forceMount key="application-drawer">
+            <Dialog.Overlay asChild forceMount>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: reduce ? 0.2 : 0.5, ease: EASE_VANGUARD }}
+                className="fixed inset-0 z-40 bg-foreground/15 backdrop-blur-md dark:bg-black/50"
+              />
+            </Dialog.Overlay>
+            <Dialog.Content asChild forceMount aria-describedby="application-details-description">
+              <motion.div
+                {...panelMotion}
+                className="fixed inset-y-0 right-0 z-40 flex w-full p-2 font-geist antialiased focus:outline-none sm:max-w-[35rem] sm:p-3"
+              >
+                <DrawerBody
+                  app={app}
+                  reduce={!!reduce}
+                  onClose={onClose}
+                  onStageChange={onStageChange}
+                  onCustomize={customizeResume}
+                  activityRuns={activityRuns}
+                />
+              </motion.div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        ) : null}
+      </AnimatePresence>
+    </Dialog.Root>
+  );
+}
+
+function DrawerBody({
+  app,
+  reduce,
+  onClose,
+  onStageChange,
+  onCustomize,
+  activityRuns,
+}: {
+  app: ApplicationItem;
+  reduce: boolean;
+  onClose: () => void;
+  onStageChange: (stage: AppStage) => void;
+  onCustomize: () => void;
+  activityRuns: AgentRun[];
+}) {
+  const source = safeSource(app.jobUrl);
+  const suggestion = AI_SUGGESTIONS[app.stage];
+  const appliedDate = dateLabel(app.appliedAt);
+  const hasDescription = !!app.jobDescription?.trim();
+  const match = app.matchPercent != null ? Math.max(0, Math.min(100, app.matchPercent)) : null;
+
+  const facts = ([
+    app.location ? { key: "location", label: "Location", icon: <MapPin size={14} weight="light" />, value: app.location } : null,
+    appliedDate ? { key: "applied", label: "Applied", icon: <CalendarBlank size={14} weight="light" />, value: appliedDate } : null,
+    app.nextFollowUp
+      ? { key: "followup", label: "Next follow-up", icon: <ClockCountdown size={14} weight="light" />, value: app.nextFollowUp }
+      : null,
+    match != null
+      ? {
+          key: "match",
+          label: "Match",
+          icon: <Gauge size={14} weight="light" />,
+          value: (
+            <span className="flex items-center gap-3">
+              <span className="tabular-nums">{app.matchPercent}%</span>
+              <span aria-hidden className="h-[3px] w-16 overflow-hidden rounded-full bg-foreground/[0.07] dark:bg-white/10">
+                <span className="block h-full origin-left rounded-full bg-primary" style={{ transform: `scaleX(${match / 100})` }} />
+              </span>
+            </span>
+          ),
+        }
+      : null,
+  ] as Array<Fact | null>).filter((fact): fact is Fact => fact !== null);
+
+  const stagger = reduce
+    ? {}
+    : { initial: "hidden" as const, animate: "show" as const, variants: listStagger };
+  const item = reduce ? {} : { variants: listItem };
+
+  return (
+    <div className={cn(bezelShell("lg"), "flex h-full w-full bg-background/60 shadow-ambient backdrop-blur-xl dark:bg-white/[0.04]")}>
+      <div className={cn(bezelCore("lg"), "flex h-full w-full flex-col overflow-hidden")}>
+        <header className="px-6 pb-6 pt-6 sm:px-8 sm:pt-8">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Eyebrow>Application details</Eyebrow>
+              <StatusPill tone={STAGE_TONE[app.stage]} live={app.stage === "interview"}>
+                {STAGE_LABELS[app.stage]}
+              </StatusPill>
+            </div>
+            <Dialog.Close asChild>
+              <IconButton aria-label="Close application details" className="-mr-1 -mt-1">
+                <X size={16} weight="light" />
+              </IconButton>
+            </Dialog.Close>
+          </div>
+          <Dialog.Title className="mt-6 text-balance font-geist text-[1.85rem] font-semibold leading-[1.04] tracking-[-0.035em] text-foreground sm:text-[2.35rem]">
+            {app.role}
+          </Dialog.Title>
+          <Dialog.Description id="application-details-description" className="mt-2 text-[15px] text-muted-foreground">
+            {app.company}
+            {app.matchPercent != null && (
+              <>
+                {" "}
+                <span aria-hidden="true">·</span> {app.matchPercent}% match
+              </>
+            )}
+          </Dialog.Description>
+        </header>
+
+        <Hairline />
+
+        <motion.div {...stagger} className="flex-1 space-y-8 overflow-y-auto overscroll-contain px-6 py-7 sm:px-8">
+          {facts.length > 0 && (
+            <motion.dl
+              {...item}
+              className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-foreground/[0.06] ring-1 ring-foreground/[0.06] dark:bg-white/[0.06] dark:ring-white/10"
+            >
+              {facts.map((fact, index) => (
+                <div
+                  key={fact.key}
+                  className={cn("min-w-0 bg-card px-4 py-3.5", facts.length % 2 === 1 && index === facts.length - 1 && "col-span-2")}
                 >
-                  <X className="h-4 w-4" />
-                </button>
-              </Dialog.Close>
-            </div>
+                  <dt className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                    <span aria-hidden>{fact.icon}</span>
+                    {fact.label}
+                  </dt>
+                  <dd className="mt-1.5 truncate text-sm font-medium text-foreground">{fact.value}</dd>
+                </div>
+              ))}
+            </motion.dl>
+          )}
 
-            <div className="mt-5 grid grid-cols-2 gap-2">
-              {application.location && (
-                <div className="flex min-w-0 items-center gap-2 rounded-xl border border-border bg-card/60 px-3 py-2.5">
-                  <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-sm">{application.location}</span>
-                </div>
-              )}
-              {appliedDate && (
-                <div className="flex items-center gap-2 rounded-xl border border-border bg-card/60 px-3 py-2.5">
-                  <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="text-sm">Applied {appliedDate}</span>
-                </div>
-              )}
-            </div>
-          </header>
+          <motion.section {...item} aria-labelledby="application-stage-label" className="space-y-3">
+            <p id="application-stage-label" className="pl-1 text-[12px] font-medium text-muted-foreground">
+              Application stage
+            </p>
+            <Segmented
+              value={app.stage}
+              onChange={(stage) => {
+                if (stage !== app.stage) onStageChange(stage);
+              }}
+              options={STAGE_OPTIONS}
+              asTabs={false}
+              size="sm"
+              ariaLabel="Application stage"
+            />
+          </motion.section>
 
-          <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5 sm:px-7">
-            <section className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-4">
-              <div className="flex items-start gap-3">
-                <div className="rounded-lg bg-primary/10 p-2 text-primary">
-                  <Sparkles className="h-4 w-4" />
-                </div>
+          <motion.div {...item}>
+            <Bezel tone="primary" size="md" coreClassName="p-5 sm:p-6">
+              <div className="flex items-start gap-4">
+                <span aria-hidden className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/20">
+                  <Sparkle size={18} weight="light" />
+                </span>
                 <div className="min-w-0 flex-1">
-                  <h2 className="font-semibold">Make this resume fit the role</h2>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    {application.jobDescription
+                  <h3 className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">Make this resume fit the role</h3>
+                  <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
+                    {app.jobDescription
                       ? "Use this job description to tailor your resume and check its match."
                       : "Add the job description to this role before tailoring a resume."}
                   </p>
-                  <LiquidGlassButton
+                  <IslandButton
                     type="button"
                     tone="primary"
                     size="sm"
-                    className="mt-3"
-                    disabled={!application.jobDescription?.trim()}
-                    onClick={customizeResume}
+                    className="mt-4"
+                    disabled={!hasDescription}
+                    onClick={onCustomize}
+                    trailing
                   >
-                    <Sparkles className="h-3.5 w-3.5" />
                     Customize resume for this job
-                    <ArrowUpRight className="h-3.5 w-3.5" />
-                  </LiquidGlassButton>
+                  </IslandButton>
                 </div>
               </div>
-            </section>
+            </Bezel>
+          </motion.div>
 
-            <section>
-              <div className="mb-2 flex items-center gap-2">
-                <ExternalLink className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold">Original source</h2>
-              </div>
-              {source ? (
-                <a
-                  href={source.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card/50 p-3 transition hover:border-primary/40 hover:bg-card"
+          <motion.section {...item} className="space-y-3">
+            <PanelTitle title="Original source" icon={<Globe size={15} weight="light" />} />
+            {source ? (
+              <a
+                href={source.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-center justify-between gap-3 rounded-2xl bg-foreground/[0.02] p-4 ring-1 ring-foreground/[0.06] transition-[background-color,box-shadow] duration-500 ease-vanguard hover:bg-foreground/[0.04] hover:ring-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 dark:bg-white/[0.02] dark:ring-white/10 dark:hover:bg-white/[0.05]"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-foreground">{source.label}</span>
+                  <span className="mt-0.5 block truncate font-geist-mono text-[11px] text-muted-foreground">{source.href}</span>
+                </span>
+                <span
+                  aria-hidden
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-foreground/[0.05] text-muted-foreground transition-[transform,color] duration-500 ease-vanguard group-hover:-translate-y-[1px] group-hover:translate-x-0.5 group-hover:text-primary dark:bg-white/10"
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{source.label}</span>
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">{source.href}</span>
-                  </span>
-                  <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:text-primary" />
-                </a>
-              ) : (
-                <p className="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                  Original posting link was not saved for this role.
-                </p>
-              )}
-            </section>
-
-            <section>
-              <div className="mb-2 flex items-center gap-2">
-                <FileText className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold">Job description</h2>
-              </div>
-              {application.jobDescription?.trim() ? (
-                <div className="max-h-[26rem] overflow-y-auto rounded-xl border border-border bg-card/40 p-4">
-                  <p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">{application.jobDescription}</p>
-                </div>
-              ) : (
-                <p className="rounded-xl border border-dashed border-border px-3 py-4 text-sm leading-6 text-muted-foreground">
-                  This listing has no saved description. Open the original source to review the details.
-                </p>
-              )}
-            </section>
-
-            <section className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-muted-foreground">Application stage</span>
-                <select
-                  value={application.stage}
-                  onChange={(event) => onStageChange(event.target.value as AppStage)}
-                  className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
-                >
-                  {STAGES.map((stage) => <option key={stage} value={stage}>{STAGE_LABELS[stage]}</option>)}
-                </select>
-              </label>
-              {application.nextFollowUp && (
-                <div>
-                  <span className="mb-1.5 block text-xs font-medium text-muted-foreground">Next follow-up</span>
-                  <div className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm">
-                    <Clock3 className="h-4 w-4 text-muted-foreground" />
-                    {application.nextFollowUp}
-                  </div>
-                </div>
-              )}
-            </section>
-
-            {application.notes && (
-              <section>
-                <h2 className="mb-2 text-sm font-semibold">Notes</h2>
-                <p className="whitespace-pre-wrap rounded-xl border border-border bg-card/40 p-4 text-sm leading-6 text-muted-foreground">{application.notes}</p>
-              </section>
+                  <ArrowSquareOut size={14} weight="light" />
+                </span>
+                <span className="sr-only">(opens in a new tab)</span>
+              </a>
+            ) : (
+              <Notice>Original posting link was not saved for this role.</Notice>
             )}
+          </motion.section>
 
-            {suggestion && (
-              <section className="rounded-2xl border border-border bg-card/50 p-4">
-                <p className="text-xs font-medium text-muted-foreground">Next step</p>
-                <p className="mt-1 text-sm">{suggestion.copy}</p>
-                <Link href={suggestion.href} onClick={onClose} className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
-                  {suggestion.label} <ArrowUpRight className="h-3.5 w-3.5" />
-                </Link>
-              </section>
+          <motion.section {...item} className="space-y-3">
+            <PanelTitle title="Job description" icon={<FileText size={15} weight="light" />} />
+            {hasDescription ? (
+              <Bezel tone="muted" size="md" coreClassName="max-h-[26rem] overflow-y-auto overscroll-contain p-5">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-foreground/90">{app.jobDescription}</p>
+              </Bezel>
+            ) : (
+              <Notice>This listing has no saved description. Open the original source to review the details.</Notice>
             )}
+          </motion.section>
 
-            <section className="pb-2">
-              <div className="mb-3 flex items-center gap-2">
-                <Clock3 className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold">Recent activity</h2>
+          {app.notes && (
+            <motion.section {...item} className="space-y-3">
+              <PanelTitle title="Notes" icon={<Note size={15} weight="light" />} />
+              <Bezel tone="muted" size="md" coreClassName="p-5">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{app.notes}</p>
+              </Bezel>
+            </motion.section>
+          )}
+
+          {suggestion && (
+            <motion.section
+              {...item}
+              className="flex flex-col gap-4 rounded-2xl bg-foreground/[0.02] p-5 ring-1 ring-foreground/[0.06] dark:bg-white/[0.02] dark:ring-white/10 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <span aria-hidden className="mt-0.5 text-warning">
+                  <Lightning size={16} weight="light" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Next step</p>
+                  <p className="mt-1 text-sm leading-6 text-foreground">{suggestion.copy}</p>
+                </div>
               </div>
-              {activityRuns.length ? (
-                <ol className="space-y-3 border-l border-border pl-4">
-                  {activityRuns.map((run) => (
-                    <li key={run.id} className="relative text-sm">
-                      <span className="absolute -left-[1.32rem] top-1.5 h-2 w-2 rounded-full bg-primary ring-4 ring-background" />
-                      <p className="font-medium capitalize">{run.agent_type.replace(/_/g, " ")}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {run.status} · {new Date(run.started_at).toLocaleString()}
-                      </p>
-                      {run.output_summary && <p className="mt-1 text-xs leading-5 text-muted-foreground">{run.output_summary}</p>}
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="text-sm text-muted-foreground">No agent activity is linked to this role yet.</p>
-              )}
-            </section>
-          </div>
+              <IslandLink href={suggestion.href} onClick={onClose} tone="ghost" size="sm" trailing className="shrink-0">
+                {suggestion.label}
+              </IslandLink>
+            </motion.section>
+          )}
 
-          <footer className="border-t border-border bg-background/95 px-5 py-4 sm:px-7">
-            <Link href="/email" onClick={onClose} className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition hover:text-foreground">
-              <Mail className="h-4 w-4" /> Draft a follow-up email
-            </Link>
-          </footer>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+          <motion.section {...item} className="space-y-4 pb-2">
+            <PanelTitle
+              title="Recent activity"
+              icon={<Pulse size={15} weight="light" />}
+              meta={activityRuns.length ? <span className="tabular-nums">{activityRuns.length} runs</span> : null}
+            />
+            {activityRuns.length ? (
+              <ol className="relative space-y-5 pl-6 before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-px before:bg-foreground/[0.08] dark:before:bg-white/10">
+                {activityRuns.map((run) => (
+                  <li key={run.id} className="relative text-sm">
+                    <span aria-hidden className="absolute -left-6 top-1.5 grid h-[15px] w-[15px] place-items-center rounded-full bg-card ring-1 ring-foreground/10 dark:ring-white/15">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium capitalize text-foreground">{run.agent_type.replace(/_/g, " ")}</p>
+                      <StatusPill tone={runTone(run.status)} live={runTone(run.status) === "primary"}>
+                        {run.status.replace(/_/g, " ")}
+                      </StatusPill>
+                    </div>
+                    <p className="mt-1 font-geist-mono text-[11px] text-muted-foreground">{new Date(run.started_at).toLocaleString()}</p>
+                    {run.output_summary && <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{run.output_summary}</p>}
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="text-sm text-muted-foreground">No agent activity is linked to this role yet.</p>
+            )}
+          </motion.section>
+        </motion.div>
+
+        <Hairline />
+        <footer className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <IslandLink href="/email" onClick={onClose} tone="quiet" size="sm" icon={<EnvelopeSimple size={15} weight="light" />}>
+            Draft a follow-up email
+          </IslandLink>
+          <Dialog.Close asChild>
+            <IslandButton tone="ghost" size="sm">
+              Done
+            </IslandButton>
+          </Dialog.Close>
+        </footer>
+      </div>
+    </div>
   );
 }

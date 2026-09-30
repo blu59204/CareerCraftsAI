@@ -39,6 +39,21 @@ const config: Config = {
         warning: "hsl(var(--warning))",
         danger: "hsl(var(--danger))",
       },
+      // Vanguard motion + depth tokens. `ease-vanguard` is the default for
+      // every interactive transition on redesigned screens (never linear /
+      // ease-in-out); `ease-vanguard-out` for entrances.
+      transitionTimingFunction: {
+        vanguard: "cubic-bezier(0.32, 0.72, 0, 1)",
+        "vanguard-out": "cubic-bezier(0.16, 1, 0.3, 1)",
+      },
+      boxShadow: {
+        // Inner-core top highlight of a Double-Bezel card.
+        "bezel-core": "inset 0 1px 1px hsl(0 0% 100% / 0.65)",
+        "bezel-core-dark": "inset 0 1px 1px hsl(0 0% 100% / 0.08)",
+        // Very soft, highly diffused ambient lift — tinted by the warm foreground.
+        ambient: "0 40px 80px -48px hsl(var(--foreground) / 0.18), 0 12px 24px -20px hsl(var(--foreground) / 0.08)",
+        "ambient-sm": "0 16px 32px -24px hsl(var(--foreground) / 0.16)",
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 4px)",
@@ -52,6 +67,9 @@ const config: Config = {
         hero: ["var(--font-playfair)", "Iowan Old Style", "Georgia", "serif"],
         // Dashboard/software-UI headlines — never serif (design-taste-frontend rule).
         command: ["var(--font-outfit)", "ui-sans-serif", "system-ui", "sans-serif"],
+        // Vanguard in-app redesign (components/vanguard, app screens).
+        geist: ["var(--font-geist)", "ui-sans-serif", "system-ui", "sans-serif"],
+        "geist-mono": ["var(--font-geist-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
     },
   },

@@ -1,20 +1,64 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { Upload, Download, Target, FileText, Wand2, CloudUpload, Loader2, Pencil, FolderOpen, Minus, Plus } from "lucide-react";
+import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
+import {
+  UploadSimple,
+  DownloadSimple,
+  Target,
+  FileText,
+  MagicWand,
+  CloudArrowUp,
+  CircleNotch,
+  PencilSimple,
+  FolderOpen,
+  Minus,
+  Plus,
+  Check,
+  Copy,
+  CaretDown,
+  Palette,
+  ClockCounterClockwise,
+  EnvelopeSimple,
+  Crosshair,
+  Lightbulb,
+  Sparkle,
+  FilePdf,
+  Warning,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
-import { fadeUp, stagger } from "@/lib/motion-variants";
-import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
-import { CommandHeader } from "@/components/immersive/CommandHeader";
+import { cn } from "@/lib/utils";
+import {
+  Bezel,
+  Eyebrow,
+  EmptyPanel,
+  Hairline,
+  IconButton,
+  IslandButton,
+  Notice,
+  PanelTitle,
+  Reveal,
+  Screen,
+  SectionHeading,
+  Segmented,
+  Skeleton,
+  StatusPill,
+  Textarea,
+  Chip,
+  EASE_OUT_EXPO,
+  EASE_VANGUARD,
+  listItem,
+  listStagger,
+  panelSwap,
+  type StatusTone,
+} from "@/components/vanguard";
 import { AtsScoreRing } from "@/components/resume/AtsScoreRing";
 import { KeywordCoverage } from "@/components/resume/KeywordCoverage";
 import { SuggestionsList } from "@/components/resume/SuggestionsList";
 import { ResumePreview } from "@/components/resume/ResumePreview";
 import { ResumeFixPanel } from "@/components/resume/ResumeFixPanel";
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
 import { getResumeInsightData } from "@/lib/resume-insights";
 import { takePendingJd } from "@/lib/job-handoff";
@@ -72,6 +116,8 @@ interface AgentRun {
   output?: Record<string, unknown>;
 }
 
+type WorkspaceTab = "builder" | "templates" | "history" | "cover-letter";
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -107,6 +153,13 @@ const RESUME_TEMPLATES: Array<{
   },
 ];
 
+const WORKSPACE_TABS: ReadonlyArray<{ value: WorkspaceTab; label: string; icon: ReactNode }> = [
+  { value: "builder", label: "Builder", icon: <MagicWand size={14} weight="light" /> },
+  { value: "templates", label: "Templates", icon: <Palette size={14} weight="light" /> },
+  { value: "history", label: "History", icon: <ClockCounterClockwise size={14} weight="light" /> },
+  { value: "cover-letter", label: "Cover letter", icon: <EnvelopeSimple size={14} weight="light" /> },
+];
+
 /** Scale for template-card thumbnails (816px letter page → ~245px wide). */
 const TEMPLATE_THUMB_SCALE = 0.35;
 
@@ -134,6 +187,67 @@ function clampZoom(value: number): number {
 
 function isTemplateId(value: unknown): value is TemplateId {
   return value === "modern" || value === "classic" || value === "technical";
+}
+
+// ---------------------------------------------------------------------------
+// Small presentational helpers
+// ---------------------------------------------------------------------------
+
+function Spinner({ size = 15 }: { size?: number }) {
+  return <CircleNotch size={size} weight="light" aria-hidden="true" className="animate-spin motion-reduce:animate-none" />;
+}
+
+/** Round icon medallion used in panel headers. */
+function Medallion({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-foreground/[0.04] text-foreground/80 ring-1 ring-foreground/[0.06] dark:bg-white/[0.05] dark:ring-white/10"
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Recessed tray for previews / empty surfaces inside a bezel core. */
+const TRAY = "rounded-[1.25rem] bg-foreground/[0.03] ring-1 ring-foreground/[0.05] dark:bg-white/[0.02] dark:ring-white/[0.07]";
+
+/**
+ * Left-column editorial hero. Same entrance choreography as the kit's
+ * PageHero, but sized for a 4/12 column so the working area can sit beside it.
+ */
+function RailHero({ actions, status }: { actions: ReactNode; status?: ReactNode }) {
+  const reduce = useReducedMotion();
+  const enter = (delay: number) =>
+    reduce
+      ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } }
+      : {
+          initial: { opacity: 0, y: 28, filter: "blur(10px)" },
+          animate: { opacity: 1, y: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } },
+          transition: { duration: 0.9, ease: EASE_OUT_EXPO, delay },
+        };
+
+  return (
+    <header className="pt-2 md:pt-4">
+      <motion.div {...enter(0)}>
+        <Eyebrow>Resume workspace</Eyebrow>
+      </motion.div>
+      <motion.h1
+        {...enter(0.06)}
+        className="mt-4 text-balance font-geist text-[clamp(2rem,3.5vw,3.5rem)] font-semibold leading-[1.05] tracking-[-0.05em] text-foreground"
+      >
+        Resume,
+        <span className="block text-muted-foreground/70">tailored to the job.</span>
+      </motion.h1>
+      <motion.p {...enter(0.12)} className="mt-6 max-w-[44ch] text-pretty text-[15px] leading-7 text-muted-foreground">
+        Paste a target job, scan keywords, improve bullets, and export once your preview is ready.
+      </motion.p>
+      <motion.div {...enter(0.18)} className="mt-7 flex flex-wrap items-center gap-2.5">
+        {actions}
+      </motion.div>
+      {status}
+    </header>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -177,101 +291,106 @@ function CoverLetterGenerator({
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      {/* Input panel */}
-      <div className="space-y-4">
-        <div className="rounded-3xl border border-border bg-card/60 p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-primary" />
-            <span className="font-medium text-sm">Job Description</span>
-            <span className="text-xs text-muted-foreground">(required)</span>
-          </div>
-          <textarea
-            value={jd}
-            onChange={(e) => setJd(e.target.value)}
-            maxLength={MAX_COVER_JD_LENGTH}
-            aria-label="Job description"
-            aria-describedby="cover-jd-count"
-            placeholder="Paste the job description here to get a tailored cover letter…"
-            className="h-32 w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+    <div className="space-y-6">
+      <SectionHeading
+        eyebrow="Cover letter"
+        title="Write the letter that goes with it."
+        description="Uses your uploaded resume as context. Pick a tone, paste the posting, then edit the draft freely."
+      />
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        {/* Input panel */}
+        <Bezel coreClassName="space-y-5 p-5 md:p-6">
+          <PanelTitle
+            icon={<FileText size={15} weight="light" />}
+            title={<label htmlFor="cover-jd">Job description</label>}
+            meta="Required"
           />
-          <p id="cover-jd-count" className="-mt-2 text-right text-xs text-muted-foreground">
-            {jd.length.toLocaleString()}/{MAX_COVER_JD_LENGTH.toLocaleString()} characters
-          </p>
+          <div className="space-y-2">
+            <Textarea
+              id="cover-jd"
+              value={jd}
+              onChange={(e) => setJd(e.target.value)}
+              maxLength={MAX_COVER_JD_LENGTH}
+              aria-label="Job description"
+              aria-describedby="cover-jd-count"
+              placeholder="Paste the job description here to get a tailored cover letter…"
+              className="min-h-40 resize-none"
+            />
+            <p id="cover-jd-count" className="pr-1 text-right text-xs tabular-nums text-muted-foreground">
+              {jd.length.toLocaleString()}/{MAX_COVER_JD_LENGTH.toLocaleString()} characters
+            </p>
+          </div>
 
           <div>
-            <div className="mb-2 text-xs font-medium text-foreground">Tone</div>
-            <div className="flex flex-wrap gap-2">
+            <p id="cover-tone-label" className="mb-2.5 pl-1 text-[12px] font-medium text-muted-foreground">
+              Tone
+            </p>
+            <div role="group" aria-labelledby="cover-tone-label" className="flex flex-wrap gap-2">
               {COVER_LETTER_TONES.map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTone(t)}
-                  className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                    tone === t
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "border border-border text-muted-foreground hover:bg-card"
-                  }`}
-                >
+                <Chip key={t} active={tone === t} onClick={() => setTone(t)}>
                   {t}
-                </button>
+                </Chip>
               ))}
             </div>
           </div>
 
-          <LiquidGlassButton
+          <Hairline />
+
+          <IslandButton
             tone="primary"
-            size="sm"
+            size="md"
             disabled={generating || !jd.trim()}
             onClick={onGenerate}
+            icon={generating ? <Spinner /> : <MagicWand size={15} weight="light" />}
           >
-            {generating ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Wand2 className="h-4 w-4" />
-            )}
             {generating ? "Generating…" : "Generate Cover Letter"}
-          </LiquidGlassButton>
-        </div>
-      </div>
+          </IslandButton>
+        </Bezel>
 
-      {/* Output panel */}
-      <div className="rounded-3xl border border-border bg-card/60 p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm font-medium text-foreground">Cover Letter</span>
-          {letter && (
-            <div className="flex gap-2">
-              <button
-                onClick={copyToClipboard}
-                className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-card transition-colors"
-              >
-                Copy
-              </button>
-              <button
-                onClick={downloadText}
-                className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-card transition-colors"
-              >
-                Download text
-              </button>
-            </div>
-          )}
-        </div>
-        {generating ? (
-          <div className="space-y-2">
-            {[100, 80, 90, 60, 70, 85].map((w, i) => (
-              <div key={i} className="shimmer h-4 rounded-full" style={{ width: `${w}%` }} />
-            ))}
+        {/* Output panel */}
+        <Bezel coreClassName="flex flex-col p-5 md:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">
+              {letter ? <label htmlFor="cover-letter-output">Cover letter</label> : "Cover letter"}
+            </h3>
+            {letter && (
+              <div className="flex gap-2">
+                <IslandButton tone="ghost" size="sm" onClick={copyToClipboard} icon={<Copy size={14} weight="light" />}>
+                  Copy
+                </IslandButton>
+                <IslandButton tone="ghost" size="sm" onClick={downloadText} icon={<DownloadSimple size={14} weight="light" />}>
+                  Download text
+                </IslandButton>
+              </div>
+            )}
           </div>
-        ) : letter ? (
-          <textarea
-            value={letter}
-            onChange={(e) => setLetter(e.target.value)}
-            className="h-72 w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        ) : (
-          <div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-border text-sm text-muted-foreground">
-            Your cover letter will appear here
+          <div className="mt-4 flex-1" aria-live="polite" aria-busy={generating || undefined}>
+            {generating ? (
+              <div className={cn(TRAY, "space-y-3 p-5")}>
+                <span className="sr-only">Generating cover letter…</span>
+                {[100, 80, 90, 60, 70, 85].map((w, i) => (
+                  <div key={i} className="shimmer h-3.5 rounded-full" style={{ width: `${w}%` }} />
+                ))}
+              </div>
+            ) : letter ? (
+              <Textarea
+                id="cover-letter-output"
+                value={letter}
+                onChange={(e) => setLetter(e.target.value)}
+                className="h-80 resize-none leading-7"
+              />
+            ) : (
+              <div className={cn(TRAY, "grid h-full min-h-60 place-items-center")}>
+                <EmptyPanel
+                  compact
+                  icon={<EnvelopeSimple size={22} weight="light" />}
+                  title="Your cover letter will appear here"
+                  description="Generate a draft, then refine the wording before you send it anywhere."
+                />
+              </div>
+            )}
           </div>
-        )}
+        </Bezel>
       </div>
     </div>
   );
@@ -308,82 +427,84 @@ function TemplateSelector({
   hasTailoredResume,
 }: TemplateSelectorProps) {
   const ownResume = !!previewMarkdown;
+  const selectedName = RESUME_TEMPLATES.find((t) => t.id === selected)?.name ?? selected;
   return (
     <div className="space-y-6">
-      <div>
-        <div className="text-sm text-muted-foreground">Resume Workspace · Templates</div>
-        <h2 className="mt-1 text-xl font-medium">Choose a template.</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {ownResume
+      <SectionHeading
+        eyebrow="Templates"
+        title="Choose a template."
+        description={
+          ownResume
             ? "Each card shows your tailored resume in that theme. All templates are single-column and ATS-safe."
-            : "Cards show a sample resume — tailor yours to see it in each theme. All templates are single-column and ATS-safe."}
-        </p>
-      </div>
+            : "Cards show a sample resume — tailor yours to see it in each theme. All templates are single-column and ATS-safe."
+        }
+      />
 
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {RESUME_TEMPLATES.map((tpl) => {
+      <motion.ul initial="hidden" animate="show" variants={listStagger} className="space-y-4">
+        {RESUME_TEMPLATES.map((tpl, index) => {
           const isSelected = selected === tpl.id;
           return (
-            <div
-              key={tpl.id}
-              className={`rounded-3xl border p-6 transition-colors ${
-                isSelected ? "border-primary bg-primary/5" : "border-border bg-card/60"
-              }`}
-            >
-              {/* Thumbnail rendered with the same layout as the PDF template */}
-              <div
-                aria-hidden="true"
-                className="pointer-events-none flex h-80 w-full select-none justify-center overflow-hidden rounded-2xl border border-border bg-muted/40 pt-3"
+            <motion.li key={tpl.id} variants={listItem}>
+              <Bezel
+                tone={isSelected ? "primary" : "default"}
+                coreClassName="grid grid-cols-1 gap-5 p-4 xl:grid-cols-[17.5rem_minmax(0,1fr)] xl:gap-6"
               >
-                <ResumePreview
-                  markdown={previewMarkdown || SAMPLE_RESUME_MARKDOWN}
-                  displayName={ownResume ? displayName : undefined}
-                  template={tpl.id}
-                  scale={TEMPLATE_THUMB_SCALE}
-                />
-              </div>
-
-              <div className="mt-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">{tpl.name}</span>
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    {tpl.badge}
-                  </span>
+                {/* Thumbnail rendered with the same layout as the PDF template */}
+                <div
+                  aria-hidden="true"
+                  className={cn(TRAY, "pointer-events-none flex h-64 w-full select-none justify-center overflow-hidden pt-3")}
+                >
+                  <ResumePreview
+                    markdown={previewMarkdown || SAMPLE_RESUME_MARKDOWN}
+                    displayName={ownResume ? displayName : undefined}
+                    template={tpl.id}
+                    scale={TEMPLATE_THUMB_SCALE}
+                  />
                 </div>
 
-                <p className="text-sm text-muted-foreground">{tpl.description}</p>
+                <div className="flex min-w-0 flex-col py-1 sm:pr-2">
+                  <div className="flex items-center gap-3">
+                    <span className="font-geist-mono text-[11px] tabular-nums text-muted-foreground">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span className="text-[10px] font-medium uppercase tracking-[0.18em] text-primary">{tpl.badge}</span>
+                  </div>
+                  <h3 className="mt-3 font-geist text-2xl font-semibold tracking-[-0.03em] text-foreground">{tpl.name}</h3>
+                  <p className="mt-2 max-w-[44ch] text-sm leading-6 text-muted-foreground">{tpl.description}</p>
 
-                <div className="flex items-center justify-between pt-1">
-                  <LiquidGlassButton
-                    tone={isSelected ? "ghost" : "primary"}
-                    size="sm"
-                    aria-disabled={(busy && !isSelected) || undefined}
-                    onClick={() => {
-                      if (!busy && !isSelected) onSelect(tpl.id);
-                    }}
-                  >
-                    {isSelected ? "Selected ✓" : hasTailoredResume ? "Use for my resume" : "Select"}
-                  </LiquidGlassButton>
+                  <div className="mt-auto flex items-center gap-3 pt-6">
+                    <IslandButton
+                      tone={isSelected ? "ghost" : "primary"}
+                      size="sm"
+                      aria-disabled={(busy && !isSelected) || undefined}
+                      className="aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+                      icon={isSelected ? <Check size={14} weight="light" /> : undefined}
+                      onClick={() => {
+                        if (!busy && !isSelected) onSelect(tpl.id);
+                      }}
+                    >
+                      {isSelected ? "Selected ✓" : hasTailoredResume ? "Use for my resume" : "Select"}
+                    </IslandButton>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </Bezel>
+            </motion.li>
           );
         })}
-      </div>
+      </motion.ul>
 
-      <div className="flex items-center gap-3">
-        <LiquidGlassButton tone="primary" size="sm" onClick={onTailor} disabled={busy || !canTailor}>
-          {isTailoring ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Wand2 className="h-4 w-4" />
-          )}
-          {isTailoring ? "Tailoring…" : `Tailor with ${RESUME_TEMPLATES.find((t) => t.id === selected)?.name ?? selected} template`}
-        </LiquidGlassButton>
-        <span className="text-xs text-muted-foreground">
-          Uses the job description from the Builder tab
-        </span>
-      </div>
+      <Bezel tone="muted" size="md" coreClassName="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <span className="pl-1 text-xs text-muted-foreground">Uses the job description from the Builder tab</span>
+        <IslandButton
+          tone="primary"
+          size="sm"
+          onClick={onTailor}
+          disabled={busy || !canTailor}
+          icon={isTailoring ? <Spinner size={14} /> : <MagicWand size={14} weight="light" />}
+        >
+          {isTailoring ? "Tailoring…" : `Tailor with ${selectedName} template`}
+        </IslandButton>
+      </Bezel>
     </div>
   );
 }
@@ -403,92 +524,119 @@ interface HistoryTabProps {
   busy: boolean;
 }
 
+const RUN_STATUS_TONE: Record<AgentRun["status"], StatusTone> = {
+  pending: "neutral",
+  running: "primary",
+  completed: "success",
+  failed: "danger",
+  awaiting_approval: "warning",
+};
+
 function HistoryTab({ agentRuns, isLoading, onDownload, onOpen, openingId, busy }: HistoryTabProps) {
+  const heading = (
+    <SectionHeading
+      eyebrow="History"
+      title="Past tailoring runs."
+      description="Reopen any tailored resume in the builder, or download its PDF again."
+    />
+  );
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        Loading history…
+      <div className="space-y-6">
+        {heading}
+        <Bezel coreClassName="space-y-3 p-4" aria-busy="true">
+          <p className="sr-only" role="status">
+            Loading history…
+          </p>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-[1rem]" />
+          ))}
+        </Bezel>
       </div>
     );
   }
 
   if (!agentRuns || agentRuns.length === 0) {
     return (
-      <EmptyState
-        title="Resume history"
-        description="Previous tailoring runs will appear here once you tailor your first resume."
-      />
+      <div className="space-y-6">
+        {heading}
+        <Bezel tone="muted">
+          <EmptyPanel
+            icon={<ClockCounterClockwise size={22} weight="light" />}
+            title="Resume history"
+            description="Previous tailoring runs will appear here once you tailor your first resume."
+          />
+        </Bezel>
+      </div>
     );
   }
 
-  const statusColors: Record<AgentRun["status"], string> = {
-    pending: "bg-muted text-muted-foreground",
-    running: "bg-primary/10 text-primary",
-    completed: "bg-success/15 text-success",
-    failed: "bg-danger/15 text-danger",
-    awaiting_approval: "bg-warning/15 text-warning",
-  };
-
   return (
-    <div className="space-y-3">
-      {agentRuns.map((run) => {
-        const docId = typeof run.output?.pdf_document_id === "string" ? run.output.pdf_document_id : null;
-        const isOpening = docId !== null && openingId === docId;
-        return (
-          <div
-            key={run.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-border bg-card/60 px-5 py-4"
-          >
-            <div className="space-y-1">
-              <div className="text-sm font-medium">Resume Agent Run</div>
-              <div className="text-xs text-muted-foreground">
-                {new Date(run.started_at).toLocaleString(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                })}
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span
-                className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[run.status] ?? "bg-muted text-muted-foreground"}`}
+    <div className="space-y-6">
+      {heading}
+      <Bezel coreClassName="px-2 py-2 md:px-3">
+        <motion.ul initial="hidden" animate="show" variants={listStagger} className="divide-y divide-foreground/[0.06] dark:divide-white/[0.07]">
+          {agentRuns.map((run) => {
+            const docId = typeof run.output?.pdf_document_id === "string" ? run.output.pdf_document_id : null;
+            const isOpening = docId !== null && openingId === docId;
+            return (
+              <motion.li
+                key={run.id}
+                variants={listItem}
+                className="flex flex-wrap items-center justify-between gap-3 px-3 py-4"
               >
-                {run.status.replace("_", " ")}
-              </span>
-              {docId && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!busy) onOpen(docId);
-                    }}
-                    // aria-disabled (not disabled) keeps the button focusable while another request runs.
-                    aria-disabled={busy || undefined}
-                    aria-label="Open this tailored resume in the builder"
-                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
-                  >
-                    {isOpening ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <FolderOpen className="h-3.5 w-3.5" />
-                    )}
-                    {isOpening ? "Opening…" : "Open"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDownload(docId)}
-                    aria-label="Download this tailored resume as PDF"
-                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-card transition-colors"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    PDF
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
+                <div className="flex min-w-0 items-center gap-3">
+                  <Medallion>
+                    <FilePdf size={16} weight="light" />
+                  </Medallion>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">Resume Agent Run</p>
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                      {new Date(run.started_at).toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill tone={RUN_STATUS_TONE[run.status] ?? "neutral"} live={run.status === "running"} className="capitalize">
+                    {run.status.replace("_", " ")}
+                  </StatusPill>
+                  {docId && (
+                    <>
+                      <IslandButton
+                        tone="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (!busy) onOpen(docId);
+                        }}
+                        // aria-disabled (not disabled) keeps the button focusable while another request runs.
+                        aria-disabled={busy || undefined}
+                        aria-label="Open this tailored resume in the builder"
+                        className="aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+                        icon={isOpening ? <Spinner size={14} /> : <FolderOpen size={14} weight="light" />}
+                      >
+                        {isOpening ? "Opening…" : "Open"}
+                      </IslandButton>
+                      <IslandButton
+                        tone="ghost"
+                        size="sm"
+                        onClick={() => onDownload(docId)}
+                        aria-label="Download this tailored resume as PDF"
+                        icon={<DownloadSimple size={14} weight="light" />}
+                      >
+                        PDF
+                      </IslandButton>
+                    </>
+                  )}
+                </div>
+              </motion.li>
+            );
+          })}
+        </motion.ul>
+      </Bezel>
     </div>
   );
 }
@@ -499,12 +647,14 @@ function HistoryTab({ agentRuns, isLoading, onDownload, onOpen, openingId, busy 
 
 export default function ResumePage() {
   const queryClient = useQueryClient();
+  const reduceMotion = useReducedMotion();
 
   // UI state
-  const [tab, setTab] = useState<"builder" | "templates" | "history" | "cover-letter">("builder");
+  const [tab, setTab] = useState<WorkspaceTab>("builder");
   const [jdText, setJdText] = useState("");
   const [jdPanelOpen, setJdPanelOpen] = useState(true);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // Picks up a job description handed off from the Jobs page's "Tailor
   // resume for this job" action, so the user lands here with it prefilled.
@@ -517,6 +667,23 @@ export default function ResumePage() {
       toast.info(`Job description loaded from ${pending.role} at ${pending.company}`);
     }
   }, []);
+
+  // Close the Save-to-Drive menu on outside click or Escape.
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) setShowExportMenu(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowExportMenu(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showExportMenu]);
 
   // Resume upload state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -932,464 +1099,697 @@ export default function ResumePage() {
   };
 
   // -------------------------------------------------------------------------
+  // Render helpers
+  // -------------------------------------------------------------------------
+  const panelVariants = reduceMotion
+    ? { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } }, exit: { opacity: 0, transition: { duration: 0.15 } } }
+    : panelSwap;
+  const scoreComputing = !!primaryDoc && primaryDoc.ats_score === null && !activeJobAts;
+  const canShowTemplateBar = !!(lastDocId && resumePreviewText && !editingText);
+
+  const heroActions = (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.doc,.docx"
+        aria-label="Resume file (PDF or DOCX)"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <IslandButton
+        tone={primaryDoc ? "ghost" : "primary"}
+        size="sm"
+        disabled={uploading}
+        onClick={() => fileInputRef.current?.click()}
+        icon={uploading ? <Spinner size={14} /> : <UploadSimple size={14} weight="light" />}
+      >
+        {uploading ? "Uploading…" : "Upload"}
+      </IslandButton>
+
+      <div ref={exportMenuRef} className="relative">
+        <IslandButton
+          tone="ghost"
+          size="sm"
+          aria-haspopup="menu"
+          aria-expanded={showExportMenu}
+          aria-controls="resume-export-menu"
+          onClick={() => setShowExportMenu((v) => !v)}
+          icon={<CloudArrowUp size={14} weight="light" />}
+          trailing={
+            <CaretDown
+              size={12}
+              weight="light"
+              className={cn("transition-transform duration-500 ease-vanguard", showExportMenu && "rotate-180")}
+            />
+          }
+        >
+          Save to Drive
+        </IslandButton>
+        <AnimatePresence>
+          {showExportMenu && (
+            <motion.div
+              id="resume-export-menu"
+              role="menu"
+              aria-label="Save or download"
+              initial={{ opacity: 0, y: -6, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.97 }}
+              transition={{ duration: 0.3, ease: EASE_VANGUARD }}
+              className="absolute left-0 top-full z-20 mt-2 w-60 origin-top-left rounded-[1.25rem] bg-foreground/[0.03] p-1 shadow-ambient ring-1 ring-foreground/[0.08] dark:bg-white/[0.04] dark:ring-white/10"
+            >
+              <div className="rounded-[calc(1.25rem-0.25rem)] bg-card p-1 shadow-bezel-core dark:shadow-bezel-core-dark">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={saveToDriveMutation.isPending}
+                  onClick={() => {
+                    setShowExportMenu(false);
+                    const docId = lastDocId ?? primaryDoc?.id;
+                    if (!docId) {
+                      toast.info("Upload a resume first, then save it to Drive");
+                      return;
+                    }
+                    saveToDriveMutation.mutate(docId);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-[0.85rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors duration-300 ease-vanguard hover:bg-foreground/[0.05] focus-visible:bg-foreground/[0.05] focus-visible:outline-none disabled:opacity-60 dark:hover:bg-white/[0.06]"
+                >
+                  {saveToDriveMutation.isPending ? (
+                    <Spinner size={15} />
+                  ) : (
+                    <CloudArrowUp size={15} weight="light" className="text-muted-foreground" aria-hidden="true" />
+                  )}
+                  {saveToDriveMutation.isPending ? "Saving…" : "Save to Google Drive"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShowExportMenu(false);
+                    handleDownloadPdf();
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-[0.85rem] px-3 py-2.5 text-left text-sm text-foreground transition-colors duration-300 ease-vanguard hover:bg-foreground/[0.05] focus-visible:bg-foreground/[0.05] focus-visible:outline-none dark:hover:bg-white/[0.06]"
+                >
+                  <DownloadSimple size={15} weight="light" className="text-muted-foreground" aria-hidden="true" /> Download PDF
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <IslandButton
+        tone={lastDocId ? "primary" : "ghost"}
+        size="sm"
+        onClick={() => handleDownloadPdf()}
+        disabled={!lastDocId}
+        title={lastDocId ? "Download tailored PDF" : "Tailor your resume first to generate a PDF"}
+        icon={<DownloadSimple size={14} weight="light" />}
+      >
+        Export
+      </IslandButton>
+    </>
+  );
+
+  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
   return (
-    <motion.div initial="hidden" animate="show" variants={stagger} className="space-y-8">
-      <CommandHeader
-        eyebrow="Resume workspace"
-        title="Tailor your resume."
-        description="Paste a target job, scan keywords, improve bullets, and export once your preview is ready."
-        actions={
-        <div className="flex flex-wrap gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.doc,.docx"
-            className="hidden"
-            onChange={handleFileChange}
+    <Screen>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:grid-rows-[auto_auto_1fr] lg:gap-x-8 lg:gap-y-6">
+        {/* ── Left column, row 1: editorial type block ─────────────────── */}
+        <div className="min-w-0 lg:col-span-5 lg:col-start-1 lg:row-start-1 xl:col-span-4">
+          <RailHero
+            actions={heroActions}
+            status={
+              <p className="sr-only" aria-live="polite">
+                {uploading ? "Uploading resume…" : ""}
+              </p>
+            }
           />
-          <LiquidGlassButton
-            tone="ghost"
-            size="sm"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Upload className="h-4 w-4" />
-            )}
-            {uploading ? "Uploading…" : "Upload"}
-          </LiquidGlassButton>
-
-          <div className="relative">
-            <LiquidGlassButton
-              tone="ghost"
-              size="sm"
-              onClick={() => setShowExportMenu((v) => !v)}
-            >
-              <CloudUpload className="h-4 w-4" /> Save to Drive
-            </LiquidGlassButton>
-            <AnimatePresence>
-              {showExportMenu && (
-                <motion.div
-                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                  transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-10 z-10 min-w-[200px] rounded-2xl border border-border bg-card p-2 shadow-lg"
-                >
-                  <button
-                    disabled={saveToDriveMutation.isPending}
-                    onClick={() => {
-                      setShowExportMenu(false);
-                      const docId = lastDocId ?? primaryDoc?.id;
-                      if (!docId) {
-                        toast.info("Upload a resume first, then save it to Drive");
-                        return;
-                      }
-                      saveToDriveMutation.mutate(docId);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
-                  >
-                    {saveToDriveMutation.isPending ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    ) : (
-                      <CloudUpload className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    {saveToDriveMutation.isPending ? "Saving…" : "Save to Google Drive"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowExportMenu(false);
-                      handleDownloadPdf();
-                    }}
-                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm hover:bg-muted"
-                  >
-                    <Download className="h-4 w-4 text-muted-foreground" /> Download PDF
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <LiquidGlassButton
-            tone="primary"
-            size="sm"
-            onClick={() => handleDownloadPdf()}
-            disabled={!lastDocId}
-            title={lastDocId ? "Download tailored PDF" : "Tailor your resume first to generate a PDF"}
-          >
-            <Download className="h-4 w-4" /> Export
-          </LiquidGlassButton>
         </div>
-        }
-      />
 
-      {/* Tab nav */}
-      <motion.div variants={fadeUp}>
-        <div className="flex gap-1 overflow-x-auto rounded-full border border-border bg-muted/40 p-1 text-sm">
-          {(["builder", "templates", "history", "cover-letter"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 capitalize transition-colors ${
-                tab === t
-                  ? "bg-background shadow-sm text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      </motion.div>
-
-      {/* Templates tab */}
-      {tab === "templates" && (
-        <motion.div variants={fadeUp}>
-          <TemplateSelector
-            selected={shownTemplate}
-            onSelect={selectTemplate}
-            onTailor={() => optimizeMutation.mutate(jdText)}
-            isTailoring={optimizeMutation.isPending}
-            canTailor={!!primaryDoc && !!jdText.trim()}
-            busy={busy}
-            previewMarkdown={resumePreviewText}
-            displayName={displayName}
-            hasTailoredResume={!!lastDocId}
-          />
-        </motion.div>
-      )}
-
-      {/* History tab */}
-      {tab === "history" && (
-        <motion.div variants={fadeUp}>
-          <HistoryTab
-            agentRuns={agentRuns}
-            isLoading={runsLoading}
-            onDownload={handleDownloadPdf}
-            onOpen={(id) => {
-              if (!busy) openTailoredMutation.mutate(id);
-            }}
-            openingId={openTailoredMutation.isPending ? (openTailoredMutation.variables ?? null) : null}
-            busy={busy}
-          />
-        </motion.div>
-      )}
-
-      {tab === "cover-letter" && <motion.div variants={fadeUp}><CoverLetterGenerator tone={coverTone} setTone={setCoverTone} jd={coverJd} setJd={setCoverJd} letter={coverLetter} setLetter={setCoverLetter} generating={generating} onGenerate={generateCoverLetter} /></motion.div>}
-
-      {/* Builder tab */}
-      {tab === "builder" && (
-        <>
-          {/* JD panel */}
-          <motion.div
-            variants={fadeUp}
-            className="rounded-3xl border border-border bg-card/60 p-6"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Target className="h-5 w-5 text-primary" />
-                <div className="font-medium">Target Job Description</div>
-                {jdText && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    Active
-                  </span>
-                )}
+        {/* ── Left column, row 2: primary resume + ATS ring ────────────── */}
+        <Reveal className="min-w-0 lg:col-span-5 lg:col-start-1 lg:row-start-2 xl:col-span-4" delay={0.1}>
+          <section aria-labelledby="primary-resume-heading">
+            <Bezel lifted coreClassName="p-5 md:p-6">
+              <div className="flex items-center justify-between gap-3">
+                <h2 id="primary-resume-heading" className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  Primary resume
+                </h2>
+                {primaryDoc && !docsLoading ? (
+                  scoreComputing ? (
+                    <StatusPill tone="primary" live>Scoring</StatusPill>
+                  ) : activeJobAts ? (
+                    <StatusPill tone="success">Analyzed</StatusPill>
+                  ) : (
+                    <StatusPill tone="neutral">Baseline</StatusPill>
+                  )
+                ) : null}
               </div>
-              <LiquidGlassButton
-                tone="ghost"
-                size="sm"
-                onClick={() => setJdPanelOpen(!jdPanelOpen)}
-              >
-                {jdPanelOpen ? "Hide" : "Show JD"}
-              </LiquidGlassButton>
-            </div>
 
-            {jdPanelOpen && (
-              <div className="mt-4 space-y-3">
-                <textarea
-                  value={jdText}
-                  onChange={(e) => setJdText(e.target.value)}
-                  maxLength={MAX_JD_LENGTH}
-                  aria-label="Target job description"
-                  aria-describedby="resume-jd-count"
-                  placeholder="Paste the job description here… CareerCraft AI will analyze requirements, match keywords, and suggest targeted resume bullets."
-                  className="h-32 w-full resize-none rounded-2xl border border-border bg-background/60 px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                />
-                <p id="resume-jd-count" className="-mt-2 text-right text-xs text-muted-foreground">
-                  {jdText.length.toLocaleString()}/{MAX_JD_LENGTH.toLocaleString()} characters
-                </p>
-
-                {jdText.trim() && (
-                  <div className="flex items-center justify-between">
-                    <div className="flex gap-2">
-                      <LiquidGlassButton tone="ghost" size="sm" disabled={!primaryDoc || atsMutation.isPending} onClick={() => primaryDoc && atsMutation.mutate({ documentId: primaryDoc.id, jdText: jdText.trim() })}>
-                        {atsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {atsMutation.isPending ? "Analyzing…" : "Analyze match"}
-                      </LiquidGlassButton>
-                      <LiquidGlassButton tone="primary" size="sm" disabled={!primaryDoc || busy} onClick={() => optimizeMutation.mutate(jdText)}>
-                        {optimizeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {optimizeMutation.isPending ? "Tailoring…" : "Tailor Resume ✨"}
-                      </LiquidGlassButton>
+              <div className="mt-5" aria-live="polite">
+                {docsLoading ? (
+                  <div className="flex items-center gap-5">
+                    <Skeleton className="h-32 w-32 shrink-0 rounded-full" />
+                    <div className="flex-1 space-y-3">
+                      <Skeleton className="h-4 w-3/4 rounded-full" />
+                      <Skeleton className="h-3 w-1/2 rounded-full" />
+                      <p className="text-xs text-muted-foreground">Loading resume…</p>
                     </div>
                   </div>
-                )}
-
-                {docsError && <p role="alert" className="text-sm text-danger">Could not load your resumes. Refresh the page and try again.</p>}
-                {!primaryDoc && !docsLoading && <p className="text-sm text-muted-foreground">Upload a resume before analyzing or tailoring it.</p>}
-
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span>✓ Keyword matching</span>
-                  <span>✓ Bullet rewriting</span>
-                  <span>✓ Skills gap analysis</span>
-                </div>
-              </div>
-            )}
-          </motion.div>
-
-          {/* Main builder grid */}
-          <motion.div
-            variants={fadeUp}
-            className="grid gap-6 lg:grid-cols-[300px_1fr_320px]"
-          >
-            {/* Left aside: ATS score + keyword coverage */}
-            <aside className="space-y-6">
-              <div className="rounded-3xl border border-border bg-card/60 p-6 text-center">
-                {docsLoading ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-8">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    <div className="text-xs text-muted-foreground">
-                      Loading resume…
+                ) : primaryDoc ? (
+                  <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
+                    {insightData.score != null ? (
+                      <AtsScoreRing score={insightData.score} size={136} />
+                    ) : (
+                      <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
+                        <span className="flex flex-col items-center gap-2 text-center text-[11px] text-muted-foreground">
+                          <Spinner size={18} />
+                          Calculating
+                        </span>
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <FilePdf size={16} weight="light" aria-hidden="true" className="shrink-0 text-muted-foreground" />
+                        <span className="truncate font-geist-mono text-xs text-foreground" title={primaryDoc.filename}>
+                          {primaryDoc.filename}
+                        </span>
+                      </div>
+                      <Hairline />
+                      {insightData.score != null ? (
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          <span className="font-medium text-foreground">{insightData.scoreLabel}</span>
+                          {activeJobAts ? " for this job" : " · run Analyze match for job-specific results"}
+                        </p>
+                      ) : (
+                        <p className="text-xs leading-5 text-muted-foreground">Calculating your baseline ATS score…</p>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  insightData.score != null ? <AtsScoreRing score={insightData.score} /> : <div className="py-10 text-sm text-muted-foreground">Upload a resume to calculate its score</div>
-                )}
-                {insightData.score != null && <div className="text-xs text-muted-foreground">{insightData.scoreLabel}{activeJobAts ? " for this job" : " · run Analyze match for job-specific results"}</div>}
-                {docsError && <div role="alert" className="mt-3 text-xs text-danger">Could not load your resume.</div>}
-                {primaryDoc && (
-                  <div className="mt-3 text-xs text-muted-foreground truncate px-2">
-                    {primaryDoc.filename}
-                  </div>
-                )}
-                {!primaryDoc && !docsLoading && (
-                  <div className="mt-3 text-xs text-muted-foreground">
-                    Upload a resume to see your ATS score
-                  </div>
-                )}
-              </div>
-
-              {activeJobAts ? <KeywordCoverage matched={insightData.matched} missing={insightData.missing} /> : <div className="rounded-3xl border border-border bg-card/60 p-5 text-sm text-muted-foreground">Add a job description and choose <span className="text-foreground">Analyze match</span> to see real keyword coverage.</div>}
-            </aside>
-
-            {/* Center: resume preview */}
-            <section aria-labelledby="resume-preview-heading" className="min-w-0 rounded-3xl border border-border bg-card/40 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 id="resume-preview-heading" className="text-sm font-normal text-muted-foreground">Preview</h2>
-                {lastDocId && resumePreviewText && !editingText && (
-                  <button
-                    ref={editButtonRef}
-                    type="button"
-                    onClick={startEditingText}
-                    disabled={busy}
-                    className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:opacity-60"
-                  >
-                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                    Edit text
-                  </button>
-                )}
-              </div>
-              {lastAtsScore != null && (
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Tailored ATS score: <span className="font-medium text-foreground">{lastAtsScore}</span>
-                  {lastMissingKeywords.length > 0 &&
-                    ` · missing: ${lastMissingKeywords.slice(0, 5).join(", ")}`}
-                </div>
-              )}
-              {/* Without a stored document + review (PDF storage failed) nothing
-                  can be fixed, so fall back to listing the agent's warnings. */}
-              {!(lastDocId && lastReview) && lastWarnings.length > 0 && (
-                <div className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning" role="alert">
-                  <p className="font-medium">Warnings</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5">
-                    {lastWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
-                  </ul>
-                </div>
-              )}
-              {aiSummary && <p className="mt-2 text-sm text-muted-foreground">{aiSummary}</p>}
-
-              {lastDocId && resumePreviewText && !editingText && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span id="resume-template-label" className="text-xs text-muted-foreground">Template</span>
-                  <div role="group" aria-labelledby="resume-template-label" className="flex flex-wrap gap-1 rounded-full border border-border bg-muted/40 p-1">
-                    {RESUME_TEMPLATES.map((tpl) => {
-                      const active = shownTemplate === tpl.id;
-                      const pending = templateMutation.isPending && templateMutation.variables === tpl.id;
-                      return (
-                        <button
-                          key={tpl.id}
-                          type="button"
-                          aria-pressed={active}
-                          // aria-disabled instead of disabled: the pill the user
-                          // just pressed keeps keyboard focus while re-rendering.
-                          aria-disabled={busy || undefined}
-                          onClick={() => {
-                            if (!busy && !active) templateMutation.mutate(tpl.id);
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs transition-colors aria-disabled:cursor-not-allowed ${
-                            active
-                              ? "bg-background font-medium text-foreground shadow-sm"
-                              : "text-muted-foreground hover:text-foreground aria-disabled:opacity-60"
-                          }`}
+                  <div className={TRAY}>
+                    <EmptyPanel
+                      compact
+                      icon={<UploadSimple size={22} weight="light" />}
+                      title="No resume yet"
+                      description="Upload a resume (PDF or DOCX) to see your ATS score. It also becomes the context every agent works from."
+                      action={
+                        <IslandButton
+                          tone="ghost"
+                          size="sm"
+                          disabled={uploading}
+                          onClick={() => fileInputRef.current?.click()}
+                          icon={<FolderOpen size={14} weight="light" />}
                         >
-                          {pending && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
-                          {tpl.name}
-                        </button>
-                      );
-                    })}
+                          Choose file
+                        </IslandButton>
+                      }
+                    />
                   </div>
-                  <span className="text-xs text-muted-foreground" aria-live="polite">
-                    {templateMutation.isPending
-                      ? "Preview updated · regenerating the PDF…"
-                      : "Click a theme to see your resume in it"}
-                  </span>
-                </div>
+                )}
+                {docsError && (
+                  <Notice tone="danger" icon={<Warning size={16} weight="light" />} className="mt-4 text-xs">
+                    Could not load your resume.
+                  </Notice>
+                )}
+              </div>
+            </Bezel>
+          </section>
+        </Reveal>
+
+        {/* ── Right column: the working area ───────────────────────────── */}
+        <div className="min-w-0 space-y-6 lg:col-span-7 lg:col-start-6 lg:row-span-3 lg:row-start-1 lg:pt-4 xl:col-span-8 xl:col-start-5">
+          <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
+            <Segmented<WorkspaceTab>
+              value={tab}
+              onChange={setTab}
+              options={WORKSPACE_TABS}
+              ariaLabel="Resume workspace sections"
+            />
+            <div aria-live="polite" className="flex items-center gap-2">
+              {optimizeMutation.isPending ? (
+                <StatusPill tone="primary" live>Resume Agent is tailoring</StatusPill>
+              ) : lastDocId ? (
+                <StatusPill tone="success">Tailored PDF ready</StatusPill>
+              ) : null}
+            </div>
+          </Reveal>
+
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={tab}
+              role="tabpanel"
+              aria-label={WORKSPACE_TABS.find((t) => t.value === tab)?.label}
+              variants={panelVariants}
+              initial="hidden"
+              animate="show"
+              exit="exit"
+              className="space-y-6"
+            >
+              {tab === "templates" && (
+                <TemplateSelector
+                  selected={shownTemplate}
+                  onSelect={selectTemplate}
+                  onTailor={() => optimizeMutation.mutate(jdText)}
+                  isTailoring={optimizeMutation.isPending}
+                  canTailor={!!primaryDoc && !!jdText.trim()}
+                  busy={busy}
+                  previewMarkdown={resumePreviewText}
+                  displayName={displayName}
+                  hasTailoredResume={!!lastDocId}
+                />
               )}
 
-              {editingText ? (
-                <div className="mt-3 space-y-3">
-                  <label htmlFor="resume-markdown-editor" className="text-xs font-medium text-foreground">
-                    Resume text (markdown)
-                  </label>
-                  <textarea
-                    ref={markdownEditorRef}
-                    id="resume-markdown-editor"
-                    value={draftMarkdown}
-                    onChange={(e) => setDraftMarkdown(e.target.value)}
-                    maxLength={MAX_MARKDOWN_LENGTH}
-                    spellCheck
-                    // readOnly (not disabled) while saving so keyboard focus stays put.
-                    readOnly={editTextMutation.isPending}
-                    aria-busy={editTextMutation.isPending || undefined}
-                    aria-describedby="resume-markdown-help"
-                    className="h-[32rem] w-full resize-y rounded-2xl border border-border bg-background/60 px-4 py-3 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 read-only:opacity-60"
-                  />
-                  <p id="resume-markdown-help" className="text-xs text-muted-foreground">
-                    Keep the structure: <code># Name</code>, a contact line, <code>## SECTION</code> headings,{" "}
-                    <code>### Role | Employer | Location | Mon YYYY - Present</code> (leave a missing part empty, e.g.{" "}
-                    <code>### Role |  | Remote | 2021 - 2022</code>) and <code>- bullets</code>.{" "}
-                    {draftMarkdown.length.toLocaleString()}/{MAX_MARKDOWN_LENGTH.toLocaleString()} characters.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <LiquidGlassButton
-                      tone="primary"
-                      size="sm"
-                      disabled={
-                        busy ||
-                        !draftMarkdown.trim() ||
-                        draftMarkdown === resumePreviewText
-                      }
-                      onClick={() => editTextMutation.mutate(draftMarkdown)}
-                    >
-                      {editTextMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {editTextMutation.isPending ? "Saving…" : "Save changes"}
-                    </LiquidGlassButton>
-                    <LiquidGlassButton
-                      tone="ghost"
-                      size="sm"
-                      disabled={editTextMutation.isPending}
-                      onClick={cancelEditingText}
-                    >
-                      Cancel
-                    </LiquidGlassButton>
-                  </div>
-                </div>
-              ) : (
+              {tab === "history" && (
+                <HistoryTab
+                  agentRuns={agentRuns}
+                  isLoading={runsLoading}
+                  onDownload={handleDownloadPdf}
+                  onOpen={(id) => {
+                    if (!busy) openTailoredMutation.mutate(id);
+                  }}
+                  openingId={openTailoredMutation.isPending ? (openTailoredMutation.variables ?? null) : null}
+                  busy={busy}
+                />
+              )}
+
+              {tab === "cover-letter" && (
+                <CoverLetterGenerator
+                  tone={coverTone}
+                  setTone={setCoverTone}
+                  jd={coverJd}
+                  setJd={setCoverJd}
+                  letter={coverLetter}
+                  setLetter={setCoverLetter}
+                  generating={generating}
+                  onGenerate={generateCoverLetter}
+                />
+              )}
+
+              {tab === "builder" && (
                 <>
-                  {resumePreviewText && (
-                    <div className="mt-3 flex items-center justify-end gap-1" role="group" aria-label="Preview zoom">
-                      <button
-                        type="button"
-                        onClick={() => setPreviewZoom((z) => clampZoom(z - ZOOM_STEP))}
-                        disabled={previewZoom <= ZOOM_MIN}
-                        aria-label="Zoom out"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:opacity-50"
-                      >
-                        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewZoom(1)}
-                        aria-label={`Zoom ${Math.round(previewZoom * 100)}%, reset to 100%`}
-                        className="min-w-[3.5rem] rounded-full border border-border px-2 py-1 text-xs tabular-nums text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
-                      >
-                        {Math.round(previewZoom * 100)}%
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewZoom((z) => clampZoom(z + ZOOM_STEP))}
-                        disabled={previewZoom >= ZOOM_MAX}
-                        aria-label="Zoom in"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-card hover:text-foreground disabled:opacity-50"
-                      >
-                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                    </div>
+                  {/* JD composer */}
+                  <section aria-labelledby="resume-jd-heading">
+                    <Bezel tone="primary" coreClassName="p-5 md:p-6">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Medallion>
+                            <Target size={16} weight="light" />
+                          </Medallion>
+                          <div className="min-w-0">
+                            <h2 id="resume-jd-heading" className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">
+                              Target Job Description
+                            </h2>
+                            <p className="text-xs text-muted-foreground">The posting you want this resume to win.</p>
+                          </div>
+                          {jdText && <StatusPill tone="primary">Active</StatusPill>}
+                        </div>
+                        <IslandButton
+                          tone="quiet"
+                          size="sm"
+                          aria-expanded={jdPanelOpen}
+                          aria-controls="resume-jd-body"
+                          onClick={() => setJdPanelOpen(!jdPanelOpen)}
+                        >
+                          {jdPanelOpen ? "Hide" : "Show JD"}
+                        </IslandButton>
+                      </div>
+
+                      <div id="resume-jd-body">
+                        {jdPanelOpen ? (
+                          <div className="mt-5 space-y-3">
+                            <Textarea
+                              value={jdText}
+                              onChange={(e) => setJdText(e.target.value)}
+                              maxLength={MAX_JD_LENGTH}
+                              aria-label="Target job description"
+                              aria-describedby="resume-jd-count"
+                              placeholder="Paste the job description here… CareerCraft AI will analyze requirements, match keywords, and suggest targeted resume bullets."
+                              className="min-h-36 resize-y"
+                            />
+
+                            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                              <p id="resume-jd-count" className="pl-1 text-xs tabular-nums text-muted-foreground">
+                                {jdText.length.toLocaleString()}/{MAX_JD_LENGTH.toLocaleString()} characters
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                <IslandButton
+                                  tone="ghost"
+                                  size="sm"
+                                  disabled={!primaryDoc || atsMutation.isPending || !jdText.trim()}
+                                  onClick={() => primaryDoc && atsMutation.mutate({ documentId: primaryDoc.id, jdText: jdText.trim() })}
+                                  icon={atsMutation.isPending ? <Spinner size={14} /> : <Crosshair size={14} weight="light" />}
+                                >
+                                  {atsMutation.isPending ? "Analyzing…" : "Analyze match"}
+                                </IslandButton>
+                                <IslandButton
+                                  tone="primary"
+                                  size="sm"
+                                  disabled={!primaryDoc || busy || !jdText.trim()}
+                                  onClick={() => optimizeMutation.mutate(jdText)}
+                                  trailing={optimizeMutation.isPending ? <Spinner size={14} /> : <MagicWand size={14} weight="light" />}
+                                >
+                                  {optimizeMutation.isPending ? "Tailoring…" : "Tailor Resume ✨"}
+                                </IslandButton>
+                              </div>
+                            </div>
+
+                            {docsError && (
+                              <Notice tone="danger" icon={<Warning size={16} weight="light" />}>
+                                Could not load your resumes. Refresh the page and try again.
+                              </Notice>
+                            )}
+                            {!primaryDoc && !docsLoading && (
+                              <p className="pl-1 text-sm text-muted-foreground">Upload a resume before analyzing or tailoring it.</p>
+                            )}
+
+                            <Hairline className="!mt-5" />
+                            <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 pl-1 text-xs text-muted-foreground">
+                              {["Keyword matching", "Bullet rewriting", "Skills gap analysis"].map((cap) => (
+                                <li key={cap} className="inline-flex items-center gap-1.5">
+                                  <Check size={12} weight="light" aria-hidden="true" className="text-primary" />
+                                  {cap}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="mt-3 pl-1 text-xs tabular-nums text-muted-foreground">
+                            {jdText.trim()
+                              ? `Job description hidden · ${jdText.length.toLocaleString()} characters`
+                              : "Job description hidden"}
+                          </p>
+                        )}
+                      </div>
+                    </Bezel>
+                  </section>
+
+                  {/* Preview */}
+                  <section aria-labelledby="resume-preview-heading">
+                    <Bezel coreClassName="p-4 md:p-6">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 pl-1">
+                          <h2 id="resume-preview-heading" className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">
+                            Preview
+                          </h2>
+                          {lastAtsScore != null ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Tailored ATS score: <span className="font-medium tabular-nums text-foreground">{lastAtsScore}</span>
+                              {lastMissingKeywords.length > 0 &&
+                                ` · missing: ${lastMissingKeywords.slice(0, 5).join(", ")}`}
+                            </p>
+                          ) : (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {resumePreviewText ? "Rendered with the PDF template." : "Your tailored resume renders here."}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {lastDocId && resumePreviewText && !editingText && (
+                            <IslandButton
+                              ref={editButtonRef}
+                              tone="ghost"
+                              size="sm"
+                              onClick={startEditingText}
+                              disabled={busy}
+                              icon={<PencilSimple size={14} weight="light" />}
+                            >
+                              Edit text
+                            </IslandButton>
+                          )}
+                          {lastDocId && (
+                            <IslandButton
+                              tone="ghost"
+                              size="sm"
+                              onClick={() => handleDownloadPdf()}
+                              icon={<DownloadSimple size={14} weight="light" />}
+                            >
+                              Download PDF
+                            </IslandButton>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Without a stored document + review (PDF storage failed) nothing
+                          can be fixed, so fall back to listing the agent's warnings. */}
+                      {!(lastDocId && lastReview) && lastWarnings.length > 0 && (
+                        <div className="mt-4 flex items-start gap-3 rounded-2xl bg-warning/10 px-4 py-3.5 text-sm leading-6 text-warning ring-1 ring-warning/25" role="alert">
+                          <Warning size={16} weight="light" aria-hidden="true" className="mt-1 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="font-medium">Warnings</p>
+                            <ul className="mt-1.5 list-disc space-y-1 pl-5">
+                              {lastWarnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                      {aiSummary && <p className="mt-4 max-w-[70ch] pl-1 text-sm leading-6 text-muted-foreground">{aiSummary}</p>}
+
+                      {aiChanges.length > 0 && (
+                        <div className={cn(TRAY, "mt-4 p-4 md:p-5")}>
+                          <div className="flex items-center gap-2">
+                            <Sparkle size={14} weight="light" aria-hidden="true" className="text-primary" />
+                            <h3 className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Resume Agent changes</h3>
+                          </div>
+                          <ul className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-sm leading-6 text-foreground/90 md:grid-cols-2">
+                            {aiChanges.map((change, index) => (
+                              <li key={`${index}-${change}`} className="flex gap-2.5">
+                                <span aria-hidden="true" className="mt-[0.6rem] h-1 w-1 shrink-0 rounded-full bg-primary" />
+                                <span className="min-w-0">{change}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-3 text-xs text-muted-foreground">These changes are reflected in the preview.</p>
+                        </div>
+                      )}
+
+                      {(canShowTemplateBar || (resumePreviewText && !editingText)) && (
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                          {canShowTemplateBar ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span id="resume-template-label" className="pl-1 text-xs text-muted-foreground">Template</span>
+                              <div
+                                role="group"
+                                aria-labelledby="resume-template-label"
+                                className="inline-flex flex-wrap gap-1 rounded-full bg-foreground/[0.035] p-1 ring-1 ring-foreground/[0.06] dark:bg-white/[0.04] dark:ring-white/10"
+                              >
+                                {RESUME_TEMPLATES.map((tpl) => {
+                                  const active = shownTemplate === tpl.id;
+                                  const pending = templateMutation.isPending && templateMutation.variables === tpl.id;
+                                  return (
+                                    <button
+                                      key={tpl.id}
+                                      type="button"
+                                      aria-pressed={active}
+                                      // aria-disabled instead of disabled: the pill the user
+                                      // just pressed keeps keyboard focus while re-rendering.
+                                      aria-disabled={busy || undefined}
+                                      onClick={() => {
+                                        if (!busy && !active) templateMutation.mutate(tpl.id);
+                                      }}
+                                      className={cn(
+                                        "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-[background-color,color,box-shadow] duration-500 ease-vanguard",
+                                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed",
+                                        active
+                                          ? "bg-card text-foreground shadow-bezel-core ring-1 ring-foreground/[0.06] dark:bg-white/10 dark:shadow-none dark:ring-white/10"
+                                          : "text-muted-foreground hover:text-foreground aria-disabled:opacity-60",
+                                      )}
+                                    >
+                                      {pending && <Spinner size={12} />}
+                                      {tpl.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <span className="text-xs text-muted-foreground" aria-live="polite">
+                                {templateMutation.isPending
+                                  ? "Preview updated · regenerating the PDF…"
+                                  : "Click a theme to see your resume in it"}
+                              </span>
+                            </div>
+                          ) : (
+                            <span />
+                          )}
+
+                          {resumePreviewText && !editingText && (
+                            <div className="flex items-center gap-1" role="group" aria-label="Preview zoom">
+                              <IconButton
+                                size="sm"
+                                onClick={() => setPreviewZoom((z) => clampZoom(z - ZOOM_STEP))}
+                                disabled={previewZoom <= ZOOM_MIN}
+                                aria-label="Zoom out"
+                              >
+                                <Minus size={13} weight="light" aria-hidden="true" />
+                              </IconButton>
+                              <button
+                                type="button"
+                                onClick={() => setPreviewZoom(1)}
+                                aria-label={`Zoom ${Math.round(previewZoom * 100)}%, reset to 100%`}
+                                className="h-7 min-w-[3.5rem] rounded-full px-2 font-geist-mono text-[11px] tabular-nums text-muted-foreground ring-1 ring-foreground/[0.06] transition-colors duration-500 ease-vanguard hover:bg-foreground/[0.05] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:ring-white/10 dark:hover:bg-white/[0.06]"
+                              >
+                                {Math.round(previewZoom * 100)}%
+                              </button>
+                              <IconButton
+                                size="sm"
+                                onClick={() => setPreviewZoom((z) => clampZoom(z + ZOOM_STEP))}
+                                disabled={previewZoom >= ZOOM_MAX}
+                                aria-label="Zoom in"
+                              >
+                                <Plus size={13} weight="light" aria-hidden="true" />
+                              </IconButton>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {editingText ? (
+                        <div className="mt-4 space-y-3">
+                          <label htmlFor="resume-markdown-editor" className="block pl-1 text-[12px] font-medium text-muted-foreground">
+                            Resume text (markdown)
+                          </label>
+                          <Textarea
+                            ref={markdownEditorRef}
+                            id="resume-markdown-editor"
+                            value={draftMarkdown}
+                            onChange={(e) => setDraftMarkdown(e.target.value)}
+                            maxLength={MAX_MARKDOWN_LENGTH}
+                            spellCheck
+                            // readOnly (not disabled) while saving so keyboard focus stays put.
+                            readOnly={editTextMutation.isPending}
+                            aria-busy={editTextMutation.isPending || undefined}
+                            aria-describedby="resume-markdown-help"
+                            className="h-[32rem] font-geist-mono text-xs leading-relaxed read-only:opacity-60"
+                          />
+                          <p id="resume-markdown-help" className="pl-1 text-xs leading-5 text-muted-foreground">
+                            Keep the structure: <code className="font-geist-mono">{"# Name"}</code>, a contact line,{" "}
+                            <code className="font-geist-mono">{"## SECTION"}</code> headings,{" "}
+                            <code className="font-geist-mono">{"### Role | Employer | Location | Mon YYYY - Present"}</code> (leave a missing part empty, e.g.{" "}
+                            <code className="font-geist-mono">{"### Role |  | Remote | 2021 - 2022"}</code>) and{" "}
+                            <code className="font-geist-mono">{"- bullets"}</code>.{" "}
+                            <span className="tabular-nums">
+                              {draftMarkdown.length.toLocaleString()}/{MAX_MARKDOWN_LENGTH.toLocaleString()}
+                            </span>{" "}
+                            characters.
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <IslandButton
+                              tone="primary"
+                              size="sm"
+                              disabled={
+                                busy ||
+                                !draftMarkdown.trim() ||
+                                draftMarkdown === resumePreviewText
+                              }
+                              onClick={() => editTextMutation.mutate(draftMarkdown)}
+                              icon={editTextMutation.isPending ? <Spinner size={14} /> : undefined}
+                            >
+                              {editTextMutation.isPending ? "Saving…" : "Save changes"}
+                            </IslandButton>
+                            <IslandButton
+                              tone="ghost"
+                              size="sm"
+                              disabled={editTextMutation.isPending}
+                              onClick={cancelEditingText}
+                            >
+                              Cancel
+                            </IslandButton>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          aria-busy={busy}
+                          className={cn(
+                            TRAY,
+                            "mt-4 max-h-[56rem] w-full overflow-auto p-3 transition-opacity duration-500 ease-vanguard sm:p-4",
+                            tailoredPending && !templateMutation.isPending && "opacity-60",
+                          )}
+                        >
+                          {resumePreviewText ? (
+                            <ResumePreview
+                              markdown={resumePreviewText}
+                              template={shownTemplate}
+                              displayName={displayName}
+                              zoom={previewZoom}
+                              minWidth={PREVIEW_MIN_WIDTH}
+                              showPageBreaks
+                              className="mx-auto"
+                            />
+                          ) : (
+                            <div className="grid min-h-[22rem] place-items-center">
+                              <EmptyPanel
+                                compact
+                                icon={optimizeMutation.isPending ? <Spinner size={22} /> : <FileText size={22} weight="light" />}
+                                title={optimizeMutation.isPending ? "Tailoring your resume…" : "No preview yet"}
+                                description={
+                                  optimizeMutation.isPending
+                                    ? "The Resume Agent is rewriting against this job. This usually takes 30–60 seconds."
+                                    : "Upload a resume, add a job description, then choose Tailor Resume to generate a real preview."
+                                }
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </Bezel>
+                  </section>
+
+                  {/* Fix missing details — own full-width row so the form has room;
+                      hidden while the raw text editor is open to avoid conflicting edits. */}
+                  {lastDocId && lastReview && !editingText && (
+                    <ResumeFixPanel
+                      documentId={lastDocId}
+                      review={lastReview}
+                      contactSuggestions={contactSuggestions}
+                      warnings={lastWarnings}
+                      onFixed={applyIfCurrent}
+                      getGeneration={getGeneration}
+                      disabled={busy}
+                    />
                   )}
-                  <div
-                    aria-busy={busy}
-                    className={`mt-3 max-h-[56rem] w-full overflow-auto rounded-2xl border border-border bg-muted/30 p-3 transition-opacity sm:p-4 ${
-                      tailoredPending && !templateMutation.isPending ? "opacity-60" : ""
-                    }`}
-                  >
-                    {resumePreviewText ? (
-                      <ResumePreview
-                        markdown={resumePreviewText}
-                        template={shownTemplate}
-                        displayName={displayName}
-                        zoom={previewZoom}
-                        minWidth={PREVIEW_MIN_WIDTH}
-                        showPageBreaks
-                        className="mx-auto"
-                      />
-                    ) : (
-                      <div className="flex aspect-[8.5/11] w-full items-center justify-center p-8 text-center text-sm text-muted-foreground">Upload a resume, add a job description, then choose Tailor Resume to generate a real preview.</div>
-                    )}
-                  </div>
                 </>
               )}
-            </section>
-
-            {/* Right aside: AI suggestions */}
-            <aside className="space-y-3">
-              <div className="text-sm text-muted-foreground">Resume Agent changes</div>
-              {aiChanges.length ? <div className="rounded-3xl border border-border bg-card/60 p-5"><ul className="list-disc space-y-2 pl-5 text-sm">{aiChanges.map((change, index) => <li key={`${index}-${change}`}>{change}</li>)}</ul><p className="mt-3 text-xs text-muted-foreground">These changes are reflected in the preview.</p></div> : <EmptyState title="No AI changes yet" description="Upload a resume and job description, then tailor it to see what the Resume Agent changed." />}
-              <div className="pt-3 text-sm text-muted-foreground">ATS recommendations</div>
-              {activeJobAts ? <SuggestionsList suggestions={insightData.suggestions} /> : <EmptyState title="No job analysis yet" description="Choose Analyze match to get keyword gaps and ATS recommendations for this job." />}
-            </aside>
-          </motion.div>
-
-          {/* Fix missing details — own full-width row so the form has room;
-              hidden while the raw text editor is open to avoid conflicting edits. */}
-          {lastDocId && lastReview && !editingText && (
-            <motion.div variants={fadeUp}>
-              <ResumeFixPanel
-                documentId={lastDocId}
-                review={lastReview}
-                contactSuggestions={contactSuggestions}
-                warnings={lastWarnings}
-                onFixed={applyIfCurrent}
-                getGeneration={getGeneration}
-                disabled={busy}
-              />
             </motion.div>
-          )}
-        </>
-      )}
+          </AnimatePresence>
+        </div>
 
-    </motion.div>
+        {/* ── Left column, row 3: job analysis (keywords + recommendations) ── */}
+        <Reveal className="min-w-0 space-y-6 lg:col-span-5 lg:col-start-1 lg:row-start-3 lg:self-start xl:col-span-4" delay={0.16}>
+          {activeJobAts ? (
+            <>
+              <KeywordCoverage matched={insightData.matched} missing={insightData.missing} />
+              <Bezel coreClassName="p-5 md:p-6">
+                <PanelTitle
+                  icon={<Lightbulb size={15} weight="light" />}
+                  title="ATS recommendations"
+                  meta={<span className="tabular-nums">{insightData.suggestions.length}</span>}
+                />
+                <div className="mt-5">
+                  {insightData.suggestions.length ? (
+                    <SuggestionsList suggestions={insightData.suggestions} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No recommendations for this job.</p>
+                  )}
+                </div>
+              </Bezel>
+            </>
+          ) : (
+            <Bezel tone="muted">
+              <EmptyPanel
+                compact
+                icon={<Crosshair size={22} weight="light" />}
+                title="No job analysis yet"
+                description={
+                  <>
+                    Add a job description and choose <span className="text-foreground">Analyze match</span> to see real keyword coverage and ATS recommendations.
+                  </>
+                }
+              />
+            </Bezel>
+          )}
+        </Reveal>
+      </div>
+    </Screen>
   );
 }

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DM_Sans, Instrument_Serif, Playfair_Display, Outfit } from "next/font/google";
+import { DM_Sans, Instrument_Serif, Playfair_Display, Outfit, Geist, Geist_Mono } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Providers } from "@/components/layout/Providers";
 import { JsonLd } from "@/components/seo/JsonLd";
@@ -36,6 +36,19 @@ const outfit = Outfit({
   subsets: ["latin"],
   weight: ["500", "600", "700"],
   variable: "--font-outfit",
+  display: "swap",
+});
+
+// Vanguard in-app redesign: Geist for app-screen UI and headlines, Geist Mono
+// for run IDs, logs and tabular data. Marketing pages keep their own faces.
+const geist = Geist({
+  subsets: ["latin"],
+  variable: "--font-geist",
+  display: "swap",
+});
+const geistMono = Geist_Mono({
+  subsets: ["latin"],
+  variable: "--font-geist-mono",
   display: "swap",
 });
 
@@ -94,7 +107,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // <SignUp/> or <UserButton/>), so no "Secured by Clerk" badge appears.
     // ClerkProvider only supplies session context to the headless hooks.
     <ClerkProvider signInUrl="/login" signUpUrl="/login">
-      <html lang="en" className={`${dmSans.variable} ${instrumentSerif.variable} ${playfair.variable} ${outfit.variable}`} suppressHydrationWarning>
+      <html lang="en" className={`${dmSans.variable} ${instrumentSerif.variable} ${playfair.variable} ${outfit.variable} ${geist.variable} ${geistMono.variable}`} suppressHydrationWarning>
         <body className="font-sans antialiased">
           <JsonLd data={ORGANIZATION_JSON_LD} />
           <JsonLd data={WEBSITE_JSON_LD} />
