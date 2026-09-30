@@ -1,17 +1,16 @@
-# Security constraints — pin to known-safe versions
-# CVE-2025-67644 only affects SQLite checkpoints (not used here — PostgreSQL only)
-langgraph-checkpoint-sqlite==0.0.0       # block — use PostgreSQL checkpoints only
-
-# LangGraph / LangChain — pinned to the versions resolved and verified 2026-06-13.
-# The orchestrator uses 0.2.x APIs (set_conditional_entry_point, StateGraph.compile).
-# Do not upgrade past these without running the full test suite against the new
-# version in a staging environment and migrating in-flight agent_runs checkpoints.
-langgraph==0.2.76
-langchain-core==0.3.86
-langchain==0.3.30
-langchain-anthropic==0.3.22
-langchain-openai==0.3.35
-langchain-google-genai==2.1.12
-langchain-ollama==0.3.10
-langchain-community==0.3.31
-langchain-google-community==2.0.10
+# Audited provider stack; full backend suite verified on 2026-10-01.
+# No LangGraph persistent checkpointer is configured: Temporal owns workflow state.
+# SQLite checkpoints remain disabled.
+langgraph-checkpoint-sqlite==0.0.0
+langgraph==1.2.12
+langchain-core==1.6.6
+langchain==1.4.3
+langchain-anthropic==1.7.5
+langchain-openai==1.6.7
+langchain-google-genai==4.4.0
+langchain-ollama==1.1.0
+langchain-community==0.4.2
+langchain-google-community==5.0.0
+langchain-text-splitters==1.1.2
+langgraph-checkpoint==4.2.0
+langgraph-sdk==0.4.5

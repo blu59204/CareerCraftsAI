@@ -1,5 +1,5 @@
 # CareerCraft AI — Python Backend Dependencies
-# Install: pip install -r requirements.txt -c constraints.txt
+# Install: pip install -r requirements.txt -c constraints.txt; pip install --no-deps -r provider-tools.txt
 # Synced from running container (2026-06-05 build that resolved successfully)
 
 # Web framework
@@ -23,7 +23,7 @@ pydantic>=2.7.4
 pydantic-settings>=2.3.0
 
 # Auth & security
-python-jose[cryptography]>=3.3.0
+PyJWT[crypto]>=2.15.1  # Clerk JWT verification; unused python-jose removed
 cryptography>=50.0.0  # PYSEC-2026-3552
 slowapi>=0.1.9
 
@@ -63,7 +63,15 @@ pymupdf>=1.24.0
 python-docx>=1.1.0
 reportlab>=4.2.0
 pypdf>=6.16.1  # CVE-2026-57204 + PYSEC-2026-3910/3911/3913 — parses user-uploaded PDFs
-python-jobspy>=1.1.75
+# JobSpy is installed without its vulnerable markdownify upper pin;
+# see provider-tools.txt. Its runtime dependencies resolve here.
+beautifulsoup4>=4.12.2,<5
+numpy>=1.26,<3
+pandas>=2.1,<3
+regex>=2024.4.28
+requests>=2.31,<3
+tls-client>=1,<2
+markdownify>=1.2.3
 
 # Playwright (browser automation)
 playwright>=1.44.0
@@ -74,6 +82,10 @@ agentql>=1.0.0
 cdp-use>=1.4.0
 bubus>=1.5.0
 browser-use-sdk>=3.4.0
+cloudpickle>=3.1.2
+google-auth-oauthlib>=1.5.0
+groq>=1.7.0
+inquirerpy>=0.3.4
 screeninfo>=0.8.0
 pyotp>=2.9.0
 dnspython>=2.6.0
