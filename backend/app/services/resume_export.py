@@ -9,7 +9,17 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt, RGBColor
 
-from app.services.pdf_service import THEMES, Theme, _plain, generate_resume_pdf
+from app.services.pdf_service import (
+    _BULLET,
+    _CONTACT,
+    _HEADING,
+    _LIST_SEPARATORS,
+    _SECTIONS,
+    THEMES,
+    Theme,
+    _plain,
+    generate_resume_pdf,
+)
 from app.services.resume_structure import clean_placeholders
 
 
@@ -64,14 +74,18 @@ def generate_resume_docx(layout: ResumeExport, full_name: str = "") -> bytes:
     section = document.sections[0]
     theme = layout.theme
     section.page_width, section.page_height = Inches(8.5), Inches(11)
-    section.left_margin = section.right_margin = Inches(theme.margin_x)
-    section.top_margin = section.bottom_margin = Inches(theme.margin_y)
+    # ReportLab frames have 6pt padding inside the page margins.
+    section.left_margin = section.right_margin = Inches(theme.margin_x) + Pt(6)
+    section.top_margin = section.bottom_margin = Inches(theme.margin_y) + Pt(6)
     normal = document.styles["Normal"]
     normal.font.name = "Times New Roman" if theme.regular.startswith("Times") else "Arial"
     normal.font.size = Pt(theme.body_size)
-    normal.paragraph_format.line_spacing = theme.leading
+    normal.paragraph_format.line_spacing = Pt(theme.body_size * theme.leading)
     normal.paragraph_format.space_after = Pt(2)
+    normal.paragraph_format.widow_control = False
     first = True
+    in_header = True
+    has_markdown_sections = any(_HEADING.match(raw.strip()) for raw in layout.markdown.splitlines())
     for raw in layout.markdown.splitlines():
         line = raw.strip()
         if not line or line in ("---", "***", "___"):
@@ -87,23 +101,56 @@ def generate_resume_docx(layout: ResumeExport, full_name: str = "") -> bytes:
             )
             paragraph.runs[0].bold = True
             paragraph.runs[0].font.size = Pt(theme.name_size)
+            paragraph.paragraph_format.line_spacing = Pt(theme.name_size * 1.15)
+            paragraph.paragraph_format.space_after = Pt(3)
             first = False
             if level == 1 or (full_name or value).casefold() == value.casefold():
                 continue
-        if level == 2:
-            paragraph = document.add_paragraph(value.upper())
+        title = value.rstrip(":")
+        caps_heading = (
+            not has_markdown_sections
+            and title.isupper()
+            and 2 < len(title) < 40
+            and not _LIST_SEPARATORS.search(title)
+        )
+        if title.casefold() in _SECTIONS or (level == 2 and len(title) < 50) or caps_heading:
+            in_header = False
+            paragraph = document.add_paragraph(title.upper())
             paragraph.paragraph_format.space_before = Pt(theme.section_gap)
+            paragraph.paragraph_format.space_after = Pt(6 + theme.heading_rule)
+            paragraph.paragraph_format.line_spacing = Pt(theme.heading_size * 1.25)
             paragraph.paragraph_format.keep_with_next = True
             run = paragraph.runs[0]
             run.bold = True
             run.font.size = Pt(theme.heading_size)
             run.font.color.rgb = RGBColor.from_string(theme.ink.lstrip("#"))
         else:
-            bullet = re.match(r"^[-*•]\s+", value)
+            bullet = _BULLET.match(value)
             paragraph = document.add_paragraph("• " + value[bullet.end() :] if bullet else value)
-            if level >= 3:
-                paragraph.runs[0].bold = True
-                paragraph.paragraph_format.keep_with_next = True
+            if in_header and _CONTACT.search(value):
+                paragraph.runs[0].font.size = Pt(theme.body_size - 0.6)
+                paragraph.paragraph_format.line_spacing = Pt(theme.body_size * 1.35)
+                paragraph.paragraph_format.space_after = Pt(1)
+                paragraph.alignment = (
+                    WD_ALIGN_PARAGRAPH.CENTER
+                    if theme.header_align == 1
+                    else WD_ALIGN_PARAGRAPH.LEFT
+                )
+            elif in_header and level == 0 and not bullet and len(value) < 90:
+                paragraph.runs[0].font.size = Pt(theme.body_size + 1)
+                paragraph.paragraph_format.line_spacing = Pt((theme.body_size + 1) * 1.3)
+                paragraph.paragraph_format.space_after = Pt(1)
+                paragraph.alignment = (
+                    WD_ALIGN_PARAGRAPH.CENTER
+                    if theme.header_align == 1
+                    else WD_ALIGN_PARAGRAPH.LEFT
+                )
+            else:
+                in_header = False
+                if bullet:
+                    paragraph.paragraph_format.left_indent = Pt(12)
+                    paragraph.paragraph_format.first_line_indent = Pt(-10)
+                    paragraph.paragraph_format.space_after = Pt(1.2)
     output = io.BytesIO()
     document.save(output)
     return output.getvalue()

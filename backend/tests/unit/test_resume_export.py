@@ -58,3 +58,17 @@ def test_irreducible_overflow_does_not_silently_drop_content():
     text = TEXT + "\n" + "- Delivered an important project with critical evidence.\n" * 200
     with pytest.raises(PageOverflow, match="have not been removed"):
         fit_resume(text, page_target=1)
+
+
+def test_docx_uses_exact_pdf_spacing_and_plain_heading_mapping():
+    text = TEXT.replace("## ", "").replace("- Reduced", "1. Reduced")
+    layout = fit_resume(text, page_target=1)
+    doc = Document(io.BytesIO(generate_resume_docx(layout)))
+    assert doc.styles["Normal"].paragraph_format.line_spacing.pt == pytest.approx(
+        layout.theme.body_size * layout.theme.leading, abs=0.05
+    )
+    heading = next(p for p in doc.paragraphs if p.text == "EXPERIENCE")
+    assert heading.runs[0].bold
+    bullet = next(p for p in doc.paragraphs if "Reduced latency" in p.text)
+    assert bullet.text.startswith("• ")
+    assert bullet.paragraph_format.space_after.pt == pytest.approx(1.2)
