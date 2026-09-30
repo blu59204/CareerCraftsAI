@@ -163,7 +163,7 @@ export default function CoverLetterPage() {
       ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } }
       : {
           initial: { opacity: 0, y: 28, filter: "blur(10px)" },
-          animate: { opacity: 1, y: 0, filter: "blur(0px)" },
+          animate: { opacity: 1, y: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } },
           transition: { duration: 0.9, ease: EASE_OUT_EXPO, delay },
         };
 
@@ -171,17 +171,17 @@ export default function CoverLetterPage() {
 
   return (
     <Screen>
-      <div className="grid grid-cols-1 gap-10 pt-6 md:pt-10 lg:grid-cols-12 lg:gap-12 xl:gap-16">
+      <div className="grid grid-cols-1 gap-6 pt-2 md:pt-4 lg:grid-cols-12 lg:gap-8">
         {/* ── Left: editorial headline + brief ───────────────────────────── */}
         <div className="min-w-0 lg:col-span-5">
-          <div className="space-y-10 lg:sticky lg:top-24">
+          <div className="space-y-6 lg:sticky lg:top-24">
             <header>
               <motion.div {...enter(0)}>
                 <Eyebrow>AI Writer</Eyebrow>
               </motion.div>
               <motion.h1
                 {...enter(0.06)}
-                className="mt-6 text-balance font-geist text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.045em] text-foreground sm:text-6xl"
+                className="mt-4 text-balance font-geist text-[clamp(2rem,3.5vw,3.5rem)] font-semibold leading-[1.05] tracking-[-0.045em] text-foreground"
               >
                 Cover Letter
                 <span className="block text-muted-foreground/70">in your voice.</span>

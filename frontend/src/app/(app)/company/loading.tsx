@@ -9,7 +9,7 @@ import { Screen } from '@/components/vanguard/Screen'
 export default function CompanyLoading() {
   return (
     <Screen>
-      <header aria-busy="true" className="grid gap-10 pb-12 pt-6 md:pb-20 md:pt-14 lg:grid-cols-12 lg:items-end">
+      <header aria-busy="true" className="grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end">
         <p role="status" className="sr-only">Loading company research</p>
         <div className="min-w-0 lg:col-span-7 xl:col-span-8">
           <Skeleton className="h-6 w-28 rounded-full" />

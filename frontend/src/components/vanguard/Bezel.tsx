@@ -51,8 +51,8 @@ export interface BezelProps extends HTMLAttributes<HTMLDivElement> {
 
 export const Bezel = forwardRef<HTMLDivElement, BezelProps>(
   ({ size = "lg", tone = "default", className, coreClassName, lifted = false, children, ...props }, ref) => (
-    <div ref={ref} className={cn(SHELL[size], SHELL_TONE[tone], lifted && "shadow-ambient", className)} {...props}>
-      <div className={cn("relative h-full", CORE[size], CORE_TONE[tone], coreClassName)}>{children}</div>
+    <div ref={ref} className={cn("min-w-0 max-w-full", SHELL[size], SHELL_TONE[tone], lifted && "shadow-ambient", className)} {...props}>
+      <div className={cn("relative h-full min-w-0", CORE[size], CORE_TONE[tone], coreClassName)}>{children}</div>
     </div>
   ),
 );

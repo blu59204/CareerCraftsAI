@@ -122,7 +122,7 @@ function useEnter() {
       ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } }
       : {
           initial: { opacity: 0, y: 28, filter: 'blur(10px)' },
-          animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+          animate: { opacity: 1, y: 0, filter: 'blur(0px)', transitionEnd: { filter: 'none' } },
           transition: { duration: 0.9, ease: EASE_OUT_EXPO, delay },
         }
 }
@@ -483,7 +483,7 @@ export default function SalaryPage() {
 
   return (
     <Screen>
-      <div className="grid grid-cols-1 gap-6 pt-2 md:pt-6 lg:grid-cols-12 lg:gap-12 xl:gap-16">
+      <div className="grid grid-cols-1 gap-6 pt-2 md:pt-4 lg:grid-cols-12 lg:gap-8">
         {/* ── Left: editorial headline + benchmark form ─────────────────── */}
         <div className="min-w-0 lg:sticky lg:top-6 lg:col-span-5 lg:self-start">
           <motion.div {...enter(0)}>
@@ -491,7 +491,7 @@ export default function SalaryPage() {
           </motion.div>
           <motion.h1
             {...enter(0.06)}
-            className="mt-5 text-balance font-geist text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.04em] text-foreground sm:text-6xl"
+            className="mt-4 text-balance font-geist text-[clamp(2rem,3.5vw,3.5rem)] font-semibold leading-[1.05] tracking-[-0.04em] text-foreground"
           >
             Salary
             <span className="block text-muted-foreground/70">intelligence.</span>

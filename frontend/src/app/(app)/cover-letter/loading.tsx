@@ -14,11 +14,11 @@ export default function CoverLetterLoading() {
     <div
       role="status"
       aria-label="Loading cover letter writer"
-      className="relative mx-auto w-full max-w-[1400px] pb-24 font-geist md:pb-40"
+      className="relative mx-auto w-full min-w-0 max-w-[1400px] pb-8 font-geist md:pb-12"
     >
-      <div className="grid grid-cols-1 gap-10 pt-6 md:pt-10 lg:grid-cols-12 lg:gap-12 xl:gap-16">
+      <div className="grid grid-cols-1 gap-6 pt-2 md:pt-4 lg:grid-cols-12 lg:gap-8">
         {/* Left: headline + brief */}
-        <div className="min-w-0 space-y-10 lg:col-span-5">
+        <div className="min-w-0 space-y-6 lg:col-span-5">
           <div>
             <Skeleton className="h-6 w-24 rounded-full" />
             <Skeleton className="mt-6 h-12 w-4/5 rounded-2xl sm:h-14" />

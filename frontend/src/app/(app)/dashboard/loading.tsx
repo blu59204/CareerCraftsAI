@@ -7,10 +7,10 @@ export default function DashboardLoading() {
     <div
       role="status"
       aria-label="Loading dashboard"
-      className="relative mx-auto w-full max-w-[1400px] space-y-20 pb-24 font-geist md:space-y-28 md:pb-40"
+      className="relative mx-auto w-full min-w-0 max-w-[1400px] space-y-6 pb-8 font-geist md:space-y-8 md:pb-12"
     >
       {/* Hero */}
-      <div className="grid gap-10 pb-12 pt-6 md:pb-20 md:pt-14 lg:grid-cols-12 lg:items-end">
+      <div className="grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end">
         <div className="space-y-6 lg:col-span-7 xl:col-span-8">
           <Skeleton className="h-6 w-32 rounded-full" />
           <div className="space-y-3">
@@ -38,8 +38,8 @@ export default function DashboardLoading() {
       </div>
 
       {/* Command bento */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        <Bezel size="lg" className="lg:col-span-8" coreClassName="space-y-6 p-6 md:p-8">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+        <Bezel size="lg" className="lg:col-span-8" coreClassName="space-y-5 p-4 sm:p-6">
           <Skeleton className="h-8 w-40 rounded-full" />
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="flex items-center gap-4">

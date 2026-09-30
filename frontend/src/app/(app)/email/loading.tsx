@@ -10,10 +10,10 @@ export default function EmailLoading() {
     <div
       role="status"
       aria-label="Loading outreach workspace"
-      className="relative mx-auto w-full max-w-[1400px] space-y-12 pb-24 font-geist md:space-y-10 md:pb-40"
+      className="relative mx-auto w-full min-w-0 max-w-[1400px] space-y-6 pb-8 font-geist md:space-y-8 md:pb-12"
     >
       {/* Hero */}
-      <div className="grid gap-10 pb-12 pt-6 md:pb-20 md:pt-14 lg:grid-cols-12 lg:items-end">
+      <div className="grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end">
         <div className="space-y-6 lg:col-span-7 xl:col-span-8">
           <Skeleton className="h-6 w-28 rounded-full" />
           <div className="space-y-3">
@@ -32,9 +32,9 @@ export default function EmailLoading() {
       </div>
 
       {/* Workspace */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
         {/* Mailbox rail */}
-        <Bezel size="md" className="min-w-0 lg:col-span-4 xl:col-span-3" coreClassName="flex flex-col gap-4 p-4">
+        <Bezel size="md" className="order-2 min-w-0 lg:order-1 lg:col-span-4 2xl:col-span-3" coreClassName="flex flex-col gap-4 p-4">
           <div className="space-y-2 px-1 pt-1">
             <Skeleton className="h-6 w-36 rounded-full" />
             <Skeleton className="h-3 w-44 rounded-full" />
@@ -55,8 +55,12 @@ export default function EmailLoading() {
         </Bezel>
 
         {/* Composer */}
-        <Bezel size="lg" lifted className="min-w-0 lg:col-span-8 xl:col-span-6" coreClassName="flex flex-col">
-          <div className="flex items-start gap-3.5 px-5 pb-5 pt-6 md:px-7 md:pt-7">
+        <Bezel size="lg" lifted className="order-1 min-w-0 lg:order-2 lg:col-span-8 2xl:col-span-6" coreClassName="flex flex-col">
+          <div className="space-y-2 px-4 pt-4 lg:hidden">
+            <Skeleton className="h-3 w-20 rounded-full" />
+            <Skeleton className="h-[3.25rem] w-full rounded-2xl" />
+          </div>
+          <div className="flex items-start gap-3.5 px-4 py-4 sm:px-5">
             <Skeleton className="h-11 w-11 shrink-0 rounded-[0.95rem]" />
             <div className="min-w-0 flex-1 space-y-2.5">
               <Skeleton className="h-6 w-3/4 rounded-xl" />
@@ -64,14 +68,14 @@ export default function EmailLoading() {
             </div>
           </div>
           <Hairline />
-          <div className="grid gap-4 px-5 py-5 sm:grid-cols-2 md:px-7">
+          <div className="grid gap-3 px-4 py-4 sm:px-5">
             <Skeleton className="h-[3.25rem] w-full rounded-2xl" />
             <Skeleton className="h-[3.25rem] w-full rounded-2xl" />
           </div>
-          <div className="px-5 md:px-7">
-            <Skeleton className="h-[18rem] w-full rounded-2xl md:h-[22rem]" />
+          <div className="px-4 sm:px-5">
+            <Skeleton className="h-[14rem] w-full rounded-2xl sm:h-[18rem]" />
           </div>
-          <div className="mt-5 space-y-4 px-5 pb-6 md:px-7 md:pb-7">
+          <div className="mt-4 space-y-3 px-4 pb-4 sm:px-5 sm:pb-5">
             <Skeleton className="h-14 w-full rounded-2xl" />
             <div className="flex justify-end gap-3">
               <Skeleton className="h-11 w-32 rounded-full" />
@@ -81,7 +85,7 @@ export default function EmailLoading() {
         </Bezel>
 
         {/* Assistant rail */}
-        <div className="grid min-w-0 grid-cols-1 content-start gap-6 md:grid-cols-2 lg:col-span-12 xl:col-span-3 xl:grid-cols-1">
+        <div className="order-3 grid min-w-0 grid-cols-1 content-start gap-4 md:grid-cols-2 lg:col-span-12 2xl:col-span-3 2xl:grid-cols-1">
           <Bezel size="md" coreClassName="space-y-4 p-4">
             <div className="flex items-center gap-2.5">
               <Skeleton className="h-8 w-8 rounded-full" />

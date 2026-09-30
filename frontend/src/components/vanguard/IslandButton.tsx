@@ -33,13 +33,13 @@ const TONE: Record<IslandTone, { pill: string; well: string }> = {
 };
 
 const SIZE: Record<IslandSize, { pill: string; withIcon: string; well: string; icon: number }> = {
-  sm: { pill: "h-9 gap-2 px-4 text-[13px]", withIcon: "pr-1", well: "h-7 w-7", icon: 14 },
-  md: { pill: "h-11 gap-2.5 px-6 text-sm", withIcon: "pr-1.5", well: "h-8 w-8", icon: 15 },
-  lg: { pill: "h-14 gap-3 px-7 text-[15px]", withIcon: "pr-2", well: "h-10 w-10", icon: 17 },
+  sm: { pill: "min-h-9 gap-2 px-4 py-1 text-[13px]", withIcon: "pr-1", well: "h-7 w-7", icon: 14 },
+  md: { pill: "min-h-11 gap-2.5 px-6 py-1.5 text-sm", withIcon: "pr-1.5", well: "h-8 w-8", icon: 15 },
+  lg: { pill: "min-h-14 gap-3 px-7 py-2 text-[15px]", withIcon: "pr-2", well: "h-10 w-10", icon: 17 },
 };
 
 const BASE =
-  "group relative inline-flex select-none items-center justify-center whitespace-nowrap rounded-full font-medium tracking-[-0.01em] " +
+  "group relative inline-flex min-w-0 max-w-full select-none items-center justify-center whitespace-normal break-words rounded-full text-center font-medium tracking-[-0.01em] " +
   "transition-[background-color,color,box-shadow,transform,opacity] duration-500 ease-vanguard active:scale-[0.98] " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background " +
   "disabled:pointer-events-none disabled:opacity-50";

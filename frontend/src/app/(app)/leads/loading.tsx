@@ -4,9 +4,9 @@ import { Skeleton } from "@/components/vanguard/Display";
 /** Mirrors the Leads directory: hero + stat strip aside, filter island, contact rows + lg detail panel. */
 export default function LeadsLoading() {
   return (
-    <div className="relative mx-auto w-full max-w-[1400px] space-y-12 pb-24 font-geist md:space-y-16 md:pb-40" aria-busy="true" aria-label="Loading recruiter contacts">
+    <div className="relative mx-auto w-full min-w-0 max-w-[1400px] space-y-6 pb-8 font-geist md:space-y-8 md:pb-12" aria-busy="true" aria-label="Loading recruiter contacts">
       {/* Hero */}
-      <div className="grid gap-10 pb-4 pt-6 md:pt-14 lg:grid-cols-12 lg:items-end">
+      <div className="grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end">
         <div className="lg:col-span-7 xl:col-span-8">
           <Skeleton className="h-6 w-28 rounded-full" />
           <Skeleton className="mt-6 h-12 w-full max-w-[26rem] sm:h-16" />

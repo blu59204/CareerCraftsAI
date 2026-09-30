@@ -4,8 +4,8 @@ import { Skeleton } from '@/components/vanguard/Display'
 /** Mirrors the Salary Editorial Split: headline + form on the left, report on the right. */
 export default function SalaryLoading() {
   return (
-    <div className="relative mx-auto w-full max-w-[1400px] pb-24 font-geist md:pb-40" aria-busy="true" aria-label="Loading salary intelligence">
-      <div className="grid grid-cols-1 gap-6 pt-2 md:pt-6 lg:grid-cols-12 lg:gap-12 xl:gap-16">
+    <div className="relative mx-auto w-full min-w-0 max-w-[1400px] pb-8 font-geist md:pb-12" aria-busy="true" aria-label="Loading salary intelligence">
+      <div className="grid grid-cols-1 gap-6 pt-2 md:pt-4 lg:grid-cols-12 lg:gap-8">
         {/* Left: eyebrow, headline, description, form */}
         <div className="min-w-0 lg:col-span-5">
           <Skeleton className="h-6 w-28 rounded-full" />

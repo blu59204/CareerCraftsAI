@@ -8,11 +8,11 @@ import { cn } from "@/lib/utils";
  * inset core; focus lifts the tray ring to the brand color.
  */
 const CONTROL =
-  "w-full rounded-[calc(1rem-0.25rem)] bg-card px-4 text-sm text-foreground shadow-bezel-core outline-none dark:bg-background/70 dark:shadow-bezel-core-dark " +
+  "w-full min-w-0 rounded-[calc(1rem-0.25rem)] bg-card px-4 text-sm text-foreground shadow-bezel-core outline-none dark:bg-background/70 dark:shadow-bezel-core-dark " +
   "placeholder:text-muted-foreground/70 disabled:cursor-not-allowed disabled:opacity-60 transition-[background-color] duration-500 ease-vanguard";
 
 const TRAY =
-  "rounded-2xl bg-foreground/[0.03] p-1 ring-1 ring-foreground/[0.07] dark:bg-white/[0.03] dark:ring-white/10 " +
+  "min-w-0 max-w-full rounded-2xl bg-foreground/[0.03] p-1 ring-1 ring-foreground/[0.07] dark:bg-white/[0.03] dark:ring-white/10 " +
   "transition-[box-shadow,background-color] duration-500 ease-vanguard focus-within:ring-2 focus-within:ring-primary/40";
 
 export const inputTrayClass = TRAY;

@@ -11,6 +11,8 @@ import {
   Export,
   FileCsv,
   MagnifyingGlass,
+  Rows,
+  SquaresFour,
   Table,
   Tray,
   WarningCircle,
@@ -18,7 +20,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { APP_STAGES, ApplicationKanban, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationKanban";
+import { APP_STAGES, ApplicationKanban, ApplicationList, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationKanban";
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
 import {
   Bezel,
@@ -31,6 +33,7 @@ import {
   Reveal,
   SPRING_SOFT,
   Screen,
+  Segmented,
   Section,
   Skeleton,
   StatStrip,
@@ -72,6 +75,7 @@ export default function ApplicationsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"list" | "board">("list");
 
   const { data: items = [], isLoading, isError, refetch } = useQuery<ApplicationItem[]>({
     queryKey: ["applications"],
@@ -156,60 +160,48 @@ export default function ApplicationsPage() {
       <PageHero
         eyebrow="Your job search"
         title="Application tracker"
-        description="Keep each role, its original posting, and your next step in one place. Drag a card between stages to update it."
-        className="pb-4 md:pb-6"
+        description="Your pipeline, from saved role to signed offer. Keep the next step in sight."
+        className="pb-0 md:pb-0"
         actions={
           <>
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Filter by company or role..."
-              aria-label="Search applications"
-              trayClassName="w-full sm:w-[22rem]"
-              leading={<MagnifyingGlass size={16} weight="light" />}
-              trailing={
-                search ? (
-                  <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}>
-                    <X size={13} weight="light" />
-                  </IconButton>
-                ) : undefined
-              }
-            />
             <IslandLink href="/jobs" tone="ghost" size="md" icon={<Briefcase size={16} weight="light" />} trailing>
               Find roles
             </IslandLink>
           </>
         }
-        aside={
-          <StatStrip
-            className="lg:[&>div>div]:px-6 lg:[&>div>div]:py-6 lg:[&>div]:grid-flow-row lg:[&>div]:grid-cols-2"
-            items={[
-              { label: "All roles", value: items.length },
-              { label: "In progress", value: activeCount },
-              { label: "Interviews", value: interviewCount },
-              { label: "Offers", value: offerCount },
-            ]}
-          />
-        }
+      />
+
+      <StatStrip
+        items={[
+          { label: "All roles", value: items.length },
+          { label: "In progress", value: activeCount },
+          { label: "Interviews", value: interviewCount },
+          { label: "Offers", value: offerCount },
+        ]}
       />
 
       <Section aria-label="Applications by stage" className="space-y-5 md:space-y-5">
         <h2 className="sr-only">Applications by stage</h2>
 
-        <Reveal subtle className="relative z-20 flex flex-wrap items-center justify-between gap-3">
+        <Bezel size="md" coreClassName="flex min-w-0 flex-wrap items-center gap-3 p-3">
+          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search company or role" aria-label="Search applications" trayClassName="w-full sm:flex-1 sm:min-w-[12rem]" leading={<MagnifyingGlass size={16} weight="light" />} trailing={search ? <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}><X size={13} weight="light" /></IconButton> : undefined} />
+          <Segmented value={view} onChange={setView} asTabs={false} ariaLabel="Application view" size="sm" options={[{ value: "list", label: "List", icon: <Rows size={14} /> }, { value: "board", label: "Board", icon: <SquaresFour size={14} /> }]} />
+          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onOpenSheets={openSheets} />
+        </Bezel>
+
+        <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
           <p aria-live="polite" className="flex items-center gap-2 pl-1 text-[13px] text-muted-foreground">
             <ArrowsLeftRight size={15} weight="light" aria-hidden />
             <span className="tabular-nums">{boardStatus}</span>
           </p>
-          <ExportMenu
-            open={showExportMenu}
-            onOpenChange={setShowExportMenu}
-            onDownloadCsv={exportToCSV}
-            onOpenSheets={openSheets}
-          />
+          <span className="text-xs text-muted-foreground">{view === "board" ? "Drag roles to update their stage" : "Select a role to view details"}</span>
         </Reveal>
 
-        {isLoading ? (
+        {isLoading && view === "list" ? (
+          <Bezel size="md" aria-busy="true" aria-label="Loading applications" coreClassName="space-y-3 p-4">
+            {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-16 w-full rounded-xl" />)}
+          </Bezel>
+        ) : isLoading ? (
           <div aria-busy="true" aria-label="Loading applications" className="flex gap-4 overflow-hidden p-1">
             {APP_STAGES.map((stage) => (
               <Bezel key={stage} size="md" tone="muted" className="w-[17.25rem] shrink-0 md:w-[18.5rem]" coreClassName="min-h-[24rem] space-y-2.5 p-2.5">
@@ -249,6 +241,10 @@ export default function ApplicationsPage() {
               />
             </Bezel>
           </Reveal>
+        ) : filteredItems.length === 0 ? (
+          <Bezel><EmptyPanel compact title="No matching applications" description="Try another company or role." action={<IslandButton tone="ghost" size="sm" onClick={() => setSearch("")}>Clear search</IslandButton>} /></Bezel>
+        ) : view === "list" ? (
+          <ApplicationList items={filteredItems} onSelect={setSelectedId} onStageChange={(id, newStage) => statusMutation.mutate({ id, newStage })} />
         ) : (
           <ApplicationKanban
             items={filteredItems}
@@ -335,7 +331,7 @@ function ExportMenu({
             animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
             exit={reduce ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.98 }}
             transition={reduce ? { duration: 0.15 } : SPRING_SOFT}
-            className="absolute right-0 top-full z-20 mt-3 w-[17rem] origin-top-right"
+            className="absolute right-0 top-full z-20 mt-3 w-[min(17rem,calc(100vw-3rem))] origin-top-right"
           >
             <Bezel size="md" lifted coreClassName="p-1.5">
               <ul className="space-y-0.5">

@@ -6,8 +6,8 @@ import { Screen } from "@/components/vanguard/Screen";
 export default function ResumeLoading() {
   return (
     <Screen>
-      <div role="status" aria-label="Loading resume workspace" className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:gap-x-10">
-        <div className="min-w-0 space-y-6 pt-4 md:pt-10 lg:col-span-5 xl:col-span-4">
+      <div role="status" aria-label="Loading resume workspace" className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:gap-x-8">
+        <div className="min-w-0 space-y-6 pt-2 md:pt-4 lg:col-span-5 xl:col-span-4">
           <Skeleton className="h-6 w-36 rounded-full" />
           <div className="space-y-3">
             <Skeleton className="h-14 w-4/5 rounded-2xl" />

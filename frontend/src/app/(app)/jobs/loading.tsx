@@ -6,7 +6,7 @@ import { Screen } from "@/components/vanguard/Screen";
 export default function JobsLoading() {
   return (
     <Screen>
-      <div aria-busy="true" aria-label="Loading jobs" className="grid gap-10 pb-12 pt-6 md:pb-20 md:pt-14 lg:grid-cols-12 lg:items-start">
+      <div aria-busy="true" aria-label="Loading jobs" className="grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-start">
         <div className="min-w-0 space-y-6 lg:col-span-7 xl:col-span-8">
           <Skeleton className="h-6 w-36 rounded-full" />
           <div className="space-y-3">

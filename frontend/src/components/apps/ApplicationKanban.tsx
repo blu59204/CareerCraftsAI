@@ -4,7 +4,7 @@ import { useState, type DragEvent, type KeyboardEvent } from "react";
 import { motion } from "motion/react";
 import { ClockCountdown, DotsSixVertical, MapPin } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
-import { Bezel, RevealGroup, listItem, listStagger, type StatusTone } from "@/components/vanguard";
+import { Bezel, RevealGroup, Select, StatusPill, listItem, listStagger, type StatusTone } from "@/components/vanguard";
 
 export type AppStage = "saved" | "applied" | "viewed" | "interview" | "offer" | "rejected";
 
@@ -114,15 +114,16 @@ export function ApplicationKanban({ items, onSelect, onStageChange, emptyColumnL
 
   return (
     <RevealGroup
-      className="flex snap-x snap-proximity gap-4 overflow-x-auto overscroll-x-contain p-1 pb-5 [scrollbar-width:thin]"
+      className="flex min-w-0 max-w-full snap-x snap-proximity gap-3 overflow-x-auto overscroll-x-contain p-1 pb-5 [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       aria-label="Pipeline stages"
       role="list"
+      tabIndex={0}
     >
       {APP_STAGES.map((stage) => {
         const columnItems = items.filter((item) => item.stage === stage);
         const isOver = dragOverStage === stage;
         return (
-          <motion.div key={stage} variants={listItem} role="listitem" className="w-[17.25rem] shrink-0 snap-start md:w-[18.5rem]">
+          <motion.div key={stage} variants={listItem} role="listitem" className="w-[min(17.25rem,100%)] shrink-0 snap-start md:w-[18.5rem]">
             <Bezel
               size="md"
               tone="muted"
@@ -180,6 +181,46 @@ export function ApplicationKanban({ items, onSelect, onStageChange, emptyColumnL
         );
       })}
     </RevealGroup>
+  );
+}
+
+/** Compact table on desktop, labeled cards on phones. */
+export function ApplicationList({ items, onSelect, onStageChange }: Props) {
+  return (
+    <Bezel size="md" coreClassName="overflow-hidden">
+      <table role="table" className="application-table w-full table-fixed text-left text-sm">
+        <caption className="sr-only">Applications and their next steps</caption>
+        <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th scope="col" className="w-[40%] px-4 py-3 font-medium">Role / company</th>
+            <th scope="col" className="w-[25%] px-4 py-3 font-medium">Stage</th>
+            <th scope="col" className="w-[15%] px-4 py-3 font-medium">Match</th>
+            <th scope="col" className="w-[20%] px-4 py-3 font-medium">Follow-up</th>
+          </tr>
+        </thead>
+        <tbody role="rowgroup" className="divide-y divide-border">
+          {items.map((item) => (
+            <tr role="row" key={item.id} className="transition-colors hover:bg-muted/30">
+              <td role="cell" className="px-4 py-3 align-middle">
+                <button type="button" onClick={() => onSelect(item.id)} className="block w-full min-w-0 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="block truncate font-medium text-foreground">{item.role}</span>
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">{item.company}{item.location ? ` · ${item.location}` : ""}</span>
+                </button>
+              </td>
+              <td role="cell" data-label="Stage" className="px-4 py-3 align-middle">
+                {onStageChange ? (
+                  <Select aria-label={`Stage for ${item.role} at ${item.company}`} value={item.stage} onChange={(event) => onStageChange(item.id, event.target.value as AppStage)} className="h-9 px-2 pr-7 text-xs">
+                    {APP_STAGES.map((stage) => <option key={stage} value={stage}>{STAGE_LABELS[stage]}</option>)}
+                  </Select>
+                ) : <StatusPill tone={STAGE_TONE[item.stage]}>{STAGE_LABELS[item.stage]}</StatusPill>}
+              </td>
+              <td role="cell" data-label="Match" className="px-4 py-3 align-middle font-geist-mono tabular-nums text-primary">{item.matchPercent != null ? `${item.matchPercent}%` : "—"}</td>
+              <td role="cell" data-label="Follow-up" className="px-4 py-3 align-middle text-xs text-muted-foreground">{item.nextFollowUp ?? "Not scheduled"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Bezel>
   );
 }
 

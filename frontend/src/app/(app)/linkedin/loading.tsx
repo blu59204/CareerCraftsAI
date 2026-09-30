@@ -13,7 +13,7 @@ export default function LinkedInLoading() {
       <div
         role="status"
         aria-label="Loading LinkedIn"
-        className="grid grid-cols-1 gap-12 pt-6 md:pt-14 lg:grid-cols-12 lg:gap-14"
+        className="grid grid-cols-1 gap-6 pt-2 md:pt-4 lg:grid-cols-12 lg:gap-8"
       >
         <div className="space-y-8 lg:col-span-5">
           <div>

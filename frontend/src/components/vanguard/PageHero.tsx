@@ -38,7 +38,7 @@ interface PageHeroProps {
 /**
  * Editorial page header: eyebrow → massive tight-tracked Geist headline →
  * measured description, with an optional right-hand aside. Provides the
- * macro-whitespace above the working area (pt-8 md:pt-16 pb-12 md:pb-20).
+ * compact spacing above the working area.
  */
 export function PageHero({ eyebrow, title, accent, description, actions, aside, className }: PageHeroProps) {
   const reduce = useReducedMotion();
@@ -47,30 +47,30 @@ export function PageHero({ eyebrow, title, accent, description, actions, aside, 
       ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } }
       : {
           initial: { opacity: 0, y: 28, filter: "blur(10px)" },
-          animate: { opacity: 1, y: 0, filter: "blur(0px)" },
+          animate: { opacity: 1, y: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } },
           transition: { duration: 0.9, ease: EASE_OUT_EXPO, delay },
         };
 
   return (
-    <header className={cn("grid gap-10 pb-12 pt-6 md:pb-20 md:pt-14 lg:grid-cols-12 lg:items-end", className)}>
+    <header className={cn("grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end", className)}>
       <div className="min-w-0 lg:col-span-7 xl:col-span-8">
         <motion.div {...enter(0)}>
           <Eyebrow>{eyebrow}</Eyebrow>
         </motion.div>
         <motion.h1
           {...enter(0.06)}
-          className="mt-6 max-w-[18ch] text-balance font-geist text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.045em] text-foreground sm:text-6xl xl:text-7xl"
+          className="mt-4 max-w-[18ch] text-balance font-geist text-[clamp(2rem,3.5vw,3.5rem)] font-semibold leading-[1.05] tracking-[-0.045em] text-foreground"
         >
           {title}
           {accent ? <span className="block text-muted-foreground/70">{accent}</span> : null}
         </motion.h1>
         {description ? (
-          <motion.p {...enter(0.12)} className="mt-6 max-w-[58ch] text-pretty text-[15px] leading-7 text-muted-foreground md:text-base">
+          <motion.p {...enter(0.12)} className="mt-4 max-w-[58ch] text-pretty text-sm leading-6 text-muted-foreground md:text-[15px]">
             {description}
           </motion.p>
         ) : null}
         {actions ? (
-          <motion.div {...enter(0.18)} className="mt-8 flex flex-wrap items-center gap-3">
+          <motion.div {...enter(0.18)} className="mt-5 flex min-w-0 flex-wrap items-center gap-3">
             {actions}
           </motion.div>
         ) : null}

@@ -23,6 +23,7 @@ import {
   Robot,
   SealCheck,
   ShieldCheck,
+  X,
 } from "@phosphor-icons/react";
 import { ResumeScoreCard } from "@/components/ui/ResumeScoreCard";
 import { JobMatchCard } from "@/components/ui/JobMatchCard";
@@ -32,6 +33,7 @@ import {
   Bezel,
   EmptyPanel,
   Hairline,
+  IconButton,
   IslandButton,
   IslandLink,
   PageHero,
@@ -130,7 +132,7 @@ interface NextAction {
   cta: string;
 }
 
-function NextActionRow({ action }: { action: NextAction }) {
+function NextActionRow({ action, onDismiss }: { action: NextAction; onDismiss?: () => void }) {
   return (
     <motion.li variants={listItem} className="flex flex-col gap-4 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center">
       <div className="flex min-w-0 flex-1 items-start gap-4">
@@ -140,9 +142,10 @@ function NextActionRow({ action }: { action: NextAction }) {
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">{action.detail}</p>
         </div>
       </div>
-      <IslandLink href={action.href} tone="ghost" size="sm" trailing className="self-start sm:self-auto">
-        {action.cta}
-      </IslandLink>
+      <div className="flex shrink-0 items-center gap-2 self-start sm:self-auto">
+        <IslandLink href={action.href} tone="ghost" size="sm" trailing>{action.cta}</IslandLink>
+        {onDismiss ? <IconButton aria-label="Dismiss keyword gaps recommendation" onClick={onDismiss}><X size={15} weight="light" /></IconButton> : null}
+      </div>
     </motion.li>
   );
 }
@@ -229,6 +232,7 @@ export default function DashboardPage() {
   const initRun = useAgentStore((s) => s.initRun);
   const setActiveRun = useAgentStore((s) => s.setActiveRun);
   const [launching, setLaunching] = useState<string | null>(null);
+  const [dismissedKeywordGaps, setDismissedKeywordGaps] = useState<string | null>(null);
 
   const { data: stats, isLoading } = useQuery<DashboardStats>({
     queryKey: ["dashboard-stats"],
@@ -360,7 +364,7 @@ export default function DashboardPage() {
       id: "keywords",
       tone: "neutral",
       icon: <Crosshair size={18} weight="light" />,
-      title: `Close ${plural(resumeData.missing_keywords.length, "keyword gap")}`,
+      title: `Address ${plural(resumeData.missing_keywords.length, "keyword gap")}`,
       detail: "Your saved jobs ask for terms your resume doesn't mention yet.",
       href: "/resume",
       cta: "Tailor resume",
@@ -388,7 +392,8 @@ export default function DashboardPage() {
       cta: "Prep",
     });
   }
-  const visibleActions = nextActions.slice(0, 4);
+  const keywordGapKey = JSON.stringify([...(resumeData?.missing_keywords ?? [])].sort());
+  const visibleActions = nextActions.filter((action) => action.id !== "keywords" || dismissedKeywordGaps !== keywordGapKey).slice(0, 4);
 
   const heroSummary =
     approvalsCount > 0
@@ -471,10 +476,10 @@ export default function DashboardPage() {
 
       {/* ---- Command bento ------------------------------------------------ */}
       <Section aria-label="Command center">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
           {/* Next actions — the anchor panel */}
           <Reveal className="min-w-0 lg:col-span-8">
-            <Bezel size="lg" tone="primary" className="h-full" coreClassName="flex flex-col p-6 md:p-8">
+            <Bezel size="lg" tone="primary" coreClassName="flex flex-col p-4 sm:p-6">
               <PanelTitle
                 title="Next actions"
                 icon={<Lightning size={16} weight="light" />}
@@ -489,7 +494,7 @@ export default function DashboardPage() {
                 }
               />
 
-              <div className="mt-6 flex-1" aria-live="polite">
+              <div className="mt-4" aria-live="polite">
                 {isLoading ? (
                   <RowSkeleton rows={3} />
                 ) : visibleActions.length > 0 ? (
@@ -500,7 +505,7 @@ export default function DashboardPage() {
                     variants={listStagger}
                   >
                     {visibleActions.map((action) => (
-                      <NextActionRow key={action.id} action={action} />
+                      <NextActionRow key={action.id} action={action} onDismiss={action.id === "keywords" ? () => setDismissedKeywordGaps(keywordGapKey) : undefined} />
                     ))}
                   </motion.ul>
                 ) : (
@@ -513,7 +518,7 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              <Hairline className="my-7" />
+              <Hairline className="my-5" />
 
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Launch an agent</p>

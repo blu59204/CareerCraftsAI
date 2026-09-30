@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Search, CheckCircle, Briefcase, Mail, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -76,21 +77,26 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
       }
     };
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setNotifOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [notifOpen]);
 
   return (
-    <header className="glass-panel sticky top-4 z-30 mx-4 mt-4 flex h-16 items-center gap-2 overflow-visible rounded-full px-4 sm:gap-4 md:mx-6">
-      {!mobileSearchOpen && (
+    <header className="glass-panel sticky top-3 z-30 mx-3 mt-3 flex h-14 items-center gap-2 overflow-visible rounded-full px-3 sm:mx-5 sm:gap-3 lg:mx-6">
         <button
           type="button"
           onClick={onMenuClick}
           aria-label="Open navigation"
-          className="shrink-0 rounded-full p-2 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground md:hidden"
+          className={cn("shrink-0 rounded-full p-2 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground lg:hidden", mobileSearchOpen && "hidden sm:block")}
         >
           <Menu className="h-5 w-5" />
         </button>
-      )}
 
       {/* Desktop/tablet: full search pill. Hidden on mobile in favor of an icon
           button — at 390px a flex-1 input with content-sized min-width pushed
@@ -132,18 +138,19 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
         </button>
       )}
 
-      <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-white/40 bg-white/[0.10] px-3 py-1.5 text-xs font-medium text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] backdrop-blur-[18px] sm:inline-flex dark:border-white/10 dark:bg-black/[0.12]">
+      <Link href="/agents" className="hidden shrink-0 items-center gap-1.5 rounded-full border border-white/40 bg-white/[0.10] px-3 py-1.5 text-xs font-medium text-primary shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] backdrop-blur-[18px] hover:bg-white/[0.16] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:inline-flex dark:border-white/10 dark:bg-black/[0.12]">
         <span className="signal-dot h-1.5 w-1.5 rounded-full bg-success" />
         Agents online
-      </span>
+      </Link>
 
-      {!mobileSearchOpen && (
-      <div className="ml-auto flex shrink-0 items-center gap-3">
+      <div className={cn("ml-auto flex shrink-0 items-center gap-2 sm:gap-3", mobileSearchOpen && "hidden sm:flex")}>
         {/* Notifications */}
-        <div ref={notifRef} className="relative">
+        <div ref={notifRef} className="sm:relative">
           <button
             type="button"
             aria-label="Notifications"
+            aria-expanded={notifOpen}
+            aria-controls="app-notifications"
             onClick={() => setNotifOpen((v) => !v)}
             className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/45 bg-white/[0.10] text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.40)] backdrop-blur-[18px] hover:bg-white/[0.16] dark:border-white/10 dark:bg-black/[0.12] dark:hover:bg-white/[0.08]"
           >
@@ -156,9 +163,10 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
           </button>
 
           {notifOpen && (
-            <div className="glass-panel-strong absolute right-0 top-11 z-50 w-80 overflow-hidden rounded-2xl">
+            <div id="app-notifications" className="glass-panel-strong absolute inset-x-0 top-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-2xl sm:inset-x-auto sm:right-0 sm:top-11 sm:w-80">
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <span className="text-sm font-semibold">Notifications</span>
+                <div className="flex items-center gap-2">
                 {unreadCount > 0 && (
                   <button
                     onClick={() => markAllRead.mutate()}
@@ -167,6 +175,8 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
                     Mark all read
                   </button>
                 )}
+                  <button type="button" aria-label="Close notifications" onClick={() => setNotifOpen(false)} className="rounded-full p-1.5 text-muted-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-4 w-4" /></button>
+                </div>
               </div>
               <div className="max-h-72 overflow-y-auto">
                 {notifications.map((n) => {
@@ -218,7 +228,6 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
         <ThemeToggle />
         <UserMenu />
       </div>
-      )}
     </header>
   );
 }

@@ -285,7 +285,7 @@ function JobActions({
   className?: string;
 }) {
   return (
-    <div className={cn("relative flex items-center gap-2", className)}>
+    <div className={cn("relative flex min-w-0 flex-wrap items-center gap-2", className)}>
       <IslandButton
         tone="ghost"
         size={size}
@@ -667,7 +667,7 @@ function FeaturedJobCard({
   const excerpt = job.jd_text?.replace(/\s+/g, " ").trim();
 
   return (
-    <article data-testid="job-card" className="job-card group relative">
+    <article data-testid="job-card" className="job-card job-row-container group relative min-w-0">
       <Bezel
         tone="primary"
         lifted
@@ -744,7 +744,7 @@ function JobRow({
         size="md"
         className={cn("transition-[box-shadow] duration-500 ease-vanguard", selected && "ring-primary/35 dark:ring-primary/40")}
         coreClassName={cn(
-          "grid grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-4 gap-y-4 p-4 md:grid-cols-[3.5rem_minmax(0,1fr)_auto] md:p-5",
+          "job-row-grid grid grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 p-3 sm:p-4",
           "transition-colors duration-500 ease-vanguard group-hover:bg-muted/40 dark:group-hover:bg-white/[0.04]",
         )}
       >
@@ -781,7 +781,7 @@ function JobRow({
           <JobMeta job={job} />
         </div>
 
-        <JobActions job={job} onPrepareApply={onPrepareApply} className="col-span-2 md:col-span-1" />
+        <JobActions job={job} onPrepareApply={onPrepareApply} className="job-row-action col-span-2" />
       </Bezel>
     </article>
   );

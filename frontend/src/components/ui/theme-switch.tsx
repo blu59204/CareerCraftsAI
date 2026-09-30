@@ -2,7 +2,7 @@
 
 import { MoonIcon, SunIcon } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/theme/ThemeProvider";
 
@@ -11,19 +11,10 @@ const ThemeSwitch = ({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => {
   const { theme, setTheme } = useTheme();
-  const [checked, setChecked] = useState(false);
+  const checked = theme === "dark";
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
-  useEffect(() => setChecked(theme === "dark"), [theme]);
-
-  const handleCheckedChange = useCallback(
-    (isChecked: boolean) => {
-      setChecked(isChecked);
-      setTheme(isChecked ? "dark" : "light");
-    },
-    [setTheme],
-  );
 
   if (!mounted) return null;
 
@@ -36,8 +27,9 @@ const ThemeSwitch = ({
       {...props}
     >
       <Switch
+        aria-label="Dark mode"
         checked={checked}
-        onCheckedChange={handleCheckedChange}
+        onCheckedChange={(isChecked) => setTheme(isChecked ? "dark" : "light")}
         className={cn(
           "peer absolute inset-0 h-full w-full rounded-full border border-white/60 bg-white/[0.07] shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_8px_24px_rgba(0,0,0,0.10)] backdrop-blur-[24px] backdrop-saturate-[190%] transition-colors dark:border-white/15 dark:bg-black/[0.12]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",

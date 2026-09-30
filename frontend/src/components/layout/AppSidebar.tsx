@@ -38,7 +38,7 @@ const ITEMS = [
 ];
 
 interface AppSidebarProps {
-  /** Mobile/tablet drawer visibility. Ignored at md+ where the sidebar is always shown. */
+  /** Mobile/tablet drawer visibility. Ignored at lg+ where the sidebar is always shown. */
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
@@ -48,7 +48,7 @@ export function AppSidebar({ mobileOpen = false, onMobileClose }: AppSidebarProp
 
   const body = (
     <div className="glass-panel flex min-h-full flex-col rounded-[32px] px-4 py-5">
-      <div className="mb-8 flex items-center justify-between px-2">
+      <div className="mb-5 flex items-center justify-between px-2">
         <Link href="/" prefetch className="flex items-center gap-3 text-base font-semibold">
           <span className="glow-primary inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
             <Sparkles className="h-4 w-4" />
@@ -62,7 +62,7 @@ export function AppSidebar({ mobileOpen = false, onMobileClose }: AppSidebarProp
           type="button"
           onClick={onMobileClose}
           aria-label="Close navigation"
-          className="rounded-full p-1.5 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground md:hidden"
+          className="rounded-full p-1.5 text-muted-foreground hover:bg-white/[0.12] hover:text-foreground lg:hidden"
         >
           <X className="h-5 w-5" />
         </button>
@@ -112,17 +112,17 @@ export function AppSidebar({ mobileOpen = false, onMobileClose }: AppSidebarProp
       {/* Desktop/tablet-landscape: persistent sidebar. Sticky (not just
           h-screen) so it stays in view instead of scrolling away once page
           content is taller than one viewport. */}
-      <aside className="hidden h-screen w-72 shrink-0 self-start p-4 md:sticky md:top-0 md:flex md:flex-col">{body}</aside>
+      <aside className="hidden h-dvh w-64 shrink-0 self-start overflow-y-auto p-3 lg:sticky lg:top-0 lg:flex lg:flex-col">{body}</aside>
 
       {/* Mobile/tablet-portrait: slide-in drawer + backdrop */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={onMobileClose}
             aria-hidden
           />
-          <aside className="relative h-screen w-72 max-w-[85vw] p-4">{body}</aside>
+          <aside className="relative h-dvh w-72 max-w-[90vw] overflow-y-auto p-3">{body}</aside>
         </div>
       )}
     </>

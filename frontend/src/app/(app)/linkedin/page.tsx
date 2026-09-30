@@ -546,7 +546,7 @@ export default function LinkedInPage() {
       ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } }
       : {
           initial: { opacity: 0, y: 28, filter: "blur(10px)" },
-          animate: { opacity: 1, y: 0, filter: "blur(0px)" },
+          animate: { opacity: 1, y: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } },
           transition: { duration: 0.9, ease: EASE_OUT_EXPO, delay },
         };
 
@@ -556,7 +556,7 @@ export default function LinkedInPage() {
         {/* ── Editorial split: statement + controls (left) · before/after drafts (right) ── */}
         <section
           aria-labelledby="linkedin-title"
-          className="grid grid-cols-1 gap-12 pt-6 md:pt-14 lg:grid-cols-12 lg:gap-14"
+          className="grid grid-cols-1 gap-6 pt-2 md:pt-4 lg:grid-cols-12 lg:gap-8"
         >
           <div className="min-w-0 lg:col-span-5">
             <div className="space-y-8 lg:sticky lg:top-24">
@@ -570,7 +570,7 @@ export default function LinkedInPage() {
                 <motion.h1
                   id="linkedin-title"
                   {...enter(0.06)}
-                  className="mt-6 text-balance text-[2.6rem] font-semibold leading-[0.95] tracking-[-0.045em] text-foreground sm:text-6xl xl:text-[4.25rem]"
+                  className="mt-4 text-balance text-[clamp(2rem,3.5vw,3.5rem)] font-semibold leading-[1.05] tracking-[-0.045em] text-foreground"
                 >
                   LinkedIn presence{" "}
                   <span className="block text-muted-foreground/70">tuned to one role.</span>

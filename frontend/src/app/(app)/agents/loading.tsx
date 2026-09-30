@@ -13,11 +13,11 @@ const GROUPS = [
 export default function AgentsLoading() {
   return (
     <div
-      className="relative mx-auto w-full max-w-[1400px] space-y-12 pb-24 font-geist md:space-y-16 md:pb-40"
+      className="relative mx-auto w-full min-w-0 max-w-[1400px] space-y-6 pb-8 font-geist md:space-y-8 md:pb-12"
       role="status"
       aria-label="Loading agents"
     >
-      <div className="grid gap-10 pb-12 pt-6 md:pb-8 md:pt-10 lg:grid-cols-12 lg:items-end">
+      <div className="grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end">
         <div className="space-y-6 lg:col-span-7 xl:col-span-8">
           <Skeleton className="h-6 w-32 rounded-full" />
           <Skeleton className="h-14 w-full max-w-md md:h-20" />

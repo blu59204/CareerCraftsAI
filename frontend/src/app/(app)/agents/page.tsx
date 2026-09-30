@@ -279,7 +279,7 @@ export default function AgentsPage() {
   };
 
   return (
-    <Screen className="space-y-12 md:space-y-16">
+    <Screen>
       <PageHero
         className="md:pb-8 md:pt-10"
         eyebrow="Agent harness"

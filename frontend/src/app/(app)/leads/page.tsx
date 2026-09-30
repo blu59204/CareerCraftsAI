@@ -452,15 +452,14 @@ function LeadRow({
   const ActionIcon = uiStatus === "Replied" ? CalendarBlank : EnvelopeSimple;
 
   return (
-    <motion.li custom={index} variants={rowIn} initial={reduce ? false : "hidden"} animate="show">
+    <motion.li custom={index} variants={rowIn} initial={reduce ? false : "hidden"} animate="show" className="lead-row-container min-w-0">
       <Bezel
         size="md"
         tone={selected ? "primary" : "default"}
         data-testid="lead-row"
         className="transition-[background-color,box-shadow] duration-500 ease-vanguard hover:ring-foreground/[0.12] dark:hover:ring-white/[0.14]"
         coreClassName={cn(
-          "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-4 p-4",
-          "md:grid-cols-[minmax(0,1fr)_minmax(0,13rem)_auto_auto] md:gap-y-0 md:py-3 md:pl-3 md:pr-3",
+          "lead-row-grid grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 p-3",
         )}
       >
         {/* Identity — opens the detail panel */}
@@ -483,12 +482,12 @@ function LeadRow({
         </button>
 
         {/* Status — sits beside the name on mobile, before the action on md+ */}
-        <div className="justify-self-end md:order-3 md:justify-self-start">
+        <div className="lead-row-status justify-self-end">
           <StatusPill tone={STATUS_TONE[uiStatus]}>{uiStatus}</StatusPill>
         </div>
 
         {/* Contact meta */}
-        <div className="col-span-2 flex min-w-0 items-center justify-between gap-3 rounded-[0.9rem] bg-foreground/[0.025] px-3 py-2.5 ring-1 ring-foreground/[0.05] dark:bg-white/[0.03] dark:ring-white/[0.08] md:order-2 md:col-span-1 md:block md:rounded-none md:bg-transparent md:p-0 md:ring-0 dark:md:bg-transparent">
+        <div className="lead-row-contact col-span-2 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-[0.9rem] bg-foreground/[0.025] px-3 py-2.5 ring-1 ring-foreground/[0.05] dark:bg-white/[0.03] dark:ring-white/[0.08]">
           <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
             <EnvelopeSimple size={13} weight="light" aria-hidden className="shrink-0 text-muted-foreground" />
             {lead.email ? (
@@ -513,7 +512,7 @@ function LeadRow({
               </a>
             ) : null}
           </div>
-          <p className="shrink-0 font-geist-mono text-[11px] tabular-nums text-muted-foreground md:mt-1 md:pl-[1.2rem]">
+          <p className="lead-row-time shrink-0 font-geist-mono text-[11px] tabular-nums text-muted-foreground">
             <span className="sr-only">Last contact: </span>
             {relativeTime(lead.last_contact)}
           </p>
@@ -523,7 +522,7 @@ function LeadRow({
         <IslandButton
           tone="ghost"
           size="sm"
-          className="col-span-2 w-full md:order-4 md:col-span-1 md:w-auto"
+          className="lead-row-action col-span-2 w-full"
           disabled={mutating}
           icon={
             mutating ? (

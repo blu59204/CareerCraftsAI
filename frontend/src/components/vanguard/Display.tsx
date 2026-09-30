@@ -47,7 +47,7 @@ export function Stat({ label, value, hint, className }: { label: ReactNode; valu
   return (
     <div className={cn("min-w-0", className)}>
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
-      <p className="mt-3 font-geist text-4xl font-semibold tabular-nums tracking-[-0.04em] text-foreground md:text-5xl">{value}</p>
+      <p className="mt-2 font-geist text-3xl font-semibold tabular-nums tracking-[-0.04em] text-foreground md:text-4xl">{value}</p>
       {hint ? <p className="mt-2 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
@@ -56,9 +56,9 @@ export function Stat({ label, value, hint, className }: { label: ReactNode; valu
 /** Horizontal strip of stats in a single bezel, hairline-divided. Collapses to 2 cols on mobile. */
 export function StatStrip({ items, className }: { items: Array<{ label: ReactNode; value: ReactNode; hint?: ReactNode }>; className?: string }) {
   return (
-    <Bezel className={className} coreClassName="grid grid-cols-2 gap-px overflow-hidden bg-foreground/[0.06] dark:bg-white/[0.06] md:grid-flow-col md:auto-cols-fr md:grid-cols-none">
+    <Bezel className={cn("stat-strip-container", className)} coreClassName="stat-strip-grid grid grid-cols-2 gap-px overflow-hidden bg-foreground/[0.06] dark:bg-white/[0.06]">
       {items.map((item, i) => (
-        <div key={i} className="bg-card px-5 py-6 md:px-7 md:py-8">
+        <div key={i} className="min-w-0 bg-card px-4 py-4 md:px-5 md:py-5">
           <Stat {...item} />
         </div>
       ))}
@@ -83,7 +83,7 @@ export function EmptyPanel({
   compact?: boolean;
 }) {
   return (
-    <div className={cn("flex flex-col items-center text-center", compact ? "px-4 py-8" : "px-6 py-16 md:py-20", className)}>
+    <div className={cn("flex flex-col items-center text-center", compact ? "px-4 py-6" : "px-4 py-10 md:px-6 md:py-12", className)}>
       {icon ? (
         <span aria-hidden className="grid h-14 w-14 place-items-center rounded-full bg-foreground/[0.04] text-foreground/70 ring-1 ring-foreground/[0.06] shadow-bezel-core dark:bg-white/[0.05] dark:ring-white/10 dark:shadow-bezel-core-dark">
           {icon}
@@ -98,7 +98,7 @@ export function EmptyPanel({
 
 /** Shimmer placeholder block that matches bezel radii. */
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden className={cn("shimmer rounded-[1.25rem]", className)} />;
+  return <div aria-hidden className={cn("shimmer min-w-0 max-w-full rounded-[1.25rem]", className)} />;
 }
 
 /** Hairline divider. */

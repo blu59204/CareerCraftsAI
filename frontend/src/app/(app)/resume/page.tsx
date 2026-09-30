@@ -223,18 +223,18 @@ function RailHero({ actions, status }: { actions: ReactNode; status?: ReactNode 
       ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } }
       : {
           initial: { opacity: 0, y: 28, filter: "blur(10px)" },
-          animate: { opacity: 1, y: 0, filter: "blur(0px)" },
+          animate: { opacity: 1, y: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } },
           transition: { duration: 0.9, ease: EASE_OUT_EXPO, delay },
         };
 
   return (
-    <header className="pt-4 md:pt-10">
+    <header className="pt-2 md:pt-4">
       <motion.div {...enter(0)}>
         <Eyebrow>Resume workspace</Eyebrow>
       </motion.div>
       <motion.h1
         {...enter(0.06)}
-        className="mt-6 text-balance font-geist text-[2.75rem] font-semibold leading-[0.95] tracking-[-0.05em] text-foreground sm:text-6xl lg:text-[3.6rem] xl:text-7xl"
+        className="mt-4 text-balance font-geist text-[clamp(2rem,3.5vw,3.5rem)] font-semibold leading-[1.05] tracking-[-0.05em] text-foreground"
       >
         Resume,
         <span className="block text-muted-foreground/70">tailored to the job.</span>
@@ -447,7 +447,7 @@ function TemplateSelector({
             <motion.li key={tpl.id} variants={listItem}>
               <Bezel
                 tone={isSelected ? "primary" : "default"}
-                coreClassName="grid grid-cols-1 gap-5 p-4 sm:grid-cols-[17.5rem_minmax(0,1fr)] sm:gap-6"
+                coreClassName="grid grid-cols-1 gap-5 p-4 xl:grid-cols-[17.5rem_minmax(0,1fr)] xl:gap-6"
               >
                 {/* Thumbnail rendered with the same layout as the PDF template */}
                 <div
@@ -1216,7 +1216,7 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   return (
     <Screen>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:grid-rows-[auto_auto_1fr] lg:gap-x-10 lg:gap-y-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:grid-rows-[auto_auto_1fr] lg:gap-x-8 lg:gap-y-6">
         {/* ── Left column, row 1: editorial type block ─────────────────── */}
         <div className="min-w-0 lg:col-span-5 lg:col-start-1 lg:row-start-1 xl:col-span-4">
           <RailHero
@@ -1320,7 +1320,7 @@ export default function ResumePage() {
         </Reveal>
 
         {/* ── Right column: the working area ───────────────────────────── */}
-        <div className="min-w-0 space-y-6 lg:col-span-7 lg:col-start-6 lg:row-span-3 lg:row-start-1 lg:pt-10 xl:col-span-8 xl:col-start-5">
+        <div className="min-w-0 space-y-6 lg:col-span-7 lg:col-start-6 lg:row-span-3 lg:row-start-1 lg:pt-4 xl:col-span-8 xl:col-start-5">
           <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
             <Segmented<WorkspaceTab>
               value={tab}
