@@ -19,7 +19,7 @@ test("job-specific ATS analysis replaces generic upload metrics", () => {
 
   assert.deepEqual(result, {
     score: 82,
-    scoreLabel: "Job match",
+    scoreLabel: "Estimated ATS compatibility",
     matched: ["Python"],
     missing: ["AWS"],
     suggestions: ["Add AWS only if it reflects real experience."],
@@ -32,14 +32,14 @@ test("without a job analysis, only the real baseline score is shown", () => {
       ats_score: 61,
       ats_data: { matched_keywords: ["React"], missing_keywords: ["Docker"] },
     }),
-    { score: 61, scoreLabel: "Baseline ATS", matched: [], missing: [], suggestions: [] },
+    { score: 61, scoreLabel: "Estimated ATS compatibility", matched: [], missing: [], suggestions: [] },
   );
 });
 
 test("missing resume data does not invent scores, keywords, or suggestions", () => {
   assert.deepEqual(getResumeInsightData(null, null), {
     score: null,
-    scoreLabel: "ATS score",
+    scoreLabel: "Estimated ATS compatibility",
     matched: [],
     missing: [],
     suggestions: [],

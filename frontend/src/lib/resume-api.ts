@@ -1,5 +1,6 @@
 import { apiClient } from "@/lib/api";
 import type { ResumeFixPayload, TailoredResume } from "@/lib/resume-types";
+import { tailoredResumeSchema } from "@/lib/profile-contracts";
 
 /** Mutation-key prefix shared by every request that replaces the tailored document. */
 export const RESUME_TAILORED_KEY = ["resume-tailored"] as const;
@@ -14,5 +15,5 @@ export async function postResumeFix(documentId: string, body: ResumeFixPayload):
   const { data } = await apiClient.post<TailoredResume>(`/resume/tailored/${documentId}/fix`, body, {
     timeout: 60_000,
   });
-  return data;
+  return tailoredResumeSchema.parse(data) as TailoredResume;
 }
