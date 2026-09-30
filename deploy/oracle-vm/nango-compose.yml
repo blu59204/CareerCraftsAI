@@ -1,5 +1,6 @@
-# Self-hosted Nango, running alongside the main app stack (compose.yml) on the
-# same shared "for now" VM. network_mode: host + explicit ports in the 191xx
+# Self-hosted Nango, running on the INFRA VM, separate from the
+# main app stack (compose.yml) and Temporal (temporal-compose.yml), which both
+# live on the APP VM. network_mode: host + explicit ports in the 191xx
 # range keep this out of the main app's 181xx range and Chola's 8080-8085/4040.
 # nango-server is amd64-only (upstream pins linux/amd64) -- this host is ARM,
 # so `docker run --privileged --rm tonistiigi/binfmt --install all` must be run

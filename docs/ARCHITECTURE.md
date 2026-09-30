@@ -144,6 +144,8 @@ Backend --> Clerk
 
 `docker-compose.dev.yml` runs the same shape but replaces the three Temporal services with a single `temporalio/temporal:latest` dev-mode container (in-memory history, UI on `:8233`).
 
+Production (`deploy/oracle-vm/`, see `docs/DEPLOYMENT.md`) differs: Temporal server, its Postgres and UI run on the same VM as the app, loopback-only (`127.0.0.1:7233`), and `notification-worker` (`python -m app.notification_worker`) is a `compose.yml` service alongside `temporal-worker`.
+
 ---
 
 ## 2. Frontend Architecture
@@ -192,7 +194,7 @@ apiErrorMessage(err, fallback) // prefers FastAPI `detail`, handles 422 list
 
 **Lifespan:** checks DB + Redis connectivity, verifies `vector` pg_extension, warms SSE publisher thread (`event_bus._ensure_publisher`), disposes engine on shutdown.
 
-**Health:** `GET /health` (no auth) returns `{status, version, db, redis, pgvector, temporal: {connected, workers, task_queue}}`. HTTP status is 200 if db/redis/pgvector are all ok, else 503 (`status: "error"`). Temporal is reported but kept out of that 200/503 decision — a Temporal outage or no worker polling the task queue instead sets `status: "degraded"` (still HTTP 200), since read APIs keep working while it is down.
+**Health:** `GET /health` (no auth) returns `{status, version, db, redis, pgvector, temporal: {connected, workers, task_queue, notification_workers, notification_email_workers}}`. HTTP status is 200 if db/redis/pgvector are all ok, else 503 (`status: "error"`). Temporal is reported but kept out of that 200/503 decision — a Temporal outage or no worker polling the task queue instead sets `status: "degraded"` (still HTTP 200), since read APIs keep working while it is down. `notification_workers` / `notification_email_workers` are the pollers on `careercraft-notifications` / `careercraft-notifications-email` (`null` if unknown); they are reported only and never change `status`.
 
 **Routers (`main.py:206`):**
 

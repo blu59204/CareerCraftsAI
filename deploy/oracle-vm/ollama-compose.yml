@@ -1,6 +1,7 @@
-# Self-hosted Ollama for embeddings (RAG + agent memory), running on the same
-# dedicated box as deploy/oracle-vm/temporal-compose.yml (spare RAM there, and
-# keeps model memory off the resource-constrained main app VM).
+# Self-hosted Ollama for embeddings (RAG + agent memory), running on the INFRA
+# VM next to deploy/oracle-vm/nango-compose.yml (spare RAM there, and keeps
+# model memory off the resource-constrained APP VM, which hosts compose.yml and
+# Temporal -- see temporal-compose.yml).
 #
 # Serves qwen3-embedding:0.6b (1024-d) only -- chat still goes to each user's
 # own BYOK provider. Pull the model once after the first `up`:
