@@ -5,7 +5,7 @@ import re
 from typing import Literal
 
 import fitz
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
 
 MAX_PROFILE_BYTES = 5 * 1024 * 1024
@@ -118,7 +118,12 @@ def ground_suggestions(profile: dict[str, str], suggestions: ProfileSuggestions)
             raise ValueError("Suggestions cannot invent an absent profile section")
         if before and edit.after.strip() and not edit.source_quotes:
             raise ValueError("Suggestions require supporting source quotes")
-        if any(len(quote.strip()) < 6 or quote not in before for quote in edit.source_quotes):
+        if any(
+            not quote.strip()
+            or quote not in before
+            or (len(quote.strip()) < 6 and quote.strip() not in before.splitlines())
+            for quote in edit.source_quotes
+        ):
             raise ValueError("Suggestions contain evidence absent from the uploaded section")
         if set(re.findall(r"\d+(?:[.,]\d+)*%?", edit.after)) - set(
             re.findall(r"\d+(?:[.,]\d+)*%?", before)
@@ -137,22 +142,54 @@ async def analyze_profile(llm, profile: dict[str, str], target_role: str) -> tup
         "literal source_quotes from the corresponding section. Preserve factual details. "
         "For absent source sections use empty after/source_quotes and ask "
         "for facts in gaps. "
-        "Return only JSON matching this schema: "
-        + json.dumps(ProfileSuggestions.model_json_schema())
+        "Return only a JSON object in this shape, populating the empty fields: "
+        + json.dumps(
+            {
+                "edits": {
+                    section: {"after": "", "reason": "", "source_quotes": [], "gaps": []}
+                    for section in ("headline", "about", "experience", "skills")
+                }
+            }
+        )
+        + " Each reason must explain the edit; source_quotes and gaps are arrays of strings, "
+        "never objects or key/value pairs. Headline must be at most 220 characters, about "
+        "at most 2600, skills at most 2000, experience at most 8000. "
+        "Do not output a schema, $defs, properties, or $ref."
+        " Every non-empty after MUST have at least one source quote, even when unchanged. "
+        "Copy quotes exactly from that SAME uploaded section; do not use experience quotes "
+        "to support about edits. If a section already fits, keep its text and quote that text. "
+        "Gaps are questions for missing facts, never copies of existing text."
     )
-    response = await llm.ainvoke(
-        [
-            SystemMessage(content=prompt),
-            HumanMessage(
-                content=json.dumps({"uploaded_profile": profile, "target_role": target_role})
-            ),
-        ]
-    )
-    content = response.content
-    if not isinstance(content, str):
-        raise ValueError("Model did not return structured profile suggestions")
-    suggestions = ProfileSuggestions.model_validate_json(
-        content.strip().removeprefix("```json").removesuffix("```").strip()
-    )
-    usage = getattr(response, "usage_metadata", None) or {}
-    return ground_suggestions(profile, suggestions), int(usage.get("total_tokens", 0))
+    messages = [
+        SystemMessage(content=prompt),
+        HumanMessage(content=json.dumps({"uploaded_profile": profile, "target_role": target_role})),
+    ]
+    tokens = 0
+    # Same one-repair limit as agents/_llm_json.py; validation stays mandatory.
+    for attempt in range(2):
+        response = await llm.ainvoke(messages)
+        tokens += int((getattr(response, "usage_metadata", None) or {}).get("total_tokens", 0))
+        content = response.content
+        if not isinstance(content, str):
+            raise ValueError("Model did not return structured profile suggestions")
+        try:
+            suggestions = ProfileSuggestions.model_validate_json(
+                content.strip().removeprefix("```json").removesuffix("```").strip()
+            )
+            return ground_suggestions(profile, suggestions), tokens
+        except ValueError:
+            if attempt:
+                raise
+            messages += [
+                AIMessage(content=content),
+                HumanMessage(
+                    content=(
+                        "Repair the previous JSON. All four sections are required. Every non-empty "
+                        "after needs source_quotes containing exact text from that SAME section, "
+                        "even when unchanged. Add no numbers or facts absent from that section. "
+                        "If a rewrite cannot be supported, keep that section unchanged and quote "
+                        "its original text. Return only the edits object, not a schema."
+                    )
+                ),
+            ]
+    raise ValueError("Could not produce grounded edits")

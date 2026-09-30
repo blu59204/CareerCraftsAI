@@ -36,6 +36,7 @@ from app.api.v1 import (
 )
 from app.core.clerk_auth import verify_token
 from app.core.config import settings
+from app.core.llm_gateway import router as llm_gw
 from app.core.rate_limit import limiter
 from memory.routes import router as memory_router
 
@@ -136,6 +137,10 @@ async def _jwt_middleware(request: Request, call_next):
     # The browser extension authenticates with its own device token, checked
     # by the extension router's get_device dependency.
     if path.startswith("/api/v1/extension/device/"):
+        return await call_next(request)
+    # Internal LLM calls use short-lived Redis sessions, validated by the
+    # gateway itself. They are not Clerk browser session JWTs.
+    if path.startswith("/llm-gateway/v1/"):
         return await call_next(request)
     if request.method == "OPTIONS":
         return await call_next(request)
@@ -278,8 +283,6 @@ app.include_router(candidate_profile.router, prefix="/api/v1")
 app.include_router(integrations.router, prefix="/api/v1")
 app.include_router(extension.router, prefix="/api/v1")
 app.include_router(memory_router)
-
-from app.core.llm_gateway import router as llm_gw
 
 app.include_router(llm_gw)
 
