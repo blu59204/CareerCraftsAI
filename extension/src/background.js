@@ -395,7 +395,8 @@ async function handleMessage(msg, sender) {
       // take over a pairing to a different CareerCraft deployment — that
       // needs the popup.
       const current = await getPairing();
-      const knownApp = ["http://localhost", "http://127.0.0.1", "https://careercraftsai.me", "https://www.careercraftsai.me"].includes(origin);
+      const appUrl = new URL(origin);
+      const knownApp = ["localhost", "127.0.0.1", "careercraftsai.me", "www.careercraftsai.me"].includes(appUrl.hostname);
       if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || new URL(sender.url).origin !== origin || (!knownApp && current?.appOrigin !== origin)) return { error: "Invalid app origin" };
       if (current && current.appOrigin !== origin) return { ok: false, reason: "paired_elsewhere" };
       if (!isStaticOrigin(origin)) {
