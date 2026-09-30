@@ -20,12 +20,17 @@ def _doc(user_id, ats_data):
     )
 
 
-async def _download(monkeypatch, doc, *, render=None):
+async def _download(monkeypatch, doc, *, render=None, pinned=False):
     from app.api.v1.deps import get_current_user, get_db
     from app.main import app
     from app.models.db import User
 
     calls = {"render": [], "stored": 0}
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        "app.api.v1.resume._pinned_by_pending_approval", AsyncMock(return_value=pinned)
+    )
 
     def fake_render(text, full_name="", template="modern"):
         calls["render"].append(template)
@@ -64,6 +69,14 @@ async def _download(monkeypatch, doc, *, render=None):
     finally:
         app.dependency_overrides.clear()
     return resp, calls
+
+
+@pytest.mark.asyncio
+async def test_pinned_pdf_serves_exact_stored_bytes(monkeypatch):
+    doc = _doc(uuid.uuid4(), {"template": "classic", "page_target": 1})
+    response, calls = await _download(monkeypatch, doc, pinned=True)
+    assert response.content == b"%PDF-stored"
+    assert calls["render"] == [] and calls["stored"] == 1
 
 
 @pytest.mark.asyncio

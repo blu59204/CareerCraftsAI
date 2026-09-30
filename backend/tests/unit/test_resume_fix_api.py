@@ -19,6 +19,35 @@ AI engineer building LLM tools.
 **Languages:** Python, SQL
 """
 
+
+@pytest.mark.asyncio
+async def test_manual_edit_without_jd_recomputes_and_survives_reload(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    edited = SPARSE_RESUME + "\n## EDUCATION\nBSc Computer Science, Pune University, 2020\n"
+    response = await h.fix({"resume_markdown": edited, "remember": False})
+    assert response.status_code == 200
+    saved = response.json()
+    assert saved["ats_score"] != 70
+    assert saved["estimate"]["mode"] == "general"
+    assert saved["content_version"] == saved["estimate"]["content_version"]
+    reloaded = (await h.get()).json()
+    assert reloaded["resume_markdown"] == saved["resume_markdown"]
+    assert reloaded["estimate"] == saved["estimate"]
+
+
+@pytest.mark.asyncio
+async def test_outdated_full_text_edit_fails_before_storage(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    response = await h.fix(
+        {"resume_markdown": SPARSE_RESUME + "New text", "expected_version": "0" * 64}
+    )
+    assert response.status_code == 409
+    assert doc.raw_text == SPARSE_RESUME
+    assert h.uploaded == [] and h.saved_facts == []
+
+
 FULL_EMPLOYER = "Agentic Universe (Qultured Media Pvt. Ltd.)"
 FIXED_HEADING = f"### Prompt Engineer Intern | {FULL_EMPLOYER} | Remote | Jun 2025 - Present"
 
@@ -64,24 +93,17 @@ def _doc(user_id, *, raw_text=SPARSE_RESUME, ats_data=None):
 
 
 def _build_app() -> tuple[FastAPI, bool]:
-    """The real app when it imports (it needs temporalio); otherwise a minimal
-    app hosting only the resume router, configured the way app.main does."""
-    try:
-        from app.main import app
+    """Exercise the resume router without importing unrelated application agents."""
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from app.api.v1.resume import router
+    from app.core.rate_limit import limiter
 
-        return app, True
-    except ModuleNotFoundError:
-        from slowapi import _rate_limit_exceeded_handler
-        from slowapi.errors import RateLimitExceeded
-
-        from app.api.v1.resume import router
-        from app.core.rate_limit import limiter
-
-        app = FastAPI()
-        app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-        app.include_router(router, prefix="/api/v1")
-        return app, False
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.include_router(router, prefix="/api/v1")
+    return app, False
 
 
 class _Harness:
@@ -264,8 +286,8 @@ async def test_get_returns_review_with_issues_for_sparse_doc(monkeypatch):
     assert body["template"] == "modern"
     assert body["resume_markdown"] == SPARSE_RESUME
     assert body["summary"] == "Tailored."
-    assert body["ats_score"] == 70
-    assert body["keywords_matched"] == ["Python"]
+    assert body["ats_score"] == body["estimate"]["composite_score"]
+    assert body["keywords_matched"] == []
     codes = {i["code"] for i in body["review"]["issues"]}
     assert codes == {"missing_phone", "truncated_employer", "missing_dates", "missing_education"}
     assert body["review"]["contact"]["email"] == "jane@example.com"
@@ -366,7 +388,7 @@ async def test_fix_rescores_when_jd_is_recorded(monkeypatch):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["ats_score"] == 91
-    assert resp.json()["keywords_missing"] == ["Azure"]
+    assert resp.json()["keywords_missing"] == ["azure"]
     assert h.ats_calls and h.ats_calls[0][1] == "Python, Azure"
 
 

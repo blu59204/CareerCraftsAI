@@ -31,6 +31,7 @@ def _persist_resume_document(
     jd_text: str,
     pdf_bytes: bytes,
     warnings: list[str] | None = None,
+    page_target: int = 2,
 ) -> str:
     """Upload the tailored PDF to storage and record a UserDocument row.
 
@@ -57,6 +58,8 @@ def _persist_resume_document(
                 raw_text=parsed.resume_markdown,
                 ats_score=parsed.ats_score,
                 ats_data={
+                    "page_target": page_target,
+                    "estimate": compute_ats_score(parsed.resume_markdown, jd_text).estimate,
                     "template": template,
                     "keywords_matched": parsed.keywords_matched,
                     "keywords_missing": parsed.keywords_missing,
@@ -126,8 +129,8 @@ def _score_parsed_resume(parsed: "ResumeOutput", jd_text: str) -> "ResumeOutput"
         return parsed
     ats = compute_ats_score(parsed.resume_markdown, jd_text)
     parsed.ats_score = ats.composite_score
-    if getattr(ats, "missing_keywords", None):
-        parsed.keywords_missing = list(ats.missing_keywords[:10])
+    parsed.keywords_missing = list(ats.missing_keywords[:10])
+    parsed.keywords_matched = list(ats.matched_keywords)
     return parsed
 
 
@@ -148,9 +151,9 @@ def resume_agent_node(state: AgentState) -> AgentState:
     is placed in state, SSE events, or the DB — the PDF is stored on local
     disk and downloaded via GET /resume/download/{document_id}.
     """
-    from app.core.sync_db import fetch_model_settings, fetch_user_full_name
-    from app.core.model_router import _build_llm
     from app.core.event_bus import emit
+    from app.core.model_router import _build_llm
+    from app.core.sync_db import fetch_model_settings, fetch_user_full_name
 
     run_id = state["run_id"]
     user_id = state["user_id"]
@@ -225,7 +228,10 @@ def resume_agent_node(state: AgentState) -> AgentState:
             emit(run_id, "thinking", {"step": "pdf", "message": "Generating PDF and storing..."})
             emit(run_id, "tool_call", {"tool": "pdf_store", "input": {"template": template}})
             pdf_bytes = generate_resume_pdf(
-                parsed.resume_markdown, full_name=full_name, template=template
+                parsed.resume_markdown,
+                full_name=full_name,
+                template=template,
+                page_target=ctx.get("page_target", 2),
             )
             try:
                 pdf_document_id = _persist_resume_document(
@@ -236,6 +242,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
                     jd_text,
                     pdf_bytes,
                     warnings=model_warnings,
+                    page_target=ctx.get("page_target", 2),
                 )
             except Exception as se:
                 logger.warning("Resume PDF persist failed, continuing without download: %s", se)

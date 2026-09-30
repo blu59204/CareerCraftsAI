@@ -1,4 +1,5 @@
 """Unit tests for ATS Service — scoring, keyword extraction, suggestions."""
+
 import pytest
 from app.services.ats_service import (
     compute_ats_score,
@@ -12,7 +13,7 @@ from app.services.ats_service import (
 def test_ats_score_in_range():
     result = compute_ats_score(
         "Python Django REST API AWS Docker CI/CD PostgreSQL Redis Kubernetes",
-        "Python AWS Docker Kubernetes Terraform CI/CD"
+        "Python AWS Docker Kubernetes Terraform CI/CD",
     )
     assert 0 <= result.composite_score <= 100
     assert 0 <= result.keyword_score <= 100
@@ -23,7 +24,7 @@ def test_ats_score_in_range():
 def test_ats_suggestions_when_score_below_80():
     result = compute_ats_score(
         "I code in python sometimes",
-        "Python AWS Docker Kubernetes Terraform CI/CD TypeScript React"
+        "Python AWS Docker Kubernetes Terraform CI/CD TypeScript React",
     )
     if result.composite_score < 80:
         assert len(result.suggestions) > 0
@@ -32,8 +33,7 @@ def test_ats_suggestions_when_score_below_80():
 
 def test_missing_keywords_finds_gaps():
     missing = get_missing_keywords(
-        "Python Django REST API",
-        "Python AWS Docker Kubernetes Terraform CI/CD TypeScript React"
+        "Python Django REST API", "Python AWS Docker Kubernetes Terraform CI/CD TypeScript React"
     )
     assert "python" not in [k.lower() for k in missing]  # present in resume
     assert len(missing) > 0
@@ -65,13 +65,16 @@ def test_generate_suggestions_non_empty():
 def test_ats_score_matches_all_keywords():
     result = compute_ats_score(
         "Python AWS Docker Kubernetes Terraform CI/CD React TypeScript Node.js",
-        "Python AWS Docker Kubernetes Terraform CI/CD React TypeScript Node.js"
+        "Python AWS Docker Kubernetes Terraform CI/CD React TypeScript Node.js",
     )
-    assert result.composite_score >= 70
+    # Matching all words alone does not supply contact, sections or achievements.
+    assert result.keyword_score == 100
+    assert result.composite_score < 70
     assert len(result.missing_keywords) == 0
 
 
 def test_ats_score_empty_resume():
     import pytest
+
     with pytest.raises(ValueError, match="resume_text cannot be empty"):
         compute_ats_score("", "Python AWS Docker")
