@@ -15,11 +15,11 @@ import {
   FloppyDisk,
   GearSix,
   HandPalm,
-  Lightning,
   NotePencil,
   PaperPlaneTilt,
   Sparkle,
   Tray,
+  Trash,
   WarningCircle,
 } from "@phosphor-icons/react";
 import {
@@ -35,6 +35,7 @@ import {
   RevealGroup,
   Screen,
   Section,
+  Select,
   StatusPill,
   Textarea,
   EASE_OUT_EXPO,
@@ -48,6 +49,7 @@ import { cn } from "@/lib/utils";
 import { apiClient } from "@/lib/api";
 import { connectGmail } from "@/lib/nango-connect";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 interface Draft {
   id: string;
@@ -59,41 +61,6 @@ interface Draft {
   status?: string;
   recipient_email?: string | null;
 }
-
-const DRAFTS: Draft[] = [
-  {
-    id: "1",
-    subject: "Following up on Frontend Engineer",
-    company: "Lumen Robotics",
-    timestamp: "2h ago",
-    initial: "L",
-    body: "Hi Priya,\n\nI wanted to follow up on my application for the Frontend Engineer position at Lumen Robotics. I submitted my application last week and am very excited about the opportunity to join your team.\n\nI'd love to schedule a quick call to discuss how my experience with React and TypeScript aligns with your needs.\n\nLooking forward to hearing from you.\n\nBest regards,\nAlex",
-  },
-  {
-    id: "2",
-    subject: "Intro to Northwind Analytics",
-    company: "Northwind Analytics",
-    timestamp: "Yesterday",
-    initial: "N",
-    body: "Hi Marcus,\n\nI came across Northwind Analytics' work on distributed systems and was impressed by your recent engineering blog post. I'm a full-stack developer with 4 years of experience and I believe I could contribute meaningfully to your backend team.\n\nWould you be open to a brief conversation?\n\nBest,\nAlex",
-  },
-  {
-    id: "3",
-    subject: "Re: Interview scheduling",
-    company: "Fable Systems",
-    timestamp: "2d ago",
-    initial: "F",
-    body: "Hi Jamie,\n\nThank you for getting back to me! I'm available for an interview on Thursday between 10am–2pm or Friday morning. Please let me know which time works best for your team.\n\nLooking forward to it!\n\nBest,\nAlex",
-  },
-  {
-    id: "4",
-    subject: "Cold outreach - Backend role",
-    company: "Vantage Loop",
-    timestamp: "3d ago",
-    initial: "V",
-    body: "Hi Team,\n\nI noticed Vantage Loop is hiring backend engineers and your microservices architecture really caught my attention. I have deep experience with Python, FastAPI, and distributed systems.\n\nI'd love to connect and learn more about the role.\n\nBest regards,\nAlex",
-  },
-];
 
 const SUGGESTIONS = [
   {
@@ -547,11 +514,11 @@ function SuggestionRow({
 
 function HeroMeta({ items }: { items: Array<{ label: string; value: ReactNode }> }) {
   return (
-    <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-[1.5rem] bg-foreground/[0.06] ring-1 ring-foreground/[0.06] dark:bg-white/[0.06] dark:ring-white/[0.08]">
+    <dl className="grid grid-cols-3 gap-4 border-y border-border py-4">
       {items.map((item) => (
-        <div key={item.label} className="bg-card px-4 py-5">
+        <div key={item.label} className="min-w-0">
           <dt className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{item.label}</dt>
-          <dd className="mt-2 font-geist text-3xl font-semibold tabular-nums tracking-[-0.04em] text-foreground">{item.value}</dd>
+          <dd className="mt-1 font-geist text-2xl font-semibold tabular-nums tracking-[-0.04em] text-foreground">{item.value}</dd>
         </div>
       ))}
     </dl>
@@ -563,12 +530,14 @@ function HeroMeta({ items }: { items: Array<{ label: string; value: ReactNode }>
 /* -------------------------------------------------------------------------- */
 
 export default function EmailPage() {
-  const [selectedId, setSelectedId] = useState<string>("1");
+  const [selectedId, setSelectedId] = useState<string>("");
   const [composeText, setComposeText] = useState<string>("");
   const [recipientEmail, setRecipientEmail] = useState("");
   const [subject, setSubject] = useState("");
   const [emailTab, setEmailTab] = useState<EmailTab>("drafts");
-  const [localDrafts, setLocalDrafts] = useState<Draft[]>(DRAFTS);
+  const [localDrafts, setLocalDrafts] = useState<Draft[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<Draft | "all" | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const qc = useQueryClient();
   const reduce = useReducedMotion();
   const columnVariants = reduce ? fadeOnly : reveal;
@@ -706,6 +675,29 @@ export default function EmailPage() {
     }
   };
 
+  const handleDeleteDrafts = async () => {
+    if (!deleteTarget || deleting) return;
+    const target = deleteTarget;
+    const isRemote = target === "all" || remoteDrafts.some((draft) => draft.id === target.id);
+    setDeleting(true);
+    try {
+      if (isRemote) {
+        await apiClient.delete(target === "all" ? "/email/drafts" : `/email/drafts/${target.id}`);
+      }
+      const keep = (draft: Draft) => target !== "all" && draft.id !== target.id;
+      setLocalDrafts((previous) => previous.filter(keep));
+      qc.setQueryData<Draft[]>(["email-drafts"], (previous) => (previous ?? []).filter(keep));
+      if (target === "all" || target.id === selected?.id) setSelectedId("");
+      setDeleteTarget(null);
+      toast.success(target === "all" ? "All workspace drafts deleted" : "Draft deleted");
+      void qc.invalidateQueries({ queryKey: ["email-drafts"] });
+    } catch {
+      toast.error("Could not delete drafts. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleApplySuggestion = (suggestion: typeof SUGGESTIONS[0]) => {
     setComposeText((prev) => {
       const base = prev || (selected?.body ?? "");
@@ -720,9 +712,10 @@ export default function EmailPage() {
   return (
     <Screen>
       <PageHero
-        eyebrow="AI automation"
-        title="AI-powered outreach."
-        description="Draft follow-ups, personalize messages, and keep human approval before anything gets sent."
+        eyebrow="Recruiter outreach"
+        title="Email workspace"
+        description="Write a clear message. Review it. Send when you're ready."
+        className="pb-0 md:pb-0"
         actions={
           <>
             {gmailConnected ? (
@@ -766,13 +759,13 @@ export default function EmailPage() {
         }
       />
 
-      <Section aria-label="Outreach workspace" className="!mt-0 md:!-mt-10">
-        <RevealGroup className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      <Section aria-label="Outreach workspace">
+        <RevealGroup className="grid grid-cols-1 items-start gap-4 lg:grid-cols-12">
           {/* Left rail: connection + list switcher */}
           <motion.aside
             variants={columnVariants}
             aria-label="Mailboxes"
-            className="min-w-0 lg:col-span-4 xl:col-span-3"
+            className="order-2 min-w-0 lg:order-1 lg:col-span-4 2xl:col-span-3"
           >
             <Bezel size="md" coreClassName="flex flex-col gap-4 p-4">
               <div className="space-y-2 px-1 pt-1" aria-live="polite">
@@ -790,7 +783,7 @@ export default function EmailPage() {
 
               <RailSwitcher value={emailTab} onChange={setEmailTab} />
 
-              <div className="-mx-1 px-1 lg:max-h-[34rem] lg:overflow-y-auto">
+              <div className="-mx-1 max-h-[20rem] overflow-y-auto overscroll-contain px-1 lg:max-h-[34rem]">
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
                     key={emailTab}
@@ -802,7 +795,11 @@ export default function EmailPage() {
                   >
                     {emailTab === "drafts" ? (
                       <>
-                        <RailListHeader title="Drafts" count={drafts.length} />
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <RailListHeader title="Drafts" count={drafts.length} />
+                          <IslandButton tone="quiet" size="sm" disabled={!drafts.length || deleting || sending} onClick={() => setDeleteTarget("all")} icon={<Trash size={14} weight="light" />} className="text-danger hover:text-danger">Delete all</IslandButton>
+                        </div>
+                        {!drafts.length && <EmptyPanel compact icon={<NotePencil size={22} weight="light" />} title="No drafts" description="Create a draft to start your outreach." action={<IslandButton tone="ghost" size="sm" onClick={handleNewDraft}>New draft</IslandButton>} />}
                         <motion.ul variants={listStagger} initial="hidden" animate="show" className="space-y-1">
                           {drafts.map((draft) => (
                             <motion.li key={draft.id} variants={listItem}>
@@ -843,10 +840,17 @@ export default function EmailPage() {
           </motion.aside>
 
           {/* Composer */}
-          <motion.div variants={columnVariants} className="min-w-0 lg:col-span-8 xl:col-span-6">
+          <motion.div variants={columnVariants} className="order-1 min-w-0 lg:order-2 lg:col-span-8 2xl:col-span-6">
             <Bezel size="lg" lifted coreClassName="flex flex-col">
+              <div className="space-y-2 px-4 pt-4 lg:hidden">
+                <label htmlFor={`${bodyId}-draft`} className="block pl-1 text-xs font-medium text-muted-foreground">Open draft</label>
+                <Select id={`${bodyId}-draft`} disabled={!drafts.length} value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
+                  {!drafts.length && <option value="">No drafts</option>}
+                  {drafts.map((draft) => <option key={draft.id} value={draft.id}>{draft.company} · {draft.subject}</option>)}
+                </Select>
+              </div>
               {/* Message header */}
-              <div className="flex flex-col gap-4 px-5 pb-5 pt-6 sm:flex-row sm:items-start sm:justify-between md:px-7 md:pt-7">
+              <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-4 sm:px-5">
                 {selected ? (
                   <div className="flex min-w-0 items-start gap-3.5">
                     <span
@@ -856,7 +860,7 @@ export default function EmailPage() {
                       {selected.initial}
                     </span>
                     <div className="min-w-0">
-                      <h2 className="text-balance font-geist text-xl font-semibold tracking-[-0.03em] text-foreground md:text-2xl">
+                      <h2 className="text-balance font-geist text-lg font-semibold tracking-[-0.03em] text-foreground sm:text-xl">
                         {subject || selected.subject}
                       </h2>
                       <p className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
@@ -873,16 +877,14 @@ export default function EmailPage() {
                 )}
                 <div className="flex shrink-0 items-center gap-2">
                   {selected ? <StatusPill tone="warning">Draft</StatusPill> : null}
-                  <IslandButton tone="quiet" size="sm" icon={<Lightning size={14} weight="light" />}>
-                    AI Draft
-                  </IslandButton>
+                  <IslandButton tone="quiet" size="sm" disabled={!selected || sending || deleting} onClick={() => selected && setDeleteTarget(selected)} icon={<Trash size={14} weight="light" />} className="text-danger hover:text-danger">Delete draft</IslandButton>
                 </div>
               </div>
 
               <Hairline />
 
               {/* Envelope fields */}
-              <div className="grid gap-4 px-5 py-5 sm:grid-cols-2 md:px-7">
+              <div className="grid gap-3 px-4 py-4 sm:px-5">
                 <div className="space-y-2">
                   <label htmlFor={recipientId} className="block pl-1 text-[12px] font-medium text-muted-foreground">
                     To
@@ -910,8 +912,8 @@ export default function EmailPage() {
               </div>
 
               {/* Body */}
-              <div className="space-y-2 px-5 md:px-7">
-                <div className="flex items-baseline justify-between pl-1">
+              <div className="space-y-2 px-4 sm:px-5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 pl-1">
                   <label htmlFor={bodyId} className="text-[12px] font-medium text-muted-foreground">
                     Message
                   </label>
@@ -924,16 +926,16 @@ export default function EmailPage() {
                   value={composeText}
                   onChange={(e) => setComposeText(e.target.value)}
                   placeholder="Edit or compose your email here…"
-                  rows={12}
-                  className="min-h-[18rem] text-[15px] leading-7 md:min-h-[22rem]"
+                  rows={10}
+                  className="min-h-[14rem] text-[15px] leading-7 sm:min-h-[18rem]"
                 />
               </div>
 
               {/* Send bar */}
-              <div className="mt-5 space-y-4 px-5 pb-6 md:px-7 md:pb-7">
+              <div className="mt-4 space-y-3 px-4 pb-4 sm:px-5 sm:pb-5">
                 <Notice tone="warning" icon={<HandPalm size={16} weight="light" />}>
-                  <span className="font-medium">Every email needs your approval before sending.</span>{" "}
-                  <span className="opacity-80">Pressing Send is that approval — nothing leaves your Gmail until you do.</span>
+                  <span className="font-medium">Review before sending.</span>{" "}
+                  <span className="opacity-80">Pressing Send approves this email and sends it through Gmail.</span>
                 </Notice>
                 <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
                   <span className="sr-only" aria-live="polite">
@@ -972,7 +974,7 @@ export default function EmailPage() {
           <motion.aside
             variants={columnVariants}
             aria-label="Assistant"
-            className="grid min-w-0 grid-cols-1 content-start gap-6 md:grid-cols-2 lg:col-span-12 xl:col-span-3 xl:grid-cols-1"
+            className="order-3 grid min-w-0 grid-cols-1 content-start gap-4 md:grid-cols-2 lg:col-span-12 2xl:col-span-3 2xl:grid-cols-1"
           >
             <Bezel size="md" coreClassName="space-y-4 p-4">
               <PanelTitle
@@ -998,6 +1000,18 @@ export default function EmailPage() {
           </motion.aside>
         </RevealGroup>
       </Section>
+      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }}>
+        <DialogContent className="w-[calc(100%-2rem)] rounded-3xl border-border bg-card p-5 sm:p-6" onEscapeKeyDown={(event) => { if (deleting) event.preventDefault(); }} onPointerDownOutside={(event) => { if (deleting) event.preventDefault(); }}>
+          <DialogTitle>{deleteTarget === "all" ? "Delete all workspace drafts?" : "Delete this draft?"}</DialogTitle>
+          <DialogDescription className="break-words leading-6">
+            {deleteTarget === "all" ? "This clears your CareerCraft drafts and cancels their pending send approvals." : `“${deleteTarget?.subject ?? "This draft"}” will be removed from CareerCraft and any pending send approval will be cancelled.`} Copies saved in Gmail are kept. This cannot be undone in the workspace.
+          </DialogDescription>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <IslandButton tone="ghost" size="sm" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</IslandButton>
+            <IslandButton tone="danger" size="sm" disabled={deleting} aria-busy={deleting} onClick={handleDeleteDrafts} icon={deleting ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}>{deleting ? "Deleting…" : deleteTarget === "all" ? "Delete all drafts" : "Delete draft"}</IslandButton>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Screen>
   );
 }

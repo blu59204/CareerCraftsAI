@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.email_agent import email_agent_node
@@ -63,6 +63,7 @@ async def list_drafts(
         .where(
             AgentRun.agent_type == "email",
             AgentRun.user_id == current_user.id,
+            AgentRun.status == "awaiting_approval",
         )
         .order_by(desc(AgentRun.started_at))
         .limit(20)
@@ -94,6 +95,40 @@ async def list_drafts(
             )
         )
     return drafts
+
+
+async def _discard_drafts(db: AsyncSession, user_id: uuid.UUID, draft_id: uuid.UUID | None = None) -> int:
+    statement = update(AgentRun).where(
+        AgentRun.agent_type == "email",
+        AgentRun.user_id == user_id,
+        AgentRun.status == "awaiting_approval",
+    )
+    if draft_id is not None:
+        statement = statement.where(AgentRun.id == draft_id)
+    result = await db.execute(
+        statement.values(status="cancelled", completed_at=datetime.now(timezone.utc)).returning(AgentRun.id)
+    )
+    deleted = len(result.scalars().all())
+    if draft_id is not None and not deleted:
+        raise HTTPException(status_code=404, detail="Draft not found or no longer pending")
+    return deleted
+
+
+@router.delete("/drafts", response_model=dict)
+async def delete_all_drafts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {"deleted": await _discard_drafts(db, current_user.id)}
+
+
+@router.delete("/drafts/{draft_id}", response_model=dict)
+async def delete_draft(
+    draft_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {"deleted": await _discard_drafts(db, current_user.id, draft_id)}
 
 
 class ComposeRequest(BaseModel):
