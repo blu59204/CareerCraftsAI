@@ -332,7 +332,6 @@ the `application-status-check` Schedule checks portal status via the browser, no
 |---|---|---|
 | `daily-job-search` | `DAILY_SEARCH_INTERVAL_HOURS` (24h) | `DailySearchWorkflow` |
 | `maintenance` | `MAINTENANCE_INTERVAL_SECONDS` (60s) | `MaintenanceWorkflow` |
-| `application-status-check` | `STATUS_CHECK_INTERVAL_HOURS` (6h), server_browser mode only | `StatusCheckWorkflow` |
 
 Overlap policy `SKIP`. Worker: task queue `TEMPORAL_TASK_QUEUE` (`careercraft`), `max_concurrent_activities=TEMPORAL_WORKER_CONCURRENCY` (4). Per-user admission (2 concurrent runs) is enforced by `POST /agents/run`.
 

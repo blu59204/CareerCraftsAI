@@ -3,8 +3,6 @@ import { useState, type ComponentType, type ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { motion, useReducedMotion } from "motion/react";
 import {
-  Browser,
-  ChatCircleText,
   Check,
   CircleNotch,
   CurrencyDollar,
@@ -27,19 +25,15 @@ import { useAgentStore } from "@/store/agentStore";
 import {
   Bezel,
   Eyebrow,
-  Field,
   Hairline,
   IconButton,
-  Input,
   IslandButton,
   Notice,
-  Select,
   StatusPill,
   Textarea,
   EASE_OUT_EXPO,
   SPRING_PANEL,
 } from "@/components/vanguard";
-import { BrowserWorkspace } from "./BrowserWorkspace";
 
 interface Props {
   runId: string;
@@ -59,23 +53,12 @@ function CharCount({ current, max }: { current: number; max: number }) {
   );
 }
 
-interface RequiredField {
-  field_id: string;
-  question_key?: string | null;
-  label: string;
-  required: boolean;
-  options?: string[];
-}
-
 const SPECIALISED_TYPES = [
   "send_email",
   "resume_ready",
   "linkedin_edits",
   "cover_letter_review",
   "search_confirmation",
-  "browser_input",
-  "browser_review",
-  "application_answers_required",
   "linkedin_outreach",
   "salary_report_review",
 ];
@@ -88,9 +71,6 @@ const ACTION_ICON: Record<string, ComponentType<IconProps>> = {
   cover_letter_review: Scroll,
   salary_report_review: CurrencyDollar,
   search_confirmation: MagnifyingGlass,
-  browser_input: Browser,
-  browser_review: Browser,
-  application_answers_required: ChatCircleText,
 };
 
 /** Sentence-case label row for a block inside the review, with an optional trailing control. */
@@ -138,13 +118,11 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editedText, setEditedText] = useState("");
-  const [answers, setAnswers] = useState<Record<string, string>>({});
   const reduce = useReducedMotion();
   const actionType = (action.type as string) || "unknown";
   const warnings = Array.isArray(action.warnings)
     ? action.warnings.filter((warning): warning is string => typeof warning === "string")
     : [];
-  const isBrowser = actionType === "browser_input" || actionType === "browser_review";
   const ActionIcon = ACTION_ICON[actionType] ?? ShieldCheck;
 
   const decide = async (approved: boolean) => {
@@ -152,11 +130,9 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
     try {
       const edits = !approved
         ? undefined
-        : actionType === "application_answers_required"
-          ? { answers }
-          : editedText
-            ? { body: editedText }
-            : undefined;
+        : editedText
+          ? { body: editedText }
+          : undefined;
       await apiClient.post(`/agents/${runId}/approve`, {
         approved,
         edits,
@@ -182,15 +158,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
     if (e.key === "Escape" && !editing) onCancel();
   };
 
-  const approveLabel = loading
-    ? "Processing..."
-    : actionType === "browser_input"
-      ? "Continue preparation"
-      : actionType === "browser_review"
-        ? "Approve final submission"
-        : actionType === "application_answers_required"
-          ? "Save answers & continue"
-          : "Approve & Execute";
+  const approveLabel = loading ? "Processing..." : "Approve & Execute";
 
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onCancel()}>
@@ -208,7 +176,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                 animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
                 transition={reduce ? { duration: 0.2 } : SPRING_PANEL}
                 data-testid="approval-modal"
-                className={cn("approval-modal w-full font-geist outline-none", isBrowser ? "max-w-5xl" : "max-w-3xl")}
+                className="approval-modal w-full max-w-3xl font-geist outline-none"
               >
                 <Bezel
                   size="lg"
@@ -406,43 +374,6 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                       </div>
                     )}
 
-                    {/* Missing answers required before preparation can continue */}
-                    {actionType === "application_answers_required" && (
-                      <div className="space-y-5">
-                        <p className="max-w-[62ch] text-sm leading-6 text-muted-foreground">
-                          {String(action.message ?? "Answer these questions once — approved answers are reused on later applications.")}
-                        </p>
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          {((action.fields as RequiredField[]) ?? []).map((field) => (
-                            <Field key={field.field_id} label={field.label}>
-                              {(id) =>
-                                field.options && field.options.length > 0 ? (
-                                  <Select
-                                    id={id}
-                                    aria-required={field.required}
-                                    value={answers[field.field_id] ?? ""}
-                                    onChange={(e) => setAnswers({ ...answers, [field.field_id]: e.target.value })}
-                                  >
-                                    <option value="" disabled>Select an answer</option>
-                                    {field.options.map((opt) => (
-                                      <option key={opt} value={opt}>{opt}</option>
-                                    ))}
-                                  </Select>
-                                ) : (
-                                  <Input
-                                    id={id}
-                                    aria-required={field.required}
-                                    value={answers[field.field_id] ?? ""}
-                                    onChange={(e) => setAnswers({ ...answers, [field.field_id]: e.target.value })}
-                                  />
-                                )
-                              }
-                            </Field>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
                     {/* Cover letter */}
                     {actionType === "cover_letter_review" && (
                       <div className="space-y-3">
@@ -557,12 +488,6 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                         ) : null}
                       </div>
                     )}
-
-                    {/* Browser checkpoints */}
-                    {isBrowser && <>
-                      <p className="max-w-[68ch] text-sm leading-6 text-foreground">{String(action.message ?? "Review your application")}</p>
-                      <BrowserWorkspace runId={runId} />
-                    </>}
 
                     {/* Generic fallback for unknown action types */}
                     {!SPECIALISED_TYPES.includes(actionType) && (

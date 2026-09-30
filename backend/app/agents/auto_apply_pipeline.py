@@ -9,11 +9,9 @@ email or LinkedIn action is dispatched.
 """
 
 import asyncio
-import base64
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -21,12 +19,10 @@ from langchain_core.messages import HumanMessage
 from app.agents.resume_agent import resume_agent_node
 from app.agents.state import AgentState
 from app.core.event_bus import emit
-from app.core.config import settings as app_settings
 from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
 from app.services.email_finder_service import find_recruiter_email as find_email_for_company
-from app.services.job_platforms_service import scrape_jobs, JobListing
-from app.services.gmail_service import GmailMCPClient
+from app.services.job_platforms_service import JobListing, scrape_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +117,7 @@ async def run_auto_apply_pipeline(
         location: Location filter
         max_applications: Max jobs to apply to in this run
         platforms: Which platforms to scrape (default: all)
-        linkedin_credentials: {"email": "...", "password": "..."} for LinkedIn login
+        linkedin_credentials: deprecated; portal login stays in the browser extension
 
     Returns:
         Pipeline results with stats and per-job outcomes
@@ -182,57 +178,21 @@ async def run_auto_apply_pipeline(
     # ── Step 3-6: For each top job, run the full apply sequence ─────
 
     # Determine auto_mode from user settings
-    from app.core.database import AsyncSessionLocal
-    from app.models.db import User as UserModel
     from sqlalchemy import select as sel
 
+    from app.core.database import AsyncSessionLocal
+    from app.models.db import User as UserModel
+
     auto_mode = "drafts"
-    linkedin_email = None
-    linkedin_password = None
 
     async with AsyncSessionLocal() as db:
         res = await db.execute(sel(UserModel).where(UserModel.id == uuid.UUID(user_id)))
         user_row = res.scalar_one_or_none()
         if user_row:
             auto_mode = user_row.auto_mode or "drafts"
-            if user_row.linkedin_email_enc and user_row.linkedin_password_enc:
-                from app.core.security import decrypt_api_key
-                from app.core.config import settings as app_settings
 
-                linkedin_email = decrypt_api_key(
-                    user_row.linkedin_email_enc, app_settings.APP_SECRET_KEY
-                )
-                linkedin_password = decrypt_api_key(
-                    user_row.linkedin_password_enc, app_settings.APP_SECRET_KEY
-                )
-
-    if linkedin_credentials:
-        linkedin_email = linkedin_credentials.get("email")
-        linkedin_password = linkedin_credentials.get("password")
-
-    # Login to LinkedIn via browser-use if auto mode + credentials available
+    # Portal login belongs to the user's browser extension.
     linkedin_ready = False
-    if (
-        linkedin_email
-        and linkedin_password
-        and auto_mode == "auto"
-        and not app_settings.OPEN_SANDBOX_URL
-    ):
-        try:
-            from app.services.browser_control_service import linkedin_login as browser_login
-
-            login_status = await browser_login(
-                llm,
-                user_id,
-                linkedin_email,
-                linkedin_password,
-                live_browser=live_browser,
-                run_id=run_id,
-            )
-            linkedin_ready = login_status == "Login completed"
-        except Exception as exc:
-            logger.warning("[AutoApply] LinkedIn browser login failed: %s", exc)
-            results["errors"].append("LinkedIn browser login failed")
 
     for job, score in top_jobs:
         app_result = await _apply_to_job(
@@ -342,7 +302,7 @@ async def _apply_to_job(
         result["resume_draft"] = resume_draft
         resume_sha256 = None
         if resume_draft.get("pdf_document_id"):
-            from app.services.application_workflow import load_resume
+            from app.applications.submission import load_resume
 
             _, resume_sha256 = await load_resume(
                 uuid.UUID(user_id), resume_draft["pdf_document_id"]
@@ -448,7 +408,7 @@ async def _apply_to_job(
                 "resume_ready": result.get("resume_tailored", False),
             }
 
-        # Drafts mode also allows document review followed by sandbox preparation.
+        # Drafts mode also allows document review followed by extension preparation.
         if (
             not result.get("approval_actions")
             and job.job_url

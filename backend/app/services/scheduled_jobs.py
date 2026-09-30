@@ -566,9 +566,7 @@ async def check_application_status(payload: StatusCheckTrigger):
             try:
                 llm = await get_llm(user_id, db)
 
-                # The sandbox browser path requires an owned durable run to
-                # create/reuse a session (see acquire_session in
-                # application_workflow.py) — create one scoped to this user.
+                # Record the browser task under the owning user.
                 run_id = str(uuid.uuid4())
                 db.add(
                     AgentRun(

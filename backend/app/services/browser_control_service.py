@@ -385,12 +385,12 @@ def _build_bu_llm(user_id: str):
     If BROWSER_USE_OLLAMA_URL is set, uses that Ollama instance for navigation
     steps (cost-efficient); otherwise falls back to the user's BYOK model.
     """
+    # Lazy browser_use imports — keeps the module loadable without Chromium installed
+    from browser_use import ChatAnthropic, ChatGoogle, ChatOllama, ChatOpenAI  # noqa: PLC0415
+
     from app.core.model_router import TokenTrackingCallback
     from app.core.security import decrypt_api_key
     from app.core.sync_db import fetch_model_settings
-
-    # Lazy browser_use imports — keeps the module loadable without Chromium installed
-    from browser_use import ChatAnthropic, ChatGoogle, ChatOllama, ChatOpenAI  # noqa: PLC0415
 
     # Prefer Ollama for browser navigation when configured (cheap, local).
     if settings.BROWSER_USE_OLLAMA_URL:
@@ -470,19 +470,9 @@ async def run_browser_task(
         from browser_use import Agent, Browser  # noqa: PLC0415
 
         bu_llm = _build_bu_llm(user_id)
-        managed = bool(settings.OPEN_SANDBOX_URL)
-        if managed:
-            if not run_id:
-                raise ValueError("A durable run ID is required for sandbox browser tasks")
-            from app.services.sandbox_service import acquire_session, OpenSandboxProvider
-
-            session = await acquire_session(user_id, run_id)
-            cdp_url, cdp_headers = await OpenSandboxProvider().cdp(session.sandbox_id)
-            browser = Browser(cdp_url=cdp_url, headers=cdp_headers, keep_alive=True)
-        else:
-            if settings.APP_ENV == "production":
-                raise RuntimeError("Production browser tasks require OpenSandbox")
-            browser = Browser(headless=not live_browser, user_data_dir=str(user_dir))
+        if settings.APP_ENV == "production":
+            raise RuntimeError("Server browser tasks are disabled; use the browser extension")
+        browser = Browser(headless=not live_browser, user_data_dir=str(user_dir))
 
         _last_frame_emit: dict[str, float] = {}
 
@@ -560,10 +550,7 @@ async def run_browser_task(
             raise
         finally:
             try:
-                if managed:
-                    await browser.stop()
-                else:
-                    await browser.kill()
+                await browser.kill()
             except Exception:
                 pass
             _last_frame_emit.pop(run_id, None)

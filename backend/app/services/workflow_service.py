@@ -23,7 +23,7 @@ from app.models.db import AgentRun, ApplicationAttempt
 
 # ApplicationAttempt states that block starting a new attempt for the same
 # (user, job_application) — see docs on Task 2 idempotent submission.
-ACTIVE_SUBMISSION_STATES = {"submitting", "submitted", "verified"}
+ACTIVE_SUBMISSION_STATES = {"submitting", "submitted", "verified", "outcome_unknown"}
 
 DRAFT_TYPES = {
     "resume_ready",
@@ -42,10 +42,6 @@ ACTION_TYPES = DRAFT_TYPES | {
     "send_email",
     "search_confirmation",
     "auto_apply_approval",
-    "browser_prepare",
-    "browser_input",
-    "browser_review",
-    "application_answers_required",
 }
 
 
@@ -80,15 +76,6 @@ def validate_approval(pending: dict, edits: dict) -> dict:
         for item in pending.get("actions_pending", [])
     ):
         raise ValueError("This batch contains an unsupported action; review it separately")
-    if action == "application_answers_required":
-        if set(edits) - {"answers"}:
-            raise ValueError("Only answers may be provided for this action")
-        answers = edits.get("answers")
-        if not isinstance(answers, dict) or not answers:
-            raise ValueError("Provide an answer for each requested field")
-        result = copy.deepcopy(pending)
-        result["answers"] = answers
-        return result
     if set(edits) - {"body"}:
         raise ValueError("Only draft text may be edited; targets and artifacts are immutable")
     if edits and action not in {"send_email", "resume_ready", "cover_letter_review"}:
@@ -108,8 +95,8 @@ def validate_approval(pending: dict, edits: dict) -> dict:
 
 async def execute_agent(run: AgentRun, context: dict | None = None) -> dict:
     from app.agents.harness import get_harness
-    from app.core.sync_db import fetch_model_settings
     from app.core.security import decrypt_api_key
+    from app.core.sync_db import fetch_model_settings
 
     model = await asyncio.to_thread(fetch_model_settings, str(run.user_id))
     if not model:
@@ -258,38 +245,8 @@ async def continue_action(run: AgentRun, pending: dict) -> dict:
             run.user_id, run.id, recipient, pending["subject"], pending["body"]
         )
         return {"status": "completed", "result": result}
-    if action == "application_answers_required":
-        from app.applications import profile_service
-        from app.services.application_workflow import run_application_stage
-
-        answers = pending.get("answers") or {}
-        fields_by_id = {f.get("field_id"): f for f in pending.get("fields", [])}
-        async with AsyncSessionLocal() as db:
-            for field_id, value in answers.items():
-                meta = fields_by_id.get(field_id, {})
-                question_key = meta.get("question_key") or field_id
-                await profile_service.save_approved_answer(
-                    db,
-                    run.user_id,
-                    question_key,
-                    meta.get("label", question_key),
-                    value,
-                )
-            await db.commit()
-        # Re-attempt preparation now that the answers are saved — the
-        # resolver will find them this time, or surface whatever is still
-        # missing as a fresh checkpoint.
-        resumed = {
-            k: v for k, v in pending.items() if k not in {"answers", "fields", "type", "message"}
-        }
-        resumed["type"] = "browser_input"
-        return await run_application_stage(run, resumed)
     if action == "auto_apply_approval":
         return await _start_approved_batch(run, pending)
-    if action in {"browser_prepare", "browser_input", "browser_review"}:
-        from app.services.application_workflow import run_application_stage
-
-        return await run_application_stage(run, pending)
     raise ValueError("Unsupported continuation")
 
 

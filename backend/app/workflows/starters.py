@@ -124,7 +124,6 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
 
     workflow_id = auto_apply_workflow_id(str(user_id), str(application_id))
     run_id = str(uuid.uuid4())
-    extension = settings.APPLY_EXECUTION_MODE == "extension"
     client = await _client()
     try:
         await client.start_workflow(
@@ -132,20 +131,13 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
             AutoApplyIntent(
                 user_id=str(user_id),
                 job_application_id=str(application_id),
-                mode=settings.APPLY_EXECUTION_MODE,
                 claim_timeout_s=settings.EXTENSION_TASK_CLAIM_TIMEOUT_S,
                 complete_timeout_s=settings.EXTENSION_TASK_COMPLETE_TIMEOUT_S,
                 run_id=run_id,
             ),
             id=workflow_id,
             task_queue=settings.TEMPORAL_TASK_QUEUE,
-            # The extension flow waits on a person and bounds itself with
-            # its own timers; only the server-browser flow needs a hard cap.
-            execution_timeout=(
-                None
-                if extension
-                else timedelta(seconds=settings.TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S)
-            ),
+            # The extension workflow bounds human review with its own timers.
             # A finished attempt (failed, cancelled, expired) may be retried;
             # a running one is reused.
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
@@ -158,7 +150,7 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
         "workflow_id": workflow_id,
         "run_id": run_id,
         "status": status,
-        "mode": settings.APPLY_EXECUTION_MODE,
+        "mode": "extension",
     }
 
 

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, main, develop, deploy/scalable-sandbox-workflows]
+    branches: [master, main, develop]
   pull_request:
-    branches: [master, main, develop, deploy/scalable-sandbox-workflows]
+    branches: [master, main, develop]
   # Protected live-smoke entry point (see the live-smoke job below): only a
   # manual trigger runs it, never a push or pull_request, since it needs live
   # deployed-environment secrets and may exercise a real account.
@@ -64,8 +64,8 @@ jobs:
       - run: pip install -r requirements.txt -c constraints.txt
         working-directory: backend
 
-      - name: Start disposable Postgres/Redis/browser containers
-        run: docker compose -p careercraft-workflow-tests -f docker-compose.test.yml up -d postgres redis browser
+      - name: Start disposable Postgres/Redis containers
+        run: docker compose -p careercraft-workflow-tests -f docker-compose.test.yml up -d postgres redis
 
       - name: Wait for Postgres to be healthy
         run: |

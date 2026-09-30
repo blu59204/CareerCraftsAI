@@ -1,11 +1,10 @@
 import asyncio
 import logging
 import re
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
-
-import urllib.parse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
@@ -14,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import apply_harness_result
-from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, JobApplication, User, UserDocument, UserPreferences
 from app.schemas.jobs import JobSearchQuerySchema
@@ -543,7 +541,7 @@ async def list_search_dorks(
     Region defaults to ``"india"`` (filters to India-targeted dorks).
     Pass ``region="global"`` for the full 17-dork list.
     """
-    from app.services.search_presets import GOOGLE_DORKS, dorks_for_engine
+    from app.services.search_presets import GOOGLE_DORKS
 
     if region.lower() == "global":
         dorks = list(GOOGLE_DORKS)
@@ -1022,8 +1020,7 @@ async def prepare_application_apply(
 ):
     """Start the application's AutoApplyWorkflow. In extension mode the
     user's own browser fills the form and the user submits from the
-    extension's review panel; in server-browser mode approval goes through
-    /agents/{run_id}/approve. Never a route-owned background task.
+    extension's review panel. Never a route-owned background task.
     """
     # Locked for the duration of this transaction so a second concurrent
     # prepare-apply call for the same application serializes behind this one
@@ -1049,17 +1046,31 @@ async def prepare_application_apply(
             detail="Attach an approved resume to this application before applying",
         )
 
-    if settings.APPLY_EXECUTION_MODE == "extension":
-        from app.services.extension_service import has_active_device
+    from app.models.db import ApplicationAttempt
+    from app.services.extension_service import has_active_device
+    from app.services.workflow_service import ACTIVE_SUBMISSION_STATES
 
-        if not await has_active_device(db, current_user.id):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Connect the CareerCraft browser extension first (Settings → Integrations), "
-                    "then stay signed in to the job site in that browser."
-                ),
+    attempt = (
+        await db.execute(
+            select(ApplicationAttempt).where(
+                ApplicationAttempt.user_id == current_user.id,
+                ApplicationAttempt.job_application_id == application_id,
             )
+        )
+    ).scalar_one_or_none()
+    if attempt and attempt.state in ACTIVE_SUBMISSION_STATES:
+        raise HTTPException(
+            status_code=409, detail="Verify the existing application before applying again"
+        )
+
+    if not await has_active_device(db, current_user.id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Connect the CareerCraft browser extension first (Settings → Integrations), "
+                "then stay signed in to the job site in that browser."
+            ),
+        )
 
     # Release the row lock before the workflow's reserve activity locks it.
     await db.commit()

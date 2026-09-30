@@ -1,7 +1,5 @@
-"""GenericAdapter tests — this adapter is a thin wrapper around the same
-schema_extractor/validator/SUBMIT_NAME/CONFIRMATION logic
-application_workflow.py already runs inline (see that module's
-review_snapshot/fill_known_fields for the original inline implementation)."""
+"""GenericAdapter tests for field extraction, validation and confirmation."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -54,9 +52,14 @@ async def test_validate_flags_missing_required_fields(page):
 async def test_fill_fields_and_upload_clears_validation(page):
     adapter = GenericAdapter()
     fields = await adapter.extract_fields(page)
-    answers = [ResolvedAnswer(
-        field_id="email", value="me@example.test", source="profile", confidence=0.99,
-    )]
+    answers = [
+        ResolvedAnswer(
+            field_id="email",
+            value="me@example.test",
+            source="profile",
+            confidence=0.99,
+        )
+    ]
     await adapter.fill_fields(page, fields, answers)
     await adapter.upload_documents(page, b"%PDF-resume")
 

@@ -15,7 +15,6 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import (
     agents,
-    browser,
     candidate_profile,
     company,
     cover_letter,
@@ -267,7 +266,6 @@ app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(leads.router, prefix="/api/v1")
 app.include_router(email.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
-app.include_router(browser.router, prefix="/api/v1")
 app.include_router(interview_prep.router, prefix="/api/v1")
 app.include_router(cover_letter.router, prefix="/api/v1")
 app.include_router(interview.router, prefix="/api/v1")

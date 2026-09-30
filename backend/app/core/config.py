@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -142,27 +141,17 @@ class Settings(BaseSettings):
     # Resend's default cap is 10 req/s/team; stay under it to leave headroom
     # for other API traffic sharing the same team/key.
     NOTIFICATION_EMAIL_RATE_LIMIT_PER_SECOND: float = Field(default=8.0, gt=0, le=100)
-    # Server-browser auto-apply only; the extension flow waits on the user
-    # and is bounded by the EXTENSION_* timeouts below instead.
-    TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S: int = Field(default=600, ge=60, le=86_400)
-    # Preparation activities (navigate, extract, fill) retry with bounded
-    # backoff; the final submit activity never does (max_attempts=1 is set
-    # directly on that activity's retry policy, not here).
     TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT_S: int = Field(default=120, ge=10, le=1800)
     TEMPORAL_ACTIVITY_HEARTBEAT_TIMEOUT_S: int = Field(default=30, ge=5, le=300)
     TEMPORAL_ACTIVITY_HEARTBEAT_INTERVAL_S: int = Field(default=5, ge=1, le=60)
     # Recurring jobs registered as Temporal Schedules by the worker at start.
     TEMPORAL_SCHEDULES_ENABLED: bool = True
     DAILY_SEARCH_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
-    STATUS_CHECK_INTERVAL_HOURS: int = Field(default=6, ge=1, le=168)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=30, le=3600)
 
     # ── Job applications ───────────────────────────────────────────────
-    # "extension": fill and submit in the user's own browser through the
+    # Fill and submit in the user's own browser through the
     # CareerCraft extension (they stay logged in to LinkedIn/Naukri there).
-    # "server_browser": drive an isolated OpenSandbox browser (needs the
-    # OPEN_SANDBOX_* settings below).
-    APPLY_EXECUTION_MODE: Literal["extension", "server_browser"] = "extension"
     # A task nobody claims in this window expires (extension offline).
     EXTENSION_TASK_CLAIM_TIMEOUT_S: int = Field(default=24 * 3600, ge=60, le=7 * 24 * 3600)
     # Once claimed, the user has this long to review and submit.
@@ -199,17 +188,6 @@ class Settings(BaseSettings):
     # These identifiers are deployment configuration, not Nango catalog names.
     NANGO_PROVIDER_CONFIG_KEYS: dict[str, str] = {}
     NANGO_REQUEST_TIMEOUT_S: int = Field(default=15, ge=1, le=60)
-
-    # OpenSandbox runs on dedicated infrastructure, never in the API process.
-    OPEN_SANDBOX_URL: str = ""
-    OPEN_SANDBOX_API_KEY: str = ""
-    OPEN_SANDBOX_CHROME_IMAGE: str = "careercraft-browser:1"
-    SANDBOX_TTL_SECONDS: int = Field(default=1800, ge=600, le=7200)
-    SANDBOX_MAX_ACTIVE: int = Field(default=4, ge=1, le=1000)
-    SANDBOX_CPU: str = "1000m"
-    SANDBOX_MEMORY: str = "1024Mi"
-    # Explicit domain allowlist, including identity/CDN domains for supported portals.
-    SANDBOX_ALLOWED_DOMAINS: str = ""
 
     # ── RAG configuration ──────────────────────────────────────────────
     RAG_CHUNK_SIZE: int = 500

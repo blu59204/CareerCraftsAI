@@ -17,11 +17,3 @@ services:
     image: redis:8-alpine
     ports:
       - "127.0.0.1:56379:6379"
-  browser:
-    build: ./sandbox
-    image: careercraft-browser:1
-    init: true
-    shm_size: 256m
-    mem_limit: 1g
-    ports:
-      - "127.0.0.1:59222:9222"

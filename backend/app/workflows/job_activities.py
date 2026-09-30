@@ -55,16 +55,6 @@ async def daily_search_activity(params: dict) -> dict:
     return {k: v for k, v in result.items() if isinstance(v, (int, str))}
 
 
-@activity.defn
-async def status_check_activity(params: dict) -> dict:
-    from app.services.scheduled_jobs import StatusCheckTrigger, check_application_status
-
-    result = await check_application_status(
-        StatusCheckTrigger(user_id=params.get("user_id", "all"))
-    )
-    return {"updated_count": result.get("updated_count", 0)}
-
-
 # Runs whose workflow is gone but whose row still says it is in progress
 # (workflow terminated by hand, history lost, pre-Temporal rows).
 _STALE_AFTER = timedelta(minutes=15)
@@ -86,7 +76,7 @@ def _workflow_id_for(run) -> str:
 @activity.defn
 async def maintenance_activity(params: dict) -> dict:
     """Reconcile agent_runs with Temporal, expire orphaned extension tasks,
-    and reap server-side browser sandboxes."""
+    and reconcile application attempts."""
     from sqlalchemy import and_, or_, select
     from temporalio.client import WorkflowExecutionStatus
     from temporalio.service import RPCError, RPCStatusCode
@@ -194,14 +184,6 @@ async def maintenance_activity(params: dict) -> dict:
             await db.commit()
             reconciled += 1
         publish(str(run_id), "error", {"error": "Run stopped"})
-
-    if settings.APPLY_EXECUTION_MODE == "server_browser":
-        from app.services.sandbox_service import reap_sessions
-
-        try:
-            await reap_sessions()
-        except Exception:
-            logger.exception("Browser reaper failed")
 
     try:
         async with AsyncSessionLocal() as db:

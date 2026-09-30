@@ -212,35 +212,6 @@ class ExtensionTask(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class BrowserSession(Base):
-    __tablename__ = "browser_sessions"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("agent_runs.id", ondelete="CASCADE"), unique=True
-    )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    sandbox_id: Mapped[str | None] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String(30), default="provisioning")
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    review: Mapped[dict | None] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class BrowserAccountState(Base):
-    __tablename__ = "browser_account_states"
-
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    state_enc: Mapped[str] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
 class ApplicationAttempt(Base):
     """Idempotency ledger for the durable submit click.
 

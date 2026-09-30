@@ -5,7 +5,7 @@ Baseline: `093ef54`. Agent A owns resume generation, ATS, builder and LinkedIn P
 
 ## Phase status and evidence
 
-Phase 1: complete after the documentation checks below. No implementation code is part of this phase. Phases 2 and 3: not started. Repository instructions in `CLAUDE.md` and `AGENTS.md` were read first. The existing Agent B worktree is reused; the main workspace has unrelated uncommitted changes that must not be copied, reverted or committed here. Existing untracked `docs-sandbox-inventory.tmp` is preserved.
+Phase 1: complete. Phase 2: in progress, starting with executor retirement and extension security. Phase 3: not started; Phase 2 exit criteria have not been met. Repository instructions in `CLAUDE.md` and `AGENTS.md` were read first. The existing Agent B worktree is reused; the main workspace has unrelated uncommitted changes that must not be copied, reverted or committed here. Existing untracked `docs-sandbox-inventory.tmp` is preserved.
 
 Findings below are from source inspection, not claims of successful live runs. Live provider availability, permissions, Temporal connectivity, migration execution and extension browser reproduction remain Phase 2/3 evidence requirements. In particular, repository documentation's production-ready/test-count claims are not treated as verification.
 
@@ -335,3 +335,36 @@ These are recorded choices, not a request to re-debate architecture or a plan ap
 - Cross-check ownership, stable GitHub shape, ranking fallback, selector validation, submit gate, schedule lifecycle and rollback instructions for contradictions.
 - Generate raw tracked-file product/native inventory and companion symbol inventory; retain historical/native occurrences explicitly.
 - `git diff --check`; inspect staged paths and commit only `docs/agent-b/*`. No tests/build claims for a documentation-only phase.
+
+## Phase 2 execution evidence
+
+### Executor retirement
+
+Removed the product executor, takeover API/UI, browser state ORM, configuration,
+Docker service and obsolete workflow branches/tests. Applications require a
+paired extension. Shared document/ledger helpers live in
+`backend/app/applications/submission.py`. Reservations reject active, submitted
+and uncertain attempts even when a workflow ID is reused.
+
+Migration `20260930090000_b_retire_browser_execution.sql` archives/restricts the
+old tables without purging data. `check-retirement.ps1` verified PostgreSQL 16
+apply, repeated apply, rollback, preserved data and restored RLS/privileges.
+Drain old workflows before deployment; rollback requires coordinated old code.
+No production migration was executed.
+
+Backend unit/security check: 1,051 passed, 69 skipped. Focused regression and
+frontend gates are rerun after formatting and dependency restoration. The
+removal scan excludes immutable migration history and this audit directory:
+no active OpenSandbox product executor remains. Native Temporal workflow
+isolation and Chromium security references are retained. A-owned
+`api/v1/resume.py:282` still has a stale `application_workflow.py` comment;
+cleanup belongs to Request 3 above.
+
+Remaining: extension submit authorization and errors, aggregation, selector,
+GitHub, then full Phase 2 gates. Existing browser-control CAPTCHA evasion must
+be removed during the extension/security step before compliance is claimed.
+
+Executor-retirement gates: focused post-format regression 54 passed; frontend
+isolated lockfile install, typecheck, full lint and production build passed.
+Docker test Compose config passed. Full backend results above are local Python
+3.14 results; CI's Python 3.12 and deployed service verification remain pending.
