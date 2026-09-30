@@ -9,10 +9,15 @@ const STAGE_LABELS = {
   needs_input: "Waiting for your answers in the page",
   review: "Waiting for your review in the page",
   login_required: "Sign in to the job site in that tab",
+  permission_required: "Waiting for site access",
+  submitting: "Submission approved; verifying the outcome",
 };
 
 function send(message) {
-  return new Promise((resolve) => chrome.runtime.sendMessage(message, (response) => resolve(response || {})));
+  return new Promise((resolve) => chrome.runtime.sendMessage(message, (response) => {
+    const error = chrome.runtime.lastError;
+    resolve(response || { error: error?.message || "The extension did not respond. Reload it and reconnect." });
+  }));
 }
 
 function showError(text) {
@@ -28,6 +33,7 @@ async function ensureOriginPermission(origin) {
 
 async function render() {
   const status = await send({ type: "CC_GET_STATUS" });
+  if (status.error) showError(status.error);
   $("pair").hidden = !!status.paired;
   $("status").hidden = !status.paired;
   if (!status.paired) return;
@@ -47,7 +53,28 @@ async function render() {
 
   const host = status.hostPermissionNeeded;
   $("permission").hidden = !host;
-  if (host) $("permission-text").textContent = `Allow the extension on ${host} to apply there, then start the application again from CareerCraft.`;
+  if (host) $("permission-text").textContent = `Allow the extension on ${host} to continue this application.`;
+  const review = active?.review;
+  $("review").hidden = !review || active.submitting;
+  if (review) {
+    $("review-url").textContent = review.snapshot.url;
+    $("review-fields").replaceChildren();
+    for (const field of review.snapshot.fields) {
+      const label = document.createElement("dt");
+      const value = document.createElement("dd");
+      label.textContent = field.label || field.id;
+      value.textContent = Array.isArray(field.value) ? field.value.join(", ") : String(field.value ?? "");
+      $("review-fields").append(label, value);
+    }
+    $("approve-submit").disabled = !!active.submitPermit || Date.parse(review.expires_at) <= Date.now();
+    $("approve-submit").onclick = async (event) => {
+      if (!event.isTrusted) return;
+      $("approve-submit").disabled = true;
+      const result = await send({ type: "CC_APPROVE_SUBMIT", taskId: active.taskId, reviewHash: review.review_hash });
+      if (!result.ok) showError(result.error || "Approval failed. No submit was authorized.");
+      else $("approve-submit").textContent = "Approved — checking the outcome";
+    };
+  }
 }
 
 $("connect").addEventListener("click", async () => {
@@ -82,6 +109,7 @@ $("grant").addEventListener("click", async () => {
   const granted = await chrome.permissions.request({ origins: [`https://${host}/*`] });
   if (granted) {
     await chrome.storage.session.remove("hostPermissionNeeded");
+    await send({ type: "CC_CHECK_NOW" });
     render();
   }
 });

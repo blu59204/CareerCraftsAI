@@ -195,6 +195,7 @@ class AutoApplyWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=_PREP_RETRY_POLICY,
         )
+        outcome = finished.get("outcome", outcome)
         self._result = {"outcome": outcome}
         if outcome == "submitted":
             self._state = "submitted"

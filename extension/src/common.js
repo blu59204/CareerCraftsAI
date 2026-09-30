@@ -37,6 +37,32 @@ export const OPEN_TASK_STATUSES = new Set(["claimed", "filling", "needs_input", 
 export const LOCAL_KEYS = { PAIRING: "pairing" };
 export const SESSION_KEYS = { ACTIVE_TASK: "activeTask", HOST_PERMISSION_NEEDED: "hostPermissionNeeded" };
 
+export function appOrigin(value) {
+  const url = new URL(value);
+  const local = ["localhost", "127.0.0.1"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !(local && url.protocol === "http:")) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Enter a HTTPS CareerCraft origin (HTTP is allowed only locally).");
+  }
+  return url.origin;
+}
+
+export function jobUrl(value) {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password || !url.hostname.includes(".") || /^(localhost|127\.|10\.|192\.168\.|169\.254\.)/.test(url.hostname)) {
+    throw new Error("Application pages must use a public HTTPS URL.");
+  }
+  return url;
+}
+
+export function taskSenderAllowed(sender, active, message, extensionId) {
+  if (sender.id !== extensionId || sender.frameId !== 0 || !active || sender.tab?.id !== active.tabId || message.taskId !== active.taskId) return false;
+  try {
+    return jobUrl(sender.url).origin === jobUrl(message.url || sender.url).origin;
+  } catch {
+    return false;
+  }
+}
+
 // A static host_permissions pattern is normally an exact scheme+host (with
 // optional leading "*."); a plain hostname match is enough here — we only
 // use this to decide whether an *additional* optional permission request

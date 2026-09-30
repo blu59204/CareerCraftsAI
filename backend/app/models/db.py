@@ -211,6 +211,14 @@ class ExtensionTask(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    review_hash: Mapped[str | None] = mapped_column(String(64))
+    review_url: Mapped[str | None] = mapped_column(Text)
+    review_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submission_token_hash: Mapped[str | None] = mapped_column(String(64))
+    submission_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    submission_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
 
 class ApplicationAttempt(Base):
     """Idempotency ledger for the durable submit click.

@@ -368,3 +368,34 @@ Executor-retirement gates: focused post-format regression 54 passed; frontend
 isolated lockfile install, typecheck, full lint and production build passed.
 Docker test Compose config passed. Full backend results above are local Python
 3.14 results; CI's Python 3.12 and deployed service verification remain pending.
+
+### Extension gate (in progress)
+
+Implemented claimed-device access, locked review/approval, five-minute review
+expiry, hashed two-minute capability and at-most-once submit state. The trusted
+popup shows final values; content scripts cannot request approval. Background
+messages require active task/tab/top frame, page URL and extension identity;
+local token storage is restricted to trusted extension contexts. Unknown-host
+permission denial preserves the task for recovery. Network/backend errors are
+shown, rather than discarded. Submission confirmation is checked against
+persisted authorization before follow-ups; uncertain outcomes stay locked.
+
+Removed CAPTCHA solver/retry evasion. In-page decisions use deterministic
+heuristics rather than deployment model credentials. Draft answers read the
+owned selected resume and account normal completed-call tokens on AgentRun.
+
+Proof so far: full backend 1,054 passed / 69 skipped before the final narrative
+selection change; focused post-change 32 passed. Node sender boundary check and
+extension JavaScript syntax checks pass. Manual MV3 procedure is in
+`EXTENSION_CHECK.md`; not yet executed. Migration apply/rollback, popup race and
+workflow uncertain-outcome tests, draft timeout accounting and final regressions
+remain before this step can be committed or declared complete.
+
+Extension follow-up evidence: disposable PostgreSQL migration apply, repeated
+apply and rollback passed with task data/RLS preserved. Four worker outcome
+checks passed: unauthorized signals cannot verify an application; expiry or
+failure after approval keeps outcome_unknown. The full final backend check
+passed 1,054 / 69 skipped; final isolated worker suite passed seven tests.
+Draft calls use the router's provider timeout/retries rather than cancelling a
+billable thread before its final token accounting. Manual browser verification
+remains pending and no real external application has been submitted.

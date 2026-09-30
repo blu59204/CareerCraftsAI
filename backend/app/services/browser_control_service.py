@@ -10,13 +10,10 @@ across runs. browser-use is the sole browser-control engine.
 import asyncio
 import base64
 import logging
-import os
-import re
 import secrets
 import time
 from pathlib import Path
 
-import httpx
 from langchain_core.language_models import BaseChatModel
 
 from app.core.config import settings
@@ -48,16 +45,7 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 # ---------------------------------------------------------------------------
-# CAPTCHA decision tree (added 2026-06-05)
-# Implemented as a single helper that wraps `run_browser_task` with retry logic
-# inspired by the Browser-Use/Claude Opus 4.7 strategy. Steps:
-#   1. Try once (browser-use already waits for invisible challenges).
-#   2. Inspect result for CAPTCHA markers → if found, retry with new profile.
-#   3. Retry up to N times with exponential backoff.
-#   4. After exhausting retries, raise ``CaptchaBlocked`` so caller can fall
-#      back to a non-browser source (JobSpy, public API, or another platform).
-# ---------------------------------------------------------------------------
-
+# Site challenges stop automation; only the user may resolve them.
 # Strings that look like a CAPTCHA / WAF / anti-bot block page.
 _CAPTCHA_MARKERS: tuple[str, ...] = (
     "captcha",
@@ -80,28 +68,13 @@ _CAPTCHA_MARKERS: tuple[str, ...] = (
     "just a moment",
 )
 
-# How many times to retry a browser task that hit a CAPTCHA.
-# Each retry uses a fresh user-data-dir to force a clean fingerprint.
-_CAPTCHA_MAX_RETRIES = 2
-
-# Sleep between retries, in seconds (exponential backoff).
-_CAPTCHA_BACKOFF_S = 4.0
-
 
 class CaptchaBlocked(RuntimeError):
-    """Raised when a browser task cannot proceed because the site is CAPTCHA-blocked.
-
-    Callers should catch this and fall back to a non-browser source
-    (JobSpy, public API, ATS JSON, etc.) or to a different platform.
-    """
+    """A site challenge requires manual intervention; automation stops."""
 
 
 def _looks_like_captcha(text: str) -> bool:
-    """Return True if the page text looks like a CAPTCHA / anti-bot challenge."""
-    if not text:
-        return False
-    needle = text.lower()
-    return any(marker in needle for marker in _CAPTCHA_MARKERS)
+    return any(marker in (text or "").lower() for marker in _CAPTCHA_MARKERS)
 
 
 async def run_browser_task_with_captcha_retry(
@@ -112,268 +85,13 @@ async def run_browser_task_with_captcha_retry(
     live_browser: bool = False,
     run_id: str | None = None,
 ) -> str:
-    """Run a browser task with CAPTCHA-aware retry.
-
-    Strategy (mirrors the Browser-Use/Claude Opus 4.7 decision tree):
-      1. Try once.
-      2. If result text looks like a CAPTCHA page → retry with fresh
-         user-data-dir (forces new IP + clean fingerprint per browser-use's
-         persistent-context model).
-      3. After ``_CAPTCHA_MAX_RETRIES`` failures, raise ``CaptchaBlocked``
-         so the caller can fall back to a non-browser source.
-
-    In a real production env the IP rotates at the proxy layer (we use the
-    user's local network as a single IP). For sites that hard-block on IP,
-    fall back to a non-browser fetcher — see the 7 search providers and the
-    JobSpy scraper.
-
-    Optional: set ``CAPTCHA_API_KEY`` + ``CAPTCHA_PROVIDER=2captcha|capsolver``
-    in .env to enable automatic CAPTCHA solving (reCAPTCHA v2/v3, hCaptcha,
-    Cloudflare Turnstile, Arkose FunCaptcha) before retrying.  When no key
-    is configured we skip Step 4 (the solver) and rely on retries alone.
-    """
-    last_exc: Exception | None = None
-    for attempt in range(_CAPTCHA_MAX_RETRIES + 1):
-        try:
-            result = await run_browser_task(
-                llm,
-                task,
-                user_id,
-                max_steps=max_steps,
-                live_browser=live_browser,
-                run_id=run_id,
-            )
-            if _looks_like_captcha(result):
-                logger.warning(
-                    "Browser task for run=%s attempt=%s returned CAPTCHA-like text; will retry",
-                    run_id,
-                    attempt,
-                )
-                if run_id:
-                    emit(
-                        run_id,
-                        "browser",
-                        {
-                            "phase": "captcha_detected",
-                            "attempt": attempt,
-                            "max_retries": _CAPTCHA_MAX_RETRIES,
-                        },
-                    )
-                # Optional: try to solve the CAPTCHA via 2Captcha/CapSolver.
-                # Skipped silently when no CAPTCHA_API_KEY is set.
-                solution = await _maybe_solve_captcha(
-                    result,
-                    run_id=run_id,
-                    attempt=attempt,
-                )
-                # Force a clean fingerprint for the next attempt by giving
-                # browser-use a unique user_data_dir suffix per attempt.
-                if attempt < _CAPTCHA_MAX_RETRIES:
-                    await asyncio.sleep(_CAPTCHA_BACKOFF_S * (attempt + 1))
-                    continue
-                raise CaptchaBlocked(
-                    f"Browser task for run={run_id} returned CAPTCHA page after "
-                    f"{_CAPTCHA_MAX_RETRIES} retries"
-                )
-            return result
-        except CaptchaBlocked:
-            raise
-        except Exception as exc:
-            last_exc = exc
-            if attempt < _CAPTCHA_MAX_RETRIES:
-                logger.warning(
-                    "Browser task for run=%s attempt=%s failed: %s; retrying",
-                    run_id,
-                    attempt,
-                    exc,
-                )
-                await asyncio.sleep(_CAPTCHA_BACKOFF_S * (attempt + 1))
-                continue
-            raise
-    # Unreachable, but satisfy type checkers.
-    raise CaptchaBlocked(f"Browser task for run={run_id} failed: {last_exc}")
-
-
-# ---------------------------------------------------------------------------
-# Optional CAPTCHA solvers (2Captcha / CapSolver)
-#
-# Set CAPTCHA_API_KEY in .env to enable. CAPTCHA_PROVIDER selects the service:
-#   CAPTCHA_PROVIDER=2captcha   (default; $3/1000 reCAPTCHA v2, 99% success)
-#   CAPTCHA_PROVIDER=capsolver  (faster, ~30s avg solve, similar pricing)
-#
-# Bypass rates (per the Browser-Use/Claude Opus 4.7 decision tree):
-#   - Cloudflare "checking your browser": 95%  (no solver needed, wait + reload)
-#   - Cloudflare Turnstile:              90%  (one-line script)
-#   - reCAPTCHA v3 (score-based):        85%  (invisible)
-#   - reCAPTCHA v2 checkbox:             70%  bare / 99% with 2Captcha
-#   - reCAPTCHA v2 image grid:           0%   bare / 99% with 2Captcha
-#   - hCaptcha:                          60%  bare / 99% with 2Captcha/CapSolver
-#   - Arkose FunCaptcha:                 30%  bare / 90% with CapSolver
-#   - AWS WAF:                           80%  (rotating UA + headers)
-#   - PerimeterX / Human Security:       20%  (premium stealth proxy required)
-# ---------------------------------------------------------------------------
-
-_CAPTCHA_SITEKEY_RE = re.compile(
-    r'data-sitekey=["\']([\w_-]+)["\']|' r'sitekey["\']?\s*[:=]\s*["\']?([\w_-]+)["\']?',
-    re.IGNORECASE,
-)
-
-
-def _extract_site_key(page_text: str) -> str | None:
-    """Pull the first reCAPTCHA/hCaptcha sitekey from a CAPTCHA page HTML."""
-    if not page_text:
-        return None
-    m = _CAPTCHA_SITEKEY_RE.search(page_text)
-    if m:
-        return m.group(1) or m.group(2)
-    return None
-
-
-async def _maybe_solve_captcha(
-    result_text: str,
-    run_id: str | None,
-    attempt: int,
-) -> str | None:
-    """If CAPTCHA_API_KEY is set, try to solve the detected challenge.
-
-    Returns the solver token if successful, or None if no solver is configured
-    / the challenge type isn't supported / the solver timed out.
-    """
-    api_key = os.environ.get("CAPTCHA_API_KEY", "").strip()
-    if not api_key:
-        return None  # no solver configured — fall through to retry
-    provider = (os.environ.get("CAPTCHA_PROVIDER") or "2captcha").lower()
-    site_key = _extract_site_key(result_text)
-    if not site_key:
-        logger.debug("CAPTCHA detected but no sitekey found in result; skipping solver")
-        return None
-    if run_id:
-        emit(
-            run_id,
-            "browser",
-            {
-                "phase": "captcha_solving",
-                "provider": provider,
-                "site_key": site_key[:12] + "…",
-                "attempt": attempt,
-            },
-        )
-    if provider == "capsolver":
-        return await _solve_with_capsolver(site_key, run_id=run_id)
-    # default: 2captcha
-    return await _solve_with_2captcha(site_key, run_id=run_id)
-
-
-async def _solve_with_2captcha(site_key: str, run_id: str | None) -> str | None:
-    """2Captcha async solver. Polls res.php for up to 180s.
-
-    Cost: ~$3 per 1000 reCAPTCHA v2 solves, 99% success rate, ~30-60s solve time.
-    """
-    api_key = os.environ["CAPTCHA_API_KEY"]
-    page_url = ""  # 2Captcha accepts empty pageurl for some captcha types
-    try:
-        async with httpx.AsyncClient(timeout=30) as cli:
-            r = await cli.post(
-                "https://2captcha.com/in.php",
-                data={
-                    "key": api_key,
-                    "method": "userrecaptcha",
-                    "googlekey": site_key,
-                    "pageurl": page_url,
-                    "json": 1,
-                },
-            )
-            data = r.json() or {}
-            if data.get("status") != 1:
-                logger.warning("2Captcha submit failed: %s", data)
-                return None
-            task_id = data.get("request")
-            # Poll for result, max 180s
-            for _ in range(36):
-                await asyncio.sleep(5)
-                r = await cli.get(
-                    "https://2captcha.com/res.php",
-                    params={
-                        "key": api_key,
-                        "action": "get",
-                        "id": task_id,
-                        "json": 1,
-                    },
-                )
-                data = r.json() or {}
-                if data.get("status") == 1:
-                    token = data.get("request", "")
-                    if run_id:
-                        emit(
-                            run_id,
-                            "browser",
-                            {
-                                "phase": "captcha_solved",
-                                "provider": "2captcha",
-                            },
-                        )
-                    return token
-                if "CAPCHA_NOT_READY" not in str(data.get("request", "")):
-                    logger.warning("2Captcha poll error: %s", data)
-                    return None
-            return None
-    except Exception as exc:
-        logger.warning("2Captcha solve failed: %s", exc)
-        return None
-
-
-async def _solve_with_capsolver(site_key: str, run_id: str | None) -> str | None:
-    """CapSolver async solver. Polls for up to 180s.
-
-    Cost: ~$3-4 per 1000 reCAPTCHA v2 solves, ~30s avg solve, 99% success.
-    Faster than 2Captcha for some CAPTCHA types (e.g. Arkose FunCaptcha).
-    """
-    api_key = os.environ["CAPTCHA_API_KEY"]
-    try:
-        async with httpx.AsyncClient(timeout=30) as cli:
-            r = await cli.post(
-                "https://api.capsolver.com/createTask",
-                json={
-                    "clientKey": api_key,
-                    "task": {
-                        "type": "ReCaptchaV2TaskProxyLess",
-                        "websiteURL": "https://www.google.com/recaptcha/api2/demo",
-                        "websiteKey": site_key,
-                    },
-                },
-            )
-            data = r.json() or {}
-            task_id = data.get("taskId")
-            if not task_id:
-                logger.warning("CapSolver submit failed: %s", data)
-                return None
-            for _ in range(36):
-                await asyncio.sleep(5)
-                r = await cli.post(
-                    "https://api.capsolver.com/getTaskResult",
-                    json={"clientKey": api_key, "taskId": task_id},
-                )
-                data = r.json() or {}
-                status = data.get("status")
-                if status == "ready":
-                    token = (data.get("solution") or {}).get("gRecaptchaResponse", "")
-                    if run_id:
-                        emit(
-                            run_id,
-                            "browser",
-                            {
-                                "phase": "captcha_solved",
-                                "provider": "capsolver",
-                            },
-                        )
-                    return token
-                if status == "failed":
-                    logger.warning("CapSolver task failed: %s", data)
-                    return None
-            return None
-    except Exception as exc:
-        logger.warning("CapSolver solve failed: %s", exc)
-        return None
+    """Compatibility entry point: one attempt, stop on challenge, never evade it."""
+    result = await run_browser_task(
+        llm, task, user_id, max_steps=max_steps, live_browser=live_browser, run_id=run_id
+    )
+    if _looks_like_captcha(result):
+        raise CaptchaBlocked("Site challenge requires manual intervention")
+    return result
 
 
 def _build_bu_llm(user_id: str):

@@ -31,11 +31,17 @@
         <p id="permission-text"></p>
         <button id="grant">Allow on this site</button>
       </div>
+      <div id="review" class="card" hidden>
+        <p class="label">Final form review</p>
+        <p id="review-url"></p>
+        <dl id="review-fields"></dl>
+        <button id="approve-submit" class="primary">Submit this application</button>
+      </div>
       <div class="row">
         <button id="check" class="primary">Check now</button>
         <button id="disconnect">Disconnect</button>
       </div>
-      <p class="hint">Nothing is submitted until you press <strong>Submit application</strong> in the review panel on the job page.</p>
+      <p class="hint">Review and edit the job page first, then approve <strong>Submit this application</strong> here.</p>
     </section>
 
     <p id="error" class="error" role="alert" hidden></p>

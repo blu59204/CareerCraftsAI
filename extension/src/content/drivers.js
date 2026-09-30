@@ -13,7 +13,7 @@
   const SUBMIT_TEXT_RE = /submit( your)? application|send application|submit|apply/i;
   const LINKEDIN_LOGIN_URL_RE = /login|authwall|checkpoint|uas/i;
   const LINKEDIN_SUBMIT_RE = /submit application/i;
-  const LINKEDIN_NEXT_RE = /continue to next step|next|review your application|review/i;
+  const LINKEDIN_NEXT_RE = /^(continue to next step|next|review your application|review)$/i;
   const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|applied/i;
   const NAUKRI_LOGIN_RE = /\/nlogin/i;
   const NAUKRI_SUCCESS_RE = /successfully applied|applied to|application sent/i;
@@ -320,7 +320,7 @@
       if (!submitEl) throw new Error("Could not find the submit control for this application");
 
       await ctx.delay();
-      await ctx.api.markSubmitting();
+      await ctx.api.markSubmitting(form, submitEl);
       dom.clickLike(submitEl);
 
       const result = await waitForConfirmation(ctx, GENERIC_SUCCESS_RE, 15000);
@@ -433,7 +433,7 @@
         let primary = findModalPrimaryButton(m);
         if (!primary.el) {
           const chosen = await decideAdvanceButton(ctx, primary.buttons || []);
-          if (chosen) primary = { el: chosen, kind: LINKEDIN_SUBMIT_RE.test(dom.textOf(chosen)) ? "submit" : "next" };
+          if (chosen && LINKEDIN_SUBMIT_RE.test(dom.textOf(chosen))) primary = { el: chosen, kind: "submit" };
         }
         if (!primary.el) throw new Error("Could not find a button to advance the Easy Apply modal");
 
@@ -453,7 +453,7 @@
           if (decision.remember) await rememberAnswers(ctx, merged.fields, decision.typed);
 
           await ctx.delay();
-          await ctx.api.markSubmitting();
+          await ctx.api.markSubmitting(m, primary.el);
           dom.clickLike(primary.el);
           const result = await waitForConfirmation(ctx, LINKEDIN_CONFIRM_RE, 20000);
           await reportConfirmationResult(ctx, result, "LinkedIn did not show a submission confirmation.");
@@ -614,12 +614,14 @@
       }
 
       await ctx.delay();
-      await ctx.api.markSubmitting();
+      await ctx.api.markSubmitting(document, applyBtn);
       dom.clickLike(applyBtn);
 
       await dom.delay(900, 1200);
       if (await guardCaptcha(ctx)) return;
-      if ((await handleChatbotDrawer(ctx)) === "cancelled") return;
+      if (findChatbotDrawer()) {
+        throw new Error("Naukri opened additional questions after Apply. Complete them manually and verify the outcome; CareerCraft will not click a second submit.");
+      }
 
       const result = await waitForConfirmation(ctx, NAUKRI_SUCCESS_RE, 15000);
       await reportConfirmationResult(ctx, result, "Naukri did not show a submission confirmation.");

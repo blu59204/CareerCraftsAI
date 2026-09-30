@@ -28,6 +28,12 @@ try {
         'supabase/migrations/20260930090000_b_retire_browser_execution.sql',
         'docs/agent-b/rollback/b_retire_browser_execution.sql',
         'backend/tests/fixtures/b_retirement_rollback_check.sql'
+        'backend/tests/fixtures/b_extension_approval_setup.sql',
+        'supabase/migrations/20260930091000_b_extension_submit_approval.sql',
+        'supabase/migrations/20260930091000_b_extension_submit_approval.sql',
+        'backend/tests/fixtures/b_extension_approval_check.sql',
+        'docs/agent-b/rollback/b_extension_submit_approval.sql',
+        'backend/tests/fixtures/b_extension_approval_rollback_check.sql'
     )
     foreach ($script in $scripts) {
         $scriptPath = Join-Path $repoRoot $script
