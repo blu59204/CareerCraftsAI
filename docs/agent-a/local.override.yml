@@ -2,8 +2,16 @@
 services:
   backend:
     build: D:/CareerCraft-agent-a/backend
+    environment:
+      LLM_GATEWAY_URL: http://backend:18100/llm-gateway/v1
   temporal-worker:
     build: D:/CareerCraft-agent-a/backend
+    environment:
+      LLM_GATEWAY_URL: http://backend:18100/llm-gateway/v1
+  notification-worker:
+    build: D:/CareerCraft-agent-a/backend
+    environment:
+      LLM_GATEWAY_URL: http://backend:18100/llm-gateway/v1
   frontend:
     build:
       context: D:/CareerCraft-agent-a/frontend

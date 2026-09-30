@@ -1,4 +1,4 @@
-﻿{
+{
   "checks": [
     "Clerk session verified; disposable user provisioned and consent recorded",
     "Edit/save/reload persists new text and recomputes general score",

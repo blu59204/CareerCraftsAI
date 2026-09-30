@@ -9,9 +9,9 @@ import concurrent.futures
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 
 import fitz
 import httpx
@@ -41,7 +41,9 @@ response = client.get(f"{api}/users/me")
 assert response.status_code == 200
 state["user_id"] = response.json()["id"]
 assert client.post(f"{api}/users/me/consent").status_code == 200
-checks.append("Clerk session verified; disposable user provisioned and consent recorded")
+checks.append(
+    "Clerk session verified; disposable user provisioned and consent recorded"
+)
 
 source = """# Agent A Review
 review@example.com | London
@@ -124,11 +126,14 @@ current = client.get(path).json()
 assert current["resume_markdown"] in [
     reply.json()["resume_markdown"] for reply in replies if reply.status_code == 200
 ]
-checks.append("Concurrent full-text edits: one commit and one 409; winner survives reload")
+checks.append(
+    "Concurrent full-text edits: one commit and one 409; winner survives reload"
+)
 response = client.post(
     path + "/fix",
     json={
-        "resume_markdown": edited + "\n- Critical evidence from a long project.\n" * 250,
+        "resume_markdown": edited
+        + "\n- Critical evidence from a long project.\n" * 250,
         "expected_version": current["content_version"],
         "page_target": 1,
         "remember": False,
@@ -174,7 +179,9 @@ for template in ("modern", "classic", "technical"):
                     assert len(pdf) <= pages
                     text = "\n".join(page.get_text() for page in pdf)
             else:
-                text = "\n".join(p.text for p in Document(io.BytesIO(response.content)).paragraphs)
+                text = "\n".join(
+                    p.text for p in Document(io.BytesIO(response.content)).paragraphs
+                )
             for field in (
                 "review@example.com",
                 "Example Ltd",
@@ -207,7 +214,35 @@ with fitz.open() as pdf:
         files={"file": ("scan.pdf", pdf.tobytes(), "application/pdf")},
     )
     assert response.status_code == 422
-checks.append("Authenticated LinkedIn wrong-type/malformed/oversized/image-only rejection")
+checks.append(
+    "Authenticated LinkedIn wrong-type/malformed/oversized/image-only rejection"
+)
+
+disable = """
+import asyncio,sys,uuid
+from sqlalchemy import update
+from app.core.database import AsyncSessionLocal
+from app.models.db import UserModelSettings
+async def main():
+ async with AsyncSessionLocal() as db:
+  await db.execute(update(UserModelSettings).where(UserModelSettings.user_id==uuid.UUID(sys.stdin.read())).values(is_active=False))
+  await db.commit()
+asyncio.run(main())
+"""
+subprocess.run(
+    [
+        "docker",
+        "exec",
+        "-i",
+        "careercraft-local-prod-backend-1",
+        "python",
+        "-c",
+        disable,
+    ],
+    input=state["user_id"],
+    text=True,
+    check=True,
+)
 
 with fitz.open() as pdf:
     page = pdf.new_page()
@@ -250,6 +285,13 @@ assert other.post(f"{api}/users/me/consent").status_code == 200
 for endpoint in (path, f"{api}/resume/download/{document_id}"):
     assert other.get(endpoint).status_code == 404
 assert other.post(path + "/fix", json={"resume_markdown": edited}).status_code == 404
-assert other.post(f"{api}/resume/ats-score", json={"document_id": document_id}).status_code == 404
-checks.append("Second real Clerk user cannot read/edit/score/download the first user's resume")
-print(json.dumps({"checks": checks, "count": len(checks)}, indent=2))
+assert (
+    other.post(f"{api}/resume/ats-score", json={"document_id": document_id}).status_code
+    == 404
+)
+checks.append(
+    "Second real Clerk user cannot read/edit/score/download the first user's resume"
+)
+result = {"checks": checks, "count": len(checks)}
+Path(__file__).with_name("live-results.json").write_text(json.dumps(result, indent=2))
+print(json.dumps(result, indent=2))

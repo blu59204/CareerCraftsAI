@@ -1,0 +1,96 @@
+docker :  Image careercraft-local-prod-backend Building 
+At line:21 char:1
++ docker compose --env-file 'D:/CareerCraft AI/frontend/.env.local' --e ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ( Image careercr...ckend Building :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ Image careercraft-local-prod-notification-worker Building 
+ Image careercraft-local-prod-temporal-worker Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.55kB done
+#1 DONE 0.0s
+
+#2 [backend internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.26kB 0.0s done
+#2 DONE 0.1s
+
+#3 [temporal-worker internal] load metadata for docker.io/library/python:3.12-slim
+#3 DONE 0.2s
+
+#4 [temporal-worker internal] load .dockerignore
+#4 transferring context: 225B 0.0s done
+#4 DONE 0.0s
+
+#5 [notification-worker 1/7] FROM docker.io/library/python:3.12-slim@sha256:d764629ce0ddd8c71fd371e9901efb324a95789d2315a47db7e4d27e78f1b0e9
+#5 resolve docker.io/library/python:3.12-slim@sha256:d764629ce0ddd8c71fd371e9901efb324a95789d2315a47db7e4d27e78f1b0e9 0.0s done
+#5 DONE 0.0s
+
+#6 [temporal-worker internal] load build context
+#6 transferring context: 42.91kB 0.0s done
+#6 DONE 0.0s
+
+#7 [backend 2/7] WORKDIR /app
+#7 CACHED
+
+#8 [backend 3/7] COPY requirements.txt constraints.txt provider-tools.txt ./
+#8 CACHED
+
+#9 [backend 4/7] RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources &&     apt-get update && apt-get install -y     wget     gnupg     ca-certificates     fonts-liberation     fonts-dejavu-core     libasound2     libatk-bridge2.0-0     libatk1.0-0     libatspi2.0-0     libcups2     libdbus-1-3     libdrm2     libgbm1     libgtk-3-0     libnspr4     libnss3     libwayland-client0     libxcomposite1     libxdamage1     libxfixes3     libxkbcommon0     libxrandr2     xdg-utils     && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [backend 5/7] RUN pip install --no-cache-dir --upgrade pip &&     pip install --no-cache-dir -r requirements.txt -c constraints.txt &&     pip install --no-cache-dir --no-deps -r provider-tools.txt &&     playwright install chromium
+#10 CACHED
+
+#11 [backend 6/7] COPY app/ ./app/
+#11 DONE 0.2s
+
+#11 [temporal-worker 6/7] COPY app/ ./app/
+#11 DONE 0.2s
+
+#12 [temporal-worker 7/7] COPY memory/ ./memory/
+#12 DONE 0.0s
+
+#13 [backend] exporting to image
+#13 exporting layers 0.1s done
+#13 exporting manifest sha256:1aa7fbc1484f611eb137faec30215011115953db1edb9bb1d92c709c99733e40 0.0s done
+#13 exporting config sha256:fb99b67e3d57b411dcf2744ffa298960b1f4e6d5b2176bb450cef77c2c85e5a8 0.0s done
+#13 exporting attestation manifest sha256:fac314f47c626803cb0d6e2b0a026ac5501e29415cf4614f3bbc707837c941f4
+#13 exporting attestation manifest sha256:fac314f47c626803cb0d6e2b0a026ac5501e29415cf4614f3bbc707837c941f4 0.0s done
+#13 exporting manifest list sha256:56146bbfe7b17dd1b8adf2f5bfa43668d09a2ba4676eea322c16e01731b7556c 0.0s done
+#13 naming to docker.io/library/careercraft-local-prod-backend:latest done
+#13 unpacking to docker.io/library/careercraft-local-prod-backend:latest
+#13 unpacking to docker.io/library/careercraft-local-prod-backend:latest 0.1s done
+#13 DONE 0.4s
+
+#14 [notification-worker] exporting to image
+#14 exporting layers 0.1s done
+#14 exporting manifest sha256:bea49987a6b7d320e0475872b4bd1320a62cdf60761727775d65310111bf0ff0 0.0s done
+#14 exporting config sha256:ff027d43d92985204a436eacda53a409fdf566a958e09ef3b4cce69bfcea72d2 0.0s done
+#14 exporting attestation manifest sha256:56950e008343bb13cc62926c32ba98a0b5f48a73542b56b15886fd163eaa79d0 0.0s done
+#14 exporting manifest list sha256:18c5b52739e00957ebf1a9d9bfdcb991bb02ade69ea1bffb39e559e70344ac0a 0.0s done
+#14 naming to docker.io/library/careercraft-local-prod-notification-worker:latest done
+#14 unpacking to docker.io/library/careercraft-local-prod-notification-worker:latest 0.1s done
+#14 DONE 0.4s
+
+#15 [temporal-worker] exporting to image
+#15 exporting layers 0.1s done
+#15 exporting manifest sha256:51f09e6724f5827acebca7b058b45183c369b4d011a591c82aaed7a0ed2e04eb 0.0s done
+#15 exporting config sha256:6d248be4c09c38dc8ff627efec64c7d6bfa54c6898fc5ecc44806b93024ff8f7 0.0s done
+#15 exporting attestation manifest sha256:fa62b9eabf7c30e9bf5133c8ae98f14505d98de1e0277e338375997b2fb95f5f 0.0s done
+#15 exporting manifest list sha256:0ba4c6feb6885db86d8e5c1d0963f60b10551fcc33a60af0d15a7c9070cd162f 0.0s done
+#15 naming to docker.io/library/careercraft-local-prod-temporal-worker:latest done
+#15 unpacking to docker.io/library/careercraft-local-prod-temporal-worker:latest 0.1s done
+#15 DONE 0.4s
+
+#16 [notification-worker] resolving provenance for metadata file
+#16 DONE 0.1s
+
+#17 [temporal-worker] resolving provenance for metadata file
+#17 DONE 0.1s
+
+#18 [backend] resolving provenance for metadata file
+#18 DONE 0.0s
+ Image careercraft-local-prod-temporal-worker Built 
+ Image careercraft-local-prod-notification-worker Built 
+ Image careercraft-local-prod-backend Built 
