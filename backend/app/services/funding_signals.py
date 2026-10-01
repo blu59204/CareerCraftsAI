@@ -24,9 +24,10 @@ REFRESHED = "funding:refreshed"
 TTL_SECONDS = 45 * 86400
 REFRESH_SECONDS = 6 * 3600
 BONUS = 5
+_background: set[asyncio.Task] = set()
 _HEADLINE = re.compile(
     r"^(?P<company>[A-Z0-9][\w&.\-' ]{1,40}?)\s+"
-    r"(?:raises|bags|secures|lands|closes|snags|nets|picks up|gets)\b",
+    r"(?:raises|bags|secures|lands|closes|snags|nets)\b",
 )
 
 
@@ -83,7 +84,11 @@ async def funded_among(companies: list[str]) -> set[str]:
     if not settings.FUNDING_FEEDS or not companies:
         return set()
     try:
-        await asyncio.wait_for(refresh(), 8)
+        # Refreshing reads outside feeds, so it runs in the background and
+        # never delays a search; this search uses what is already stored.
+        task = asyncio.create_task(refresh())
+        _background.add(task)
+        task.add_done_callback(_background.discard)
         redis = await _redis()
         keys = sorted({_squash(c) for c in companies if _squash(c)})
         values = await redis.mget([KEY + k for k in keys])

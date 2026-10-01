@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # ── Next.js public URLs ────────────────────────────────────────────
     NEXT_PUBLIC_APP_URL: str = "http://localhost:3000"
     NEXT_PUBLIC_API_URL: str = "http://localhost:8000"
+    # https address of this API as recipients' mail apps reach it. Open
+    # tracking adds its pixel only when this is set to a public https URL.
+    PUBLIC_API_URL: str | None = None
 
     # ── Redis ──────────────────────────────────────────────────────────
     REDIS_PASSWORD: str | None = None
@@ -88,6 +91,8 @@ class Settings(BaseSettings):
     # verifier key set, no address counts as verified and every one is
     # held for the member to confirm.
     HUNTER_API_KEY: str = ""
+    PROSPEO_API_KEY: str = ""
+    FINDYMAIL_API_KEY: str = ""
     APOLLO_API_KEY: str = ""
     ZEROBOUNCE_API_KEY: str = ""
     NEVERBOUNCE_API_KEY: str = ""
