@@ -3,7 +3,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,8 +27,8 @@ class StartSessionRequest(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    answer_text: str
-    question_index: int
+    answer_text: str = Field(max_length=8000)
+    question_index: int = Field(ge=0, le=100)
 
 
 @router.post("/session/start")
@@ -71,7 +71,9 @@ async def start_session(
     output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
     if agent_run.status == "failed":
-        logger.warning("Interview session start failed for run %s: %s", run_id, harness_result.get("error"))
+        logger.warning(
+            "Interview session start failed for run %s: %s", run_id, harness_result.get("error")
+        )
         raise HTTPException(status_code=502, detail=CLIENT_SAFE_AGENT_ERROR)
     questions = output.get("questions") or []
     question = questions[0] if questions else None
@@ -147,7 +149,9 @@ async def submit_answer(
     output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
     if agent_run.status == "failed":
-        logger.warning("Answer evaluation failed for run %s: %s", run_id, harness_result.get("error"))
+        logger.warning(
+            "Answer evaluation failed for run %s: %s", run_id, harness_result.get("error")
+        )
         raise HTTPException(status_code=502, detail=CLIENT_SAFE_AGENT_ERROR)
 
     # Re-fetch the session (already own it, per the IDOR check above) to read

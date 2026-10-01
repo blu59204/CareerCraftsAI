@@ -4,6 +4,7 @@ agent_runs_repository — upsert agent run records from the orchestrator.
 Used by orchestrator._run_agent_safely() to persist tokens_used, duration_ms,
 status, output, and error after every agent node execution.
 """
+
 from __future__ import annotations
 
 import asyncio

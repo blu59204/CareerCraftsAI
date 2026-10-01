@@ -48,13 +48,17 @@ async def generate_cover_letter(
         from app.models.db import JobApplication
 
         app_row = (
-            await db.execute(
-                select(JobApplication).where(
-                    JobApplication.id == payload.application_id,
-                    JobApplication.user_id == current_user.id,
+            (
+                await db.execute(
+                    select(JobApplication).where(
+                        JobApplication.id == payload.application_id,
+                        JobApplication.user_id == current_user.id,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if app_row is None:
             raise HTTPException(status_code=404, detail="Application not found")
         jd_text = (app_row.jd_text or "").strip()
@@ -70,7 +74,10 @@ async def generate_cover_letter(
         user_id=current_user.id,
         agent_type="cover_letter",
         status="running",
-        input={"tone": payload.tone, "application_id": str(payload.application_id) if payload.application_id else None},
+        input={
+            "tone": payload.tone,
+            "application_id": str(payload.application_id) if payload.application_id else None,
+        },
     )
     db.add(agent_run)
     # Committed, not just flushed: the orchestrator records the run through a
@@ -86,7 +93,9 @@ async def generate_cover_letter(
                 task_type="cover_letter",
                 context={
                     "tone": payload.tone,
-                    "job_application_id": str(payload.application_id) if payload.application_id else None,
+                    "job_application_id": (
+                        str(payload.application_id) if payload.application_id else None
+                    ),
                     "jd_text": jd_text,
                 },
                 user_settings={},

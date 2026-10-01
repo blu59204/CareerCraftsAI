@@ -39,9 +39,7 @@ async def database(monkeypatch):
         # Match supabase/migrations/0006: agent_runs.user_id is nullable there,
         # so the orchestrator's placeholder insert reaches the primary-key
         # check and waits on the lock instead of failing NOT NULL first.
-        await connection.execute(
-            text("ALTER TABLE agent_runs ALTER COLUMN user_id DROP NOT NULL")
-        )
+        await connection.execute(text("ALTER TABLE agent_runs ALTER COLUMN user_id DROP NOT NULL"))
     # Build the real sync engine (with its connect hooks) against the test DB.
     monkeypatch.setattr(settings, "DATABASE_URL", ASYNC_URL)
     monkeypatch.setattr(sync_db, "_sync_engine", None)

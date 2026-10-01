@@ -7,6 +7,7 @@ be reused from a worker thread.  A dedicated *synchronous* SQLAlchemy engine is
 created once (protected by a threading.Lock) and reused across all calls,
 avoiding both connection pool exhaustion and the asyncio.run() RuntimeError.
 """
+
 import asyncio
 import sys
 import threading

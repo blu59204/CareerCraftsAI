@@ -15,16 +15,16 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field, model_validator
 
 from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
 from app.core.model_router import _build_llm
-from app.core.sync_db import fetch_model_settings, _get_sync_factory
+from app.core.sync_db import _get_sync_factory, fetch_model_settings
 from app.services.rag_service import retrieve
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,9 @@ class InterviewEvaluationOutput(BaseModel):
     feedback: str = ""
     rating: str = ""
 
-_GENERATE_QUESTIONS_PROMPT = """You are an expert interview coach. Generate interview questions for a mock interview session.
+
+_GENERATE_QUESTIONS_PROMPT = """You are an expert interview coach.
+Generate interview questions for a mock interview session.
 
 Target Role: {role}
 Company: {company}
@@ -110,6 +112,35 @@ def compute_rating_label(score: int) -> str:
         if low <= score <= high:
             return label
     return "poor"
+
+
+def merge_answer(
+    answers: list | None,
+    scores: list | None,
+    question_index: int,
+    answer_text: str,
+    score: int,
+) -> tuple[list, list]:
+    """Record one answer, replacing any earlier answer to the same question.
+
+    A resubmitted answer (a client retry, or the user trying again) must not
+    add a second score, or the session would be marked complete early and its
+    average skewed. ``answers[i]`` and ``scores[i]`` stay aligned.
+    """
+    answers = list(answers or [])
+    scores = list(scores or [])
+    entry = {"question_index": question_index, "answer_text": answer_text}
+    for i, existing in enumerate(answers):
+        if isinstance(existing, dict) and existing.get("question_index") == question_index:
+            answers[i] = entry
+            if i < len(scores):
+                scores[i] = score
+            else:
+                scores.append(score)
+            return answers, scores
+    answers.append(entry)
+    scores.append(score)
+    return answers, scores
 
 
 def compute_session_summary(scores: list[int]) -> dict:
@@ -179,21 +210,18 @@ def start_session_node(state: AgentState) -> AgentState:
             try:
                 intel_chunks = retrieve(user_id, "company", company, model_settings, k=3)
                 if intel_chunks:
-                    company_intel_text = "\n".join(
-                        c.page_content for c in intel_chunks
-                    )
+                    company_intel_text = "\n".join(c.page_content for c in intel_chunks)
             except Exception as exc:
                 logger.warning(
                     "interview_coach: failed to retrieve company intel for %s: %s",
-                    company, exc,
+                    company,
+                    exc,
                 )
 
         # Build prompt
         company_intel_section = ""
         if company_intel_text:
-            company_intel_section = (
-                f"Company Intelligence:\n{company_intel_text[:1500]}"
-            )
+            company_intel_section = f"Company Intelligence:\n{company_intel_text[:1500]}"
 
         if question_type_filter:
             type_filter_section = f"Question Type Filter: {question_type_filter} ONLY"
@@ -271,7 +299,8 @@ def start_session_node(state: AgentState) -> AgentState:
                 "questions": questions,
                 "question_count": len(questions),
             },
-            "messages": state["messages"] + [
+            "messages": state["messages"]
+            + [
                 AIMessage(
                     content=f"Interview session started for {role}"
                     + (f" at {company}" if company else "")
@@ -280,7 +309,9 @@ def start_session_node(state: AgentState) -> AgentState:
             ],
         }
     except Exception as exc:
-        logger.error("interview_coach start_session failed for user %s: %s", state.get("user_id"), exc)
+        logger.error(
+            "interview_coach start_session failed for user %s: %s", state.get("user_id"), exc
+        )
         return {**state, "status": "failed", "error": "Agent failed"}
 
 
@@ -330,7 +361,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
             }
 
         questions = session_data.get("questions", [])
-        if question_index >= len(questions):
+        if not 0 <= question_index < len(questions):
             return {
                 **state,
                 "status": "failed",
@@ -371,7 +402,11 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
         raw_score = evaluation.get("score")
         if raw_score is None:
             raw_score = round(
-                (evaluation.get("clarity", 0) + evaluation.get("relevance", 0) + evaluation.get("depth", 0))
+                (
+                    evaluation.get("clarity", 0)
+                    + evaluation.get("relevance", 0)
+                    + evaluation.get("depth", 0)
+                )
                 / 30
                 * 100
             )
@@ -418,7 +453,8 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
                 "rating": rating,
                 "tips": tips,
             },
-            "messages": state["messages"] + [
+            "messages": state["messages"]
+            + [
                 AIMessage(
                     content=f"Answer evaluated: {score}/100 ({rating}). "
                     + (f"Tip: {tips[0]}" if tips else "")
@@ -428,7 +464,8 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
     except Exception as exc:
         logger.error(
             "interview_coach evaluate_answer failed for user %s: %s",
-            state.get("user_id"), exc,
+            state.get("user_id"),
+            exc,
         )
         return {**state, "status": "failed", "error": "Agent failed"}
 
@@ -449,6 +486,7 @@ def _log_agent_run(
 ) -> None:
     """Log an agent run to the agent_runs table."""
     from app.core.event_bus import suppress_terminal_events
+
     if suppress_terminal_events.get():
         return
     from app.models.db import AgentRun
@@ -464,9 +502,7 @@ def _log_agent_run(
                 output=output_data,
                 duration_ms=duration_ms,
                 tokens_used=tokens_used,
-                completed_at=(
-                    datetime.now(timezone.utc) if status in ("completed", "failed") else None
-                ),
+                completed_at=(datetime.now(UTC) if status in ("completed", "failed") else None),
             )
             db.add(run)
             db.commit()
@@ -508,14 +544,13 @@ def _save_interview_session(
 def _get_interview_session(session_id: str) -> dict | None:
     """Retrieve interview session data by ID."""
     from sqlalchemy import select
+
     from app.models.db import InterviewSession
 
     factory = _get_sync_factory()
     try:
         with factory() as db:
-            result = db.execute(
-                select(InterviewSession).where(InterviewSession.id == session_id)
-            )
+            result = db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
             session = result.scalars().first()
             if not session:
                 return None
@@ -542,37 +577,30 @@ def _update_session_answer(
 ) -> None:
     """Append answer and score to the session record."""
     from sqlalchemy import select
+
     from app.models.db import InterviewSession
 
     factory = _get_sync_factory()
     try:
         with factory() as db:
-            result = db.execute(
-                select(InterviewSession).where(InterviewSession.id == session_id)
-            )
+            result = db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
             session = result.scalars().first()
             if not session:
                 return
 
-            answers = list(session.answers or [])
-            scores = list(session.scores or [])
-
-            answers.append({
-                "question_index": question_index,
-                "answer_text": answer_text,
-            })
-            scores.append(score)
-
+            answers, scores = merge_answer(
+                session.answers, session.scores, question_index, answer_text, score
+            )
             session.answers = answers
             session.scores = scores
 
-            # Compute summary if all questions answered
+            # Compute summary once every question has an answer
             if len(scores) >= len(session.questions or []):
                 summary = compute_session_summary(scores)
                 session.summary = summary
                 session.overall_score = summary["overall_score"]
                 session.status = "completed"
-                session.completed_at = datetime.now(timezone.utc)
+                session.completed_at = datetime.now(UTC)
 
             db.commit()
     except Exception as exc:

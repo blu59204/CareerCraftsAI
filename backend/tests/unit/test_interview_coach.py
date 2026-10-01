@@ -1,4 +1,5 @@
 """Unit tests for Interview Coach Agent — question generation, scoring, session lifecycle."""
+
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -65,15 +66,20 @@ def test_start_session_generates_questions(mock_llm):
     from app.agents.interview_coach_agent import start_session_node
 
     mock_llm.responses = [
-        json.dumps([
-            {"id": 1, "type": "behavioral", "text": "Tell me about yourself"},
-            {"id": 2, "type": "technical", "text": "Explain Python GIL"},
-            {"id": 3, "type": "situational", "text": "How do you handle conflict?"},
-        ])
+        json.dumps(
+            [
+                {"id": 1, "type": "behavioral", "text": "Tell me about yourself"},
+                {"id": 2, "type": "technical", "text": "Explain Python GIL"},
+                {"id": 3, "type": "situational", "text": "How do you handle conflict?"},
+            ]
+        )
     ]
 
     with (
-        patch("app.agents.interview_coach_agent.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch(
+            "app.agents.interview_coach_agent.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
         patch("app.agents.interview_coach_agent._build_llm", return_value=mock_llm),
         patch("app.agents.interview_coach_agent.retrieve", return_value=[]),
         patch("app.agents.interview_coach_agent._log_agent_run", return_value=None),
@@ -91,20 +97,30 @@ def test_evaluate_answer_scores_in_range(mock_llm):
     from app.agents.interview_coach_agent import evaluate_answer_node
 
     session_id = str(uuid.uuid4())
-    mock_llm.responses = [json.dumps({
-        "clarity": 8,
-        "relevance": 7,
-        "depth": 6,
-        "feedback": "Good answer with concrete metrics.",
-        "rating": "excellent",
-    })]
+    mock_llm.responses = [
+        json.dumps(
+            {
+                "clarity": 8,
+                "relevance": 7,
+                "depth": 6,
+                "feedback": "Good answer with concrete metrics.",
+                "rating": "excellent",
+            }
+        )
+    ]
 
     with (
-        patch("app.agents.interview_coach_agent.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch(
+            "app.agents.interview_coach_agent.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
         patch("app.agents.interview_coach_agent._build_llm", return_value=mock_llm),
-        patch("app.agents.interview_coach_agent._get_interview_session", return_value={
-            "questions": [{"question": "Tell me about yourself", "type": "behavioral"}]
-        }),
+        patch(
+            "app.agents.interview_coach_agent._get_interview_session",
+            return_value={
+                "questions": [{"question": "Tell me about yourself", "type": "behavioral"}]
+            },
+        ),
         patch("app.agents.interview_coach_agent._update_session_answer", return_value=None),
         patch("app.agents.interview_coach_agent._log_agent_run", return_value=None),
     ):
@@ -242,7 +258,9 @@ async def test_interview_session_contract_start_then_answer_to_completion(monkey
     app.dependency_overrides[get_db] = _fake_db
     try:
         with patch("app.api.v1.interview.get_harness", AsyncMock(return_value=fake_harness)):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 headers = {"Authorization": "Bearer test-token"}
 
                 start_response = await client.post(
@@ -326,15 +344,15 @@ async def test_start_session_returns_502_not_200_when_harness_run_fails(monkeypa
         return fake_db
 
     fake_harness = MagicMock()
-    fake_harness.run = AsyncMock(
-        return_value={"status": "failed", "error": "provider timeout"}
-    )
+    fake_harness.run = AsyncMock(return_value={"status": "failed", "error": "provider timeout"})
 
     app.dependency_overrides[get_current_user] = _fake_user
     app.dependency_overrides[get_db] = _fake_db
     try:
         with patch("app.api.v1.interview.get_harness", AsyncMock(return_value=fake_harness)):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
                 response = await client.post(
                     "/api/v1/interview/session/start",
                     json={"role": "Python Engineer", "company": "Stripe"},
@@ -344,3 +362,36 @@ async def test_start_session_returns_502_not_200_when_harness_run_fails(monkeypa
                 assert "question" not in response.json()
     finally:
         app.dependency_overrides.clear()
+
+
+def test_merge_answer_replaces_a_resubmitted_answer():
+    from app.agents.interview_coach_agent import merge_answer
+
+    answers, scores = merge_answer([], [], 0, "first try", 40)
+    answers, scores = merge_answer(answers, scores, 0, "second try", 70)
+
+    assert scores == [70]
+    assert answers == [{"question_index": 0, "answer_text": "second try"}]
+
+
+def test_merge_answer_appends_new_questions_in_order():
+    from app.agents.interview_coach_agent import merge_answer
+
+    answers, scores = merge_answer(None, None, 0, "a", 50)
+    answers, scores = merge_answer(answers, scores, 1, "b", 80)
+    answers, scores = merge_answer(answers, scores, 0, "a again", 60)
+
+    assert scores == [60, 80]
+    assert [a["question_index"] for a in answers] == [0, 1]
+
+
+def test_answer_request_bounds():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.v1.interview import AnswerRequest
+
+    with pytest.raises(ValidationError):
+        AnswerRequest(answer_text="x", question_index=-1)
+    with pytest.raises(ValidationError):
+        AnswerRequest(answer_text="x" * 8001, question_index=0)
