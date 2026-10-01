@@ -43,6 +43,8 @@ class AutoApplyIntent:
     # Chosen by the API so it can return the run id right away; older
     # callers leave it unset and the workflow picks one.
     run_id: str | None = None
+    # Started by the agent rather than the member: needs the score threshold.
+    auto: bool = False
 
 
 # Extension progress stages (see app/api/v1/extension.py).
@@ -111,6 +113,7 @@ class AutoApplyWorkflow:
                     "job_application_id": intent.job_application_id,
                     "workflow_id": workflow.info().workflow_id,
                     "run_id": run_id,
+                    "auto": intent.auto,
                 },
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=_RESERVE_RETRY_POLICY,
@@ -144,6 +147,10 @@ class AutoApplyWorkflow:
 
     async def _run_in_extension(self, intent: AutoApplyIntent, reserved: dict) -> dict:
         """Hand the application to the user's browser and wait for it."""
+        if reserved.get("wait_seconds"):
+            # Space applications out rather than sending them in a burst.
+            self._state = "pacing"
+            await workflow.sleep(timedelta(seconds=reserved["wait_seconds"]))
         workflow_id = workflow.info().workflow_id
         task = await workflow.execute_activity(
             create_extension_task_activity,

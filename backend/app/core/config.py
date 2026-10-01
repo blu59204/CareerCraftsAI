@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     # ── Agent configuration ────────────────────────────────────────────
     AGENT_DEFAULT_TIMEOUT_S: int = 60
     AGENT_MAX_CONCURRENT_PER_USER: int = 2
+    # ── Application limits (protect the member's accounts on job boards) ──
+    # Applications started per rolling 24 hours, the least gap between two,
+    # and the match score an automatic application needs (0-100).
+    APPLY_DAILY_CAP: int = 25
+    APPLY_MIN_GAP_SECONDS: int = 120
+    AUTO_APPLY_MIN_SCORE: int = 70
     AGENT_THINKING_BUDGET_TOKENS: int = 8000
     # Upper bound for one agent execution activity (LLM calls + tools).
     WORKFLOW_TASK_TIMEOUT_S: int = Field(default=300, ge=30, le=1800)
