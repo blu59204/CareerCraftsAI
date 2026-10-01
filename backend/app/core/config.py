@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     FUNDING_FEEDS: list[str] = [
         "https://inc42.com/feed/",
         "https://yourstory.com/feed",
+        "https://entrackr.com/feed",
     ]
     ADZUNA_APP_ID: str | None = None
     ADZUNA_APP_KEY: str | None = None

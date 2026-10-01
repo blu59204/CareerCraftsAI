@@ -29,6 +29,7 @@ FAMILIES = {
     "arbeitnow",
     "himalayas",
     "workingnomads",
+    "themuse",
     "careerjet",
     "jooble",
     "hn_hiring",
@@ -531,6 +532,7 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         "arbeitnow": f"https://www.arbeitnow.com/api/job-board-api?page={page}",
         "himalayas": f"https://himalayas.app/jobs/api?limit=100&offset={(page-1)*100}",
         "workingnomads": "https://www.workingnomads.com/api/exposed_jobs/",
+        "themuse": f"https://www.themuse.com/api/public/jobs?page={page-1}",
     }
     if family == "workable":
         token = settings.WORKABLE_API_TOKENS.get(tenant)
@@ -775,6 +777,22 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
             }
             for j in (data if isinstance(data, list) else [])
         ]
+    elif family == "themuse":
+        rows = [
+            {
+                "id": j.get("id"),
+                "title": j.get("name"),
+                "company": (j.get("company") or {}).get("name"),
+                "url": (j.get("refs") or {}).get("landing_page"),
+                "location": ", ".join(
+                    str(loc.get("name")) for loc in j.get("locations") or [] if loc.get("name")
+                ),
+                "description": j.get("contents"),
+                "posted_at": j.get("publication_date"),
+            }
+            for j in data.get("results", [])
+        ]
+        next_cursor = str(page + 1) if page < int(data.get("page_count") or 0) else None
     elif family == "careerjet":
         rows = [
             {
