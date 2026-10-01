@@ -55,6 +55,26 @@ async def draft_followup_activity(params: dict) -> dict:
 
 
 @activity.defn
+async def list_inbox_tracking_users_activity(params: dict) -> dict:
+    from app.services.application_status_service import list_inbox_tracking_users
+
+    return {"user_ids": await list_inbox_tracking_users()}
+
+
+@activity.defn
+async def inbox_status_activity(params: dict) -> dict:
+    import asyncio
+
+    from app.services.application_status_service import scan_inbox_for_member
+
+    outcome = await asyncio.to_thread(scan_inbox_for_member, params["user_id"])
+    if outcome["status"] == "failed":
+        # Let Temporal retry the member's scan; other members are unaffected.
+        raise RuntimeError("Inbox scan failed")
+    return {"changes": len((outcome["result"] or {}).get("changes", []))}
+
+
+@activity.defn
 async def list_daily_search_users_activity(params: dict) -> dict:
     from app.services.scheduled_jobs import list_daily_search_users
 

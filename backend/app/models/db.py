@@ -233,6 +233,31 @@ class ExtensionTask(Base):
     submission_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ApplicationStatusEvent(Base):
+    """An email that moved (or failed to match) an application's status.
+
+    Unique per (user, Gmail message): a message is acted on at most once.
+    """
+
+    __tablename__ = "application_status_events"
+    __table_args__ = (UniqueConstraint("user_id", "gmail_message_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    job_application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("job_applications.id", ondelete="SET NULL"), index=True
+    )
+    gmail_message_id: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    company: Mapped[str | None] = mapped_column(String)
+    subject: Mapped[str | None] = mapped_column(String)
+    previous_status: Mapped[str | None] = mapped_column(String)
+    new_status: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ApplicationAttempt(Base):
     """Idempotency ledger for the durable submit click.
 
@@ -584,6 +609,10 @@ class UserPreferences(Base):
     # Opt-in: the scheduled daily search runs browser automation and LLM
     # calls on the member's own API key, so it never starts unasked.
     daily_search_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Opt-in: scan the member's connected Gmail for replies to applications.
+    inbox_tracking_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

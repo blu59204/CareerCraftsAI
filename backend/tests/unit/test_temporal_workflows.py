@@ -487,6 +487,7 @@ async def test_ensure_schedules_registers_recurring_jobs(monkeypatch):
 
     assert set(created) | {"maintenance"} == {
         "daily-job-search",
+        "inbox-status-check",
         "maintenance",
         "public-job-catalog-refresh",
     }
@@ -501,6 +502,7 @@ def test_every_started_workflow_is_registered_with_the_worker():
     from app.workflows.scheduled import (
         DailySearchWorkflow,
         DailyUserSearchWorkflow,
+        InboxStatusWorkflow,
         MaintenanceWorkflow,
     )
 
@@ -511,6 +513,7 @@ def test_every_started_workflow_is_registered_with_the_worker():
         JobSearchWorkflow,
         DailySearchWorkflow,
         DailyUserSearchWorkflow,
+        InboxStatusWorkflow,
         MaintenanceWorkflow,
     ):
         assert workflow_cls in WORKFLOWS
@@ -526,6 +529,8 @@ def test_every_started_workflow_is_registered_with_the_worker():
         "draft_followup_activity",
         "daily_search_activity",
         "list_daily_search_users_activity",
+        "list_inbox_tracking_users_activity",
+        "inbox_status_activity",
         "maintenance_activity",
         "reserve_application_attempt",
     } <= names
@@ -566,3 +571,35 @@ async def test_daily_search_runs_each_opted_in_member_separately():
     # One member failing every retry does not stop anyone else's search.
     assert result == {"users": 7, "failed": 1}
     assert sorted(searched) == [u for u in user_ids if u != "u3"]
+
+
+@pytest.mark.asyncio
+async def test_inbox_status_scans_each_opted_in_member_and_survives_a_failure():
+    from app.workflows.scheduled import InboxStatusWorkflow
+
+    scanned = []
+
+    @activity.defn(name="list_inbox_tracking_users_activity")
+    async def list_users(params: dict) -> dict:
+        return {"user_ids": ["a", "b", "c"]}
+
+    @activity.defn(name="inbox_status_activity")
+    async def scan(params: dict) -> dict:
+        if params["user_id"] == "b":
+            raise RuntimeError("Gmail unavailable")
+        scanned.append(params["user_id"])
+        return {"changes": 1}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[InboxStatusWorkflow],
+            activities=[list_users, scan],
+        ):
+            result = await env.client.execute_workflow(
+                InboxStatusWorkflow.run, id="inbox-status", task_queue=QUEUE
+            )
+
+    assert result == {"users": 3, "failed": 1}
+    assert sorted(scanned) == ["a", "c"]

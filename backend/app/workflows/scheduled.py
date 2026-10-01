@@ -13,7 +13,9 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from app.workflows.job_activities import (
         daily_search_activity,
+        inbox_status_activity,
         list_daily_search_users_activity,
+        list_inbox_tracking_users_activity,
         maintenance_activity,
         refresh_job_catalog_activity,
     )
@@ -74,6 +76,40 @@ class DailySearchWorkflow:
 
 
 @workflow.defn
+class InboxStatusWorkflow:
+    """Scan each opted-in member's Gmail for replies to their applications.
+    One activity per member, five at a time, each with its own timeout and
+    retries, so one mailbox failing never holds up or restarts another."""
+
+    @workflow.run
+    async def run(self) -> dict:
+        listed = await workflow.execute_activity(
+            list_inbox_tracking_users_activity,
+            {},
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
+        )
+        user_ids: list[str] = listed.get("user_ids", [])
+        failed = 0
+        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
+            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
+            results = await asyncio.gather(
+                *(
+                    workflow.execute_activity(
+                        inbox_status_activity,
+                        {"user_id": user_id},
+                        start_to_close_timeout=timedelta(minutes=10),
+                        retry_policy=_RETRY,
+                    )
+                    for user_id in batch
+                ),
+                return_exceptions=True,
+            )
+            failed += sum(isinstance(result, BaseException) for result in results)
+        return {"users": len(user_ids), "failed": failed}
+
+
+@workflow.defn
 class MaintenanceWorkflow:
     @workflow.run
     async def run(self) -> dict:
@@ -107,6 +143,11 @@ def schedule_specs() -> list[tuple[str, type, timedelta]]:
             "daily-job-search",
             DailySearchWorkflow,
             timedelta(hours=settings.DAILY_SEARCH_INTERVAL_HOURS),
+        ),
+        (
+            "inbox-status-check",
+            InboxStatusWorkflow,
+            timedelta(hours=settings.INBOX_STATUS_INTERVAL_HOURS),
         ),
         (
             "maintenance",

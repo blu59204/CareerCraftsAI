@@ -149,6 +149,7 @@ class Settings(BaseSettings):
     # Recurring jobs registered as Temporal Schedules by the worker at start.
     TEMPORAL_SCHEDULES_ENABLED: bool = True
     DAILY_SEARCH_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
+    INBOX_STATUS_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=30, le=3600)
 
     # ── Job applications ───────────────────────────────────────────────

@@ -2,13 +2,14 @@
 email_monitor_agent.py — Monitors Gmail inbox for job-related notifications.
 
 Reads emails from hiring platforms (LinkedIn, Naukri, Indeed, etc.) and:
-1. Detects interview invites → updates application status to "interview"
-2. Detects rejections → updates status to "rejected"
-3. Detects "profile viewed" → updates status to "viewed"
-4. Detects recruiter messages → flags for user attention
-5. Triggers follow-up scheduling when appropriate
+1. Detects interview invites → moves the matching application to "interview"
+2. Detects rejections → moves it to "rejected"
+3. Detects "profile viewed" / shortlisted → moves it to "viewed"
+4. Detects recruiter messages → recorded, no status change
 
-Runs on demand as an agent run (AgentRunWorkflow).
+Matching, forward-only status rules and once-per-message dedupe live in
+app.services.application_status_service. Runs on demand as an agent run
+(AgentRunWorkflow) and daily for members who turned on inbox tracking.
 """
 
 import logging
@@ -18,7 +19,8 @@ from langchain_core.messages import HumanMessage
 
 from app.agents.state import AgentState
 from app.core.model_router import build_agent_llm
-from app.core.sync_db import fetch_model_settings
+from app.core.sync_db import fetch_model_settings, run_coro_sync
+from app.services.application_status_service import apply_inbox_updates, processed_message_ids
 from app.services.gmail_service import GmailMCPClient
 
 logger = logging.getLogger(__name__)
@@ -85,43 +87,55 @@ def email_monitor_node(state: AgentState) -> AgentState:
 
         gmail = GmailMCPClient(user_id)
 
-        # Search for recent job-related emails
+        # Search for recent job-related emails. Windows overlap the daily
+        # schedule on purpose; already-handled messages are skipped below.
         queries = [
-            "from:linkedin.com newer_than:1d",
-            "from:naukri.com newer_than:1d",
-            "from:indeed.com newer_than:1d",
+            "from:linkedin.com newer_than:2d",
+            "from:naukri.com newer_than:2d",
+            "from:indeed.com newer_than:2d",
             "subject:interview newer_than:3d",
             "subject:application newer_than:3d",
         ]
 
-        all_notifications: list[dict] = []
+        message_ids: list[str] = []
         for query in queries:
             results = gmail.search_threads(query, max_results=5)
-            if isinstance(results, list):
-                all_notifications.extend(results)
+            for item in results if isinstance(results, list) else []:
+                message_id = item.get("id") if isinstance(item, dict) else None
+                if message_id and message_id not in message_ids:
+                    message_ids.append(message_id)
 
-        if not all_notifications:
+        # Skip mail already acted on, so repeat scans cost no model calls.
+        done = run_coro_sync(processed_message_ids(user_id, message_ids))
+        fresh = [message_id for message_id in message_ids if message_id not in done]
+        if not fresh:
             return {
                 **state,
                 "status": "completed",
-                "result": {"notifications": [], "updates": []},
+                "result": {"notifications_scanned": len(message_ids), "updates": [], "changes": []},
             }
 
-        # Classify each notification
+        # Classify each new message
         llm = build_agent_llm(model_settings)
         updates: list[dict] = []
 
-        for notif in all_notifications[:15]:  # Cap to avoid token burn
-            classification = _classify_notification(notif, llm)
+        for message_id in fresh[:15]:  # Cap to avoid token burn
+            summary = gmail.get_message_summary(message_id)
+            if not summary:
+                continue
+            classification = _classify_notification(summary, llm)
             if classification and classification["category"] != "IRRELEVANT":
-                updates.append(classification)
+                updates.append({**classification, "message_id": message_id})
+
+        changes = run_coro_sync(apply_inbox_updates(user_id, updates)) if updates else []
 
         return {
             **state,
             "status": "completed",
             "result": {
-                "notifications_scanned": len(all_notifications),
+                "notifications_scanned": len(message_ids),
                 "updates": updates,
+                "changes": changes,
             },
         }
     except Exception as exc:
@@ -136,8 +150,9 @@ def _classify_notification(notif: dict, llm) -> dict | None:
     body = str(notif.get("body", notif.get("snippet", "")))[:500]
     sender = str(notif.get("from", notif.get("sender", "")))
 
-    # Quick regex classification
-    combined = f"{subject} {body}".lower()
+    # Quick regex classification. Patterns match case-insensitively, but the
+    # company extractor needs the original capitals to find a name.
+    combined = f"{subject} {body}"
     for status, patterns in _STATUS_PATTERNS.items():
         for pattern in patterns:
             if re.search(pattern, combined, re.IGNORECASE):

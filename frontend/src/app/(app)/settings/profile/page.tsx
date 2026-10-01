@@ -10,6 +10,7 @@ import {
   Check,
   CalendarCheck,
   CircleNotch,
+  EnvelopeSimple,
   CurrencyDollar,
   FloppyDisk,
   MapPin,
@@ -57,6 +58,8 @@ interface UserPreferences {
   prefer_live_browser: boolean;
   // Opt-in: the scheduled morning search runs only for members who turn it on.
   daily_search_enabled: boolean;
+  // Opt-in: scan the connected Gmail for replies and move applications forward.
+  inbox_tracking_enabled: boolean;
 }
 
 interface FormState {
@@ -72,6 +75,7 @@ interface FormState {
   bio: string;
   prefer_live_browser: boolean;
   daily_search_enabled: boolean;
+  inbox_tracking_enabled: boolean;
 }
 
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
@@ -114,6 +118,7 @@ const DEFAULT_FORM: FormState = {
   bio: "",
   prefer_live_browser: false,
   daily_search_enabled: false,
+  inbox_tracking_enabled: false,
 };
 
 function prefsToForm(prefs: UserPreferences): FormState {
@@ -130,6 +135,7 @@ function prefsToForm(prefs: UserPreferences): FormState {
     bio: prefs.bio ?? "",
     prefer_live_browser: Boolean(prefs.prefer_live_browser),
     daily_search_enabled: Boolean(prefs.daily_search_enabled),
+    inbox_tracking_enabled: Boolean(prefs.inbox_tracking_enabled),
   };
 }
 
@@ -223,6 +229,7 @@ function ProfileSkeleton() {
     "lg:col-span-4 h-52",
     "lg:col-span-7 h-56",
     "lg:col-span-5 h-56",
+    "lg:col-span-12 h-44",
     "lg:col-span-12 h-44",
   ];
   return (
@@ -342,6 +349,7 @@ export default function ProfilePreferencesPage() {
         bio: form.bio || undefined,
         prefer_live_browser: form.prefer_live_browser,
         daily_search_enabled: form.daily_search_enabled,
+        inbox_tracking_enabled: form.inbox_tracking_enabled,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -754,6 +762,37 @@ export default function ProfilePreferencesPage() {
                 </div>
                 <StatusPill tone={form.daily_search_enabled ? "primary" : "neutral"}>
                   {form.daily_search_enabled ? "Every morning" : "Off (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* I — inbox tracking */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.14}
+                tone={form.inbox_tracking_enabled ? "primary" : "muted"}
+                icon={<EnvelopeSimple size={16} weight="light" />}
+                title="Track replies in Gmail"
+                meta={
+                  <Toggle
+                    checked={form.inbox_tracking_enabled}
+                    onChange={(next) => set("inbox_tracking_enabled", next)}
+                    label="Update application status from your inbox"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Update application status from your inbox
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, CareerCraft checks your connected Gmail once a day for recruiter replies, such as an
+                    interview invitation or a rejection, and moves the matching application forward. It reads sender,
+                    subject and a short preview only, never changes or sends mail, and moves a status only when one
+                    application clearly matches. Requires Gmail under Integrations and an AI model.
+                  </p>
+                </div>
+                <StatusPill tone={form.inbox_tracking_enabled ? "primary" : "neutral"}>
+                  {form.inbox_tracking_enabled ? "Checking daily" : "Off (default)"}
                 </StatusPill>
               </PrefCard>
             </div>
