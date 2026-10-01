@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage
 from app.agents._llm_json import call_llm_json
 from app.agents.prompts.cover_letter_prompt import OUTPUT_SCHEMA as CoverLetterOutput
 from app.agents.prompts.cover_letter_prompt import SYSTEM_PROMPT as COVER_SYSTEM_PROMPT
+from app.agents.prompts.cover_letter_prompt import VALID_TONES
 from app.agents.prompts.cover_letter_prompt import build_user_prompt as build_cover_prompt
 from app.agents.state import AgentState
 from app.core.model_router import build_agent_llm
@@ -25,8 +26,6 @@ from app.core.sync_db import _get_sync_factory, _to_uuid, fetch_model_settings
 from app.services.rag_service import retrieve
 
 logger = logging.getLogger(__name__)
-
-VALID_TONES = {"formal", "casual", "bold"}
 
 
 def _store_cover_letter(

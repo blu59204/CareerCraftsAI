@@ -5,13 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.prompts.cover_letter_prompt import VALID_TONES
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import queue_agent_run
 from app.models.db import CoverLetterVersion, User
 
 router = APIRouter(prefix="/cover-letter", tags=["cover-letter"])
-
-VALID_TONES = {"formal", "casual", "bold"}
 
 
 class GenerateRequest(BaseModel):
@@ -37,7 +36,7 @@ async def generate_cover_letter(
     current_user: User = Depends(get_current_user),
 ):
     if payload.tone not in VALID_TONES:
-        raise HTTPException(status_code=400, detail=f"tone must be one of: {VALID_TONES}")
+        raise HTTPException(status_code=400, detail=f"tone must be one of: {sorted(VALID_TONES)}")
 
     jd_text = (payload.jd_text or "").strip()
     if not jd_text and payload.application_id:

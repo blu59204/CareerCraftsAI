@@ -64,7 +64,7 @@ import { ScoreExplanation } from "@/components/resume/ScoreExplanation";
 import { scoreAnalysisSchema, tailoredResumeSchema } from "@/lib/profile-contracts";
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
-import { generateCoverLetter as requestCoverLetter } from "@/lib/agent-run";
+import { generateCoverLetter as requestCoverLetter, type CoverLetterTone } from "@/lib/agent-run";
 import { getResumeInsightData } from "@/lib/resume-insights";
 import { isCurrentAnalysis } from "@/lib/resume-state";
 import { takePendingJd } from "@/lib/job-handoff";
@@ -1097,12 +1097,12 @@ export default function ResumePage() {
   // -------------------------------------------------------------------------
   const generateCoverLetter = async () => {
     setGenerating(true);
-    // Map UI tone labels to backend VALID_TONES (formal | casual | bold)
-    const toneMap: Record<CoverTone, "formal" | "casual" | "bold"> = {
+    // Map UI tone labels to the backend's tones
+    const toneMap: Record<CoverTone, CoverLetterTone> = {
       Professional: "formal",
-      Concise: "formal",
+      Concise: "concise",
       Enthusiastic: "casual",
-      "Story-driven": "bold",
+      "Story-driven": "story",
     };
     try {
       // Queue the cover_letter agent and wait for its draft.

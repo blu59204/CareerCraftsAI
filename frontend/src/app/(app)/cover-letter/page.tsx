@@ -14,7 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api";
-import { generateCoverLetter } from "@/lib/agent-run";
+import { generateCoverLetter, type CoverLetterTone } from "@/lib/agent-run";
 import { cn } from "@/lib/utils";
 import {
   Bezel,
@@ -83,11 +83,11 @@ export default function CoverLetterPage() {
 
   const generate = async () => {
     setGenerating(true);
-    const toneMap: Record<Tone, "formal" | "casual" | "bold"> = {
+    const toneMap: Record<Tone, CoverLetterTone> = {
       Professional: "formal",
-      Concise: "formal",
+      Concise: "concise",
       Enthusiastic: "casual",
-      "Story-driven": "bold",
+      "Story-driven": "story",
     };
     try {
       const data = await generateCoverLetter(toneMap[tone], jd.trim());

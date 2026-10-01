@@ -44,8 +44,10 @@ export type CoverLetterResult = { runId: string; content: string | null; warning
  * job description (400 when missing) and returns at once; the agent itself
  * runs as a durable workflow.
  */
+export type CoverLetterTone = "formal" | "casual" | "bold" | "concise" | "story";
+
 export async function generateCoverLetter(
-  tone: "formal" | "casual" | "bold",
+  tone: CoverLetterTone,
   jdText: string,
 ): Promise<CoverLetterResult> {
   const { data } = await apiClient.post<{ run_id: string }>("/cover-letter/generate", {

@@ -5,8 +5,10 @@ Run: pytest tests/security -v
 
 import base64
 import json
+
 import pytest
 from httpx import ASGITransport, AsyncClient
+
 from app.main import app
 
 
@@ -26,6 +28,7 @@ async def test_protected_endpoints_reject_unauthenticated():
         ("POST", "/api/v1/email/compose"),
         ("POST", "/api/v1/resume/optimize"),
         ("POST", "/api/v1/interview/session/start"),
+        ("GET", "/api/v1/interview/sessions"),
         ("POST", "/api/v1/linkedin/outreach/identify"),
         ("POST", "/api/v1/cover-letter/generate"),
         ("POST", "/api/v1/interview/session"),
@@ -129,7 +132,7 @@ async def test_job_search_max_results_capped():
 
 def test_api_key_encryption_ciphertext_not_plaintext():
     """Verify encrypted key is AES-GCM ciphertext, not the plaintext key."""
-    from app.core.security import encrypt_api_key, decrypt_api_key
+    from app.core.security import decrypt_api_key, encrypt_api_key
 
     plaintext = "sk-ant-api03-real-looking-key-with-enough-length"
     secret = "test-secret-key-32-chars-minimum!!"

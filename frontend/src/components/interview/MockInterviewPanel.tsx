@@ -33,6 +33,7 @@ import {
   Textarea,
   listItem,
 } from "@/components/vanguard";
+import { DictationButton } from "./DictationButton";
 import { ScoreRing, scoreTone } from "./ScoreRing";
 
 type QuestionType = "behavioral" | "technical" | "situational";
@@ -428,6 +429,9 @@ export function MockInterviewPanel() {
                 className="min-h-44 resize-none"
                 aria-describedby="coach-answer-count"
               />
+              <div className="mt-3">
+                <DictationButton current={answer} onText={setAnswer} />
+              </div>
               <div className="mt-5 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <p id="coach-answer-count" aria-live="polite" className="text-xs tabular-nums text-muted-foreground">
                   <span className={words >= 10 ? "text-success" : undefined}>{words}</span> words · minimum 10

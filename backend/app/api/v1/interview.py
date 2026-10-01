@@ -1,7 +1,8 @@
 import logging
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,6 +74,54 @@ async def submit_answer(
         },
     )
     return {"run_id": run_id, "status": "queued", "question_index": body.question_index}
+
+
+class SessionListItem(BaseModel):
+    id: uuid.UUID
+    role: str
+    company: str | None
+    status: str
+    overall_score: int | None
+    question_count: int
+    answered_count: int
+    started_at: datetime
+    completed_at: datetime | None
+
+
+@router.get("/sessions", response_model=list[SessionListItem])
+async def list_sessions(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The member's past mock interviews, newest first. Question and answer
+    text stays in GET /session/{id}/summary; this is just the list."""
+    rows = (
+        (
+            await db.execute(
+                select(InterviewSession)
+                .where(InterviewSession.user_id == current_user.id)
+                .order_by(InterviewSession.started_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        SessionListItem(
+            id=row.id,
+            role=row.role,
+            company=row.company,
+            status=row.status,
+            overall_score=row.overall_score,
+            question_count=len(row.questions or []),
+            answered_count=len(row.answers or []),
+            started_at=row.started_at,
+            completed_at=row.completed_at,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/session/{session_id}/summary")

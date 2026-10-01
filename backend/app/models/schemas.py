@@ -176,7 +176,7 @@ class ModelSettingsResponse(BaseModel):
 
 class CoverLetterRequest(BaseModel):
     job_application_id: uuid.UUID
-    tone: Literal["formal", "casual", "bold"] = "formal"
+    tone: Literal["formal", "casual", "bold", "concise", "story"] = "formal"
 
 
 class CoverLetterResponse(BaseModel):
