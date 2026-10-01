@@ -24,7 +24,11 @@ async def _recent_attempt_stats(db, user_id, exclude_id, now):
         await db.execute(
             select(
                 func.count(),
-                func.max(func.coalesce(ApplicationAttempt.scheduled_start_at, ApplicationAttempt.created_at)),
+                func.max(
+                    func.coalesce(
+                        ApplicationAttempt.scheduled_start_at, ApplicationAttempt.created_at
+                    )
+                ),
             ).where(*conditions)
         )
     ).one()
