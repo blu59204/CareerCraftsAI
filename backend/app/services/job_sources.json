@@ -2747,5 +2747,13 @@
     "refresh_hours": 12,
     "provenance": "Careerjet partner API (India); needs CAREERJET_API_KEY, inert without it",
     "policy": "official API; stop on denial"
+  },
+  {
+    "id": "themuse",
+    "family": "themuse",
+    "tenant": "",
+    "permitted": true,
+    "provenance": "official public job API",
+    "policy": "attribution and outbound original link; respect terms and cache policy"
   }
 ]
