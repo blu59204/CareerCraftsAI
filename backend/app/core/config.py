@@ -84,7 +84,14 @@ class Settings(BaseSettings):
     BROWSER_DELAY_EXTRACT_MAX_MS: int = 1500
 
     # ── External API keys (all optional) ───────────────────────────────
+    # Recruiter email finders and verifiers: bring your own keys. With no
+    # verifier key set, no address counts as verified and every one is
+    # held for the member to confirm.
     HUNTER_API_KEY: str = ""
+    APOLLO_API_KEY: str = ""
+    ZEROBOUNCE_API_KEY: str = ""
+    NEVERBOUNCE_API_KEY: str = ""
+    MILLIONVERIFIER_API_KEY: str = ""
     PROXYCURL_API_KEY: str = ""
     EXA_API_KEY: str = ""
     RESEND_API_KEY: str = ""
