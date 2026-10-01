@@ -121,13 +121,24 @@ class GmailMCPClient:
             )
         return messages
 
-    def send_message(self, to: str, subject: str, body: str, html: str | None = None) -> dict:
+    def send_message(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        html: str | None = None,
+        attachments: list[tuple[str, bytes]] | None = None,
+    ) -> dict:
         message = EmailMessage()
         message["To"] = to
         message["Subject"] = subject
         message.set_content(body)
         if html:
             message.add_alternative(html, subtype="html")
+        for filename, content in attachments or []:
+            message.add_attachment(
+                content, maintype="application", subtype="pdf", filename=filename
+            )
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode().rstrip("=")
         try:
             result = proxy_request(

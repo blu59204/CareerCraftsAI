@@ -99,11 +99,14 @@ def _address(header: str) -> str:
 
 
 def member_reply(thread: dict, member_email: str) -> dict | None:
-    """Latest message in the thread written by the member."""
+    """Latest message in the thread the member really sent. The From header
+    alone can be forged by anyone mailing the member, so the message must also
+    carry Gmail's SENT label, which only mail sent from the account has."""
     mine = [
         m
         for m in thread.get("messages", [])
-        if _address(
+        if "SENT" in (m.get("labelIds") or [])
+        and _address(
             next(
                 (
                     str(h.get("value", ""))
@@ -209,23 +212,29 @@ async def restart_answered(user_id: str) -> int:
             .scalars()
             .all()
         )
-        for task in rows:
+        pending = [
+            t for t in rows if (t.payload or {}).get("restart_pending") and t.job_application_id
+        ]
+        # Close every still-open attempt first, then wait once for all of them.
+        closing = [t for t in pending if t.status in OPEN_TASK_STATUSES]
+        for task in closing:
+            try:
+                await signal_extension_update(
+                    task.workflow_id,
+                    {"stage": "cancelled", "details": {"message": "Restarting with your answers"}},
+                )
+            except Exception:
+                logger.warning("Could not close application %s", task.id, exc_info=True)
+        if closing:
+            await db.commit()  # release the connection while the workflows close
+            await asyncio.sleep(3)
+            for task in closing:
+                await db.refresh(task)
+        for task in pending:
             payload = dict(task.payload or {})
-            if not payload.get("restart_pending") or not task.job_application_id:
-                continue
             try:
                 if task.status in OPEN_TASK_STATUSES:
-                    await signal_extension_update(
-                        task.workflow_id,
-                        {
-                            "stage": "cancelled",
-                            "details": {"message": "Restarting with your answers"},
-                        },
-                    )
-                    await asyncio.sleep(3)
-                    await db.refresh(task)
-                    if task.status in OPEN_TASK_STATUSES:
-                        continue
+                    continue
                 result = await start_auto_apply(owner, task.job_application_id)
             except Exception:
                 logger.warning("Could not restart application %s", task.id, exc_info=True)

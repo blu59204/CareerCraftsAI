@@ -32,6 +32,7 @@ These must be set for the app to start.
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins. In production: `https://yourdomain.com` |
 | `NEXT_PUBLIC_APP_URL` | `http://localhost:3000` | Full frontend URL. Used for OAuth redirect construction. |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL as seen by the browser. |
+| `PUBLIC_API_URL` | unset | Public https address of the API as recipients' mail apps reach it. Open tracking adds its pixel only when this is a public https URL (never localhost). |
 
 ---
 
@@ -47,6 +48,7 @@ All optional — features gracefully degrade if not set.
 | `GOOGLE_CSE_API_KEY`, `GOOGLE_CSE_ID` | [Programmable Search](https://programmablesearch.google.com/) | Job discovery | Enables the `google:*` sources, which search for postings on Greenhouse, Lever, Ashby and Workday. Inactive without both. Free quota is 100 queries a day; each source uses one per day. |
 | `FUNDING_FEEDS` | Startup-news RSS (default: Inc42, YourStory) | Job ranking | JSON list of feeds. Headlines like "Acme raises $5M" mark Acme as recently funded for 45 days and add a small ranking bonus. `[]` turns it off. |
 | `APOLLO_API_KEY` | [apollo.io](https://apollo.io) | Recruiter outreach | Second finder; matches a named recruiter at a company. |
+| `PROSPEO_API_KEY` / `FINDYMAIL_API_KEY` | [prospeo.io](https://prospeo.io) / [findymail.com](https://findymail.com) | Recruiter outreach | More finders, tried after Hunter and Apollo. Inert without a key. Response shapes follow their documentation and were not run live. |
 | `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `MILLIONVERIFIER_API_KEY` | the provider | Recruiter outreach | Verifies an address before it is emailed. Without one, nothing counts as verified and every email waits for the member's approval. |
 | `APPLY_DAILY_CAP`, `APPLY_MIN_GAP_SECONDS`, `AUTO_APPLY_MIN_SCORE` | none | Applications | Applications per rolling 24 hours (25), seconds between two (120), and the match score an automatic application needs (70). |
 | `PROXYCURL_API_KEY` | [proxycurl.com](https://proxycurl.com) | LinkedInAgent | Fetches LinkedIn profile data without scraping. |

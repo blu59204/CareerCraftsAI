@@ -46,9 +46,11 @@ async def test_funded_companies_are_matched_by_squashed_name(monkeypatch):
     monkeypatch.setattr(funding, "_redis", get_redis)
     monkeypatch.setattr(funding, "public_get", get)
     monkeypatch.setattr(funding.settings, "FUNDING_FEEDS", ["https://news.example.com/feed"])
+    assert await funding.refresh() == 2
+    # a search reads what is stored and never waits on the feed
     found = await funding.funded_among(["ACME LABS", "Initech", "globex"])
     assert found == {"acme labs", "globex"}
-    # a second call inside the refresh window does not read the feed again
+    # a second refresh inside the window does not read the feed again
     assert await funding.refresh() == 0
 
 

@@ -66,6 +66,36 @@ INDIAN_PLATFORMS = {
         "search_url": "https://www.iimjobs.com/search?q={query}&l={location}",
         "url": "https://www.iimjobs.com",
     },
+    "timesjobs": {
+        "name": "TimesJobs",
+        "search_url": "https://www.timesjobs.com/candidate/job-search.html?searchType=personalizedSearch&txtKeywords={query}&txtLocation={location}",
+        "url": "https://www.timesjobs.com",
+    },
+    "apna": {
+        "name": "Apna",
+        "search_url": "https://apna.co/jobs?search={query}&location={location}",
+        "url": "https://apna.co",
+    },
+    "techgig": {
+        "name": "TechGig",
+        "search_url": "https://www.techgig.com/job-search?txtKeyword={query}&txtLocation={location}",
+        "url": "https://www.techgig.com",
+    },
+    "unstop": {
+        "name": "Unstop",
+        "search_url": "https://unstop.com/jobs?searchTerm={query}",
+        "url": "https://unstop.com",
+    },
+    "ambitionbox": {
+        "name": "AmbitionBox Jobs",
+        "search_url": "https://www.ambitionbox.com/jobs/{query}-jobs-in-{location}-prf",
+        "url": "https://www.ambitionbox.com",
+    },
+    "hirist": {
+        "name": "Hirist",
+        "search_url": "https://www.hirist.tech/search/{query}",
+        "url": "https://www.hirist.tech",
+    },
     "freshersworld": {
         "name": "Freshersworld",
         "search_url": "https://www.freshersworld.com/jobs?q={query}&city={location}",
