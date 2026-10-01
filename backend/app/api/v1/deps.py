@@ -1,17 +1,18 @@
 """FastAPI dependencies for authentication and database access."""
 
+import asyncio
 import logging
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
 from app.core.clerk_auth import (
     get_or_provision_user,
     subject_from_payload,
     verify_auth_jwt,
 )
+from app.core.database import get_db
 from app.models.db import User
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,12 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Missing Bearer token")
 
     token = auth_header.removeprefix("Bearer ").strip()
-    payload = verify_auth_jwt(token)
+    # The JWT middleware already verified this header and kept the claims;
+    # verify again only where it did not run, and off the event loop, since
+    # a JWKS cache miss is a blocking HTTP fetch.
+    payload = getattr(request.state, "user", None)
+    if not isinstance(payload, dict):
+        payload = await asyncio.to_thread(verify_auth_jwt, token)
 
     # Clerk's `sub` is a text id (user_2abc...), stored in users.clerk_user_id.
     # Provisioning (including the concurrent-first-request race) lives in

@@ -7,12 +7,13 @@ be reused from a worker thread.  A dedicated *synchronous* SQLAlchemy engine is
 created once (protected by a threading.Lock) and reused across all calls,
 avoiding both connection pool exhaustion and the asyncio.run() RuntimeError.
 """
+
 import asyncio
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
@@ -66,6 +67,14 @@ def run_coro_sync(coro):
         return pool.submit(_run_fresh, coro).result()
 
 
+# Agent nodes write through this engine while API requests may hold row locks
+# on the async engine; never wait on a lock forever.
+def _set_lock_timeout(dbapi_connection, _record) -> None:
+    with dbapi_connection.cursor() as cursor:
+        cursor.execute("SET lock_timeout = '30s'")
+    dbapi_connection.commit()
+
+
 def _get_sync_factory():
     global _sync_engine, _sync_factory
     if _sync_engine is None:
@@ -79,6 +88,7 @@ def _get_sync_factory():
                     max_overflow=10,
                     pool_pre_ping=True,
                 )
+                event.listen(_sync_engine, "connect", _set_lock_timeout)
                 _sync_factory = sessionmaker(_sync_engine, class_=Session, expire_on_commit=False)
     return _sync_factory
 

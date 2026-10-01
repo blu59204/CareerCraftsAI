@@ -1,66 +1,16 @@
-import asyncio
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.harness import get_harness
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import apply_harness_result
-from app.models.db import AgentRun, CompanyIntelModel, User
+from app.models.db import CompanyIntelModel, User
 
 router = APIRouter(prefix="/company", tags=["company"])
-
-HARNESS_TIMEOUT_SECONDS = 120
 
 
 class CompanyResearchRequest(BaseModel):
     company_name: str
-
-
-@router.post("/research")
-async def research_company(
-    body: CompanyResearchRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="company_research",
-        status="running",
-        input={"company_name": body.company_name},
-    )
-    db.add(agent_run)
-    # Committed now, not just flushed: harness.run() below can run long
-    # enough to hit the timeout, and get_db() rolls back on any exception
-    # (including the HTTPException raised on timeout) — without this commit
-    # a timed-out run left no trace at all, not even as "failed".
-    await db.commit()
-
-    harness = await get_harness()
-    try:
-        harness_result = await asyncio.wait_for(
-            harness.run(
-                user_id=str(current_user.id),
-                task_type="company_research",
-                context={"company_name": body.company_name},
-                user_settings={},
-                run_id=run_id,
-            ),
-            timeout=HARNESS_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        agent_run.status = "failed"
-        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.commit()
-        raise HTTPException(status_code=504, detail="Company research timed out") from None
-    apply_harness_result(agent_run, harness_result)
-    await db.flush()
-    return {"run_id": run_id, "status": agent_run.status}
 
 
 @router.get("/{name}/intel")

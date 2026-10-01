@@ -369,23 +369,55 @@ class StatusCheckTrigger(BaseModel):
     user_id: str
 
 
+def _daily_search_eligible_ids():
+    """Members who opted into the daily search, have an active model and saved
+    target roles, and have not asked for their account to be deleted."""
+    from sqlalchemy import select
+
+    from app.models.db import User as UserModel
+    from app.models.db import UserModelSettings, UserPreferences
+
+    return (
+        select(UserModel.id)
+        .join(UserModelSettings, UserModelSettings.user_id == UserModel.id)
+        .join(UserPreferences, UserPreferences.user_id == UserModel.id)
+        .where(
+            UserModelSettings.is_active == True,  # noqa: E712
+            UserPreferences.daily_search_enabled == True,  # noqa: E712
+            UserPreferences.target_roles.is_not(None),
+            UserModel.deletion_scheduled_for.is_(None),
+        )
+        .distinct()
+    )
+
+
+async def list_daily_search_users() -> list[str]:
+    """User ids the scheduled daily search fans out to, one child each."""
+    from app.core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(_daily_search_eligible_ids())
+        return [str(user_id) for user_id in rows.scalars().all()]
+
+
 async def daily_search(payload: StatusCheckTrigger):
     """Daily automated job search based on user preferences.
 
     Fetches user preferences from memory, searches all platforms + Google Jobs,
     scores matches, and saves top results as applications.
 
-    Honors per-user opt-in: only members who (1) have an active LLM model
-    configured and (2) have saved job preferences (target_roles /
-    preferred_locations) get a daily search. "all" fans out across all
-    eligible members; an explicit user_id targets just that member.
+    Honors per-user opt-in: only members who turned on the daily search in
+    Settings, have an active LLM model and saved target roles, and are not
+    pending deletion get one. The Temporal schedule starts one child
+    workflow per member with an explicit user_id; "all" runs every eligible
+    member in this one call and is kept for manual runs.
     """
     from sqlalchemy import select
 
     from app.agents.memory.manager import MemoryManager
     from app.core.database import AsyncSessionLocal
     from app.core.model_router import get_llm
-    from app.models.db import JobApplication, UserModelSettings, UserPreferences
+    from app.models.db import JobApplication, UserPreferences
     from app.models.db import User as UserModel
     from app.services.indian_platforms_service import search_google_jobs
     from app.services.job_platforms_service import scrape_all_platforms
@@ -396,24 +428,10 @@ async def daily_search(payload: StatusCheckTrigger):
     visible_browser_opted_in = 0  # how many users have prefer_live_browser=True
 
     async with AsyncSessionLocal() as db:
-        if payload.user_id == "all":
-            # Fan-out: every user with an active model + saved preferences.
-            res = await db.execute(
-                select(UserModel)
-                .join(UserModelSettings, UserModelSettings.user_id == UserModel.id)
-                .join(UserPreferences, UserPreferences.user_id == UserModel.id)
-                .where(
-                    UserModelSettings.is_active == True,  # noqa: E712
-                    UserPreferences.target_roles.is_not(None),
-                )
-                .distinct()
-            )
-            users = res.scalars().all()
-        else:
-            res = await db.execute(
-                select(UserModel).where(UserModel.clerk_user_id == payload.user_id)
-            )
-            users = res.scalars().all()
+        query = select(UserModel).where(UserModel.id.in_(_daily_search_eligible_ids()))
+        if payload.user_id != "all":
+            query = query.where(UserModel.id == uuid.UUID(payload.user_id))
+        users = (await db.execute(query)).scalars().all()
 
         for user in users:
             try:
@@ -445,12 +463,18 @@ async def daily_search(payload: StatusCheckTrigger):
                 user_ctx = await mgr.get_user_context(user_id)
                 await mgr.close()
 
-                search_term = user_ctx.get("target_roles", "software engineer")
-                location = user_ctx.get("preferred_locations", "Bangalore")
-                if isinstance(search_term, list) and search_term:
-                    search_term = search_term[0]
-                if isinstance(location, list) and location:
-                    location = location[0]
+                search_term = user_ctx.get("target_roles") or (prefs_row and prefs_row.target_roles)
+                location = user_ctx.get("preferred_locations") or (
+                    prefs_row and prefs_row.preferred_locations
+                )
+                if isinstance(search_term, list):
+                    search_term = search_term[0] if search_term else None
+                if isinstance(location, list):
+                    location = location[0] if location else None
+                # No invented defaults: search only for what the member saved.
+                location = location or (
+                    "Remote" if prefs_row and prefs_row.work_mode == "remote" else None
+                )
                 if not search_term or not location:
                     logger.debug("Skipping daily search for %s: missing prefs", user_id)
                     continue
@@ -520,187 +544,3 @@ async def daily_search(payload: StatusCheckTrigger):
         "jobs_found": jobs_found,
         "applications_queued": applications_queued,
     }
-
-
-async def check_application_status(payload: StatusCheckTrigger):
-    """Check application status on hiring platforms via browser-use.
-
-    Run by the Temporal status-check Schedule.
-    Logs into platforms, checks notifications/status pages, updates DB.
-    """
-    from sqlalchemy import select, update
-
-    from app.core.database import AsyncSessionLocal
-    from app.core.model_router import get_llm
-    from app.models.db import AgentRun, JobApplication
-    from app.services.browser_control_service import (
-        run_browser_task_with_captcha_retry as run_browser_task,
-    )
-
-    updated_count = 0
-
-    async with AsyncSessionLocal() as db:
-        # Get all active applications (applied/viewed) for this user
-        if payload.user_id == "all":
-            res = await db.execute(
-                select(JobApplication).where(JobApplication.status.in_(["applied", "viewed"]))
-            )
-        else:
-            res = await db.execute(
-                select(JobApplication).where(
-                    JobApplication.user_id == uuid.UUID(payload.user_id),
-                    JobApplication.status.in_(["applied", "viewed"]),
-                )
-            )
-        applications = res.scalars().all()
-
-        if not applications:
-            return {"status": "ok", "updated_count": 0, "message": "No active applications"}
-
-        # Group by (user_id, platform) — never group applications from
-        # different users together, or the browser task for the group would
-        # run under one user's model/account while touching another user's
-        # applications.
-        grouped_apps: dict[tuple[str, str], list] = {}
-        for app in applications:
-            platform = _detect_platform(app.job_url or "")
-            grouped_apps.setdefault((str(app.user_id), platform), []).append(app)
-
-        # Check each user's platform notification page under that user's own
-        # account/model only.
-        for (user_id, platform), apps in grouped_apps.items():
-            try:
-                llm = await get_llm(user_id, db)
-
-                # Record the browser task under the owning user.
-                run_id = str(uuid.uuid4())
-                db.add(
-                    AgentRun(
-                        id=uuid.UUID(run_id),
-                        user_id=uuid.UUID(user_id),
-                        agent_type="status_check",
-                        status="running",
-                        input={"platform": platform, "application_ids": [str(a.id) for a in apps]},
-                    )
-                )
-                await db.commit()
-
-                task = _build_status_check_task(platform, apps)
-                result_text = await run_browser_task(
-                    llm, task, user_id, max_steps=15, run_id=run_id
-                )
-
-                # Parse status updates from browser agent response
-                updates = _parse_status_updates(result_text, apps)
-                for app_id, new_status in updates.items():
-                    await db.execute(
-                        update(JobApplication)
-                        .where(JobApplication.id == app_id)
-                        .values(status=new_status)
-                    )
-                    updated_count += 1
-                await db.execute(
-                    update(AgentRun)
-                    .where(AgentRun.id == uuid.UUID(run_id))
-                    .values(status="completed", completed_at=datetime.now(UTC))
-                )
-                await db.commit()
-            except Exception as exc:
-                logger.warning(
-                    "Status check failed for user %s platform %s: %s",
-                    user_id,
-                    platform,
-                    exc,
-                )
-
-    logger.info("Status check complete: %d applications updated", updated_count)
-    return {"status": "ok", "updated_count": updated_count}
-
-
-def _detect_platform(job_url: str) -> str:
-    """Detect platform from job URL."""
-    url_lower = job_url.lower()
-    if "linkedin" in url_lower:
-        return "linkedin"
-    if "naukri" in url_lower:
-        return "naukri"
-    if "indeed" in url_lower:
-        return "indeed"
-    if "foundit" in url_lower or "monster" in url_lower:
-        return "foundit"
-    if "instahyre" in url_lower:
-        return "instahyre"
-    return "unknown"
-
-
-def _build_status_check_task(platform: str, apps: list) -> str:
-    """Build browser-use task to check application status on a platform."""
-    urls = {
-        "linkedin": "https://www.linkedin.com/my-items/saved-jobs/",
-        "naukri": "https://www.naukri.com/mnjuser/recommendedjobs",
-        "indeed": "https://www.indeed.com/myjobs",
-        "foundit": "https://www.foundit.in/my-applications",
-        "instahyre": "https://www.instahyre.com/candidate/opportunities/",
-    }
-    check_url = urls.get(platform, "")
-    if not check_url:
-        return f"Cannot check status for platform: {platform}"
-
-    companies = ", ".join({a.company for a in apps[:10]})
-    return (
-        f"Go to {check_url}. "
-        f"Look for application status updates for these companies: {companies}. "
-        f"For each application found, report the status in this format: "
-        f"COMPANY: <name> | STATUS: <viewed/shortlisted/interview/rejected/no_update>. "
-        f"One per line. If you can't find status info, report NO_UPDATE for all."
-    )
-
-
-def _parse_status_updates(result_text: str, apps: list) -> dict:
-    """Parse browser agent output into {app_id: new_status} dict."""
-    updates = {}
-    if not result_text:
-        return updates
-
-    # Only statuses job_applications' CHECK constraint accepts. Portals'
-    # "shortlisted" means the recruiter has seen and kept the application.
-    status_map = {
-        "viewed": "viewed",
-        "shortlisted": "viewed",
-        "interview": "interview",
-        "rejected": "rejected",
-        "hired": "offer",
-        "offer": "offer",
-    }
-
-    for line in result_text.strip().split("\n"):
-        line = line.strip().upper()
-        if "COMPANY:" not in line or "STATUS:" not in line:
-            continue
-        try:
-            parts = {}
-            for segment in line.split("|"):
-                if ":" in segment:
-                    key, val = segment.split(":", 1)
-                    parts[key.strip().lower()] = val.strip().lower()
-
-            company = parts.get("company", "")
-            status = parts.get("status", "no_update")
-
-            if status == "no_update":
-                continue
-
-            new_status = status_map.get(status)
-            if not new_status:
-                continue
-
-            # Match to application by company name
-            for app in apps:
-                if app.company.lower() in company or company in app.company.lower():
-                    updates[app.id] = new_status
-                    break
-        except Exception as exc:
-            logger.debug("Skipping unparsable status update line: %s", exc)
-            continue
-
-    return updates

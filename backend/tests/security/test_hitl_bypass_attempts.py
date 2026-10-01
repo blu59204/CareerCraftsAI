@@ -5,6 +5,7 @@ Verifies that no agent can bypass approval before destructive actions
 (email send, job application submit). Tests approval endpoint behavior
 for edge cases, expired checkpoints, and concurrent access.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agents.base_agent import BaseAgent
 from app.agents.state import AgentState
 
 
@@ -32,9 +32,15 @@ class TestHITLBypassPrevention:
             run_id="00000000-0000-0000-0000-000000000002",
             task_type="email",
             context={
-                "company": "C", "role": "SWE", "recipient_email": "r@c.com",
+                "company": "C",
+                "role": "SWE",
+                "recipient_email": "r@c.com",
             },
-            messages=[], status="running", pending_action=None, result=None, error=None,
+            messages=[],
+            status="running",
+            pending_action=None,
+            result=None,
+            error=None,
         )
         fake_llm = MagicMock()
         # The agent parses a JSON EmailOutput; a plain-text reply would make the
@@ -51,14 +57,23 @@ class TestHITLBypassPrevention:
         # NOTE: email_agent binds these names at module top, so patch the
         # agent module namespace — patching app.core.sync_db.* would miss and
         # hit the real DB (hang). Same rule applies to every agent test.
-        with patch(
-            "app.agents.email_agent.fetch_model_settings", return_value=MagicMock(),
-        ), patch(
-            "app.agents.email_agent.GmailMCPClient", autospec=True,
-        ) as MockGmail, patch(
-            "app.agents.email_agent._build_llm", return_value=fake_llm,
-        ), patch(
-            "app.agents.email_agent.think_and_select", return_value="hook",
+        with (
+            patch(
+                "app.agents.email_agent.fetch_model_settings",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.agents.email_agent.GmailMCPClient",
+                autospec=True,
+            ) as MockGmail,
+            patch(
+                "app.agents.email_agent.build_agent_llm",
+                return_value=fake_llm,
+            ),
+            patch(
+                "app.agents.email_agent.think_and_select",
+                return_value="hook",
+            ),
         ):
             MockGmail.return_value.search_threads = MagicMock(return_value=[])
             MockGmail.return_value.send_message = MagicMock()
@@ -74,48 +89,68 @@ class TestHITLBypassPrevention:
         from app.agents.auto_apply_pipeline import run_auto_apply_pipeline
 
         job = MagicMock(
-            company="Acme", title="Python Engineer",
-            job_url="https://example.com/j/123", platform="indeed",
+            company="Acme",
+            title="Python Engineer",
+            job_url="https://example.com/j/123",
+            platform="indeed",
             description="Python role building reliable software",
         )
         mock_session = MagicMock()
         mock_session.execute = AsyncMock(
-            return_value=MagicMock(
-                scalar_one_or_none=MagicMock(return_value=None)
-            )
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
         )
         mock_cm = MagicMock()
         mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         emitted = []
-        with patch(
-            "app.agents.auto_apply_pipeline.scrape_jobs", return_value=[job],
-        ), patch(
-            "app.agents.auto_apply_pipeline.fetch_model_settings", return_value=MagicMock(),
-        ), patch(
-            "app.agents.auto_apply_pipeline.fetch_user_profile_text", return_value="Senior Python dev",
-        ), patch(
-            "app.agents.auto_apply_pipeline._build_llm", return_value=MagicMock(),
-        ), patch(
-            "app.agents.auto_apply_pipeline._score_job_quick", return_value=90,
-        ), patch(
-            "app.agents.auto_apply_pipeline.find_email_for_company",
-            new=AsyncMock(return_value=None),
-        ), patch(
-            "app.agents.auto_apply_pipeline.resume_agent_node",
-            return_value={"status": "completed", "result": {}},
-        ), patch(
-            "app.core.database.AsyncSessionLocal", MagicMock(return_value=mock_cm),
-        ), patch(
-            "app.agents.auto_apply_pipeline.emit",
-            side_effect=lambda run_id, event_type, payload: emitted.append((event_type, payload)),
+        with (
+            patch(
+                "app.agents.auto_apply_pipeline.scrape_jobs",
+                return_value=[job],
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline.fetch_model_settings",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline.fetch_user_profile_text",
+                return_value="Senior Python dev",
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline.build_agent_llm",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline._score_job_quick",
+                return_value=90,
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline.find_email_for_company",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline.resume_agent_node",
+                return_value={"status": "completed", "result": {}},
+            ),
+            patch(
+                "app.core.database.AsyncSessionLocal",
+                MagicMock(return_value=mock_cm),
+            ),
+            patch(
+                "app.agents.auto_apply_pipeline.emit",
+                side_effect=lambda run_id, event_type, payload: emitted.append(
+                    (event_type, payload)
+                ),
+            ),
         ):
-            results = asyncio.run(run_auto_apply_pipeline(
-                user_id="00000000-0000-0000-0000-000000000001",
-                search_query="python",
-                run_id="00000000-0000-0000-0000-000000000002",
-            ))
+            results = asyncio.run(
+                run_auto_apply_pipeline(
+                    user_id="00000000-0000-0000-0000-000000000001",
+                    search_query="python",
+                    run_id="00000000-0000-0000-0000-000000000002",
+                )
+            )
 
         assert results["emails_sent"] == 0
         assert results["applications_sent"] == 0
@@ -124,12 +159,16 @@ class TestHITLBypassPrevention:
         assert checkpoints[0].get("type") == "review_application_draft"
 
     def test_approve_wrong_action_type_blocked(self):
-        from app.agents.base_agent import BaseAgent
         state = AgentState(
-            user_id="u1", run_id="r3", task_type="email",
-            context={}, messages=[], status="running",
+            user_id="u1",
+            run_id="r3",
+            task_type="email",
+            context={},
+            messages=[],
+            status="running",
             pending_action={"type": "send_email", "details": {}},
-            result=None, error=None,
+            result=None,
+            error=None,
         )
         mismatched = {"type": "submit_application", "details": {}}
         assert mismatched["type"] != state["pending_action"]["type"]

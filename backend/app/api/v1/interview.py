@@ -1,23 +1,19 @@
-import asyncio
 import logging
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.harness import get_harness
-from app.agents.interview_coach_agent import compute_session_summary
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR, apply_harness_result
-from app.models.db import AgentRun, InterviewSession, User
+from app.api.v1.run_utils import queue_agent_run
+from app.models.db import InterviewSession, User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/interview", tags=["interview"])
-
-HARNESS_TIMEOUT_SECONDS = 120
 
 
 class StartSessionRequest(BaseModel):
@@ -27,8 +23,8 @@ class StartSessionRequest(BaseModel):
 
 
 class AnswerRequest(BaseModel):
-    answer_text: str
-    question_index: int
+    answer_text: str = Field(max_length=8000)
+    question_index: int = Field(ge=0, le=100)
 
 
 @router.post("/session/start")
@@ -37,48 +33,12 @@ async def start_session(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="interview_coach",
-        status="running",
-        input=body.model_dump(exclude_none=True),
+    # Durable agent run: poll GET /agents/runs/{run_id}; its output carries
+    # session_id and questions.
+    run_id = await queue_agent_run(
+        db, current_user, "interview_coach", body.model_dump(exclude_none=True)
     )
-    db.add(agent_run)
-    await db.flush()
-
-    harness = await get_harness()
-    try:
-        harness_result = await asyncio.wait_for(
-            harness.run(
-                user_id=str(current_user.id),
-                task_type="interview_coach",
-                context=body.model_dump(exclude_none=True),
-                user_settings={},
-                run_id=run_id,
-            ),
-            timeout=HARNESS_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        agent_run.status = "failed"
-        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
-        raise HTTPException(status_code=504, detail="Interview session start timed out") from None
-    output = apply_harness_result(agent_run, harness_result) or {}
-    await db.flush()
-    if agent_run.status == "failed":
-        logger.warning("Interview session start failed for run %s: %s", run_id, harness_result.get("error"))
-        raise HTTPException(status_code=502, detail=CLIENT_SAFE_AGENT_ERROR)
-    questions = output.get("questions") or []
-    question = questions[0] if questions else None
-    return {
-        "run_id": run_id,
-        "status": agent_run.status,
-        "session_id": output.get("session_id"),
-        "question": question,
-        "question_index": 0,
-    }
+    return {"run_id": run_id, "status": "queued"}
 
 
 @router.post("/session/{session_id}/answer")
@@ -101,71 +61,67 @@ async def submit_answer(
     if session_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="interview_coach",
-        status="running",
-        input={
+    # Durable agent run: poll GET /agents/runs/{run_id} for the feedback,
+    # then read the session for the next question or the summary.
+    run_id = await queue_agent_run(
+        db,
+        current_user,
+        "evaluate_answer",
+        {
             "session_id": str(session_id),
             "question_index": body.question_index,
             "answer_text": body.answer_text,
         },
     )
-    db.add(agent_run)
-    await db.flush()
+    return {"run_id": run_id, "status": "queued", "question_index": body.question_index}
 
-    harness = await get_harness()
-    try:
-        harness_result = await asyncio.wait_for(
-            harness.run(
-                user_id=str(current_user.id),
-                task_type="evaluate_answer",
-                context={
-                    "session_id": str(session_id),
-                    "question_index": body.question_index,
-                    "answer_text": body.answer_text,
-                },
-                user_settings={},
-                run_id=run_id,
-            ),
-            timeout=HARNESS_TIMEOUT_SECONDS,
+
+class SessionListItem(BaseModel):
+    id: uuid.UUID
+    role: str
+    company: str | None
+    status: str
+    overall_score: int | None
+    question_count: int
+    answered_count: int
+    started_at: datetime
+    completed_at: datetime | None
+
+
+@router.get("/sessions", response_model=list[SessionListItem])
+async def list_sessions(
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The member's past mock interviews, newest first. Question and answer
+    text stays in GET /session/{id}/summary; this is just the list."""
+    rows = (
+        (
+            await db.execute(
+                select(InterviewSession)
+                .where(InterviewSession.user_id == current_user.id)
+                .order_by(InterviewSession.started_at.desc())
+                .limit(limit)
+            )
         )
-    except asyncio.TimeoutError:
-        agent_run.status = "failed"
-        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
-        raise HTTPException(status_code=504, detail="Answer evaluation timed out") from None
-
-    output = apply_harness_result(agent_run, harness_result) or {}
-    await db.flush()
-    if agent_run.status == "failed":
-        logger.warning("Answer evaluation failed for run %s: %s", run_id, harness_result.get("error"))
-        raise HTTPException(status_code=502, detail=CLIENT_SAFE_AGENT_ERROR)
-
-    # Re-fetch the session (already own it, per the IDOR check above) to read
-    # the questions/scores the agent's sync-DB helper just updated, so we can
-    # derive the next question and, once the last one is answered, the summary.
-    session_after = await db.execute(
-        select(InterviewSession).where(InterviewSession.id == session_id)
+        .scalars()
+        .all()
     )
-    session_row = session_after.scalar_one_or_none()
-    questions = (session_row.questions if session_row else None) or []
-    scores = (session_row.scores if session_row else None) or []
-
-    next_index = body.question_index + 1
-    next_question = questions[next_index] if next_index < len(questions) else None
-    summary = compute_session_summary(scores) if next_question is None else None
-
-    return {
-        "run_id": run_id,
-        "status": agent_run.status,
-        "feedback": output,
-        "next_question": next_question,
-        "question_index": body.question_index,
-        "summary": summary,
-    }
+    return [
+        SessionListItem(
+            id=row.id,
+            role=row.role,
+            company=row.company,
+            status=row.status,
+            overall_score=row.overall_score,
+            question_count=len(row.questions or []),
+            answered_count=len(row.answers or []),
+            started_at=row.started_at,
+            completed_at=row.completed_at,
+        )
+        for row in rows
+    ]
 
 
 @router.get("/session/{session_id}/summary")

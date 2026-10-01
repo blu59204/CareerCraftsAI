@@ -537,12 +537,11 @@ class TestLinkedInAgent:
 
 @pytest.mark.e2e
 class TestCompanyResearchAgent:
-    def test_company_research_api(self, api_client: httpx.Client):
-        r = api_client.post("/company/research", json={"company_name": "Infosys"}, timeout=180)
-        assert r.status_code == 200, f"Research failed: {r.text}"
-        body = r.json()
-        assert body["status"] == "completed", body
-        data = api_client.get(f"/agents/runs/{body['run_id']}").json()["output"]
+    def test_company_research_api(self, api_client: httpx.Client, wait_for_run):
+        run_id = _start_run(api_client, "company_research", {"company_name": "Infosys"})
+        run = wait_for_run(api_client, run_id, timeout_s=180)
+        assert run["status"] == "completed", run
+        data = run["output"]
         assert data["company_name"] == "Infosys"
         assert len(data.get("culture_summary") or data.get("overview") or "") > 50
         intel = api_client.get("/company/Infosys/intel")
@@ -551,17 +550,17 @@ class TestCompanyResearchAgent:
         assert "id" in intel.json()
         print(f"COMPANY RESEARCH: Infosys — {len(str(data))} bytes")
 
-    def test_company_research_caching(self, api_client: httpx.Client):
+    def test_company_research_caching(self, api_client: httpx.Client, wait_for_run):
+        context = {"company_name": "Infosys"}
         t1 = time.time()
-        first = api_client.post("/company/research", json={"company_name": "Infosys"}, timeout=180)
+        first = wait_for_run(api_client, _start_run(api_client, "company_research", context), 180)
         t1_end = time.time()
         t2 = time.time()
-        second = api_client.post("/company/research", json={"company_name": "Infosys"}, timeout=180)
+        second = wait_for_run(api_client, _start_run(api_client, "company_research", context), 180)
         t2_end = time.time()
-        assert first.status_code == 200 and second.status_code == 200
-        output = api_client.get(f"/agents/runs/{second.json()['run_id']}").json()["output"]
+        assert first["status"] == "completed" and second["status"] == "completed"
         # company_research_node returns the stored brief (7-day TTL) with cached=True.
-        assert output.get("cached") is True, "Caching not working"
+        assert second["output"].get("cached") is True, "Caching not working"
         print(f"CACHING: 1st={t1_end - t1:.2f}s, 2nd={t2_end - t2:.2f}s")
 
     def test_company_research_via_ui(self, authenticated_page: Page):
@@ -585,28 +584,28 @@ class TestCompanyResearchAgent:
 
 @pytest.mark.e2e
 class TestSalaryAgent:
-    def test_salary_benchmark_api(self, api_client: httpx.Client):
-        r = api_client.post(
-            "/salary/report",
-            json={
+    def test_salary_benchmark_api(self, api_client: httpx.Client, wait_for_run):
+        run_id = _start_run(
+            api_client,
+            "salary_intelligence",
+            {
                 "role": "Senior Software Engineer",
                 "location": "Bengaluru, India",
                 "offer_amount": 1800000,
             },
-            timeout=180,
         )
-        assert r.status_code == 200, f"Salary failed: {r.text}"
-        body = r.json()
-        assert body["status"] in {"awaiting_approval", "completed"}, body
-        # The report row is keyed by the run id.
-        report = api_client.get(f"/salary/report/{body['run_id']}")
-        assert report.status_code == 200, report.text
-        data = report.json()
-        if data["data_unavailable"]:
-            pytest.skip(f"No published salary figures found (sources: {data['data_sources']})")
-        assert 0 < data["p25"] <= data["p50"] <= data["p75"]
-        assert data["negotiation_script"], "No negotiation script"
-        print(f"SALARY API: p50={data['p50']}")
+        try:
+            run = wait_for_run(api_client, run_id, timeout_s=180)
+            assert run["status"] in {"awaiting_approval", "completed"}, run
+            output = run["output"] or {}
+            data = output.get("report") or output
+            if data.get("data_unavailable"):
+                pytest.skip(f"No published salary figures found ({data.get('data_sources')})")
+            assert 0 < data["p25"] <= data["p50"] <= data["p75"]
+            assert output.get("script"), "No negotiation script"
+            print(f"SALARY API: p50={data['p50']}")
+        finally:
+            _reject_if_awaiting(api_client, run_id)
 
     def test_salary_via_ui(self, authenticated_page: Page):
         page = authenticated_page
@@ -1067,7 +1066,7 @@ class TestSecurityVerification:
             ("POST", "/resume/optimize"),
             ("GET", "/leads"),
             ("POST", "/cover-letter/generate"),
-            ("POST", "/salary/report"),
+            ("POST", "/interview/session/start"),
         ]
         for method, path in endpoints:
             r = httpx.request(method, f"{API_URL}{path}", timeout=10)

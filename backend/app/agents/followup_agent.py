@@ -52,13 +52,13 @@ def build_followup_draft(
         from app.agents.prompts.followup_prompt import OUTPUT_SCHEMA as FollowupOutput
         from app.agents.prompts.followup_prompt import SYSTEM_PROMPT as FOLLOWUP_SYSTEM_PROMPT
         from app.agents.prompts.followup_prompt import build_user_prompt as build_followup_prompt
-        from app.core.model_router import _build_llm
+        from app.core.model_router import build_agent_llm
         from app.core.sync_db import fetch_model_settings
 
         model_settings = fetch_model_settings(user_id)
         if not model_settings:
             raise ValueError("no active model settings for user")
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
         parsed = call_llm_json(
             llm,
             FOLLOWUP_SYSTEM_PROMPT,

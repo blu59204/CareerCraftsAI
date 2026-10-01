@@ -17,6 +17,14 @@ def _fake_session_cm(yielded):
     return _cm()
 
 
+@pytest.fixture(autouse=True)
+def _no_recent_attempts(monkeypatch):
+    """The fake session cannot run the 24h count; no earlier attempts by default."""
+    monkeypatch.setattr(
+        "app.workflows.activities._recent_attempt_stats", AsyncMock(return_value=(0, None))
+    )
+
+
 class _ReserveFakeDB:
     def __init__(self, app_row, existing_attempt=None):
         self.app_row = app_row
@@ -137,3 +145,85 @@ async def test_reserve_activity_preserves_terminal_and_uncertain_attempts(
         await activities.reserve_application_attempt(params)
     assert other_workflow_attempt.state == state
     assert fake.commits == 0
+
+
+def _reserve_params(user_id, job_application_id, **extra):
+    return {
+        "user_id": str(user_id),
+        "job_application_id": str(job_application_id),
+        "workflow_id": f"auto-apply/{user_id}/{job_application_id}",
+        "run_id": str(uuid.uuid4()),
+        **extra,
+    }
+
+
+def _saved_app(user_id, job_application_id, score=90):
+    from app.models.db import JobApplication
+
+    return JobApplication(
+        id=job_application_id,
+        user_id=user_id,
+        company="Acme",
+        role="Backend Engineer",
+        job_url="https://jobs.example.test/apply",
+        status="saved",
+        resume_id=uuid.uuid4(),
+        match_score=score,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reserve_refuses_past_the_daily_cap(monkeypatch):
+    from app.core.config import settings
+    from app.workflows import activities
+
+    user_id, job_id = uuid.uuid4(), uuid.uuid4()
+    fake = _ReserveFakeDB(_saved_app(user_id, job_id))
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    monkeypatch.setattr(
+        "app.workflows.activities._recent_attempt_stats",
+        AsyncMock(return_value=(settings.APPLY_DAILY_CAP, None)),
+    )
+
+    with pytest.raises(ValueError, match="Daily application limit"):
+        await activities.reserve_application_attempt(_reserve_params(user_id, job_id))
+    assert fake.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_automatic_applications_need_the_match_score(monkeypatch):
+    from app.workflows import activities
+
+    user_id, job_id = uuid.uuid4(), uuid.uuid4()
+    fake = _ReserveFakeDB(_saved_app(user_id, job_id, score=40))
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    monkeypatch.setattr(
+        "app.applications.submission.load_resume", AsyncMock(return_value=(b"%PDF", "sha"))
+    )
+
+    with pytest.raises(ValueError, match="below the automatic-apply threshold"):
+        await activities.reserve_application_attempt(_reserve_params(user_id, job_id, auto=True))
+    # a member applying by hand to the same job is their own call
+    reserved = await activities.reserve_application_attempt(_reserve_params(user_id, job_id))
+    assert reserved["wait_seconds"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reserve_reports_how_long_to_pause_between_applications(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.workflows import activities
+
+    user_id, job_id = uuid.uuid4(), uuid.uuid4()
+    fake = _ReserveFakeDB(_saved_app(user_id, job_id))
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(fake))
+    monkeypatch.setattr(
+        "app.applications.submission.load_resume", AsyncMock(return_value=(b"%PDF", "sha"))
+    )
+    monkeypatch.setattr(
+        "app.workflows.activities._recent_attempt_stats",
+        AsyncMock(return_value=(3, datetime.now(UTC) - timedelta(seconds=20))),
+    )
+
+    reserved = await activities.reserve_application_attempt(_reserve_params(user_id, job_id))
+    assert 90 <= reserved["wait_seconds"] <= 100

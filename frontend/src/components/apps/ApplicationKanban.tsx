@@ -20,6 +20,10 @@ export type ApplicationItem = {
   jobDescription?: string | null;
   appliedAt?: string | null;
   notes?: string | null;
+  source?: string | null;
+  resumeLabel?: string | null;
+  outreachStatus?: string | null;
+  outreachTo?: string | null;
 };
 
 /** Board order of the pipeline stages. */

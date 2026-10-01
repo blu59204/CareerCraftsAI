@@ -8,7 +8,9 @@ import {
   Briefcase,
   Browser,
   Check,
+  CalendarCheck,
   CircleNotch,
+  EnvelopeSimple,
   CurrencyDollar,
   FloppyDisk,
   MapPin,
@@ -54,6 +56,15 @@ interface UserPreferences {
   // When true, autonomous job search + apply open a visible Chromium and
   // stream browser_frame SSE events to the UI.  Default false (headless).
   prefer_live_browser: boolean;
+  // Opt-in: the scheduled morning search runs only for members who turn it on.
+  daily_search_enabled: boolean;
+  // Opt-in: scan the connected Gmail for replies and move applications forward.
+  inbox_tracking_enabled: boolean;
+  // Recruiter emails per rolling 24 hours, and whether approved-before senders go out unattended.
+  outreach_daily_cap: number;
+  outreach_auto_send: boolean;
+  // Opt-in: tailor a resume and queue applications for saved jobs above the match threshold.
+  auto_apply_enabled: boolean;
 }
 
 interface FormState {
@@ -68,6 +79,11 @@ interface FormState {
   preferred_locations: string;
   bio: string;
   prefer_live_browser: boolean;
+  daily_search_enabled: boolean;
+  inbox_tracking_enabled: boolean;
+  outreach_daily_cap: string;
+  outreach_auto_send: boolean;
+  auto_apply_enabled: boolean;
 }
 
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
@@ -109,6 +125,11 @@ const DEFAULT_FORM: FormState = {
   preferred_locations: "",
   bio: "",
   prefer_live_browser: false,
+  daily_search_enabled: false,
+  inbox_tracking_enabled: false,
+  outreach_daily_cap: "25",
+  outreach_auto_send: false,
+  auto_apply_enabled: false,
 };
 
 function prefsToForm(prefs: UserPreferences): FormState {
@@ -124,6 +145,11 @@ function prefsToForm(prefs: UserPreferences): FormState {
     preferred_locations: (prefs.preferred_locations ?? []).join(", "),
     bio: prefs.bio ?? "",
     prefer_live_browser: Boolean(prefs.prefer_live_browser),
+    daily_search_enabled: Boolean(prefs.daily_search_enabled),
+    inbox_tracking_enabled: Boolean(prefs.inbox_tracking_enabled),
+    outreach_daily_cap: String(prefs.outreach_daily_cap ?? 25),
+    outreach_auto_send: Boolean(prefs.outreach_auto_send),
+    auto_apply_enabled: Boolean(prefs.auto_apply_enabled),
   };
 }
 
@@ -217,6 +243,8 @@ function ProfileSkeleton() {
     "lg:col-span-4 h-52",
     "lg:col-span-7 h-56",
     "lg:col-span-5 h-56",
+    "lg:col-span-12 h-44",
+    "lg:col-span-12 h-44",
   ];
   return (
     <div role="status" aria-live="polite" className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -334,6 +362,11 @@ export default function ProfilePreferencesPage() {
         preferred_locations: parsedLocations,
         bio: form.bio || undefined,
         prefer_live_browser: form.prefer_live_browser,
+        daily_search_enabled: form.daily_search_enabled,
+        inbox_tracking_enabled: form.inbox_tracking_enabled,
+        outreach_daily_cap: Math.min(100, Math.max(1, parseInt(form.outreach_daily_cap, 10) || 25)),
+        outreach_auto_send: form.outreach_auto_send,
+        auto_apply_enabled: form.auto_apply_enabled,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -716,6 +749,143 @@ export default function ProfilePreferencesPage() {
                 </div>
                 <StatusPill tone={form.prefer_live_browser ? "primary" : "neutral"}>
                   {form.prefer_live_browser ? "Visible Chromium" : "Headless (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* H — daily search */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.12}
+                tone={form.daily_search_enabled ? "primary" : "muted"}
+                icon={<CalendarCheck size={16} weight="light" />}
+                title="Daily job search"
+                meta={
+                  <Toggle
+                    checked={form.daily_search_enabled}
+                    onChange={(next) => set("daily_search_enabled", next)}
+                    label="Search for new jobs every morning"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Search for new jobs every morning
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, CareerCraft searches each morning for your target roles in your preferred locations,
+                    using your own AI model and key. It needs at least one target role, and a location unless your
+                    work mode is remote. Nothing is applied for without your approval.
+                  </p>
+                </div>
+                <StatusPill tone={form.daily_search_enabled ? "primary" : "neutral"}>
+                  {form.daily_search_enabled ? "Every morning" : "Off (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* I — inbox tracking */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.14}
+                tone={form.inbox_tracking_enabled ? "primary" : "muted"}
+                icon={<EnvelopeSimple size={16} weight="light" />}
+                title="Track replies in Gmail"
+                meta={
+                  <Toggle
+                    checked={form.inbox_tracking_enabled}
+                    onChange={(next) => set("inbox_tracking_enabled", next)}
+                    label="Update application status from your inbox"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Update application status from your inbox
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, CareerCraft checks your connected Gmail once a day for recruiter replies, such as an
+                    interview invitation or a rejection, and moves the matching application forward. It reads sender,
+                    subject and a short preview only, never changes or sends mail, and moves a status only when one
+                    application clearly matches. Requires Gmail under Integrations and an AI model.
+                  </p>
+                </div>
+                <StatusPill tone={form.inbox_tracking_enabled ? "primary" : "neutral"}>
+                  {form.inbox_tracking_enabled ? "Checking daily" : "Off (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* J0 — queue applications */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.15}
+                tone={form.auto_apply_enabled ? "primary" : "muted"}
+                icon={<CalendarCheck size={16} weight="light" />}
+                title="Queue applications for me"
+                meta={
+                  <Toggle
+                    checked={form.auto_apply_enabled}
+                    onChange={(next) => set("auto_apply_enabled", next)}
+                    label="Prepare applications for strong matches"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Prepare applications for strong matches
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, CareerCraft takes saved jobs that match at 70% or more, tailors your resume using only
+                    what is in your own documents, and queues each application in your browser extension, a few at a
+                    time and within your daily limit. You still review every filled form in the extension before
+                    anything is submitted. Needs a paired extension and an AI model.
+                  </p>
+                </div>
+                <StatusPill tone={form.auto_apply_enabled ? "primary" : "neutral"}>
+                  {form.auto_apply_enabled ? "Queuing strong matches" : "Off (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* J — recruiter emails */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.16}
+                tone={form.outreach_auto_send ? "primary" : "muted"}
+                icon={<EnvelopeSimple size={16} weight="light" />}
+                title="Recruiter emails"
+                meta={
+                  <Toggle
+                    checked={form.outreach_auto_send}
+                    onChange={(next) => set("outreach_auto_send", next)}
+                    label="Send verified emails without asking each time"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Send verified emails without asking each time
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Every recruiter email waits for your approval on the Outreach page. After you have approved three,
+                    turning this on lets emails to verified addresses go out on their own. Unverified addresses are
+                    always held for you. One follow-up is drafted after six days, and nothing more is sent once the
+                    company replies.
+                  </p>
+                  <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                    Emails per day, at most
+                    <Input
+                      name="outreach_daily_cap"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={100}
+                      className="tabular-nums"
+                      trayClassName="w-24"
+                      value={form.outreach_daily_cap}
+                      onChange={(e) => set("outreach_daily_cap", e.target.value)}
+                    />
+                  </label>
+                </div>
+                <StatusPill tone={form.outreach_auto_send ? "primary" : "neutral"}>
+                  {form.outreach_auto_send ? "Auto-send after 3 approvals" : "Approve each (default)"}
                 </StatusPill>
               </PrefCard>
             </div>

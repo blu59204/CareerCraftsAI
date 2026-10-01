@@ -55,6 +55,114 @@ async def draft_followup_activity(params: dict) -> dict:
 
 
 @activity.defn
+async def list_inbox_tracking_users_activity(params: dict) -> dict:
+    from app.services.application_status_service import list_inbox_tracking_users
+
+    return {"user_ids": await list_inbox_tracking_users()}
+
+
+@activity.defn
+async def inbox_status_activity(params: dict) -> dict:
+    import asyncio
+
+    from app.services.application_status_service import scan_inbox_for_member
+
+    outcome = await asyncio.to_thread(scan_inbox_for_member, params["user_id"])
+    if outcome["status"] == "failed":
+        # Let Temporal retry the member's scan; other members are unaffected.
+        raise RuntimeError("Inbox scan failed")
+    changes = (outcome["result"] or {}).get("changes", [])
+    if changes:
+        await _notify_status_changes(params["user_id"], changes)
+    return {"changes": len(changes)}
+
+
+async def _notify_status_changes(user_id: str, changes: list[dict]) -> None:
+    """Tell the member their applications moved. Best effort: the status is
+    already saved, so a notification failure must not retry the scan."""
+    import logging
+    import uuid
+
+    from app.workflows.starters import start_notification
+
+    first = changes[0]
+    if len(changes) == 1:
+        title = f"{first['company']}: application moved to {first['to_status']}"
+        body = first.get("role")
+    else:
+        title = f"{len(changes)} applications updated from your inbox"
+        body = ", ".join(f"{c['company']} ({c['to_status']})" for c in changes[:5])
+    try:
+        await start_notification(
+            uuid.UUID(user_id),
+            type="application_update",
+            title=title,
+            body=body,
+            link="/applications",
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Failed to notify user %s of application updates", user_id, exc_info=True
+        )
+
+
+@activity.defn
+async def list_auto_apply_users_activity(params: dict) -> dict:
+    from app.services.auto_apply_queue import list_auto_apply_users
+
+    return {"user_ids": await list_auto_apply_users()}
+
+
+@activity.defn
+async def auto_apply_queue_activity(params: dict) -> dict:
+    from app.services.auto_apply_queue import queue_for_member
+
+    return await queue_for_member(params["user_id"])
+
+
+@activity.defn
+async def list_summary_users_activity(params: dict) -> dict:
+    from app.services.daily_summary import list_summary_users
+
+    return {"user_ids": await list_summary_users()}
+
+
+@activity.defn
+async def daily_summary_activity(params: dict) -> dict:
+    from app.services.daily_summary import send_summary
+
+    return {"sent": int(await send_summary(params["user_id"]))}
+
+
+@activity.defn
+async def list_outreach_users_activity(params: dict) -> dict:
+    from app.services.outreach_service import list_outreach_users
+
+    return {"user_ids": await list_outreach_users()}
+
+
+@activity.defn
+async def outreach_activity(params: dict) -> dict:
+    """One member's turn: note replies and bounces, queue due follow-ups,
+    then send what is approved, within their daily cap."""
+    from app.services import outreach_service
+
+    user_id = params["user_id"]
+    outcome = await outreach_service.record_replies(user_id)
+    followups = await outreach_service.queue_due_followups(user_id)
+    outcome.update(await outreach_service.send_approved(user_id))
+    outcome["followups_queued"] = followups
+    return {k: v for k, v in outcome.items() if isinstance(v, (int, bool))}
+
+
+@activity.defn
+async def list_daily_search_users_activity(params: dict) -> dict:
+    from app.services.scheduled_jobs import list_daily_search_users
+
+    return {"user_ids": await list_daily_search_users()}
+
+
+@activity.defn
 async def daily_search_activity(params: dict) -> dict:
     from app.services.scheduled_jobs import StatusCheckTrigger, daily_search
 

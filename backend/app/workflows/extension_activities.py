@@ -42,6 +42,9 @@ def detect_platform(job_url: str) -> str:
         ("lever.co", "lever"),
         ("ashbyhq.com", "ashby"),
         ("myworkdayjobs.com", "workday"),
+        ("smartrecruiters.com", "smartrecruiters"),
+        ("workable.com", "workable"),
+        ("recruitee.com", "recruitee"),
         ("foundit.", "foundit"),
         ("instahyre.com", "instahyre"),
     ):
@@ -62,11 +65,16 @@ async def create_extension_task_activity(params: dict) -> dict:
     user_id = uuid.UUID(params["user_id"])
     application_id = uuid.UUID(params["job_application_id"])
     run_id = uuid.UUID(params["run_id"])
+    from app.services.apply_url import resolve_original_apply_url
+
+    # Apply on the employer's own ATS page when the listing links to one.
+    apply_url = await resolve_original_apply_url(params["job_url"])
     payload = {
-        "job_url": params["job_url"],
+        "job_url": apply_url,
+        "listing_url": params["job_url"] if apply_url != params["job_url"] else None,
         "company": params.get("company"),
         "role": params.get("role"),
-        "platform": detect_platform(params["job_url"]),
+        "platform": detect_platform(apply_url),
         "resume_document_id": params.get("pdf_document_id"),
         "attempt_id": params.get("attempt_id"),
     }

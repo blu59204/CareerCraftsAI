@@ -35,6 +35,7 @@ from app.core.event_bus import publish
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, ApplicationAttempt, ExtensionDevice, ExtensionTask, User
 from app.services import extension_service
+from app.services.attention_notices import notify_needs_attention
 from app.workflows.starters import WorkflowUnavailable
 
 router = APIRouter(prefix="/extension", tags=["extension"])
@@ -524,7 +525,9 @@ async def task_event(
         return {"status": event.stage, "active": False}
 
     await _signal(task.workflow_id, {"stage": event.stage})
+    previous_stage = task.status
     await _record_progress(db, task, event.stage, event.message or STAGE_MESSAGES[event.stage])
+    await notify_needs_attention(task.user_id, event.stage, previous_stage, task.payload)
     return {"status": event.stage, "active": True}
 
 

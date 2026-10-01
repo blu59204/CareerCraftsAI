@@ -3,22 +3,24 @@
 import { Suspense, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
-import { ListChecks, Microphone } from "@phosphor-icons/react";
+import { ClockCounterClockwise, ListChecks, Microphone } from "@phosphor-icons/react";
 import { Bezel, PageHero, Screen, Segmented, panelSwap } from "@/components/vanguard";
 import { cn } from "@/lib/utils";
 import { MockInterviewPanel } from "@/components/interview/MockInterviewPanel";
+import { InterviewHistoryPanel } from "@/components/interview/InterviewHistoryPanel";
 import { PrepPlanPanel } from "@/components/interview/PrepPlanPanel";
 import { InterviewBodySkeleton } from "@/components/interview/InterviewSkeleton";
 
-type InterviewTab = "prep" | "coach";
+type InterviewTab = "prep" | "coach" | "history";
 
 function parseTab(value: string | null): InterviewTab {
-  return value === "coach" ? "coach" : "prep";
+  return value === "coach" || value === "history" ? value : "prep";
 }
 
 const TAB_OPTIONS: ReadonlyArray<{ value: InterviewTab; label: string; icon: React.ReactNode }> = [
   { value: "prep", label: "Prep plan", icon: <ListChecks size={15} weight="light" /> },
   { value: "coach", label: "Mock interview", icon: <Microphone size={15} weight="light" /> },
+  { value: "history", label: "History", icon: <ClockCounterClockwise size={15} weight="light" /> },
 ];
 
 const RHYTHM: ReadonlyArray<{ step: string; title: string; body: string; tab: InterviewTab }> = [
@@ -112,13 +114,13 @@ function InterviewWorkspace() {
         <motion.div
           key={tab}
           role="tabpanel"
-          aria-label={tab === "prep" ? "Prep plan" : "Mock interview"}
+          aria-label={tab === "prep" ? "Prep plan" : tab === "coach" ? "Mock interview" : "History"}
           variants={panelSwap}
           initial="hidden"
           animate="show"
           exit="exit"
         >
-          {tab === "prep" ? <PrepPlanPanel /> : <MockInterviewPanel />}
+          {tab === "prep" ? <PrepPlanPanel /> : tab === "coach" ? <MockInterviewPanel /> : <InterviewHistoryPanel />}
         </motion.div>
       </AnimatePresence>
     </div>

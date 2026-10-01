@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from email.message import EmailMessage
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from app.integrations.exceptions import IntegrationActionError
 from app.services.integration_proxy_service import proxy_request
@@ -35,6 +35,43 @@ class GmailMCPClient:
             return []
         return result.data.get("messages", []) if isinstance(result.data, dict) else []
 
+    def get_message_summary(self, message_id: str) -> dict:
+        """Sender, subject, date and Gmail's own snippet for one message.
+
+        Gmail's search lists only message ids; this fetches headers (not the
+        body) so a scan can classify mail without downloading it.
+        """
+        query = urlencode(
+            [
+                ("format", "metadata"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "Date"),
+            ]
+        )
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=f"gmail/v1/users/me/messages/{quote(message_id, safe='')}?{query}",
+            )
+        except Exception:
+            return {}
+        data = result.data if isinstance(result.data, dict) else {}
+        headers = {
+            str(h.get("name", "")).lower(): str(h.get("value", ""))
+            for h in (data.get("payload") or {}).get("headers", [])
+            if isinstance(h, dict)
+        }
+        return {
+            "id": data.get("id") or message_id,
+            "from": headers.get("from", ""),
+            "subject": headers.get("subject", ""),
+            "date": headers.get("date", ""),
+            "snippet": str(data.get("snippet", "")),
+        }
+
     def get_thread(self, thread_id: str) -> dict:
         try:
             result = proxy_request(
@@ -46,6 +83,43 @@ class GmailMCPClient:
         except Exception:
             return {}
         return result.data if isinstance(result.data, dict) else {}
+
+    def get_thread_headers(self, thread_id: str) -> list[dict]:
+        """Sender, subject and date of every message in a thread (no bodies)."""
+        query = urlencode(
+            [
+                ("format", "metadata"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "Date"),
+            ]
+        )
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=f"gmail/v1/users/me/threads/{quote(thread_id, safe='')}?{query}",
+            )
+        except Exception:
+            return []
+        data = result.data if isinstance(result.data, dict) else {}
+        messages = []
+        for message in data.get("messages", []):
+            headers = {
+                str(h.get("name", "")).lower(): str(h.get("value", ""))
+                for h in (message.get("payload") or {}).get("headers", [])
+                if isinstance(h, dict)
+            }
+            messages.append(
+                {
+                    "id": message.get("id", ""),
+                    "from": headers.get("from", ""),
+                    "subject": headers.get("subject", ""),
+                    "date": headers.get("date", ""),
+                }
+            )
+        return messages
 
     def send_message(self, to: str, subject: str, body: str) -> dict:
         message = EmailMessage()

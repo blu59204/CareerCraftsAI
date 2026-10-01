@@ -117,7 +117,9 @@ async def start_job_search(run_id: uuid.UUID | str, user_id: uuid.UUID | str, pa
     return workflow_id
 
 
-async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dict:
+async def start_auto_apply(
+    user_id: uuid.UUID, application_id: uuid.UUID, auto: bool = False
+) -> dict:
     """Start (or find) the application workflow. Returns workflow_id and
     whether this call started it ("queued") or it was already running."""
     from app.workflows.auto_apply import AutoApplyIntent, AutoApplyWorkflow, auto_apply_workflow_id
@@ -134,6 +136,7 @@ async def start_auto_apply(user_id: uuid.UUID, application_id: uuid.UUID) -> dic
                 claim_timeout_s=settings.EXTENSION_TASK_CLAIM_TIMEOUT_S,
                 complete_timeout_s=settings.EXTENSION_TASK_COMPLETE_TIMEOUT_S,
                 run_id=run_id,
+                auto=auto,
             ),
             id=workflow_id,
             task_queue=settings.TEMPORAL_TASK_QUEUE,

@@ -18,7 +18,7 @@ from langchain_core.messages import AIMessage
 from app.agents._llm_json import call_llm_json
 from app.agents.prompts.nl_search_prompt import SYSTEM_PROMPT, OUTPUT_SCHEMA, build_user_prompt
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ class SearchParameters:
 # ---------------------------------------------------------------------------
 # Parameter extraction via LLM
 # ---------------------------------------------------------------------------
+
 
 def extract_parameters(llm: BaseChatModel, query: str) -> SearchParameters:
     """Use LLM to extract structured search parameters from a natural language query."""
@@ -133,6 +134,7 @@ def _log_agent_run(
 ) -> None:
     """Log this NL search run to the agent_runs table."""
     from app.core.event_bus import suppress_terminal_events
+
     if suppress_terminal_events.get():
         return  # The durable worker commits the authoritative run state.
     from app.core.sync_db import _get_sync_factory
@@ -195,7 +197,7 @@ def nl_search_node(state: AgentState) -> AgentState:
         if not model_settings:
             raise ValueError("No active model settings configured for user")
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
 
         # Step 1: Extract parameters from NL query
         params = extract_parameters(llm, query)
@@ -239,7 +241,8 @@ def nl_search_node(state: AgentState) -> AgentState:
                     "interpretation": params.to_dict(),
                     "original_query": query,
                 },
-                "messages": state["messages"] + [
+                "messages": state["messages"]
+                + [
                     AIMessage(
                         content=f"I interpreted your search as: {params.role_title}"
                         f"{f' ({params.seniority})' if params.seniority else ''}"
@@ -265,10 +268,7 @@ def nl_search_node(state: AgentState) -> AgentState:
         jobs_raw = _job_listings_to_dicts(listings)
 
         # Score jobs against user profile
-        scored = [
-            {**job, "match_score": _score_job(llm, job, user_profile)}
-            for job in jobs_raw
-        ]
+        scored = [{**job, "match_score": _score_job(llm, job, user_profile)} for job in jobs_raw]
         scored.sort(key=lambda j: j["match_score"], reverse=True)
 
         duration_ms = int((time.monotonic() - start_ts) * 1000)

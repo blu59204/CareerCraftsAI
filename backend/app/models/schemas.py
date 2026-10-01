@@ -63,6 +63,12 @@ class UserPreferencesSchema(BaseModel):
     notify_agent_alerts: bool | None = None
     notify_followup_reminders: bool | None = None
     notify_weekly_digest: bool | None = None
+    daily_search_enabled: bool | None = None
+    inbox_tracking_enabled: bool | None = None
+    outreach_daily_cap: int | None = Field(default=None, ge=1, le=100)
+    outreach_auto_send: bool | None = None
+    notify_daily_summary: bool | None = None
+    auto_apply_enabled: bool | None = None
 
 
 class UserPreferencesResponse(UserPreferencesSchema):
@@ -174,7 +180,7 @@ class ModelSettingsResponse(BaseModel):
 
 class CoverLetterRequest(BaseModel):
     job_application_id: uuid.UUID
-    tone: Literal["formal", "casual", "bold"] = "formal"
+    tone: Literal["formal", "casual", "bold", "concise", "story"] = "formal"
 
 
 class CoverLetterResponse(BaseModel):

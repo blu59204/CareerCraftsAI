@@ -61,6 +61,10 @@ type ApplicationRecord = {
   followup_day5: string | null;
   followup_day12: string | null;
   notes: string | null;
+  source: string | null;
+  resume_label: string | null;
+  outreach_status: string | null;
+  outreach_to: string | null;
 };
 
 function nextFollowUp(application: ApplicationRecord): string | undefined {
@@ -93,6 +97,10 @@ export default function ApplicationsPage() {
         appliedAt: application.applied_at,
         nextFollowUp: nextFollowUp(application),
         notes: application.notes,
+        source: application.source,
+        resumeLabel: application.resume_label,
+        outreachStatus: application.outreach_status,
+        outreachTo: application.outreach_to,
       }));
     },
   });

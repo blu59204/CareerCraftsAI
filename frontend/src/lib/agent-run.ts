@@ -36,3 +36,31 @@ export async function waitForAgentRun(runId: string, timeoutMs = 300_000): Promi
   }
   throw new Error(`Agent run did not finish within ${timeoutMs / 1000} seconds`);
 }
+
+export type CoverLetterResult = { runId: string; content: string | null; warnings: string[] };
+
+/**
+ * Queue a cover letter run and wait for its draft. The route validates the
+ * job description (400 when missing) and returns at once; the agent itself
+ * runs as a durable workflow.
+ */
+export type CoverLetterTone = "formal" | "casual" | "bold" | "concise" | "story";
+
+export async function generateCoverLetter(
+  tone: CoverLetterTone,
+  jdText: string,
+): Promise<CoverLetterResult> {
+  const { data } = await apiClient.post<{ run_id: string }>("/cover-letter/generate", {
+    tone,
+    jd_text: jdText,
+  });
+  const run = await waitForAgentRun(data.run_id);
+  const output = (run.output ?? {}) as Record<string, unknown>;
+  const content = output.cover_letter_markdown ?? output.content;
+  const warnings = Array.isArray(output.warnings) ? (output.warnings as string[]) : [];
+  return {
+    runId: data.run_id,
+    content: run.status === "failed" || typeof content !== "string" ? null : content,
+    warnings,
+  };
+}

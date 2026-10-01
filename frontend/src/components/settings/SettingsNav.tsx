@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId, useState } from "react";
 import { motion } from "motion/react";
-import { Brain, Briefcase, Plugs, UserCircle, type Icon } from "@phosphor-icons/react";
+import { Brain, Briefcase, Notebook, Plugs, UserCircle, type Icon } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { SPRING_SOFT } from "@/components/vanguard/motion";
 
@@ -13,6 +13,7 @@ const sections: ReadonlyArray<{ href: string; label: string; icon: Icon }> = [
   { href: "/settings/profile", label: "Job preferences", icon: Briefcase },
   { href: "/settings/integrations", label: "Integrations", icon: Plugs },
   { href: "/settings/models", label: "AI models & keys", icon: Brain },
+  { href: "/settings/memory", label: "Memory", icon: Notebook },
 ];
 
 /**

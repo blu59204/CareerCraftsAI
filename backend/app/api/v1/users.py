@@ -324,10 +324,19 @@ async def add_model_settings(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from sqlalchemy import delete as sa_delete
     from sqlalchemy import update as sa_update
 
-    # Deactivate any existing active keys so exactly one remains active.
-    # (No DB unique constraint guarantees this, so enforce it here.)
+    # Saving a model again replaces its old key instead of keeping both, so
+    # stale encrypted keys do not pile up. Other models stay switchable.
+    await db.execute(
+        sa_delete(UserModelSettings).where(
+            UserModelSettings.user_id == current_user.id,
+            UserModelSettings.provider == payload.provider,
+            UserModelSettings.model_name == payload.model_name,
+        )
+    )
+    # Exactly one active model (also enforced by a partial unique index).
     await db.execute(
         sa_update(UserModelSettings)
         .where(UserModelSettings.user_id == current_user.id)
@@ -371,13 +380,15 @@ async def activate_model(
 ):
     import uuid as _uuid
 
-    # deactivate all
-    all_res = await db.execute(
-        select(UserModelSettings).where(UserModelSettings.user_id == current_user.id)
+    from sqlalchemy import update as sa_update
+
+    # Deactivate the others in one statement before activating the target,
+    # so the one-active index never sees two active rows mid-flush.
+    await db.execute(
+        sa_update(UserModelSettings)
+        .where(UserModelSettings.user_id == current_user.id)
+        .values(is_active=False)
     )
-    for m in all_res.scalars().all():
-        m.is_active = False
-    # activate target
     target_res = await db.execute(
         select(UserModelSettings).where(
             UserModelSettings.id == _uuid.UUID(model_id),

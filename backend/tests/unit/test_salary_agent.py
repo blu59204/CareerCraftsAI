@@ -59,7 +59,7 @@ def test_salary_agent_pauses_for_approval(mock_llm):
             "app.agents.salary_agent.fetch_model_settings",
             return_value=MagicMock(provider="openai"),
         ),
-        patch("app.agents.salary_agent._build_llm", return_value=mock_llm),
+        patch("app.agents.salary_agent.build_agent_llm", return_value=mock_llm),
         patch("app.agents.salary_agent.ExaService") as mock_exa_cls,
         patch("app.agents.salary_agent._log_agent_run", return_value=None),
     ):
@@ -149,7 +149,7 @@ def test_salary_falls_back_to_keyless_search_without_exa(mock_llm):
 
     with (
         patch.object(salary_agent, "fetch_model_settings", return_value=MagicMock()),
-        patch.object(salary_agent, "_build_llm", return_value=mock_llm),
+        patch.object(salary_agent, "build_agent_llm", return_value=mock_llm),
         patch.object(salary_agent, "ExaService") as exa_cls,
         patch.object(salary_agent, "_log_agent_run", return_value=None),
         patch.object(salary_agent.web_research, "duckduckgo", ddg),

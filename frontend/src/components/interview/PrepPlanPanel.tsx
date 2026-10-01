@@ -15,7 +15,6 @@ import {
   CircleNotch,
   Lightbulb,
   Microphone,
-  MicrophoneSlash,
   Play,
   Plus,
   Question as QuestionIcon,
@@ -26,6 +25,7 @@ import {
   YoutubeLogo,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { DictationButton } from "./DictationButton";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import {
   Bezel,
@@ -235,9 +235,7 @@ function MockInterviewModal({
                   {currentQ}
                 </p>
               </Bezel>
-              <Notice icon={<MicrophoneSlash size={15} weight="light" />} className="py-2.5 text-xs">
-                Voice input coming soon — type your answer below
-              </Notice>
+              <DictationButton current={answer} onText={setAnswer} />
               <Textarea
                 aria-label="Your answer"
                 value={answer}

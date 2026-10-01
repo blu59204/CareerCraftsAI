@@ -328,6 +328,9 @@ Agent → ChatOpenAI(base_url=LLM_GATEWAY_URL, api_key=session_token)
 
 - `create_gateway_session(user_id, model_settings)` — HMAC-SHA256(`APP_SECRET_KEY`) token (48ch + nonce), Redis `llm_gw:session:{token}` JSON `{user_id, provider, model_name, api_key_enc}`, TTL 3600s, cross-worker visible.
 - `get_gateway_llm(user_id, db)` — loads active `UserModelSettings`, returns key-free `ChatOpenAI`.
+- Every agent node builds its model with `model_router.build_agent_llm(model_settings)`, a gateway `ChatOpenAI` with budget check and token tracking; a unit test fails if an agent module builds a keyed model. `_build_llm` (direct, keyed) remains only for the Settings key test.
+- The gateway proxies text chat completions only (no tools, structured output or streaming). Embeddings for RAG and semantic memory still use the decrypted key inside the worker.
+- The worker must reach the backend: `LLM_GATEWAY_URL` is `http://backend:8000/llm-gateway/v1` in dev Compose and `http://127.0.0.1:18100/llm-gateway/v1` on the Oracle stack.
 - Provider URLs: `openai, anthropic, google (generativelanguage), nvidia_nim (integrate.api.nvidia)`.
 - Defense in depth: `llm_proxy_service.redact_keys()` strips key echoes.
 

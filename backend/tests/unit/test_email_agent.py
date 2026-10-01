@@ -33,18 +33,24 @@ def make_state() -> AgentState:
 def test_email_agent_drafts_and_pauses_for_approval(mock_llm):
     from app.agents.email_agent import email_agent_node
 
-    mock_llm.responses = [json.dumps({
-        "subject": "Following up — Senior Python Engineer",
-        "body": "Dear Hiring Team, I wanted to follow up...",
-        "intent_detected": "status_request",
-    })]
+    mock_llm.responses = [
+        json.dumps(
+            {
+                "subject": "Following up — Senior Python Engineer",
+                "body": "Dear Hiring Team, I wanted to follow up...",
+                "intent_detected": "status_request",
+            }
+        )
+    ]
 
     _patch_settings = "app.agents.email_agent.fetch_model_settings"
-    _patch_llm = "app.agents.email_agent._build_llm"
+    _patch_llm = "app.agents.email_agent.build_agent_llm"
     _patch_gmail = "app.agents.email_agent.GmailMCPClient"
-    with patch(_patch_settings, return_value=MagicMock(provider="openai")), \
-         patch(_patch_llm, return_value=mock_llm), \
-         patch(_patch_gmail) as mock_gmail_cls:
+    with (
+        patch(_patch_settings, return_value=MagicMock(provider="openai")),
+        patch(_patch_llm, return_value=mock_llm),
+        patch(_patch_gmail) as mock_gmail_cls,
+    ):
         mock_gmail = MagicMock()
         mock_gmail.search_threads.return_value = []
         mock_gmail_cls.return_value = mock_gmail
@@ -61,16 +67,18 @@ def test_email_agent_never_auto_sends(mock_llm):
     """Critical: email agent must NEVER call send_message directly."""
     from app.agents.email_agent import email_agent_node
 
-    mock_llm.responses = [json.dumps({
-        "subject": "Test", "body": "Body", "intent_detected": "status_request"
-    })]
+    mock_llm.responses = [
+        json.dumps({"subject": "Test", "body": "Body", "intent_detected": "status_request"})
+    ]
 
     _patch_settings = "app.agents.email_agent.fetch_model_settings"
-    _patch_llm = "app.agents.email_agent._build_llm"
+    _patch_llm = "app.agents.email_agent.build_agent_llm"
     _patch_gmail = "app.agents.email_agent.GmailMCPClient"
-    with patch(_patch_settings, return_value=MagicMock(provider="openai")), \
-         patch(_patch_llm, return_value=mock_llm), \
-         patch(_patch_gmail) as mock_gmail_cls:
+    with (
+        patch(_patch_settings, return_value=MagicMock(provider="openai")),
+        patch(_patch_llm, return_value=mock_llm),
+        patch(_patch_gmail) as mock_gmail_cls,
+    ):
         mock_gmail = MagicMock()
         mock_gmail_cls.return_value = mock_gmail
         email_agent_node(make_state())
@@ -81,8 +89,10 @@ def test_email_agent_never_auto_sends(mock_llm):
 def test_email_agent_fails_without_fabricating_a_draft():
     from app.agents.email_agent import email_agent_node
 
-    with patch("app.agents.email_agent.fetch_model_settings", return_value=MagicMock()), \
-         patch("app.agents.email_agent._build_llm", side_effect=Exception("LLM unavailable")):
+    with (
+        patch("app.agents.email_agent.fetch_model_settings", return_value=MagicMock()),
+        patch("app.agents.email_agent.build_agent_llm", side_effect=Exception("LLM unavailable")),
+    ):
         result = email_agent_node(make_state())
 
     assert result["status"] == "failed"

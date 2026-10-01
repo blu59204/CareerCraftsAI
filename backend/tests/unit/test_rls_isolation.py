@@ -197,21 +197,18 @@ def test_approve_endpoint_rejects_other_users_run():
 
 
 def test_hnsw_migration_file_exists_and_contains_index():
-    """Verify the HNSW migration SQL file was created and contains the expected index."""
+    """The applied migrations create the HNSW and collection indexes."""
     from pathlib import Path
 
-    migration = Path(__file__).parent.parent.parent / "supabase" / "migrations" / "hnsw_index.sql"
-    assert migration.exists(), (
-        "supabase/migrations/hnsw_index.sql not found — run this migration in production "
-        "to create the HNSW index required for production-scale vector similarity search"
-    )
-
-    content = migration.read_text()
+    migrations = Path(__file__).parents[3] / "supabase" / "migrations"
+    content = (migrations / "0025_hnsw_index_embeddings.sql").read_text()
     assert "hnsw" in content.lower(), "Migration must contain HNSW index creation"
     assert "langchain_pg_embedding" in content, "Migration must target langchain_pg_embedding table"
     assert (
         "vector_cosine_ops" in content
     ), "Migration must use cosine ops to match LangChain retrieval"
+    collection = (migrations / "20261001101000_langchain_collection_index.sql").read_text()
+    assert "idx_langchain_embedding_collection_id" in collection
     assert "CREATE INDEX IF NOT EXISTS" in content, "Migration must be idempotent (IF NOT EXISTS)"
 
 

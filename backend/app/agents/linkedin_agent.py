@@ -10,7 +10,7 @@ from app.agents.prompts.linkedin_prompt import (
 
 from app.agents.state import AgentState
 from app.agents.thinking import think_and_select
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings
 from app.services.rag_service import retrieve
 
@@ -46,7 +46,7 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
         chunks = retrieve(user_id, "resume", target_role, model_settings, k=5)
         context_text = "\n".join(c.page_content for c in chunks)
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
 
         # ── Think: Which experiences to highlight, what narrative ─────
         thinking = think_and_select(
@@ -83,9 +83,8 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
                 "thinking": " ".join(profile.before_after_notes),
                 "live_browser": live_browser,
             },
-            "messages": state["messages"] + [
-                AIMessage(content="LinkedIn sections ready for review.")
-            ],
+            "messages": state["messages"]
+            + [AIMessage(content="LinkedIn sections ready for review.")],
         }
     except Exception as exc:
         logger.exception("LinkedIn agent failed for user %s", state.get("user_id"))
@@ -93,7 +92,10 @@ def linkedin_agent_node(state: AgentState) -> AgentState:
             **state,
             "status": "failed",
             "error": f"LinkedIn optimization failed: {str(exc)[:200]}",
-            "messages": state["messages"] + [
-                AIMessage(content="LinkedIn optimization failed; no fabricated profile was created.")
+            "messages": state["messages"]
+            + [
+                AIMessage(
+                    content="LinkedIn optimization failed; no fabricated profile was created."
+                )
             ],
         }

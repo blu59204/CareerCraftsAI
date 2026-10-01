@@ -87,20 +87,28 @@ git pull origin master
 
 ## 2. Apply pending database migrations
 
-There is no migration-runner wired up yet — migrations are applied by hand,
-directly against the self-hosted Postgres, before deploying code that
-depends on them:
+`scripts/migrate.py` applies every file in `supabase/migrations/` that is not
+yet recorded in the `public.schema_migrations` ledger, in filename order, each
+in its own transaction. Run it from the repo checkout on the VM before
+deploying code that depends on a new migration (it needs Python and psycopg,
+not the app image):
 
 ```bash
-sudo docker exec careercraft-isolated-postgres-1 \
-  psql -p 18132 -U careercraft \
-  -c "<the ALTER TABLE / CREATE ... from the new migration file in supabase/migrations/>"
+python3 -m venv ~/.careercraft-migrate && ~/.careercraft-migrate/bin/pip install 'psycopg[binary]'
+export DATABASE_URL=postgresql://careercraft:<password>@127.0.0.1:18132/<database>
+~/.careercraft-migrate/bin/python scripts/migrate.py --dry-run   # list what is pending
+~/.careercraft-migrate/bin/python scripts/migrate.py
 ```
 
-Check `supabase/migrations/` for any file newer than what's already been
-applied. This is a real gap worth closing eventually (a proper migration
-runner, or at minimum a script that applies every unapplied file in order)
-— tracked as follow-up work, not blocking day-to-day deploys.
+**First run on a database migrated by hand.** The runner refuses to touch a
+database that has tables but no ledger. Record what is already applied, then
+run it normally to apply the rest:
+
+```bash
+~/.careercraft-migrate/bin/python scripts/migrate.py --baseline 20261001093000_b_extension_task_statuses.sql
+```
+
+`--baseline` with no file name records every file as applied.
 
 ---
 
@@ -271,9 +279,6 @@ way the forward migration was applied in step 2 above.
 
 - **No CI/CD auto-deploy.** Deploys are manual (`git pull` + rebuild on the
   VM directly), not triggered by merging to `master`.
-  `.github/workflows/cd.yml` still targets branch `main`, `/opt/jobagent`
-  and the retired root `docker-compose.yml`; it does not deploy this stack.
-- **No migration runner.** See step 2 above.
 - **ngrok as the public ingress** is unusual for a permanent production
   setup (normally used for temporary/dev tunneling) — the comments in
   `deploy/oracle-vm/nango-compose.yml` describe the current layout as

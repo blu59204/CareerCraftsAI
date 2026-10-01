@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import _get_sync_factory, fetch_model_settings
 from app.services import web_research
 from app.services.exa_service import ExaService
@@ -382,7 +382,7 @@ def salary_report_node(state: AgentState) -> AgentState:
             classification = classify_offer(offer_amount, p25, p50, p75).value
 
         # Build LLM and generate negotiation script (Requirements 3.4, 3.7)
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
         script = _generate_negotiation_script(
             llm, role, company, p25, p50, p75, classification or "at_market", currency
         )

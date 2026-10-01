@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api";
+import { generateCoverLetter, type CoverLetterTone } from "@/lib/agent-run";
 import { cn } from "@/lib/utils";
 import {
   Bezel,
@@ -82,27 +83,22 @@ export default function CoverLetterPage() {
 
   const generate = async () => {
     setGenerating(true);
-    const toneMap: Record<Tone, "formal" | "casual" | "bold"> = {
+    const toneMap: Record<Tone, CoverLetterTone> = {
       Professional: "formal",
-      Concise: "formal",
+      Concise: "concise",
       Enthusiastic: "casual",
-      "Story-driven": "bold",
+      "Story-driven": "story",
     };
     try {
-      const { data } = await apiClient.post<{
-        run_id: string; status: string; content: string | null; tone: string | null; warnings?: string[];
-      }>("/cover-letter/generate", {
-        tone: toneMap[tone],
-        jd_text: jd.trim(),
-      });
-      setWarnings(data.warnings ?? []);
+      const data = await generateCoverLetter(toneMap[tone], jd.trim());
+      setWarnings(data.warnings);
       if (data.content) {
         const content = data.content;
         setLetter(content);
         const id = Date.now();
-        setVersions((prev) => [...prev, { id, tone, content, warnings: data.warnings ?? [], createdAt: id }]);
+        setVersions((prev) => [...prev, { id, tone, content, warnings: data.warnings, createdAt: id }]);
         setActiveVersionId(id);
-        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
+        await apiClient.post(`/agents/${data.runId}/approve`, { approved: true });
         toast.success("Cover letter generated");
       } else {
         toast.error("We couldn’t generate a cover letter. Check your active AI model in Settings and try again.");
@@ -111,8 +107,8 @@ export default function CoverLetterPage() {
       const apiError = error as { response?: { status?: number; data?: { detail?: string } } };
       if (apiError.response?.status === 400) {
         toast.error("Add a job description before generating your cover letter.");
-      } else if (apiError.response?.status === 504) {
-        toast.error("Cover letter generation timed out. Please try again.");
+      } else if (apiError.response?.status === 429) {
+        toast.error("Wait for your current agent runs to finish, then try again.");
       } else {
         toast.error("We couldn’t generate a cover letter. Check your active AI model in Settings and try again.");
       }

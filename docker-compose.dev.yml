@@ -44,6 +44,9 @@ services:
     env_file: .env
     environment:
       TEMPORAL_ADDRESS: temporal:7233
+      # Agents run here, not in the API container, so localhost:8000 (the
+      # default) is not the gateway; reach it by service name.
+      LLM_GATEWAY_URL: http://backend:8000/llm-gateway/v1
     volumes:
       - ./backend/app:/app/app
     init: true

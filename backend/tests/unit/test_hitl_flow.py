@@ -13,12 +13,12 @@ Bugs confirmed absent (audit P0):
   - apply_linkedin task string said "Click through all steps and Submit" — fixed in Fix 2
   - fill_and_submit_form is always called with submit=False from apply_to_any_portal
 """
+
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # 1. Email HITL gate: approve_and_send rejects non-awaiting_approval runs
@@ -35,9 +35,9 @@ def test_email_approve_rejects_completed_run():
     from app.api.v1 import email as email_module
 
     source = inspect.getsource(email_module.approve_and_send)
-    assert "awaiting_approval" in source, (
-        "approve_and_send must check run.status == 'awaiting_approval' before sending"
-    )
+    assert (
+        "awaiting_approval" in source
+    ), "approve_and_send must check run.status == 'awaiting_approval' before sending"
     # Must raise (400) when not awaiting_approval
     assert "raise HTTPException" in source
     assert "status_code=400" in source or "400" in source
@@ -49,12 +49,10 @@ def test_email_approve_rejects_wrong_action_type():
     from app.api.v1 import email as email_module
 
     source = inspect.getsource(email_module.approve_and_send)
-    assert "send_email" in source, (
-        "approve_and_send must verify action type is 'send_email'"
-    )
-    assert "raise HTTPException" in source, (
-        "approve_and_send must raise HTTPException when the pending action type is wrong"
-    )
+    assert "send_email" in source, "approve_and_send must verify action type is 'send_email'"
+    assert (
+        "raise HTTPException" in source
+    ), "approve_and_send must raise HTTPException when the pending action type is wrong"
 
 
 def test_email_approve_rejects_missing_run():
@@ -103,16 +101,18 @@ def test_email_agent_node_always_returns_awaiting_approval():
 
     mock_llm = MagicMock()
     mock_llm.invoke.return_value = MagicMock(
-        content=json.dumps({
-            "subject": "Following up",
-            "body": "Hi, I'm interested in the role.",
-            "intent_detected": "status_request",
-        })
+        content=json.dumps(
+            {
+                "subject": "Following up",
+                "body": "Hi, I'm interested in the role.",
+                "intent_detected": "status_request",
+            }
+        )
     )
 
     with (
         patch("app.agents.email_agent.fetch_model_settings", return_value=MagicMock()),
-        patch("app.agents.email_agent._build_llm", return_value=mock_llm),
+        patch("app.agents.email_agent.build_agent_llm", return_value=mock_llm),
         patch("app.agents.email_agent.GmailMCPClient") as mock_gmail_cls,
         patch("app.agents.email_agent.think_and_select", return_value="Think: personalize."),
     ):
@@ -158,7 +158,8 @@ async def test_apply_to_any_portal_always_calls_submit_false():
         patch("app.services.auto_apply_service._human_delay", new=AsyncMock()),
     ):
         await apply_to_any_portal(
-            MagicMock(), "usr_test",
+            MagicMock(),
+            "usr_test",
             "https://boards.greenhouse.io/company/jobs/123",
             run_id="r1",
         )
@@ -257,6 +258,6 @@ def test_auto_apply_pipeline_source_never_passes_submit_true():
 
     source = inspect.getsource(auto_apply_pipeline)
     # The pipeline queues actions for approval — it must not submit directly
-    assert "submit=True" not in source, (
-        "auto_apply_pipeline contains 'submit=True' — this bypasses the HITL gate."
-    )
+    assert (
+        "submit=True" not in source
+    ), "auto_apply_pipeline contains 'submit=True' — this bypasses the HITL gate."

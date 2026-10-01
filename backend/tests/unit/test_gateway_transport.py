@@ -59,7 +59,9 @@ async def test_native_adapter_returns_text_and_usage(transport, monkeypatch, pro
     assert response.json()["usage"]["total_tokens"] == 10
     assert response.json()["choices"][0]["message"]["content"] == "Grounded edit"
     assert "private-key" not in response.text
-    assert invoke.call_args.args[0][0].content == "Source"
+    forwarded = invoke.call_args.args[0]
+    assert forwarded[-1].content == "Source"
+    assert forwarded[0].content.startswith("UNTRUSTED CONTENT")  # shared rules added
 
 
 @pytest.mark.asyncio

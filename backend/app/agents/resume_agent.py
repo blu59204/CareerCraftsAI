@@ -1,3 +1,4 @@
+import json
 import logging
 
 from langchain_core.messages import AIMessage
@@ -12,8 +13,9 @@ from app.agents.state import AgentState
 from app.services.ats_estimator import estimate_resume
 from app.services.ats_service import compute_ats_score
 from app.services.pdf_service import generate_resume_pdf
-from app.services.resume_export import PageOverflow
 from app.services.rag_service import retrieve
+from app.services.resume_export import PageOverflow
+from app.services.resume_grounding import source_text, unsupported_claims
 from app.services.resume_structure import (
     apply_fixes,
     apply_saved_facts,
@@ -127,6 +129,41 @@ def _finalize_markdown(
     return parsed, review_resume(markdown)
 
 
+def _ground_resume(
+    llm,
+    parsed: "ResumeOutput",
+    source: str,
+    full_name: str | None,
+    verified_contact: dict,
+    saved_facts: dict,
+) -> tuple["ResumeOutput", list[str]]:
+    """Make sure the tailored text only says what the candidate's own
+    documents say. One repair pass asks the model to remove what is not in the
+    source; whatever is still unsupported is returned for the caller to act on.
+    """
+    unsupported = unsupported_claims(parsed.resume_markdown, source)
+    if not unsupported:
+        return parsed, []
+    repair_prompt = (
+        "Your resume draft contains details that do not appear in the candidate's source "
+        "documents. Remove or reword every one so the resume states only what the source "
+        "states. Do not add anything new.\n"
+        f"UNSUPPORTED: {', '.join(unsupported[:30])}\n\n"
+        f"DRAFT_RESUME_MARKDOWN:\n{parsed.resume_markdown}\n\n"
+        f"CANDIDATE_SOURCE:\n{source[:12000]}"
+    )
+    try:
+        repaired = call_llm_json(llm, RESUME_JSON_SYSTEM_PROMPT, repair_prompt, ResumeOutput)
+    except Exception as exc:  # the first draft stays and is reported as unsupported
+        logger.warning("Resume grounding repair failed: %s", type(exc).__name__)
+        return parsed, unsupported
+    repaired, _ = _finalize_markdown(repaired, full_name, verified_contact, saved_facts)
+    remaining = unsupported_claims(repaired.resume_markdown, source)
+    if len(remaining) <= len(unsupported):
+        return repaired, remaining
+    return parsed, unsupported
+
+
 def _score_parsed_resume(parsed: "ResumeOutput", jd_text: str) -> "ResumeOutput":
     """Overwrite the self-graded ATS score with the real computed score."""
     if not jd_text.strip():
@@ -226,6 +263,17 @@ def resume_agent_node(state: AgentState) -> AgentState:
             ResumeOutput,
         )
         parsed, review = _finalize_markdown(parsed, full_name, verified_contact, saved_facts)
+        source = source_text(chunk_texts, saved_facts, full_name, json.dumps(verified_contact))
+        parsed, unsupported = _ground_resume(
+            llm, parsed, source, full_name, verified_contact, saved_facts
+        )
+        if parsed.resume_markdown.strip():
+            review = review_resume(parsed.resume_markdown)
+        if unsupported:
+            parsed.warnings = list(parsed.warnings or []) + [
+                "Not found in your documents, please check or remove: "
+                + ", ".join(unsupported[:10])
+            ]
         model_warnings = list(parsed.warnings or [])
 
         pdf_document_id = None
@@ -299,6 +347,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
 
         pending = _resume_pending_action(parsed, pdf_document_id)
         pending["review"] = review
+        pending["grounding"] = {"checked": True, "unsupported": unsupported}
         pending["template"] = template
         emit(run_id, "complete", {"result": pending})
         return {

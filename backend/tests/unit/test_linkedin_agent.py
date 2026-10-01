@@ -26,22 +26,35 @@ def test_linkedin_agent_generates_sections_and_pauses():
 
     from app.agents.linkedin_agent import linkedin_agent_node
 
-    llm_responses = [AIMessage(content=json.dumps({
-        "headline": "Python Engineer | FastAPI",
-        "about": "I build reliable Python services.",
-        "experiences": [{"title": "Engineer", "company": "Example", "bullets": ["Built APIs"]}],
-        "target_keywords": ["Python"],
-        "before_after_notes": ["Kept claims grounded in the source."],
-    }))]
+    llm_responses = [
+        AIMessage(
+            content=json.dumps(
+                {
+                    "headline": "Python Engineer | FastAPI",
+                    "about": "I build reliable Python services.",
+                    "experiences": [
+                        {"title": "Engineer", "company": "Example", "bullets": ["Built APIs"]}
+                    ],
+                    "target_keywords": ["Python"],
+                    "before_after_notes": ["Kept claims grounded in the source."],
+                }
+            )
+        )
+    ]
     mock_llm = MagicMock()
     mock_llm.invoke.side_effect = llm_responses
     mock_chunks = [MagicMock(page_content="5 years Python, FastAPI, LangChain")]
 
     _settings_patch = "app.agents.linkedin_agent.fetch_model_settings"
-    with patch("app.agents.linkedin_agent.retrieve", return_value=mock_chunks), \
-         patch(_settings_patch, return_value=MagicMock(provider="openai")), \
-         patch("app.agents.linkedin_agent._build_llm", return_value=mock_llm), \
-         patch("app.agents.linkedin_agent.think_and_select", return_value="Focus on Python/FastAPI experience"):
+    with (
+        patch("app.agents.linkedin_agent.retrieve", return_value=mock_chunks),
+        patch(_settings_patch, return_value=MagicMock(provider="openai")),
+        patch("app.agents.linkedin_agent.build_agent_llm", return_value=mock_llm),
+        patch(
+            "app.agents.linkedin_agent.think_and_select",
+            return_value="Focus on Python/FastAPI experience",
+        ),
+    ):
         result = linkedin_agent_node(make_state())
 
     assert result["status"] == "awaiting_approval"
@@ -54,10 +67,11 @@ def test_linkedin_agent_generates_sections_and_pauses():
 def test_linkedin_agent_fails_without_fabricating_a_draft():
     from app.agents.linkedin_agent import linkedin_agent_node
 
-    with patch("app.agents.linkedin_agent.fetch_model_settings", return_value=MagicMock()), \
-         patch("app.agents.linkedin_agent.retrieve", side_effect=Exception("DB error")):
+    with (
+        patch("app.agents.linkedin_agent.fetch_model_settings", return_value=MagicMock()),
+        patch("app.agents.linkedin_agent.retrieve", side_effect=Exception("DB error")),
+    ):
         result = linkedin_agent_node(make_state())
 
     assert result["status"] == "failed"
     assert "LinkedIn optimization failed" in result["error"]
-

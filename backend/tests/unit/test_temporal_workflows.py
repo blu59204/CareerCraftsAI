@@ -486,9 +486,13 @@ async def test_ensure_schedules_registers_recurring_jobs(monkeypatch):
     await scheduled.ensure_schedules(client)
 
     assert set(created) | {"maintenance"} == {
+        "auto-apply-queue",
         "daily-job-search",
+        "daily-summary",
+        "inbox-status-check",
         "maintenance",
         "public-job-catalog-refresh",
+        "recruiter-outreach",
     }
     handles["maintenance"].update.assert_awaited_once()  # existing one is updated
     handles["application-status-check"].delete.assert_awaited_once()
@@ -500,6 +504,8 @@ def test_every_started_workflow_is_registered_with_the_worker():
     from app.workflows.registry import ACTIVITIES, WORKFLOWS
     from app.workflows.scheduled import (
         DailySearchWorkflow,
+        DailyUserSearchWorkflow,
+        InboxStatusWorkflow,
         MaintenanceWorkflow,
     )
 
@@ -509,6 +515,8 @@ def test_every_started_workflow_is_registered_with_the_worker():
         FollowupWorkflow,
         JobSearchWorkflow,
         DailySearchWorkflow,
+        DailyUserSearchWorkflow,
+        InboxStatusWorkflow,
         MaintenanceWorkflow,
     ):
         assert workflow_cls in WORKFLOWS
@@ -522,6 +530,117 @@ def test_every_started_workflow_is_registered_with_the_worker():
         "run_job_search_activity",
         "fail_job_search_activity",
         "draft_followup_activity",
+        "daily_search_activity",
+        "list_daily_search_users_activity",
+        "list_inbox_tracking_users_activity",
+        "inbox_status_activity",
+        "list_outreach_users_activity",
+        "outreach_activity",
+        "list_summary_users_activity",
+        "daily_summary_activity",
+        "list_auto_apply_users_activity",
+        "auto_apply_queue_activity",
         "maintenance_activity",
         "reserve_application_attempt",
     } <= names
+
+
+# ── DailySearchWorkflow ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_daily_search_runs_each_opted_in_member_separately():
+    from app.workflows.scheduled import DailySearchWorkflow, DailyUserSearchWorkflow
+
+    user_ids = [f"u{i}" for i in range(7)]  # more than one batch
+    searched = []
+
+    @activity.defn(name="list_daily_search_users_activity")
+    async def list_users(params: dict) -> dict:
+        return {"user_ids": user_ids}
+
+    @activity.defn(name="daily_search_activity")
+    async def search(params: dict) -> dict:
+        if params["user_id"] == "u3":
+            raise RuntimeError("job board down")
+        searched.append(params["user_id"])
+        return {"status": "ok"}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[DailySearchWorkflow, DailyUserSearchWorkflow],
+            activities=[list_users, search],
+        ):
+            result = await env.client.execute_workflow(
+                DailySearchWorkflow.run, id="daily-search", task_queue=QUEUE
+            )
+
+    # One member failing every retry does not stop anyone else's search.
+    assert result == {"users": 7, "failed": 1}
+    assert sorted(searched) == [u for u in user_ids if u != "u3"]
+
+
+@pytest.mark.asyncio
+async def test_inbox_status_scans_each_opted_in_member_and_survives_a_failure():
+    from app.workflows.scheduled import InboxStatusWorkflow
+
+    scanned = []
+
+    @activity.defn(name="list_inbox_tracking_users_activity")
+    async def list_users(params: dict) -> dict:
+        return {"user_ids": ["a", "b", "c"]}
+
+    @activity.defn(name="inbox_status_activity")
+    async def scan(params: dict) -> dict:
+        if params["user_id"] == "b":
+            raise RuntimeError("Gmail unavailable")
+        scanned.append(params["user_id"])
+        return {"changes": 1}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[InboxStatusWorkflow],
+            activities=[list_users, scan],
+        ):
+            result = await env.client.execute_workflow(
+                InboxStatusWorkflow.run, id="inbox-status", task_queue=QUEUE
+            )
+
+    assert result == {"users": 3, "failed": 1}
+    assert sorted(scanned) == ["a", "c"]
+
+
+@pytest.mark.asyncio
+async def test_outreach_runs_each_member_and_survives_a_failure():
+    from app.workflows.scheduled import OutreachWorkflow
+
+    handled = []
+
+    @activity.defn(name="list_outreach_users_activity")
+    async def list_users(params: dict) -> dict:
+        return {"user_ids": ["a", "b"]}
+
+    @activity.defn(name="outreach_activity")
+    async def run_member(params: dict) -> dict:
+        if params["user_id"] == "a":
+            raise RuntimeError("Gmail unavailable")
+        handled.append(params["user_id"])
+        return {"sent": 1}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[OutreachWorkflow],
+            activities=[list_users, run_member],
+        ):
+            result = await env.client.execute_workflow(
+                OutreachWorkflow.run, id="outreach", task_queue=QUEUE
+            )
+
+    assert result == {"users": 2, "failed": 1}
+    assert handled == ["b"]

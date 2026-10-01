@@ -3,7 +3,6 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from langchain_core.messages import HumanMessage
 
 from app.agents.state import AgentState
@@ -16,7 +15,10 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         os.getenv("INTEGRATION") != "1",
-        reason="live-source fallbacks — quarantined pending job_search rewrite; run with INTEGRATION=1",
+        reason=(
+            "live-source fallbacks — quarantined pending job_search rewrite; "
+            "run with INTEGRATION=1"
+        ),
     ),
 ]
 
@@ -36,7 +38,10 @@ def make_state(query: str = "Python engineer remote") -> AgentState:
 
 
 def test_job_search_agent_returns_scored_matches(mock_llm):
-    pytest.skip("Legacy test — coverage is in test_job_search_agent_uses_google_jobs_when_jobspy_has_no_results")
+    pytest.skip(
+        "Legacy test — coverage is in "
+        "test_job_search_agent_uses_google_jobs_when_jobspy_has_no_results"
+    )
 
 
 def test_job_search_agent_closes_session_on_error():
@@ -53,24 +58,31 @@ def test_job_search_agent_returns_empty_matches_when_real_sources_unavailable(mo
 
     mock_llm.responses = ["50"]
 
-    with patch(
-             "app.agents.job_search.fetch_model_settings",
-             return_value=MagicMock(provider="openai"),
-         ), \
-         patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"), \
-         patch("app.agents.thinking.think_and_select", return_value="score relevant Python jobs"), \
-         patch("app.services.job_platforms_service.scrape_jobs", side_effect=Exception("JobSpy offline")), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]), \
-         patch("app.agents.job_search._search_public_ats_jobs", side_effect=Exception("ATS offline")), \
-         patch("app.agents.job_search._search_remoteok_jobs", side_effect=Exception("RemoteOK offline")):
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"),
+        patch("app.agents.thinking.think_and_select", return_value="score relevant Python jobs"),
+        patch(
+            "app.services.job_platforms_service.scrape_jobs",
+            side_effect=Exception("JobSpy offline"),
+        ),
+        patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]),
+        patch(
+            "app.agents.job_search._search_public_ats_jobs", side_effect=Exception("ATS offline")
+        ),
+        patch(
+            "app.agents.job_search._search_remoteok_jobs", side_effect=Exception("RemoteOK offline")
+        ),
+    ):
         result = job_search_agent_node(make_state())
 
     assert result["status"] == "completed"
     assert result["result"] == {"matches": [], "total_found": 0}
     assert all(
-        "example.com" not in (match.get("job_url") or "")
-        for match in result["result"]["matches"]
+        "example.com" not in (match.get("job_url") or "") for match in result["result"]["matches"]
     )
 
 
@@ -90,15 +102,18 @@ def test_job_search_agent_uses_google_jobs_when_jobspy_has_no_results(mock_llm):
         )
     ]
 
-    with patch(
-        "app.agents.job_search.fetch_model_settings",
-        return_value=MagicMock(provider="openai"),
-    ), \
-         patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"), \
-         patch("app.agents.thinking.think_and_select", return_value="score Python jobs"), \
-         patch("app.services.job_platforms_service.scrape_jobs", return_value=[]), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=google_jobs) as google_search:
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"),
+        patch("app.agents.thinking.think_and_select", return_value="score Python jobs"),
+        patch("app.services.job_platforms_service.scrape_jobs", return_value=[]),
+        patch(
+            "app.services.indian_platforms_service.search_google_jobs", return_value=google_jobs
+        ) as google_search,
+    ):
         result = job_search_agent_node(make_state())
 
     assert result["status"] == "completed"
@@ -115,18 +130,21 @@ def test_job_search_agent_passes_live_browser_to_google_jobs(mock_llm):
     state = make_state()
     state["context"]["live_browser"] = True
 
-    with patch(
-        "app.agents.job_search.fetch_model_settings",
-        return_value=MagicMock(provider="openai"),
-    ), \
-         patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"), \
-         patch("app.agents.thinking.think_and_select", return_value="score Python jobs"), \
-         patch("app.agents.job_search.app_settings.AGENTQL_API_KEY", None), \
-         patch("app.agents.job_search.app_settings.SEARXNG_URL", None), \
-         patch("app.services.job_platforms_service.scrape_jobs", return_value=[]), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]) as google_search, \
-         patch("app.agents.job_search._search_public_ats_jobs", return_value=[]):
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"),
+        patch("app.agents.thinking.think_and_select", return_value="score Python jobs"),
+        patch("app.agents.job_search.app_settings.AGENTQL_API_KEY", None),
+        patch("app.agents.job_search.app_settings.SEARXNG_URL", None),
+        patch("app.services.job_platforms_service.scrape_jobs", return_value=[]),
+        patch(
+            "app.services.indian_platforms_service.search_google_jobs", return_value=[]
+        ) as google_search,
+        patch("app.agents.job_search._search_public_ats_jobs", return_value=[]),
+    ):
         job_search_agent_node(state)
 
     _, kwargs = google_search.call_args
@@ -152,17 +170,20 @@ def test_live_browser_search_uses_visible_google_jobs_before_jobspy(mock_llm):
         )
     ]
 
-    with patch(
-        "app.agents.job_search.fetch_model_settings",
-        return_value=MagicMock(provider="openai"),
-    ), \
-         patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"), \
-         patch("app.agents.thinking.think_and_select", return_value="score Python jobs"), \
-         patch("app.agents.job_search.app_settings.AGENTQL_API_KEY", None), \
-         patch("app.agents.job_search.app_settings.SEARXNG_URL", None), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=google_jobs) as google_search, \
-         patch("app.services.job_platforms_service.scrape_jobs") as jobspy_scrape:
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"),
+        patch("app.agents.thinking.think_and_select", return_value="score Python jobs"),
+        patch("app.agents.job_search.app_settings.AGENTQL_API_KEY", None),
+        patch("app.agents.job_search.app_settings.SEARXNG_URL", None),
+        patch(
+            "app.services.indian_platforms_service.search_google_jobs", return_value=google_jobs
+        ) as google_search,
+        patch("app.services.job_platforms_service.scrape_jobs") as jobspy_scrape,
+    ):
         result = job_search_agent_node(state)
 
     assert result["status"] == "completed"
@@ -191,17 +212,18 @@ def test_job_search_agent_uses_public_ats_before_remoteok(mock_llm):
     state["context"]["location"] = "Bangalore"
     state["context"]["work_mode"] = "hybrid"
 
-    with patch(
-        "app.agents.job_search.fetch_model_settings",
-        return_value=MagicMock(provider="openai"),
-    ), \
-         patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"), \
-         patch("app.agents.thinking.think_and_select", return_value="score Python jobs"), \
-         patch("app.services.job_platforms_service.scrape_jobs", return_value=[]), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]), \
-         patch("app.agents.job_search._search_public_ats_jobs", return_value=ats_jobs) as ats_search, \
-         patch("app.agents.job_search._search_remoteok_jobs") as remoteok_search:
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"),
+        patch("app.agents.thinking.think_and_select", return_value="score Python jobs"),
+        patch("app.services.job_platforms_service.scrape_jobs", return_value=[]),
+        patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]),
+        patch("app.agents.job_search._search_public_ats_jobs", return_value=ats_jobs) as ats_search,
+        patch("app.agents.job_search._search_remoteok_jobs") as remoteok_search,
+    ):
         result = job_search_agent_node(state)
 
     assert result["status"] == "completed"
@@ -218,17 +240,18 @@ def test_non_remote_search_skips_remoteok_when_no_ats_jobs(mock_llm):
     state["context"]["location"] = "Bangalore"
     state["context"]["work_mode"] = "onsite"
 
-    with patch(
-             "app.agents.job_search.fetch_model_settings",
-             return_value=MagicMock(provider="openai"),
-         ), \
-         patch("app.agents.job_search._build_llm", return_value=mock_llm), \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"), \
-         patch("app.agents.thinking.think_and_select", return_value="score Python jobs"), \
-         patch("app.services.job_platforms_service.scrape_jobs", return_value=[]), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]), \
-         patch("app.agents.job_search._search_public_ats_jobs", return_value=[]), \
-         patch("app.agents.job_search._search_remoteok_jobs") as remoteok_search:
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="Python engineer"),
+        patch("app.agents.thinking.think_and_select", return_value="score Python jobs"),
+        patch("app.services.job_platforms_service.scrape_jobs", return_value=[]),
+        patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]),
+        patch("app.agents.job_search._search_public_ats_jobs", return_value=[]),
+        patch("app.agents.job_search._search_remoteok_jobs") as remoteok_search,
+    ):
         result = job_search_agent_node(state)
 
     assert result["status"] == "completed"
@@ -251,13 +274,13 @@ def test_browser_uses_headed_mode_for_live_browser():
 
     from app.services import browser_control_service as svc
 
-    with patch.object(svc, "Browser") as browser_cls, \
-         patch.object(svc, "Agent") as agent_cls, \
-         patch.object(svc, "_build_bu_llm", return_value=MagicMock()):
+    with (
+        patch.object(svc, "Browser") as browser_cls,
+        patch.object(svc, "Agent") as agent_cls,
+        patch.object(svc, "_build_bu_llm", return_value=MagicMock()),
+    ):
         browser_cls.return_value.kill = AsyncMock()
-        agent_cls.return_value.run = AsyncMock(
-            return_value=MagicMock(final_result=lambda: "done")
-        )
+        agent_cls.return_value.run = AsyncMock(return_value=MagicMock(final_result=lambda: "done"))
         asyncio.run(svc.run_browser_task(None, "task", "usr_test123", live_browser=True))
 
     _, kwargs = browser_cls.call_args
@@ -277,24 +300,20 @@ def test_job_search_agent_respects_max_results_cap():
         for i in range(30)
     ]
 
-    with patch(
-             "app.agents.job_search.fetch_model_settings",
-             return_value=MagicMock(provider="openai"),
-         ), \
-         patch("app.agents.job_search._build_llm") as mock_build, \
-         patch("app.agents.job_search.fetch_user_profile_text", return_value="test"), \
-         patch("app.services.job_platforms_service.scrape_jobs", return_value=[]), \
-         patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]), \
-         patch("app.agents.job_search._search_public_ats_jobs", return_value=many_jobs), \
-         patch("app.agents.job_search._search_remoteok_jobs", return_value=[]):
-        llm = MagicMock()
-        llm.invoke.return_value = MagicMock(content="50")
-        mock_build.return_value = llm
+    with (
+        patch(
+            "app.agents.job_search.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.job_search.fetch_user_profile_text", return_value="test"),
+        patch("app.services.job_platforms_service.scrape_jobs", return_value=[]),
+        patch("app.services.indian_platforms_service.search_google_jobs", return_value=[]),
+        patch("app.agents.job_search._search_public_ats_jobs", return_value=many_jobs),
+        patch("app.agents.job_search._search_remoteok_jobs", return_value=[]),
+    ):
         # max_results capped at 25 per spec
         state = make_state()
         state["context"]["max_results"] = 50
         result = job_search_agent_node(state)
 
     assert len(result["result"]["matches"]) <= 25
-
-

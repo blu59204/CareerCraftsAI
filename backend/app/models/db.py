@@ -6,12 +6,14 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -61,6 +63,15 @@ class User(Base):
 
 class UserModelSettings(Base):
     __tablename__ = "user_model_settings"
+    # At most one active model per member (migration 20261001102000).
+    __table_args__ = (
+        Index(
+            "user_model_settings_one_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -222,6 +233,31 @@ class ExtensionTask(Base):
     submission_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ApplicationStatusEvent(Base):
+    """An email that moved (or failed to match) an application's status.
+
+    Unique per (user, Gmail message): a message is acted on at most once.
+    """
+
+    __tablename__ = "application_status_events"
+    __table_args__ = (UniqueConstraint("user_id", "gmail_message_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    job_application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("job_applications.id", ondelete="SET NULL"), index=True
+    )
+    gmail_message_id: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    company: Mapped[str | None] = mapped_column(String)
+    subject: Mapped[str | None] = mapped_column(String)
+    previous_status: Mapped[str | None] = mapped_column(String)
+    new_status: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ApplicationAttempt(Base):
     """Idempotency ledger for the durable submit click.
 
@@ -265,6 +301,60 @@ class ApplicationAttempt(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "job_application_id", name="application_attempts_one_per_job"),
+    )
+
+
+class RecruiterOutreach(Base):
+    """One email to a recruiter, from first draft through reply or bounce.
+
+    state: held (address not verified, the member decides), draft (verified,
+    waiting for approval), approved (will be sent within the daily cap),
+    sending, sent, failed, cancelled.
+    """
+
+    __tablename__ = "recruiter_outreach"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    job_application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("job_applications.id", ondelete="SET NULL")
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("recruiter_outreach.id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(String(20), default="initial")  # initial | followup
+    company: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str | None] = mapped_column(String)
+    to_email: Mapped[str] = mapped_column(String, nullable=False)
+    email_source: Mapped[str | None] = mapped_column(String(30))
+    verdict: Mapped[str] = mapped_column(String(10), default="unknown")
+    verified_by: Mapped[str | None] = mapped_column(String(30))
+    subject: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    resume_version: Mapped[str | None] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_message_id: Mapped[str | None] = mapped_column(String)
+    gmail_thread_id: Mapped[str | None] = mapped_column(String)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    followup_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # one first email and one follow-up per application
+        Index(
+            "recruiter_outreach_one_per_kind",
+            "user_id",
+            "job_application_id",
+            "kind",
+            unique=True,
+            postgresql_where=text("job_application_id IS NOT NULL"),
+        ),
     )
 
 
@@ -568,6 +658,32 @@ class UserPreferences(Base):
         Boolean, default=True, nullable=False, server_default="true"
     )
     notify_weekly_digest: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Opt-in: the scheduled daily search runs browser automation and LLM
+    # calls on the member's own API key, so it never starts unasked.
+    daily_search_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Opt-in: scan the member's connected Gmail for replies to applications.
+    inbox_tracking_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Opt-in: one email a day summarising applications and recruiter emails.
+    notify_daily_summary: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Opt-in: tailor a resume and queue the application in the member's browser
+    # for saved jobs at or above the match-score threshold.
+    auto_apply_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Recruiter outreach: emails sent per rolling 24 hours, and whether sends
+    # may go out without per-email approval once a few have been approved.
+    outreach_daily_cap: Mapped[int] = mapped_column(
+        Integer, default=25, nullable=False, server_default="25"
+    )
+    outreach_auto_send: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

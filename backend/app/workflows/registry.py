@@ -18,18 +18,32 @@ from app.workflows.extension_activities import (
 )
 from app.workflows.followup import FollowupWorkflow
 from app.workflows.job_activities import (
+    auto_apply_queue_activity,
     daily_search_activity,
+    daily_summary_activity,
     draft_followup_activity,
     fail_job_search_activity,
+    inbox_status_activity,
+    list_auto_apply_users_activity,
+    list_daily_search_users_activity,
+    list_inbox_tracking_users_activity,
+    list_outreach_users_activity,
+    list_summary_users_activity,
     maintenance_activity,
-    run_job_search_activity,
+    outreach_activity,
     refresh_job_catalog_activity,
+    run_job_search_activity,
 )
 from app.workflows.job_search import JobSearchWorkflow
 from app.workflows.scheduled import (
+    AutoApplyQueueWorkflow,
     DailySearchWorkflow,
-    MaintenanceWorkflow,
+    DailySummaryWorkflow,
+    DailyUserSearchWorkflow,
+    InboxStatusWorkflow,
     JobCatalogRefreshWorkflow,
+    MaintenanceWorkflow,
+    OutreachWorkflow,
 )
 
 WORKFLOWS = [
@@ -39,6 +53,11 @@ WORKFLOWS = [
     JobSearchWorkflow,
     FollowupWorkflow,
     DailySearchWorkflow,
+    DailyUserSearchWorkflow,
+    DailySummaryWorkflow,
+    AutoApplyQueueWorkflow,
+    InboxStatusWorkflow,
+    OutreachWorkflow,
     MaintenanceWorkflow,
 ]
 
@@ -55,5 +74,15 @@ ACTIVITIES = [
     fail_job_search_activity,
     draft_followup_activity,
     daily_search_activity,
+    list_daily_search_users_activity,
+    list_inbox_tracking_users_activity,
+    inbox_status_activity,
+    list_outreach_users_activity,
+    list_summary_users_activity,
+    outreach_activity,
+    auto_apply_queue_activity,
+    list_auto_apply_users_activity,
+    daily_summary_activity,
+    list_summary_users_activity,
     maintenance_activity,
 ]

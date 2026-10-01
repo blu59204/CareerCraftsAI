@@ -6,6 +6,7 @@ Properties tested:
 - Property 18: At least one AI suggestion generated for any application status + days combo
 - Property 21-24: ATS scoring properties
 """
+
 import pytest
 from hypothesis import given, settings as h_settings, assume
 from hypothesis import strategies as st
@@ -17,17 +18,16 @@ from app.services.ats_service import (
     get_missing_keywords,
     AtsScoreResult,
 )
-from app.services.persona_service import compute_keyword_overlap, select_best_persona
 from app.services.linkedin_outreach_service import (
     filter_contacts_by_title,
     validate_message_length,
     draft_outreach_message,
 )
 
-
 # ---------------------------------------------------------------------------
 # Property 3: HITL gate state transition
 # ---------------------------------------------------------------------------
+
 
 def test_hitl_gate_requires_awaiting_approval():
     """Verify that the approve endpoint only works on awaiting_approval status."""
@@ -80,6 +80,7 @@ def test_ai_suggestion_always_available(status: str, days_since: int):
 # Property 21: ATS composite score bounds and weighting
 # ---------------------------------------------------------------------------
 
+
 @given(
     keyword=st.integers(min_value=0, max_value=100),
     readability=st.integers(min_value=0, max_value=100),
@@ -99,9 +100,18 @@ def test_ats_composite_bounds_and_weighting(keyword: int, readability: int, form
 # Property 22: Missing keywords are set difference
 # ---------------------------------------------------------------------------
 
+
 @given(
-    resume_words=st.lists(st.text(min_size=4, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz"), min_size=5, max_size=20),
-    jd_words=st.lists(st.text(min_size=4, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz"), min_size=5, max_size=20),
+    resume_words=st.lists(
+        st.text(min_size=4, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz"),
+        min_size=5,
+        max_size=20,
+    ),
+    jd_words=st.lists(
+        st.text(min_size=4, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz"),
+        min_size=5,
+        max_size=20,
+    ),
 )
 @h_settings(max_examples=20)
 def test_missing_keywords_are_set_difference(resume_words: list, jd_words: list):
@@ -125,6 +135,7 @@ def test_missing_keywords_are_set_difference(resume_words: list, jd_words: list)
 # Property 23: Suggestions when score is low
 # ---------------------------------------------------------------------------
 
+
 def test_suggestions_when_score_below_60():
     """Verify ≥3 suggestions when composite < 60."""
     result = AtsScoreResult(
@@ -137,43 +148,20 @@ def test_suggestions_when_score_below_60():
         suggestions=[],
         flesch_kincaid=10.0,
         avg_sentence_length=15.0,
-        format_checks={"has_contact_info": True, "no_tables": True, "has_standard_headings": False},
+        format_checks={
+            "has_contact_info": True,
+            "no_tables": True,
+            "has_standard_headings": False,
+        },
     )
     suggestions = generate_suggestions(result)
     assert len(suggestions) >= 3
 
 
 # ---------------------------------------------------------------------------
-# Property 25-29: Persona service properties
-# ---------------------------------------------------------------------------
-
-@given(
-    persona_kw=st.lists(st.text(min_size=3, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz"), min_size=1, max_size=10),
-    jd_kw=st.lists(st.text(min_size=3, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz"), min_size=1, max_size=10),
-)
-@h_settings(max_examples=20)
-def test_keyword_overlap_bounds(persona_kw: list, jd_kw: list):
-    """Overlap is always in [0.0, 1.0]."""
-    score = compute_keyword_overlap(persona_kw, jd_kw)
-    assert 0.0 <= score <= 1.0
-
-
-def test_best_persona_maximizes_overlap():
-    """Selected persona should have the highest keyword overlap."""
-    personas = [
-        {"name": "A", "target_keywords": ["python", "fastapi", "docker"]},
-        {"name": "B", "target_keywords": ["react", "typescript", "nextjs"]},
-        {"name": "C", "target_keywords": ["python", "react", "docker", "typescript"]},
-    ]
-    jd_text = "We need python and docker experience with react frontend skills"
-    best, score = select_best_persona(personas, jd_text)
-    assert best is not None
-    assert score > 0
-
-
-# ---------------------------------------------------------------------------
 # Property 30-33: LinkedIn outreach properties
 # ---------------------------------------------------------------------------
+
 
 def test_contact_title_filtering():
     """Only contacts with recruiter/talent/hiring/engineering/director titles pass."""
@@ -188,7 +176,7 @@ def test_contact_title_filtering():
     names = [c["name"] for c in filtered]
     assert "Alice" in names  # recruiter
     assert "Carol" in names  # talent
-    assert "Eve" in names    # engineering + director
+    assert "Eve" in names  # engineering + director
     assert "Dave" not in names  # marketing intern
 
 

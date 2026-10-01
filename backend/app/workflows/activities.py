@@ -3,9 +3,29 @@
 from __future__ import annotations
 
 import uuid as _uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from temporalio import activity
+
+
+async def _recent_attempt_stats(db, user_id, exclude_id, now):
+    """(attempts started in the last 24h, when the latest started)."""
+    from sqlalchemy import func, select
+
+    from app.models.db import ApplicationAttempt
+
+    conditions = [
+        ApplicationAttempt.user_id == user_id,
+        ApplicationAttempt.created_at > now - timedelta(hours=24),
+    ]
+    if exclude_id is not None:
+        conditions.append(ApplicationAttempt.id != exclude_id)
+    row = (
+        await db.execute(
+            select(func.count(), func.max(ApplicationAttempt.created_at)).where(*conditions)
+        )
+    ).one()
+    return row[0], row[1]
 
 
 @activity.defn
@@ -31,6 +51,7 @@ async def reserve_application_attempt(params: dict) -> dict:
     from app.applications.submission import load_resume
     from app.core.database import AsyncSessionLocal
     from app.models.db import AgentRun, ApplicationAttempt, JobApplication
+    from app.services import apply_limits
     from app.services.workflow_service import ACTIVE_SUBMISSION_STATES
 
     user_id = _uuid.UUID(params["user_id"])
@@ -72,6 +93,20 @@ async def reserve_application_attempt(params: dict) -> dict:
         # not reset a submitted or uncertain attempt when started again.
         if existing and existing.state in ACTIVE_SUBMISSION_STATES:
             raise ValueError(f"An application attempt is already {existing.state}")
+
+        if params.get("auto"):
+            error = apply_limits.score_error(app_row.match_score)
+            if error:
+                raise ValueError(error)
+
+        now = datetime.now(UTC)
+        started, last_started = await _recent_attempt_stats(
+            db, user_id, existing.id if existing else None, now
+        )
+        error = apply_limits.daily_cap_error(started)
+        if error:
+            raise ValueError(error)
+        wait_seconds = apply_limits.pacing_wait_seconds(last_started, now)
 
         _, resume_sha256 = await load_resume(user_id, str(app_row.resume_id))
 
@@ -127,6 +162,7 @@ async def reserve_application_attempt(params: dict) -> dict:
         "role": app_row.role,
         "pdf_document_id": str(app_row.resume_id),
         "resume_sha256": resume_sha256,
+        "wait_seconds": wait_seconds,
     }
 
 

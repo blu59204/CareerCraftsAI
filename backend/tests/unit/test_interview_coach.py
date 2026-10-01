@@ -1,7 +1,8 @@
 """Unit tests for Interview Coach Agent — question generation, scoring, session lifecycle."""
+
 import json
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -31,7 +32,10 @@ def make_eval_state(session_id: str) -> AgentState:
         context={
             "session_id": session_id,
             "question_index": 0,
-            "answer_text": "I used Python to build a distributed task queue that processed 1M jobs/day, reducing latency by 40%.",
+            "answer_text": (
+                "I used Python to build a distributed task queue that processed "
+                "1M jobs/day, reducing latency by 40%."
+            ),
         },
         status="running",
         pending_action=None,
@@ -65,16 +69,21 @@ def test_start_session_generates_questions(mock_llm):
     from app.agents.interview_coach_agent import start_session_node
 
     mock_llm.responses = [
-        json.dumps([
-            {"id": 1, "type": "behavioral", "text": "Tell me about yourself"},
-            {"id": 2, "type": "technical", "text": "Explain Python GIL"},
-            {"id": 3, "type": "situational", "text": "How do you handle conflict?"},
-        ])
+        json.dumps(
+            [
+                {"id": 1, "type": "behavioral", "text": "Tell me about yourself"},
+                {"id": 2, "type": "technical", "text": "Explain Python GIL"},
+                {"id": 3, "type": "situational", "text": "How do you handle conflict?"},
+            ]
+        )
     ]
 
     with (
-        patch("app.agents.interview_coach_agent.fetch_model_settings", return_value=MagicMock(provider="openai")),
-        patch("app.agents.interview_coach_agent._build_llm", return_value=mock_llm),
+        patch(
+            "app.agents.interview_coach_agent.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.interview_coach_agent.build_agent_llm", return_value=mock_llm),
         patch("app.agents.interview_coach_agent.retrieve", return_value=[]),
         patch("app.agents.interview_coach_agent._log_agent_run", return_value=None),
         patch("app.agents.interview_coach_agent._save_interview_session", return_value=None),
@@ -91,20 +100,30 @@ def test_evaluate_answer_scores_in_range(mock_llm):
     from app.agents.interview_coach_agent import evaluate_answer_node
 
     session_id = str(uuid.uuid4())
-    mock_llm.responses = [json.dumps({
-        "clarity": 8,
-        "relevance": 7,
-        "depth": 6,
-        "feedback": "Good answer with concrete metrics.",
-        "rating": "excellent",
-    })]
+    mock_llm.responses = [
+        json.dumps(
+            {
+                "clarity": 8,
+                "relevance": 7,
+                "depth": 6,
+                "feedback": "Good answer with concrete metrics.",
+                "rating": "excellent",
+            }
+        )
+    ]
 
     with (
-        patch("app.agents.interview_coach_agent.fetch_model_settings", return_value=MagicMock(provider="openai")),
-        patch("app.agents.interview_coach_agent._build_llm", return_value=mock_llm),
-        patch("app.agents.interview_coach_agent._get_interview_session", return_value={
-            "questions": [{"question": "Tell me about yourself", "type": "behavioral"}]
-        }),
+        patch(
+            "app.agents.interview_coach_agent.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.interview_coach_agent.build_agent_llm", return_value=mock_llm),
+        patch(
+            "app.agents.interview_coach_agent._get_interview_session",
+            return_value={
+                "questions": [{"question": "Tell me about yourself", "type": "behavioral"}]
+            },
+        ),
         patch("app.agents.interview_coach_agent._update_session_answer", return_value=None),
         patch("app.agents.interview_coach_agent._log_agent_run", return_value=None),
     ):
@@ -121,223 +140,128 @@ def test_evaluate_answer_scores_in_range(mock_llm):
 # established in test_applications.py::test_candidate_profile_api_upsert_then_get.
 
 
+class _OwnershipResult:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
 class _FakeInterviewDB:
-    """Async-session double for interview route tests.
+    """Async-session double: execute() answers the IDOR ownership check."""
 
-    Call 1 to execute() is always the IDOR ownership check (a column-only
-    select) in submit_answer; any later call re-fetches the full row to read
-    the questions/scores the agent's (mocked) run would have updated.
-    """
-
-    def __init__(self, session_row=None, owns_session=True):
-        self.session_row = session_row
-        self.owns_session = owns_session
-        self.added = []
-        self.execute_calls = 0
+    def __init__(self, owned_id):
+        self.owned_id = owned_id
 
     async def execute(self, *a, **k):
-        self.execute_calls += 1
-
-        class _Result:
-            def __init__(self_inner, value):
-                self_inner.value = value
-
-            def scalar_one_or_none(self_inner):
-                return self_inner.value
-
-        if self.execute_calls == 1:
-            owned_id = self.session_row.id if (self.owns_session and self.session_row) else None
-            return _Result(owned_id)
-        return _Result(self.session_row)
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def flush(self):
-        return None
-
-
-def _fake_session_row(session_id, user_id, questions, scores):
-    row = MagicMock()
-    row.id = session_id
-    row.user_id = user_id
-    row.questions = questions
-    row.scores = scores
-    return row
+        return _OwnershipResult(self.owned_id)
 
 
 @pytest.mark.asyncio
-async def test_interview_session_contract_start_then_answer_to_completion(monkeypatch):
-    """Step 1 (TDD): the API layer must return the full session/question/
-    feedback contract, not just {run_id, status} — and question_index must
-    increment per turn instead of being hardcoded to 0 on every answer."""
-    from httpx import ASGITransport, AsyncClient
+async def test_start_session_queues_a_durable_run(monkeypatch):
+    from app.api.v1 import interview
 
-    from app.api.v1.deps import get_current_user, get_db
-    from app.main import app
+    queued = {}
 
-    user_id = uuid.uuid4()
+    async def fake_queue(db, user, task_type, context):
+        queued.update(task_type=task_type, context=context)
+        return "run-1"
+
+    monkeypatch.setattr(interview, "queue_agent_run", fake_queue)
+    user = MagicMock(id=uuid.uuid4())
+
+    result = await interview.start_session(
+        interview.StartSessionRequest(role="Python Engineer", company="Stripe"),
+        db=MagicMock(),
+        current_user=user,
+    )
+
+    assert result == {"run_id": "run-1", "status": "queued"}
+    assert queued["task_type"] == "interview_coach"
+    assert queued["context"] == {"role": "Python Engineer", "company": "Stripe"}
+
+
+@pytest.mark.asyncio
+async def test_submit_answer_queues_evaluation_for_owned_session(monkeypatch):
+    from app.api.v1 import interview
+
+    queued = {}
+
+    async def fake_queue(db, user, task_type, context):
+        queued.update(task_type=task_type, context=context)
+        return "run-2"
+
+    monkeypatch.setattr(interview, "queue_agent_run", fake_queue)
     session_id = uuid.uuid4()
-    monkeypatch.setattr(
-        "app.main.verify_token",
-        lambda token: {"sub": str(user_id), "email": "a@b.com"},
+    answer = "I led the migration of our billing service to a queue based design."
+
+    result = await interview.submit_answer(
+        session_id,
+        interview.AnswerRequest(answer_text=answer, question_index=1),
+        db=_FakeInterviewDB(owned_id=session_id),
+        current_user=MagicMock(id=uuid.uuid4()),
     )
-    questions = [
-        {"type": "behavioral", "question": "Tell me about yourself", "context": "warm-up"},
-        {"type": "technical", "question": "Explain the GIL", "context": "depth check"},
-    ]
 
-    async def _fake_user():
-        return MagicMock(id=user_id, email="a@b.com")
-
-    session_row = _fake_session_row(session_id, user_id, questions, scores=[])
-    fake_db = _FakeInterviewDB(session_row=session_row)
-
-    async def _fake_db():
-        return fake_db
-
-    start_result = {
-        "status": "completed",
-        "result": {
-            "type": "interview_session_started",
-            "session_id": str(session_id),
-            "role": "Python Engineer",
-            "company": "Stripe",
-            "questions": questions,
-            "question_count": 2,
-        },
+    assert result == {"run_id": "run-2", "status": "queued", "question_index": 1}
+    assert queued["task_type"] == "evaluate_answer"
+    assert queued["context"] == {
+        "session_id": str(session_id),
+        "question_index": 1,
+        "answer_text": answer,
     }
-    answer_results = [
-        {
-            "status": "completed",
-            "result": {
-                "type": "answer_evaluation",
-                "session_id": str(session_id),
-                "question_index": 0,
-                "score": 82,
-                "rating": "excellent",
-                "tips": ["Add a metric next time."],
-            },
-        },
-        {
-            "status": "completed",
-            "result": {
-                "type": "answer_evaluation",
-                "session_id": str(session_id),
-                "question_index": 1,
-                "score": 60,
-                "rating": "good",
-                "tips": ["Go deeper on internals."],
-            },
-        },
-    ]
-
-    fake_harness = MagicMock()
-    fake_harness.run = AsyncMock(side_effect=[start_result, *answer_results])
-
-    app.dependency_overrides[get_current_user] = _fake_user
-    app.dependency_overrides[get_db] = _fake_db
-    try:
-        with patch("app.api.v1.interview.get_harness", AsyncMock(return_value=fake_harness)):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                headers = {"Authorization": "Bearer test-token"}
-
-                start_response = await client.post(
-                    "/api/v1/interview/session/start",
-                    json={"role": "Python Engineer", "company": "Stripe"},
-                    headers=headers,
-                )
-                assert start_response.status_code == 200, start_response.text
-                start_body = start_response.json()
-                assert start_body["session_id"]
-                assert start_body["question"]["question"] == "Tell me about yourself"
-                assert start_body["question_index"] == 0
-
-                # Answer question 0 — expect the *second* question next, no summary yet.
-                answer_response = await client.post(
-                    f"/api/v1/interview/session/{session_id}/answer",
-                    json={
-                        "question_index": 0,
-                        "answer_text": "I built a distributed task queue that processed a million jobs a day.",
-                    },
-                    headers=headers,
-                )
-                assert answer_response.status_code == 200, answer_response.text
-                answer_body = answer_response.json()
-                assert answer_body["feedback"]["score"] >= 0
-                assert "next_question" in answer_body
-                assert answer_body["next_question"]["question"] == "Explain the GIL"
-                assert answer_body["summary"] is None
-
-                # The harness must be told which question this answer is for
-                # (bug: previously hardcoded to question_index=0 every turn).
-                first_answer_call = fake_harness.run.call_args_list[1]
-                assert first_answer_call.kwargs["context"]["question_index"] == 0
-                assert first_answer_call.kwargs["context"]["answer_text"]
-
-                # Answer question 1 (the last one) — expect no next question, summary present.
-                session_row.scores = [82]  # simulate the agent's sync-DB update after turn 1
-                final_answer_response = await client.post(
-                    f"/api/v1/interview/session/{session_id}/answer",
-                    json={
-                        "question_index": 1,
-                        "answer_text": "The GIL is a mutex that protects access to Python objects in CPython.",
-                    },
-                    headers=headers,
-                )
-                assert final_answer_response.status_code == 200, final_answer_response.text
-                final_body = final_answer_response.json()
-                assert final_body["next_question"] is None
-                assert final_body["summary"] is not None
-                assert final_body["summary"]["count"] == 1
-
-                second_answer_call = fake_harness.run.call_args_list[2]
-                assert second_answer_call.kwargs["context"]["question_index"] == 1
-    finally:
-        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
-async def test_start_session_returns_502_not_200_when_harness_run_fails(monkeypatch):
-    """A failed harness run must not surface as an HTTP 200 with a malformed
-    body (no `question` key) — the frontend's mutation onSuccess handler
-    assumes a successful contract and would otherwise mishandle it. The
-    route must raise instead, so the client's onError path fires."""
-    from httpx import ASGITransport, AsyncClient
+async def test_submit_answer_rejects_another_users_session(monkeypatch):
+    from fastapi import HTTPException
 
-    from app.api.v1.deps import get_current_user, get_db
-    from app.main import app
+    from app.api.v1 import interview
 
-    user_id = uuid.uuid4()
-    monkeypatch.setattr(
-        "app.main.verify_token",
-        lambda token: {"sub": str(user_id), "email": "a@b.com"},
-    )
+    async def fake_queue(*_a, **_k):
+        raise AssertionError("must not queue a run for a session the user does not own")
 
-    async def _fake_user():
-        return MagicMock(id=user_id, email="a@b.com")
+    monkeypatch.setattr(interview, "queue_agent_run", fake_queue)
+    answer = "I led the migration of our billing service to a queue based design."
 
-    fake_db = _FakeInterviewDB()
+    with pytest.raises(HTTPException) as exc:
+        await interview.submit_answer(
+            uuid.uuid4(),
+            interview.AnswerRequest(answer_text=answer, question_index=0),
+            db=_FakeInterviewDB(owned_id=None),
+            current_user=MagicMock(id=uuid.uuid4()),
+        )
+    assert exc.value.status_code == 404
 
-    async def _fake_db():
-        return fake_db
 
-    fake_harness = MagicMock()
-    fake_harness.run = AsyncMock(
-        return_value={"status": "failed", "error": "provider timeout"}
-    )
+def test_merge_answer_replaces_a_resubmitted_answer():
+    from app.agents.interview_coach_agent import merge_answer
 
-    app.dependency_overrides[get_current_user] = _fake_user
-    app.dependency_overrides[get_db] = _fake_db
-    try:
-        with patch("app.api.v1.interview.get_harness", AsyncMock(return_value=fake_harness)):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-                response = await client.post(
-                    "/api/v1/interview/session/start",
-                    json={"role": "Python Engineer", "company": "Stripe"},
-                    headers={"Authorization": "Bearer test-token"},
-                )
-                assert response.status_code == 502, response.text
-                assert "question" not in response.json()
-    finally:
-        app.dependency_overrides.clear()
+    answers, scores = merge_answer([], [], 0, "first try", 40)
+    answers, scores = merge_answer(answers, scores, 0, "second try", 70)
+
+    assert scores == [70]
+    assert answers == [{"question_index": 0, "answer_text": "second try"}]
+
+
+def test_merge_answer_appends_new_questions_in_order():
+    from app.agents.interview_coach_agent import merge_answer
+
+    answers, scores = merge_answer(None, None, 0, "a", 50)
+    answers, scores = merge_answer(answers, scores, 1, "b", 80)
+    answers, scores = merge_answer(answers, scores, 0, "a again", 60)
+
+    assert scores == [60, 80]
+    assert [a["question_index"] for a in answers] == [0, 1]
+
+
+def test_answer_request_bounds():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.v1.interview import AnswerRequest
+
+    with pytest.raises(ValidationError):
+        AnswerRequest(answer_text="x", question_index=-1)
+    with pytest.raises(ValidationError):
+        AnswerRequest(answer_text="x" * 8001, question_index=0)

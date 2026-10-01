@@ -62,7 +62,15 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_supabase_user();
+-- auth.users exists only on Supabase. On plain PostgreSQL the API creates
+-- users on their first authenticated request instead.
+DO $$
+BEGIN
+    IF to_regclass('auth.users') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+        CREATE TRIGGER on_auth_user_created
+            AFTER INSERT ON auth.users
+            FOR EACH ROW EXECUTE FUNCTION public.handle_new_supabase_user();
+    END IF;
+END
+$$;

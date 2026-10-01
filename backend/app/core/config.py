@@ -84,7 +84,14 @@ class Settings(BaseSettings):
     BROWSER_DELAY_EXTRACT_MAX_MS: int = 1500
 
     # ── External API keys (all optional) ───────────────────────────────
+    # Recruiter email finders and verifiers: bring your own keys. With no
+    # verifier key set, no address counts as verified and every one is
+    # held for the member to confirm.
     HUNTER_API_KEY: str = ""
+    APOLLO_API_KEY: str = ""
+    ZEROBOUNCE_API_KEY: str = ""
+    NEVERBOUNCE_API_KEY: str = ""
+    MILLIONVERIFIER_API_KEY: str = ""
     PROXYCURL_API_KEY: str = ""
     EXA_API_KEY: str = ""
     RESEND_API_KEY: str = ""
@@ -95,6 +102,7 @@ class Settings(BaseSettings):
     FIRECRAWL_API_KEY: str | None = None
     SEARXNG_URL: str | None = None
     RAPIDAPI_KEY: str | None = None
+    JOOBLE_API_KEY: str | None = None
     ADZUNA_APP_ID: str | None = None
     ADZUNA_APP_KEY: str | None = None
     WORKABLE_API_TOKENS: dict[str, str] = {}
@@ -113,6 +121,12 @@ class Settings(BaseSettings):
     # ── Agent configuration ────────────────────────────────────────────
     AGENT_DEFAULT_TIMEOUT_S: int = 60
     AGENT_MAX_CONCURRENT_PER_USER: int = 2
+    # ── Application limits (protect the member's accounts on job boards) ──
+    # Applications started per rolling 24 hours, the least gap between two,
+    # and the match score an automatic application needs (0-100).
+    APPLY_DAILY_CAP: int = 25
+    APPLY_MIN_GAP_SECONDS: int = 120
+    AUTO_APPLY_MIN_SCORE: int = 70
     AGENT_THINKING_BUDGET_TOKENS: int = 8000
     # Upper bound for one agent execution activity (LLM calls + tools).
     WORKFLOW_TASK_TIMEOUT_S: int = Field(default=300, ge=30, le=1800)
@@ -149,6 +163,13 @@ class Settings(BaseSettings):
     # Recurring jobs registered as Temporal Schedules by the worker at start.
     TEMPORAL_SCHEDULES_ENABLED: bool = True
     DAILY_SEARCH_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
+    INBOX_STATUS_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
+    # How often approved recruiter emails are sent and replies are checked.
+    DAILY_SUMMARY_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
+    AUTO_APPLY_QUEUE_INTERVAL_HOURS: int = Field(default=6, ge=1, le=168)
+    # Applications the agent queues per member per run, on top of the daily cap.
+    AUTO_APPLY_QUEUE_BATCH: int = Field(default=3, ge=1, le=10)
+    OUTREACH_INTERVAL_MINUTES: int = Field(default=30, ge=5, le=1440)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=30, le=3600)
 
     # ── Job applications ───────────────────────────────────────────────

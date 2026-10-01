@@ -78,6 +78,7 @@ interface NotificationPreferences {
   notify_agent_alerts: boolean;
   notify_followup_reminders: boolean;
   notify_weekly_digest: boolean;
+  notify_daily_summary: boolean;
 }
 
 function getInitials(fullName: string | null | undefined): string {
@@ -186,6 +187,7 @@ export default function AccountSettingsPage() {
   const agentAlerts = notifyPrefs?.notify_agent_alerts ?? true;
   const followUpReminders = notifyPrefs?.notify_followup_reminders ?? true;
   const weeklyDigest = notifyPrefs?.notify_weekly_digest ?? false;
+  const dailySummary = notifyPrefs?.notify_daily_summary ?? false;
   const saveNotifyPrefs = useMutation({
     mutationFn: async (payload: NotificationPreferences) =>
       apiClient.patch("/users/me/preferences", payload),
@@ -198,6 +200,7 @@ export default function AccountSettingsPage() {
       notify_agent_alerts: agentAlerts,
       notify_followup_reminders: followUpReminders,
       notify_weekly_digest: weeklyDigest,
+      notify_daily_summary: dailySummary,
     };
     saveNotifyPrefs.mutate({ ...current, [key]: !current[key] });
   };
@@ -428,6 +431,7 @@ export default function AccountSettingsPage() {
     { key: "notify_agent_alerts" as const, label: "Agent completion alerts", sub: "Notify when agents finish running", enabled: agentAlerts },
     { key: "notify_followup_reminders" as const, label: "Follow-up reminders", sub: "Reminders to follow up with leads", enabled: followUpReminders },
     { key: "notify_weekly_digest" as const, label: "Weekly digest", sub: "A weekly summary of your activity", enabled: weeklyDigest },
+    { key: "notify_daily_summary" as const, label: "Daily summary", sub: "Each day: applications sent, replies and what needs you", enabled: dailySummary },
   ];
   const enabledNotificationCount = notificationItems.filter((item) => item.enabled).length;
 

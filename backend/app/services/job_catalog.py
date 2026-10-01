@@ -22,7 +22,13 @@ def sources() -> list[Source]:
 
     rows = json.loads(Path(__file__).with_name("job_sources.json").read_text())
     mapped = {
-        row["id"]: Source(**{k: row[k] for k in ("id", "family", "tenant", "permitted")})
+        row["id"]: Source(
+            **{
+                k: row[k]
+                for k in ("id", "family", "tenant", "permitted", "url", "refresh_hours")
+                if k in row
+            }
+        )
         for row in rows
     }
     for row in settings.JOB_SOURCE_OVERRIDES[:100]:
@@ -93,7 +99,7 @@ async def refresh_source(source: Source, query="", force=False) -> tuple[list[di
             "job_source_failure", extra={"source_id": source.id, "error_type": type(exc).__name__}
         )
         jobs = cached["cached_jobs"] or []
-    interval = timedelta(hours=24 if source.family == "remotive" else 1)
+    interval = timedelta(hours=24 if source.family == "remotive" else source.refresh_hours)
     if warning:
         interval = timedelta(minutes=min(60, 2 ** min(int(cached["failures"] or 0) + 1, 6)))
         if retry_after:
