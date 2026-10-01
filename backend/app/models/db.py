@@ -111,6 +111,8 @@ class JobApplication(Base):
     followup_day5: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     followup_day12: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(Text)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped["User"] = relationship(back_populates="applications")
 

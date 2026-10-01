@@ -19,6 +19,9 @@ from app.schemas.jobs import JobSearchQuerySchema
 from app.workflows.starters import WorkflowUnavailable
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+from app.api.v1.job_basis import router as basis_router
+
+router.include_router(basis_router)
 logger = logging.getLogger(__name__)
 
 NL_SEARCH_TIMEOUT_SECONDS = 120
@@ -42,13 +45,17 @@ class JobSearchRequest(JobSearchQuerySchema):
     preferred_locations: list[str] | None = None
 
 
-def make_job_search_id(user_id: str, search_query: str, location: str, max_results: int) -> str:
+def make_job_search_id(
+    user_id: str, search_query: str, location: str, max_results: int, filters: dict | None = None
+) -> str:
     """Content hash of a search — identical repeat clicks reuse the run
     that is already in flight instead of starting another."""
     import hashlib
 
+    import json
+
     digest = hashlib.sha256(
-        f"{user_id}:{search_query}:{location}:{max_results}".encode()
+        f"{user_id}:{search_query}:{location}:{max_results}:{json.dumps(filters or {}, sort_keys=True)}".encode()
     ).hexdigest()[:16]
     return f"{user_id}:job_search:{digest}"
 
@@ -75,6 +82,8 @@ class ApplicationResponse(BaseModel):
     followup_day5: datetime | None = None
     followup_day12: datetime | None = None
     notes: str | None = None
+    source: str | None = None
+    posted_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -334,8 +343,9 @@ async def _resolve_search_context(
     )
     prefs = prefs_result.scalar_one_or_none()
 
-    resume_result = await db.execute(_latest_resume_query(current_user.id))
-    resume = resume_result.scalar_one_or_none()
+    from app.services.search_basis import resolve_basis
+
+    resume, _ = await resolve_basis(db, current_user.id, payload.resume_id, payload.persona_id)
 
     role_source = "custom"
     role = payload.search_query.strip()
@@ -419,6 +429,8 @@ async def _resolve_search_context(
 
 @router.get("/search/profile", response_model=JobSearchProfileResponse)
 async def get_job_search_profile(
+    resume_id: uuid.UUID | None = None,
+    persona_id: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -426,8 +438,9 @@ async def get_job_search_profile(
         select(UserPreferences).where(UserPreferences.user_id == current_user.id)
     )
     prefs = prefs_result.scalar_one_or_none()
-    resume_result = await db.execute(_latest_resume_query(current_user.id))
-    resume = resume_result.scalar_one_or_none()
+    from app.services.search_basis import resolve_basis
+
+    resume, _ = await resolve_basis(db, current_user.id, resume_id, persona_id)
     resume_text = resume.raw_text if resume else None
 
     resume_roles = _derive_roles_from_resume(resume_text)
@@ -755,29 +768,6 @@ async def search_jobs(
     if payload.max_results > 25:
         raise HTTPException(status_code=400, detail="max_results cannot exceed 25")
 
-    # Block the run early if the user hasn't configured an LLM model yet.
-    # Otherwise the agent silently returns zero jobs (BYOK apps fail with
-    # "Agent failed" + no detail). 409 signals "you must finish setup first".
-    from app.models.db import UserModelSettings
-
-    model_row = (
-        (
-            await db.execute(
-                select(UserModelSettings).where(
-                    UserModelSettings.user_id == current_user.id,
-                    UserModelSettings.is_active == True,  # noqa: E712
-                )
-            )
-        )
-        .scalars()
-        .first()
-    )
-    if not model_row:
-        raise HTTPException(
-            status_code=409,
-            detail="No active model configured. Pick a provider under Settings → AI Model before running job search.",
-        )
-
     search_query, location, work_mode, search_source = await _resolve_search_context(
         db, current_user, payload
     )
@@ -801,14 +791,29 @@ async def search_jobs(
     platforms = payload.platforms or []
 
     remote = (payload.remote or "").strip() or work_mode or "any"
+    from app.services.search_basis import resolve_basis
+
+    resume, persona = await resolve_basis(
+        db, current_user.id, payload.resume_id, payload.persona_id
+    )
+    basis = {
+        "resume_id": str(resume.id) if resume else None,
+        "persona_id": str(persona.id) if persona else None,
+        "posted_within_days": payload.posted_within_days,
+        "platforms": sorted(platforms),
+        "remote": remote,
+    }
     stable_job_id = make_job_search_id(
-        str(current_user.id), search_query, location, payload.max_results
+        str(current_user.id), search_query, location, payload.max_results, basis
     )
 
     # A duplicate request (same query/location/count) reuses the run that is
     # already in flight rather than starting a second identical search.
     # Locked so two concurrent duplicate requests serialize on this check
     # rather than both slipping past it.
+    from app.models.db import User
+
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
     existing_result = await db.execute(
         select(AgentRun)
         .where(
@@ -832,6 +837,7 @@ async def search_jobs(
         agent_type="job_search",
         status="running",
         input={
+            **basis,
             "search_query": search_query,
             "location": location,
             "max_results": payload.max_results,
@@ -854,6 +860,7 @@ async def search_jobs(
             run_id,
             current_user.id,
             {
+                **basis,
                 "search_query": search_query,
                 "location": location,
                 "max_results": payload.max_results,
@@ -876,6 +883,8 @@ async def search_jobs(
 async def list_applications(
     status: str | None = None,
     location: str | None = None,
+    source: str | None = Query(None, max_length=100),
+    posted_within_days: int | None = Query(None, ge=1, le=90),
     limit: int | None = Query(None, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -886,6 +895,13 @@ async def list_applications(
     query = select(JobApplication).where(JobApplication.user_id == current_user.id)
     if status:
         query = query.where(JobApplication.status == status)
+    if source:
+        query = query.where(JobApplication.source == source)
+    if posted_within_days:
+        query = query.where(
+            JobApplication.posted_at
+            >= datetime.now(timezone.utc) - timedelta(days=posted_within_days)
+        )
     result = await db.execute(
         query.order_by(
             JobApplication.match_score.desc().nulls_last()

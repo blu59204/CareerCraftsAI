@@ -23,11 +23,17 @@ from app.workflows.job_activities import (
     fail_job_search_activity,
     maintenance_activity,
     run_job_search_activity,
+    refresh_job_catalog_activity,
 )
 from app.workflows.job_search import JobSearchWorkflow
-from app.workflows.scheduled import DailySearchWorkflow, MaintenanceWorkflow
+from app.workflows.scheduled import (
+    DailySearchWorkflow,
+    MaintenanceWorkflow,
+    JobCatalogRefreshWorkflow,
+)
 
 WORKFLOWS = [
+    JobCatalogRefreshWorkflow,
     AgentRunWorkflow,
     AutoApplyWorkflow,
     JobSearchWorkflow,
@@ -37,6 +43,7 @@ WORKFLOWS = [
 ]
 
 ACTIVITIES = [
+    refresh_job_catalog_activity,
     execute_agent_run_activity,
     continue_agent_run_activity,
     expire_agent_run_activity,

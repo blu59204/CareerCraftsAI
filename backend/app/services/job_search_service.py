@@ -137,7 +137,15 @@ _ADAPTERS: dict[str, Callable[[str, str, int], list[dict]]] = {
     "presets": _adapter_presets,
 }
 
-DEFAULT_PLATFORMS = ["open_apis", "jobspy", "ats", "remoteok"]
+DEFAULT_PLATFORMS = [
+    "greenhouse",
+    "lever",
+    "ashby",
+    "smartrecruiters",
+    "remotive",
+    "remoteok",
+    "arbeitnow",
+]
 
 
 async def search_all_platforms(
@@ -145,6 +153,17 @@ async def search_all_platforms(
     platforms: list[str] | None = None,
     timeout_s: int = 90,
 ) -> tuple[list[dict], list[str]]:
+    from app.services.job_connectors import FAMILIES
+    from app.services.job_catalog import search_catalog
+
+    selected = platforms or DEFAULT_PLATFORMS
+    public = [p for p in selected if p in FAMILIES or ":" in p]
+    public_jobs, public_warnings = [], []
+    if public:
+        public_jobs, public_warnings = await search_catalog(query, public)
+        if len(public) == len(selected):
+            return public_jobs, public_warnings
+    platforms = [p for p in selected if p not in public]
     """Fan out across job platforms (and locations) concurrently.
 
     Args:
@@ -170,7 +189,7 @@ async def search_all_platforms(
     q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
 
     names = platforms or DEFAULT_PLATFORMS
-    warnings: list[str] = []
+    warnings: list[str] = public_warnings
     valid_names = []
     for name in names:
         if name in _ADAPTERS:
@@ -201,7 +220,7 @@ async def search_all_platforms(
         *(run_one(name, location) for name in valid_names for location in locations)
     )
 
-    jobs = _dedupe([job for group in per_source for job in group])
+    jobs = _dedupe(public_jobs + [job for group in per_source for job in group])
     if remote in ("remote", "hybrid", "onsite"):
         # Post-fetch predicate: none of the adapters accept a remote/work-mode
         # parameter, so filter on each job's normalized location + remote

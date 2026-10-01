@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 @activity.defn
+async def refresh_job_catalog_activity(params: dict) -> dict:
+    from app.services.job_catalog import refresh_catalog
+
+    return await refresh_catalog()
+
+
+@activity.defn
 async def run_job_search_activity(params: dict) -> dict:
     from app.services.scheduled_jobs import JobSearchTrigger, run_job_search
 

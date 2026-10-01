@@ -13,6 +13,7 @@ with workflow.unsafe.imports_passed_through():
     from app.workflows.job_activities import (
         daily_search_activity,
         maintenance_activity,
+        refresh_job_catalog_activity,
     )
 
 logger = logging.getLogger(__name__)
@@ -44,11 +45,24 @@ class MaintenanceWorkflow:
         )
 
 
+@workflow.defn
+class JobCatalogRefreshWorkflow:
+    @workflow.run
+    async def run(self) -> dict:
+        return await workflow.execute_activity(
+            refresh_job_catalog_activity,
+            {},
+            start_to_close_timeout=timedelta(minutes=30),
+            retry_policy=_RETRY,
+        )
+
+
 def schedule_specs() -> list[tuple[str, type, timedelta]]:
     """(schedule id, workflow class, interval) for every recurring job."""
     from app.core.config import settings
 
     specs = [
+        ("public-job-catalog-refresh", JobCatalogRefreshWorkflow, timedelta(hours=1)),
         (
             "daily-job-search",
             DailySearchWorkflow,

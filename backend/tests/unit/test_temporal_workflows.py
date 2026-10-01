@@ -485,7 +485,11 @@ async def test_ensure_schedules_registers_recurring_jobs(monkeypatch):
 
     await scheduled.ensure_schedules(client)
 
-    assert set(created) | {"maintenance"} == {"daily-job-search", "maintenance"}
+    assert set(created) | {"maintenance"} == {
+        "daily-job-search",
+        "maintenance",
+        "public-job-catalog-refresh",
+    }
     handles["maintenance"].update.assert_awaited_once()  # existing one is updated
     handles["application-status-check"].delete.assert_awaited_once()
     daily = created["daily-job-search"]

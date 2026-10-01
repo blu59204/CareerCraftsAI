@@ -31,6 +31,9 @@ class JobSearchTrigger(BaseModel):
     work_mode: str = ""
     platforms: list[str] = Field(default_factory=list)
     remote: str = "any"
+    resume_id: str | None = None
+    persona_id: str | None = None
+    posted_within_days: int = Field(default=30, ge=1, le=90)
 
 
 async def run_job_search(
@@ -50,6 +53,9 @@ async def run_job_search(
         task_type="job_search",
         messages=[HumanMessage(content=payload.search_query)],
         context={
+            "resume_id": payload.resume_id,
+            "persona_id": payload.persona_id,
+            "posted_within_days": payload.posted_within_days,
             "search_query": payload.search_query,
             "location": payload.location,
             "max_results": payload.max_results,
