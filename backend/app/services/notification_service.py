@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 _PREFERENCE_GATE: dict[str, str] = {
     "job_matches": "notify_agent_alerts",
     "followup_ready": "notify_followup_reminders",
+    "application_update": "notify_agent_alerts",
 }
 
 

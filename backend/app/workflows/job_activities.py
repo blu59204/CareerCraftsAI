@@ -71,7 +71,39 @@ async def inbox_status_activity(params: dict) -> dict:
     if outcome["status"] == "failed":
         # Let Temporal retry the member's scan; other members are unaffected.
         raise RuntimeError("Inbox scan failed")
-    return {"changes": len((outcome["result"] or {}).get("changes", []))}
+    changes = (outcome["result"] or {}).get("changes", [])
+    if changes:
+        await _notify_status_changes(params["user_id"], changes)
+    return {"changes": len(changes)}
+
+
+async def _notify_status_changes(user_id: str, changes: list[dict]) -> None:
+    """Tell the member their applications moved. Best effort: the status is
+    already saved, so a notification failure must not retry the scan."""
+    import logging
+    import uuid
+
+    from app.workflows.starters import start_notification
+
+    first = changes[0]
+    if len(changes) == 1:
+        title = f"{first['company']}: application moved to {first['to_status']}"
+        body = first.get("role")
+    else:
+        title = f"{len(changes)} applications updated from your inbox"
+        body = ", ".join(f"{c['company']} ({c['to_status']})" for c in changes[:5])
+    try:
+        await start_notification(
+            uuid.UUID(user_id),
+            type="application_update",
+            title=title,
+            body=body,
+            link="/applications",
+        )
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Failed to notify user %s of application updates", user_id, exc_info=True
+        )
 
 
 @activity.defn
