@@ -19,6 +19,7 @@ import {
   appOrigin,
   jobUrl,
   taskSenderAllowed,
+  snapshotKey,
 } from "./common.js";
 
 const POLL_ALARM = "poll";
@@ -315,7 +316,7 @@ async function handleMessage(msg, sender) {
       if (!active.submitPermit) return { waiting: true };
       if (Date.parse(active.submitPermit.expiresAt) <= Date.now()) return { error: "Approval expired. Verify the application before retrying." };
       if (!msg.consume) return { approved: true };
-      if (JSON.stringify(msg.snapshot) !== JSON.stringify(active.review.snapshot)) return { error: "The form changed after review. Nothing was clicked; verify before retrying." };
+      if (snapshotKey(msg.snapshot) !== snapshotKey(active.review.snapshot)) return { error: "The form changed after review. Nothing was clicked; verify before retrying." };
       if (submitClaims.has(active.taskId)) return { error: "Submission was already claimed." };
       submitClaims.add(active.taskId);
       await setActiveTask({ ...active, submitting: true, stage: "submitting" });

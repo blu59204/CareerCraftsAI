@@ -2,7 +2,7 @@
 platform_detector.py — Detect job platform from URL and return CSS selectors.
 
 Used by JobSearchAgent to locate job details on listing pages, and by
-FormFillerService to target platform-specific form elements.
+the paired browser extension to target platform-specific form elements.
 """
 
 

@@ -116,3 +116,12 @@ export async function setActiveTask(active) {
 export async function clearActiveTask() {
   await chrome.storage.session.remove(SESSION_KEYS.ACTIVE_TASK);
 }
+
+// Chrome storage may reorder object keys; field array order remains significant.
+export function snapshotKey(value) {
+  if (Array.isArray(value)) return `[${value.map(snapshotKey).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${snapshotKey(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}

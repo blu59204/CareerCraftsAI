@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appOrigin, jobUrl, taskSenderAllowed } from "../src/common.js";
+import { appOrigin, jobUrl, taskSenderAllowed, snapshotKey } from "../src/common.js";
 
 const active = { taskId: "task", tabId: 7 };
 const sender = { id: "extension", frameId: 0, tab: { id: 7 }, url: "https://jobs.lever.co/company/posting" };
@@ -12,4 +12,6 @@ assert.throws(() => jobUrl("http://localhost/form"));
 assert.throws(() => jobUrl("https://127.0.0.1/form"));
 assert.throws(() => appOrigin("https://user:password@app.example"));
 assert.equal(appOrigin("http://localhost:3000"), "http://localhost:3000");
+assert.equal(snapshotKey({url: "x", fields: [{id: "a", value: "b"}]}), snapshotKey({fields: [{value: "b", id: "a"}], url: "x"}));
+assert.notEqual(snapshotKey({fields: [1, 2]}), snapshotKey({fields: [2, 1]}));
 console.log("Task sender, frame, origin and pairing boundary checks passed.");
