@@ -486,6 +486,7 @@ async def test_ensure_schedules_registers_recurring_jobs(monkeypatch):
     await scheduled.ensure_schedules(client)
 
     assert set(created) | {"maintenance"} == {
+        "auto-apply-queue",
         "daily-job-search",
         "daily-summary",
         "inbox-status-check",
@@ -537,6 +538,8 @@ def test_every_started_workflow_is_registered_with_the_worker():
         "outreach_activity",
         "list_summary_users_activity",
         "daily_summary_activity",
+        "list_auto_apply_users_activity",
+        "auto_apply_queue_activity",
         "maintenance_activity",
         "reserve_application_attempt",
     } <= names

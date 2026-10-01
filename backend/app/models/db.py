@@ -673,6 +673,11 @@ class UserPreferences(Base):
     notify_daily_summary: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Opt-in: tailor a resume and queue the application in the member's browser
+    # for saved jobs at or above the match-score threshold.
+    auto_apply_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     # Recruiter outreach: emails sent per rolling 24 hours, and whether sends
     # may go out without per-email approval once a few have been approved.
     outreach_daily_cap: Mapped[int] = mapped_column(

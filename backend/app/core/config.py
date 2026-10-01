@@ -165,6 +165,9 @@ class Settings(BaseSettings):
     INBOX_STATUS_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
     # How often approved recruiter emails are sent and replies are checked.
     DAILY_SUMMARY_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
+    AUTO_APPLY_QUEUE_INTERVAL_HOURS: int = Field(default=6, ge=1, le=168)
+    # Applications the agent queues per member per run, on top of the daily cap.
+    AUTO_APPLY_QUEUE_BATCH: int = Field(default=3, ge=1, le=10)
     OUTREACH_INTERVAL_MINUTES: int = Field(default=30, ge=5, le=1440)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=30, le=3600)
 

@@ -68,6 +68,7 @@ class UserPreferencesSchema(BaseModel):
     outreach_daily_cap: int | None = Field(default=None, ge=1, le=100)
     outreach_auto_send: bool | None = None
     notify_daily_summary: bool | None = None
+    auto_apply_enabled: bool | None = None
 
 
 class UserPreferencesResponse(UserPreferencesSchema):

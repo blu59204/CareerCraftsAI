@@ -244,3 +244,57 @@ async def test_applications_list_carries_resume_and_email_status(maker):
     assert result["Acme"].resume_label.startswith("jane-acme.pdf · ")
     assert result["Acme"].outreach_status == "sent" and result["Acme"].outreach_to == "a@acme.com"
     assert result["Beta"].resume_label is None and result["Beta"].outreach_status is None
+
+
+async def test_auto_apply_queue_tailors_attaches_and_starts_only_safe_jobs(maker, monkeypatch):
+    import app.services.auto_apply_queue as queue
+    from app.models.db import JobApplication, UserDocument
+
+    monkeypatch.setattr(queue, "AsyncSessionLocal", maker)
+    user = await _member(maker)
+    async with maker() as db:
+        docs = [
+            UserDocument(
+                user_id=uuid.UUID(user),
+                doc_type="resume",
+                filename=f"r{i}.pdf",
+                storage_path="x",
+            )
+            for i in range(2)
+        ]
+        db.add_all(docs)
+        apps = [
+            JobApplication(
+                user_id=uuid.UUID(user),
+                company=name,
+                role="Eng",
+                job_url=f"https://boards.greenhouse.io/{name}/jobs/1",
+                match_score=score,
+                status="saved",
+            )
+            for name, score in (("hi", 95), ("mid", 85), ("low", 40))
+        ]
+        db.add_all(apps)
+        await db.commit()
+        doc_ids = [str(d.id) for d in docs]
+        ids = {a.company: a.id for a in apps}
+
+    drafts = {
+        "hi": {"pdf_document_id": doc_ids[0], "grounding": {"checked": True, "unsupported": []}},
+        # a resume that claims something unsupported must never be used
+        "mid": {"pdf_document_id": doc_ids[1], "grounding": {"unsupported": ["Kubernetes"]}},
+    }
+    monkeypatch.setattr(queue, "_tailor", lambda uid, app: drafts[app.company])
+    started = []
+
+    async def fake_start(user_id, application_id, auto=False):
+        started.append((application_id, auto))
+
+    monkeypatch.setattr("app.workflows.starters.start_auto_apply", fake_start)
+
+    assert await queue.queue_for_member(user) == {"queued": 1, "skipped": 1}
+    assert started == [(ids["hi"], True)]
+    async with maker() as db:
+        hi = await db.get(JobApplication, ids["hi"])
+        mid = await db.get(JobApplication, ids["mid"])
+    assert str(hi.resume_id) == doc_ids[0] and mid.resume_id is None

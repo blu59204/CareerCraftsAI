@@ -63,6 +63,8 @@ interface UserPreferences {
   // Recruiter emails per rolling 24 hours, and whether approved-before senders go out unattended.
   outreach_daily_cap: number;
   outreach_auto_send: boolean;
+  // Opt-in: tailor a resume and queue applications for saved jobs above the match threshold.
+  auto_apply_enabled: boolean;
 }
 
 interface FormState {
@@ -81,6 +83,7 @@ interface FormState {
   inbox_tracking_enabled: boolean;
   outreach_daily_cap: string;
   outreach_auto_send: boolean;
+  auto_apply_enabled: boolean;
 }
 
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
@@ -126,6 +129,7 @@ const DEFAULT_FORM: FormState = {
   inbox_tracking_enabled: false,
   outreach_daily_cap: "25",
   outreach_auto_send: false,
+  auto_apply_enabled: false,
 };
 
 function prefsToForm(prefs: UserPreferences): FormState {
@@ -145,6 +149,7 @@ function prefsToForm(prefs: UserPreferences): FormState {
     inbox_tracking_enabled: Boolean(prefs.inbox_tracking_enabled),
     outreach_daily_cap: String(prefs.outreach_daily_cap ?? 25),
     outreach_auto_send: Boolean(prefs.outreach_auto_send),
+    auto_apply_enabled: Boolean(prefs.auto_apply_enabled),
   };
 }
 
@@ -361,6 +366,7 @@ export default function ProfilePreferencesPage() {
         inbox_tracking_enabled: form.inbox_tracking_enabled,
         outreach_daily_cap: Math.min(100, Math.max(1, parseInt(form.outreach_daily_cap, 10) || 25)),
         outreach_auto_send: form.outreach_auto_send,
+        auto_apply_enabled: form.auto_apply_enabled,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -804,6 +810,37 @@ export default function ProfilePreferencesPage() {
                 </div>
                 <StatusPill tone={form.inbox_tracking_enabled ? "primary" : "neutral"}>
                   {form.inbox_tracking_enabled ? "Checking daily" : "Off (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* J0 — queue applications */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.15}
+                tone={form.auto_apply_enabled ? "primary" : "muted"}
+                icon={<CalendarCheck size={16} weight="light" />}
+                title="Queue applications for me"
+                meta={
+                  <Toggle
+                    checked={form.auto_apply_enabled}
+                    onChange={(next) => set("auto_apply_enabled", next)}
+                    label="Prepare applications for strong matches"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Prepare applications for strong matches
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, CareerCraft takes saved jobs that match at 70% or more, tailors your resume using only
+                    what is in your own documents, and queues each application in your browser extension, a few at a
+                    time and within your daily limit. You still review every filled form in the extension before
+                    anything is submitted. Needs a paired extension and an AI model.
+                  </p>
+                </div>
+                <StatusPill tone={form.auto_apply_enabled ? "primary" : "neutral"}>
+                  {form.auto_apply_enabled ? "Queuing strong matches" : "Off (default)"}
                 </StatusPill>
               </PrefCard>
 

@@ -107,6 +107,20 @@ async def _notify_status_changes(user_id: str, changes: list[dict]) -> None:
 
 
 @activity.defn
+async def list_auto_apply_users_activity(params: dict) -> dict:
+    from app.services.auto_apply_queue import list_auto_apply_users
+
+    return {"user_ids": await list_auto_apply_users()}
+
+
+@activity.defn
+async def auto_apply_queue_activity(params: dict) -> dict:
+    from app.services.auto_apply_queue import queue_for_member
+
+    return await queue_for_member(params["user_id"])
+
+
+@activity.defn
 async def list_summary_users_activity(params: dict) -> dict:
     from app.services.daily_summary import list_summary_users
 

@@ -13,8 +13,10 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from app.workflows.job_activities import (
         daily_search_activity,
+        auto_apply_queue_activity,
         daily_summary_activity,
         inbox_status_activity,
+        list_auto_apply_users_activity,
         list_daily_search_users_activity,
         list_inbox_tracking_users_activity,
         list_outreach_users_activity,
@@ -32,6 +34,36 @@ _RETRY = RetryPolicy(initial_interval=timedelta(minutes=1), maximum_attempts=3)
 # Members searched at once. Each search runs browser automation on its own
 # member's key, so this bounds worker load, not anyone's spend.
 _DAILY_SEARCH_BATCH = 5
+
+
+async def _for_each_member(list_activity, member_activity, member_timeout: timedelta) -> dict:
+    """Run `member_activity` for every member `list_activity` returns, five at
+    a time. One activity per member, each with its own timeout and retries, so
+    one member failing never holds up or restarts another."""
+    listed = await workflow.execute_activity(
+        list_activity,
+        {},
+        start_to_close_timeout=timedelta(minutes=2),
+        retry_policy=_RETRY,
+    )
+    user_ids: list[str] = listed.get("user_ids", [])
+    failed = 0
+    for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
+        batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
+        results = await asyncio.gather(
+            *(
+                workflow.execute_activity(
+                    member_activity,
+                    {"user_id": user_id},
+                    start_to_close_timeout=member_timeout,
+                    retry_policy=_RETRY,
+                )
+                for user_id in batch
+            ),
+            return_exceptions=True,
+        )
+        failed += sum(isinstance(result, BaseException) for result in results)
+    return {"users": len(user_ids), "failed": failed}
 
 
 @workflow.defn
@@ -87,30 +119,9 @@ class InboxStatusWorkflow:
 
     @workflow.run
     async def run(self) -> dict:
-        listed = await workflow.execute_activity(
-            list_inbox_tracking_users_activity,
-            {},
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_RETRY,
+        return await _for_each_member(
+            list_inbox_tracking_users_activity, inbox_status_activity, timedelta(minutes=10)
         )
-        user_ids: list[str] = listed.get("user_ids", [])
-        failed = 0
-        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
-            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
-            results = await asyncio.gather(
-                *(
-                    workflow.execute_activity(
-                        inbox_status_activity,
-                        {"user_id": user_id},
-                        start_to_close_timeout=timedelta(minutes=10),
-                        retry_policy=_RETRY,
-                    )
-                    for user_id in batch
-                ),
-                return_exceptions=True,
-            )
-            failed += sum(isinstance(result, BaseException) for result in results)
-        return {"users": len(user_ids), "failed": failed}
 
 
 @workflow.defn
@@ -120,30 +131,9 @@ class OutreachWorkflow:
 
     @workflow.run
     async def run(self) -> dict:
-        listed = await workflow.execute_activity(
-            list_outreach_users_activity,
-            {},
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_RETRY,
+        return await _for_each_member(
+            list_outreach_users_activity, outreach_activity, timedelta(minutes=10)
         )
-        user_ids: list[str] = listed.get("user_ids", [])
-        failed = 0
-        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
-            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
-            results = await asyncio.gather(
-                *(
-                    workflow.execute_activity(
-                        outreach_activity,
-                        {"user_id": user_id},
-                        start_to_close_timeout=timedelta(minutes=10),
-                        retry_policy=_RETRY,
-                    )
-                    for user_id in batch
-                ),
-                return_exceptions=True,
-            )
-            failed += sum(isinstance(result, BaseException) for result in results)
-        return {"users": len(user_ids), "failed": failed}
 
 
 @workflow.defn
@@ -152,30 +142,22 @@ class DailySummaryWorkflow:
 
     @workflow.run
     async def run(self) -> dict:
-        listed = await workflow.execute_activity(
-            list_summary_users_activity,
-            {},
-            start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=_RETRY,
+        return await _for_each_member(
+            list_summary_users_activity, daily_summary_activity, timedelta(minutes=2)
         )
-        user_ids: list[str] = listed.get("user_ids", [])
-        failed = 0
-        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
-            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
-            results = await asyncio.gather(
-                *(
-                    workflow.execute_activity(
-                        daily_summary_activity,
-                        {"user_id": user_id},
-                        start_to_close_timeout=timedelta(minutes=2),
-                        retry_policy=_RETRY,
-                    )
-                    for user_id in batch
-                ),
-                return_exceptions=True,
-            )
-            failed += sum(isinstance(result, BaseException) for result in results)
-        return {"users": len(user_ids), "failed": failed}
+
+
+@workflow.defn
+class AutoApplyQueueWorkflow:
+    """Tailor and queue applications for members who opted in. Resume
+    tailoring calls the member's own model, so each member gets a long timeout
+    and a failure stays theirs alone."""
+
+    @workflow.run
+    async def run(self) -> dict:
+        return await _for_each_member(
+            list_auto_apply_users_activity, auto_apply_queue_activity, timedelta(minutes=25)
+        )
 
 
 @workflow.defn
@@ -217,6 +199,11 @@ def schedule_specs() -> list[tuple[str, type, timedelta]]:
             "inbox-status-check",
             InboxStatusWorkflow,
             timedelta(hours=settings.INBOX_STATUS_INTERVAL_HOURS),
+        ),
+        (
+            "auto-apply-queue",
+            AutoApplyQueueWorkflow,
+            timedelta(hours=settings.AUTO_APPLY_QUEUE_INTERVAL_HOURS),
         ),
         (
             "daily-summary",
