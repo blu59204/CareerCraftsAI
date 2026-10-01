@@ -67,7 +67,7 @@ class TestHITLBypassPrevention:
                 autospec=True,
             ) as MockGmail,
             patch(
-                "app.agents.email_agent._build_llm",
+                "app.agents.email_agent.build_agent_llm",
                 return_value=fake_llm,
             ),
             patch(
@@ -118,7 +118,7 @@ class TestHITLBypassPrevention:
                 return_value="Senior Python dev",
             ),
             patch(
-                "app.agents.auto_apply_pipeline._build_llm",
+                "app.agents.auto_apply_pipeline.build_agent_llm",
                 return_value=MagicMock(),
             ),
             patch(

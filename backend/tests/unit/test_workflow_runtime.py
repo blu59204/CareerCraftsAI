@@ -580,8 +580,8 @@ async def test_maintenance_flips_stuck_submitting_attempt(monkeypatch):
             compiled = str(statement).lower()
             if "from application_attempts" in compiled:
                 return _ScalarsList([attempt])
-            if "from extension_tasks" in compiled:
-                return _ScalarsList([])
+            if "from extension_tasks" in compiled or "from users" in compiled:
+                return _ScalarsList([])  # no tasks; no account due for deletion
             return _ScalarsList([run])
 
         async def get(self, model, key, with_for_update=False):

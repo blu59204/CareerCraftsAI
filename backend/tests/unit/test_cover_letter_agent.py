@@ -4,6 +4,7 @@ The node speaks prompts/cover_letter_prompt exclusively (no inline prompt
 text) and never touches the network: RAG, LLM build, and persistence are
 all mocked. Cover letters are drafts for review — nothing is ever sent.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,14 +33,16 @@ def make_state(**ctx) -> AgentState:
 
 
 def _valid_cover_json() -> str:
-    return json.dumps({
-        "cover_letter_markdown": "Dear Hiring Manager,\n\nI build reliable APIs.",
-        "hook_used": "API reliability hook",
-        "requirements_addressed": ["Python", "APIs"],
-        "word_count": 42,
-        "tone": "formal",
-        "alternative_openings": ["Alt opener one.", "Alt opener two."],
-    })
+    return json.dumps(
+        {
+            "cover_letter_markdown": "Dear Hiring Manager,\n\nI build reliable APIs.",
+            "hook_used": "API reliability hook",
+            "requirements_addressed": ["Python", "APIs"],
+            "word_count": 42,
+            "tone": "formal",
+            "alternative_openings": ["Alt opener one.", "Alt opener two."],
+        }
+    )
 
 
 def _patches(mock_llm, **overrides):
@@ -49,14 +52,14 @@ def _patches(mock_llm, **overrides):
     kw = dict(
         fetch_model_settings=MagicMock(provider="openai"),
         retrieve=[MagicMock(page_content="5 years Python experience")],
-        _build_llm=mock_llm,
+        build_agent_llm=mock_llm,
         emit=None,
     )
     kw.update(overrides)
     return [
         patch.object(cla, "fetch_model_settings", return_value=kw["fetch_model_settings"]),
         patch.object(cla, "retrieve", return_value=kw["retrieve"]),
-        patch.object(cla, "_build_llm", return_value=kw["_build_llm"]),
+        patch.object(cla, "build_agent_llm", return_value=kw["build_agent_llm"]),
         patch("app.core.event_bus.emit"),
     ]
 
@@ -103,9 +106,7 @@ def test_cover_letter_accepts_legacy_application_id_key(mock_llm):
         with patch.object(
             cla, "_store_cover_letter", return_value={"document_id": "doc-9", "version_number": 1}
         ) as store:
-            cla.cover_letter_node(
-                make_state(application_id="00000000-0000-0000-0000-000000000009")
-            )
+            cla.cover_letter_node(make_state(application_id="00000000-0000-0000-0000-000000000009"))
     store.assert_called_once()
 
 

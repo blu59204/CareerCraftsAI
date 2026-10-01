@@ -83,7 +83,7 @@ def test_start_session_generates_questions(mock_llm):
             "app.agents.interview_coach_agent.fetch_model_settings",
             return_value=MagicMock(provider="openai"),
         ),
-        patch("app.agents.interview_coach_agent._build_llm", return_value=mock_llm),
+        patch("app.agents.interview_coach_agent.build_agent_llm", return_value=mock_llm),
         patch("app.agents.interview_coach_agent.retrieve", return_value=[]),
         patch("app.agents.interview_coach_agent._log_agent_run", return_value=None),
         patch("app.agents.interview_coach_agent._save_interview_session", return_value=None),
@@ -117,7 +117,7 @@ def test_evaluate_answer_scores_in_range(mock_llm):
             "app.agents.interview_coach_agent.fetch_model_settings",
             return_value=MagicMock(provider="openai"),
         ),
-        patch("app.agents.interview_coach_agent._build_llm", return_value=mock_llm),
+        patch("app.agents.interview_coach_agent.build_agent_llm", return_value=mock_llm),
         patch(
             "app.agents.interview_coach_agent._get_interview_session",
             return_value={

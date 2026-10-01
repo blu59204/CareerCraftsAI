@@ -20,7 +20,7 @@ from app.agents.prompts.cover_letter_prompt import OUTPUT_SCHEMA as CoverLetterO
 from app.agents.prompts.cover_letter_prompt import SYSTEM_PROMPT as COVER_SYSTEM_PROMPT
 from app.agents.prompts.cover_letter_prompt import build_user_prompt as build_cover_prompt
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import _get_sync_factory, _to_uuid, fetch_model_settings
 from app.services.rag_service import retrieve
 
@@ -57,15 +57,17 @@ def _store_cover_letter(
             raise ValueError("Job application not found for this user")
 
         doc_id = uuid.uuid4()
-        db.add(UserDocument(
-            id=doc_id,
-            user_id=_to_uuid(user_id),
-            doc_type="cover_letter",
-            filename=f"cover_letter_{tone}_{doc_id.hex[:8]}.md",
-            storage_path=f"cover_letters/{user_id}/{doc_id}.md",
-            raw_text=parsed.cover_letter_markdown,
-            is_primary=False,
-        ))
+        db.add(
+            UserDocument(
+                id=doc_id,
+                user_id=_to_uuid(user_id),
+                doc_type="cover_letter",
+                filename=f"cover_letter_{tone}_{doc_id.hex[:8]}.md",
+                storage_path=f"cover_letters/{user_id}/{doc_id}.md",
+                raw_text=parsed.cover_letter_markdown,
+                is_primary=False,
+            )
+        )
 
         # NOTE: max+1 is not atomic; concurrent generates for the same
         # application could duplicate a version number. Accepted: cover
@@ -81,14 +83,16 @@ def _store_cover_letter(
             or 0
         ) + 1
 
-        db.add(CoverLetterVersion(
-            id=uuid.uuid4(),
-            user_id=_to_uuid(user_id),
-            job_application_id=_to_uuid(job_application_id),
-            document_id=doc_id,
-            tone=tone,
-            version_number=next_version,
-        ))
+        db.add(
+            CoverLetterVersion(
+                id=uuid.uuid4(),
+                user_id=_to_uuid(user_id),
+                job_application_id=_to_uuid(job_application_id),
+                document_id=doc_id,
+                tone=tone,
+                version_number=next_version,
+            )
+        )
         db.execute(
             update(JobApplication)
             .where(
@@ -115,8 +119,11 @@ def cover_letter_node(state: AgentState) -> AgentState:
     from app.core.event_bus import emit
 
     if tone not in VALID_TONES:
-        return {**state, "status": "failed",
-                "error": f"missing/invalid: tone must be one of {sorted(VALID_TONES)}"}
+        return {
+            **state,
+            "status": "failed",
+            "error": f"missing/invalid: tone must be one of {sorted(VALID_TONES)}",
+        }
     if not (jd_text or "").strip():
         return {**state, "status": "failed", "error": "missing: jd_text"}
 
@@ -132,7 +139,9 @@ def cover_letter_node(state: AgentState) -> AgentState:
         # profile text (or empty context) instead of failing the whole run.
         try:
             resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=5)
-            chunk_texts = [c.page_content if hasattr(c, "page_content") else str(c) for c in resume_chunks]
+            chunk_texts = [
+                c.page_content if hasattr(c, "page_content") else str(c) for c in resume_chunks
+            ]
         except Exception as rag_exc:
             logger.warning("Cover letter RAG retrieval failed, continuing: %s", rag_exc)
             resume_chunks, chunk_texts = [], []
@@ -143,18 +152,25 @@ def cover_letter_node(state: AgentState) -> AgentState:
             except Exception as prof_exc:
                 logger.warning("Cover letter profile fallback failed, continuing: %s", prof_exc)
         emit(run_id, "tool_call", {"tool": "rag_retrieve", "input": {"k": 5}})
-        emit(run_id, "tool_result", {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}})
+        emit(
+            run_id,
+            "tool_result",
+            {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}},
+        )
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
 
         emit(run_id, "thinking", {"step": "write", "message": f"Writing {tone} cover letter..."})
         parsed = call_llm_json(
             llm,
             COVER_SYSTEM_PROMPT,
             build_cover_prompt(
-                {"jd_text": jd_text, "tone": tone,
-                 "company": ctx.get("company", "NOT_PROVIDED"),
-                 "target_role": ctx.get("target_role", ctx.get("role", "NOT_PROVIDED"))},
+                {
+                    "jd_text": jd_text,
+                    "tone": tone,
+                    "company": ctx.get("company", "NOT_PROVIDED"),
+                    "target_role": ctx.get("target_role", ctx.get("role", "NOT_PROVIDED")),
+                },
                 chunk_texts or None,
             ),
             CoverLetterOutput,
@@ -182,11 +198,13 @@ def cover_letter_node(state: AgentState) -> AgentState:
 
         duration_ms = int((time.monotonic() - start_ts) * 1000)
         pending = parsed.model_dump()
-        pending.update({
-            "type": "cover_letter_review",
-            "document_id": document_id,
-            "version_number": version_number,
-        })
+        pending.update(
+            {
+                "type": "cover_letter_review",
+                "document_id": document_id,
+                "version_number": version_number,
+            }
+        )
         if persist_warning:
             pending["persist_warning"] = persist_warning
         emit(run_id, "complete", {"result": {"document_id": document_id, "tone": tone}})
@@ -196,7 +214,8 @@ def cover_letter_node(state: AgentState) -> AgentState:
             "pending_action": pending,
             "result": pending,
             "tokens_used": tokens_used,
-            "messages": state.get("messages", []) + [AIMessage(content=parsed.cover_letter_markdown[:200])],
+            "messages": state.get("messages", [])
+            + [AIMessage(content=parsed.cover_letter_markdown[:200])],
             "context": {**ctx, "duration_ms": duration_ms},
         }
     except Exception as exc:

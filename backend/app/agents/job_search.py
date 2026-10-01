@@ -7,7 +7,6 @@ from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
 from app.core.config import settings as app_settings
 from app.core.event_bus import emit
-from app.core.model_router import _build_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text, run_coro_sync
 from app.services.job_search_service import search_all_platforms
 
@@ -48,84 +47,353 @@ LEVER_COMPANIES = (
 # so the ATS source alone returns thousands of real jobs.
 GREENHOUSE_BOARDS = (
     # Tech / SaaS
-    "airbnb", "stripe", "databricks", "doordashusa", "figma", "gitlab",
-    "grammarly", "notion", "ramp", "rippling", "robinhood", "scaleai",
-    "anthropic", "openai", "vercel", "supabase", "linear", "retool",
-    "segment", "mux", "cloudflare", "fastly", "hashicorp", "snowflake",
-    "cockroachdb", "planetscale", "mongodb", "elastic", "confluent",
-    "materialize", "timescale", "neon", "turso", "railway", "fly",
-    "render", "deno", "convex", "inngest", "trigger", "temporal",
-    "sentry", "datadog", "newrelic", "grafana", "pagerduty", "launchdarkly",
-    "statsig", "split", "optimizely", "pendo", "appcues",
+    "airbnb",
+    "stripe",
+    "databricks",
+    "doordashusa",
+    "figma",
+    "gitlab",
+    "grammarly",
+    "notion",
+    "ramp",
+    "rippling",
+    "robinhood",
+    "scaleai",
+    "anthropic",
+    "openai",
+    "vercel",
+    "supabase",
+    "linear",
+    "retool",
+    "segment",
+    "mux",
+    "cloudflare",
+    "fastly",
+    "hashicorp",
+    "snowflake",
+    "cockroachdb",
+    "planetscale",
+    "mongodb",
+    "elastic",
+    "confluent",
+    "materialize",
+    "timescale",
+    "neon",
+    "turso",
+    "railway",
+    "fly",
+    "render",
+    "deno",
+    "convex",
+    "inngest",
+    "trigger",
+    "temporal",
+    "sentry",
+    "datadog",
+    "newrelic",
+    "grafana",
+    "pagerduty",
+    "launchdarkly",
+    "statsig",
+    "split",
+    "optimizely",
+    "pendo",
+    "appcues",
     # Consumer
-    "duolingo", "coinbase", "robinhood", "gemini", "kraken", "ramp",
-    "mercury", "brex", "affirm", "klarna", "wise", "revolut",
-    "instacart", "doordash", "ubereats", "grubhub", "wayfair", "etsy",
-    "pinterest", "snap", "bytedance", "discord", "twitch", "roblox",
+    "duolingo",
+    "coinbase",
+    "robinhood",
+    "gemini",
+    "kraken",
+    "ramp",
+    "mercury",
+    "brex",
+    "affirm",
+    "klarna",
+    "wise",
+    "revolut",
+    "instacart",
+    "doordash",
+    "ubereats",
+    "grubhub",
+    "wayfair",
+    "etsy",
+    "pinterest",
+    "snap",
+    "bytedance",
+    "discord",
+    "twitch",
+    "roblox",
     # Fintech / B2B
-    "plaid", "moderntreasury", "ramp", "wisedragon", "checkr",
-    "personio", "deel", "remote", "gusto", "justworks", "rippling",
-    "greenhouse", "lever", "ashbyhq", "workable", "bamboohr",
+    "plaid",
+    "moderntreasury",
+    "ramp",
+    "wisedragon",
+    "checkr",
+    "personio",
+    "deel",
+    "remote",
+    "gusto",
+    "justworks",
+    "rippling",
+    "greenhouse",
+    "lever",
+    "ashbyhq",
+    "workable",
+    "bamboohr",
     # Dev tools
-    "github", "gitlab", "bitbucket", "snyk", "sonatype", "jfrog",
-    "circleci", "buildkite", "githubactions", "semaphore", "drone",
+    "github",
+    "gitlab",
+    "bitbucket",
+    "snyk",
+    "sonatype",
+    "jfrog",
+    "circleci",
+    "buildkite",
+    "githubactions",
+    "semaphore",
+    "drone",
     # Health / Bio
-    "ro", "hims", "modernhealth", "springhealth", "headway", "talkspace",
+    "ro",
+    "hims",
+    "modernhealth",
+    "springhealth",
+    "headway",
+    "talkspace",
     # Mobility
-    "uber", "lyft", "waymo", "cruise", "nuro", "zoox", "motional",
-    "bird", "lime", "spin", "helbiz",
+    "uber",
+    "lyft",
+    "waymo",
+    "cruise",
+    "nuro",
+    "zoox",
+    "motional",
+    "bird",
+    "lime",
+    "spin",
+    "helbiz",
     # Enterprise
-    "salesforce", "hubspot", "zendesk", "intercom", "freshworks",
-    "atlassian", "slack", "dropbox", "box", "docusign", "okta",
-    "auth0", "twilio", "sendgrid", "mailgun", "postmark", "klaviyo",
+    "salesforce",
+    "hubspot",
+    "zendesk",
+    "intercom",
+    "freshworks",
+    "atlassian",
+    "slack",
+    "dropbox",
+    "box",
+    "docusign",
+    "okta",
+    "auth0",
+    "twilio",
+    "sendgrid",
+    "mailgun",
+    "postmark",
+    "klaviyo",
     # AI / ML
-    "anthropic", "openai", "cohere", "huggingface", "replicate",
-    "stability", "midjourney", "runway", "jasper", "character",
-    "perplexity", "mistral", "anyscale", "together", "fireworks",
-    "weightsandbiases", "labelbox", "scale", "surge", "defined",
+    "anthropic",
+    "openai",
+    "cohere",
+    "huggingface",
+    "replicate",
+    "stability",
+    "midjourney",
+    "runway",
+    "jasper",
+    "character",
+    "perplexity",
+    "mistral",
+    "anyscale",
+    "together",
+    "fireworks",
+    "weightsandbiases",
+    "labelbox",
+    "scale",
+    "surge",
+    "defined",
     # Indian tech
-    "razorpay", "phonepe", "cred", "zerodha", "groww", "meesho",
-    "swiggy", "zomato", "flipkart", "paytm", "ola", "rapido",
-    "byjus", "unacademy", "vedantu", "upgrad", "simplilearn",
-    "freshworks", "zoho", "infosys", "tcs", "wipro", "hcl",
+    "razorpay",
+    "phonepe",
+    "cred",
+    "zerodha",
+    "groww",
+    "meesho",
+    "swiggy",
+    "zomato",
+    "flipkart",
+    "paytm",
+    "ola",
+    "rapido",
+    "byjus",
+    "unacademy",
+    "vedantu",
+    "upgrad",
+    "simplilearn",
+    "freshworks",
+    "zoho",
+    "infosys",
+    "tcs",
+    "wipro",
+    "hcl",
 )
 
 LEVER_COMPANIES = (
-    "ashby", "benchling", "chime", "coursera", "netflix", "reddit",
-    "shopify", "zapier", "atlassian", "canva", "doximity", "duolingo",
-    "eventbrite", "faire", "flexport", "gusto", "handshake", "hopin",
-    "kwai", "lattice", "loom", "maven", "miro", "mongodb", "mural",
-    "nextdoor", "olacabs", "olx", "opendoor", "outschool", "pagerduty",
-    "peloton", "plaid", "postman", "quora", "retool", "riverside",
-    "segment", "sentry", "tiktok", "triplebyte", "truecaller",
-    "udemy", "vimeo", "wealthfront", "yelp", "zola", "zylo",
+    "ashby",
+    "benchling",
+    "chime",
+    "coursera",
+    "netflix",
+    "reddit",
+    "shopify",
+    "zapier",
+    "atlassian",
+    "canva",
+    "doximity",
+    "duolingo",
+    "eventbrite",
+    "faire",
+    "flexport",
+    "gusto",
+    "handshake",
+    "hopin",
+    "kwai",
+    "lattice",
+    "loom",
+    "maven",
+    "miro",
+    "mongodb",
+    "mural",
+    "nextdoor",
+    "olacabs",
+    "olx",
+    "opendoor",
+    "outschool",
+    "pagerduty",
+    "peloton",
+    "plaid",
+    "postman",
+    "quora",
+    "retool",
+    "riverside",
+    "segment",
+    "sentry",
+    "tiktok",
+    "triplebyte",
+    "truecaller",
+    "udemy",
+    "vimeo",
+    "wealthfront",
+    "yelp",
+    "zola",
+    "zylo",
 )
 
 # Ashby — public job board JSON endpoint (no auth).
 ASHBY_COMPANIES = (
-    "linear", "notion", "ramp", "retool", "vanta", "drata",
-    "linear", "mercury", "brex", "ramp", "gusto", "rippling",
-    "checkr", "deel", "remote", "personio", "kandji", "jumpcloud",
-    "1password", "bitwarden", "okta", "auth0", "snyk", "sonatype",
-    "hashicorp", "spacelift", "env0", "atlantis", "firefly",
-    "anaconda", "weightsandbiases", "neptune", "arize", "why labs",
-    "quivr", "dust", "glean", "chrono24", "tessian",
-    "perplexity", "character", "replit", "cursor", "codeium",
-    "continue", "aider", "sweep", "dust", "factory",
-    "resend", "postmark", "mailgun", "frontapp", "helpscout",
-    "tars", "voiceflow", "typeform", "fillout", "tally",
+    "linear",
+    "notion",
+    "ramp",
+    "retool",
+    "vanta",
+    "drata",
+    "linear",
+    "mercury",
+    "brex",
+    "ramp",
+    "gusto",
+    "rippling",
+    "checkr",
+    "deel",
+    "remote",
+    "personio",
+    "kandji",
+    "jumpcloud",
+    "1password",
+    "bitwarden",
+    "okta",
+    "auth0",
+    "snyk",
+    "sonatype",
+    "hashicorp",
+    "spacelift",
+    "env0",
+    "atlantis",
+    "firefly",
+    "anaconda",
+    "weightsandbiases",
+    "neptune",
+    "arize",
+    "why labs",
+    "quivr",
+    "dust",
+    "glean",
+    "chrono24",
+    "tessian",
+    "perplexity",
+    "character",
+    "replit",
+    "cursor",
+    "codeium",
+    "continue",
+    "aider",
+    "sweep",
+    "dust",
+    "factory",
+    "resend",
+    "postmark",
+    "mailgun",
+    "frontapp",
+    "helpscout",
+    "tars",
+    "voiceflow",
+    "typeform",
+    "fillout",
+    "tally",
 )
 
 # SmartRecruiters — public job board JSON endpoint (no auth).
 SMARTRECRUITERS_COMPANIES = (
-    "visa", "mastercard", "uber", "bosch", "siemens", "sap",
-    "ikea", "ikea-sweden", "spotify", "skyscanner", "klarna",
-    "king", "mcdonalds", "pizza-hut", "burger-king", "wendys",
-    "marriott", "hilton", "hyatt", "airbnb-inc", "expedia",
-    "salesforce", "redhat", "vmware", "citrix", "nutanix",
-    "deloitte", "pwc", "kpmg", "ey", "accenture",
-    "unilever", "pg", "nestle", "cocacola", "pepsi",
-    "abbvie", "amgen", "gilead", "regeneron", "vertex",
+    "visa",
+    "mastercard",
+    "uber",
+    "bosch",
+    "siemens",
+    "sap",
+    "ikea",
+    "ikea-sweden",
+    "spotify",
+    "skyscanner",
+    "klarna",
+    "king",
+    "mcdonalds",
+    "pizza-hut",
+    "burger-king",
+    "wendys",
+    "marriott",
+    "hilton",
+    "hyatt",
+    "airbnb-inc",
+    "expedia",
+    "salesforce",
+    "redhat",
+    "vmware",
+    "citrix",
+    "nutanix",
+    "deloitte",
+    "pwc",
+    "kpmg",
+    "ey",
+    "accenture",
+    "unilever",
+    "pg",
+    "nestle",
+    "cocacola",
+    "pepsi",
+    "abbvie",
+    "amgen",
+    "gilead",
+    "regeneron",
+    "vertex",
 )
 
 SCORE_PROMPT = """Rate how well this job matches the candidate profile. Return ONLY a number 0-100.
@@ -138,6 +406,7 @@ Description: {description}
 
 Score (0-100):"""
 
+
 def _heuristic_score_job(job: dict, profile: str) -> int:
     terms = {
         term.lower().strip(".,:;()[]")
@@ -146,8 +415,7 @@ def _heuristic_score_job(job: dict, profile: str) -> int:
         and term.lower() not in {"and", "the", "with", "for", "from"}
     }
     haystack = " ".join(
-        str(job.get(key, ""))
-        for key in ("title", "company", "location", "description", "platform")
+        str(job.get(key, "")) for key in ("title", "company", "location", "description", "platform")
     ).lower()
     overlap = sum(1 for term in terms if term in haystack)
     score = 45 + min(35, overlap * 10)
@@ -160,14 +428,19 @@ def _heuristic_score_job(job: dict, profile: str) -> int:
 
 def _score_job(llm, job: dict, profile: str, thinking: str = "") -> int:
     try:
-        resp = llm.invoke([HumanMessage(
-            content=SCORE_PROMPT.format(
-                profile=profile,
-                title=job.get("title", ""),
-                company=job.get("company", ""),
-                description=str(job.get("description", ""))[:500],
-            ) + (f"\n\nScoring criteria from analysis:\n{thinking}" if thinking else "")
-        )])
+        resp = llm.invoke(
+            [
+                HumanMessage(
+                    content=SCORE_PROMPT.format(
+                        profile=profile,
+                        title=job.get("title", ""),
+                        company=job.get("company", ""),
+                        description=str(job.get("description", ""))[:500],
+                    )
+                    + (f"\n\nScoring criteria from analysis:\n{thinking}" if thinking else "")
+                )
+            ]
+        )
         digits = "".join(c for c in resp.content.strip()[:3] if c.isdigit())
         return int(digits) if digits else _heuristic_score_job(job, profile)
     except Exception as exc:
@@ -177,8 +450,14 @@ def _score_job(llm, job: dict, profile: str, thinking: str = "") -> int:
 
 def _job_listings_to_dicts(job_listings) -> list[dict]:
     return [
-        {"title": j.title, "company": j.company, "location": j.location,
-         "description": j.description, "job_url": j.job_url, "platform": j.platform}
+        {
+            "title": j.title,
+            "company": j.company,
+            "location": j.location,
+            "description": j.description,
+            "job_url": j.job_url,
+            "platform": j.platform,
+        }
         for j in job_listings
     ]
 
@@ -186,6 +465,7 @@ def _job_listings_to_dicts(job_listings) -> list[dict]:
 def _domain_of(url: str) -> str:
     try:
         from urllib.parse import urlparse
+
         host = urlparse(url).netloc.lower().lstrip("www.")
         return host.split(":")[0] or "Unknown"
     except Exception:
@@ -218,14 +498,16 @@ def _search_searxng_jobs(query: str, location: str, max_results: int) -> list[di
         title = (item or {}).get("title")
         if not url or not title:
             continue
-        jobs.append({
-            "title": title,
-            "company": _domain_of(url),
-            "location": location,
-            "description": (item.get("content") or "")[:2000],
-            "job_url": url,
-            "platform": "searxng",
-        })
+        jobs.append(
+            {
+                "title": title,
+                "company": _domain_of(url),
+                "location": location,
+                "description": (item.get("content") or "")[:2000],
+                "job_url": url,
+                "platform": "searxng",
+            }
+        )
         if len(jobs) >= max_results:
             break
     return jobs
@@ -245,8 +527,7 @@ def _search_remoteok_jobs(query: str, max_results: int) -> list[dict]:
         if not isinstance(row, dict) or not row.get("position"):
             continue
         haystack = " ".join(
-            str(row.get(key, ""))
-            for key in ("position", "company", "description", "tags")
+            str(row.get(key, "")) for key in ("position", "company", "description", "tags")
         ).lower()
         if terms and not any(term in haystack for term in terms):
             continue
@@ -267,8 +548,20 @@ def _search_remoteok_jobs(query: str, max_results: int) -> list[dict]:
 
 def _query_terms(query: str) -> set[str]:
     stop = {
-        "and", "for", "the", "with", "remote", "hybrid", "onsite", "entry",
-        "level", "senior", "junior", "lead", "full", "time",
+        "and",
+        "for",
+        "the",
+        "with",
+        "remote",
+        "hybrid",
+        "onsite",
+        "entry",
+        "level",
+        "senior",
+        "junior",
+        "lead",
+        "full",
+        "time",
     }
     return {
         term.lower().strip(".,:;()[]")
@@ -282,18 +575,13 @@ def _matches_query(job: dict, query: str) -> bool:
     if not terms:
         return True
     haystack = " ".join(
-        str(job.get(key, ""))
-        for key in ("title", "company", "location", "description", "platform")
+        str(job.get(key, "")) for key in ("title", "company", "location", "description", "platform")
     ).lower()
     return any(term in haystack for term in terms)
 
 
 def _matches_work_mode(job: dict, work_mode: str, location: str) -> bool:
-    modes = [
-        item.strip().lower()
-        for item in (work_mode or "").split(",")
-        if item.strip()
-    ]
+    modes = [item.strip().lower() for item in (work_mode or "").split(",") if item.strip()]
     if len(modes) > 1:
         return any(_matches_work_mode(job, mode, location) for mode in modes)
     mode = modes[0] if modes else ""
@@ -306,9 +594,7 @@ def _matches_work_mode(job: dict, work_mode: str, location: str) -> bool:
             desired_location not in {"", "any", "remote"} and desired_location in loc
         )
     if mode == "onsite":
-        return "remote" not in loc and (
-            desired_location in {"", "any"} or desired_location in loc
-        )
+        return "remote" not in loc and (desired_location in {"", "any"} or desired_location in loc)
     if desired_location not in {"", "any", "remote"}:
         return desired_location in loc or "remote" in loc
     return True
@@ -353,14 +639,19 @@ def _search_public_ats_jobs(
 
         def _gh(b):
             return _search_greenhouse_board(client, b)
+
         def _lv(c):
             return _search_lever_company(client, c)
+
         def _ab(c):
             return _search_ashby_jobs(client, c)
+
         def _sr(c):
             return _search_smartrecruiters_jobs(client, c)
+
         def _wd(t):
             return _search_workday_company(client, t)
+
         def _bh(t):
             return _search_bamboohr_company(client, t)
 
@@ -430,14 +721,16 @@ def _search_himalayas_jobs(client: httpx.Client, query: str, max_results: int) -
         # Build a sensible location from locationRestrictions
         locs = j.get("locationRestrictions") or []
         location = ", ".join(locs) if locs else "Remote"
-        jobs.append({
-            "title": title,
-            "company": company,
-            "location": location,
-            "description": _strip_html(excerpt)[:600],
-            "job_url": j.get("applicationUrl") or j.get("url", ""),
-            "platform": "himalayas",
-        })
+        jobs.append(
+            {
+                "title": title,
+                "company": company,
+                "location": location,
+                "description": _strip_html(excerpt)[:600],
+                "job_url": j.get("applicationUrl") or j.get("url", ""),
+                "platform": "himalayas",
+            }
+        )
         if len(jobs) >= max_results:
             break
     return jobs
@@ -465,19 +758,25 @@ def _search_workingnomads_jobs(client: httpx.Client, query: str, max_results: in
             if r.status_code != 200 or not r.text or r.text.lstrip().startswith("<"):
                 continue
             data = r.json()
-            items = data if isinstance(data, list) else (data.get("jobs") or data.get("results") or [])
+            items = (
+                data if isinstance(data, list) else (data.get("jobs") or data.get("results") or [])
+            )
             if not items:
                 continue
             jobs: list[dict] = []
             for j in items:
-                jobs.append({
-                    "title": j.get("title", ""),
-                    "company": j.get("company_name", "") or j.get("companyName", "") or (j.get("company") or {}).get("name", ""),
-                    "location": j.get("location", "") or "Remote",
-                    "description": _strip_html(j.get("description", ""))[:600],
-                    "job_url": j.get("url", "") or j.get("apply_url", ""),
-                    "platform": "workingnomads",
-                })
+                jobs.append(
+                    {
+                        "title": j.get("title", ""),
+                        "company": j.get("company_name", "")
+                        or j.get("companyName", "")
+                        or (j.get("company") or {}).get("name", ""),
+                        "location": j.get("location", "") or "Remote",
+                        "description": _strip_html(j.get("description", ""))[:600],
+                        "job_url": j.get("url", "") or j.get("apply_url", ""),
+                        "platform": "workingnomads",
+                    }
+                )
                 if len(jobs) >= max_results:
                     break
             if jobs:
@@ -488,7 +787,9 @@ def _search_workingnomads_jobs(client: httpx.Client, query: str, max_results: in
     return []
 
 
-def _search_themuse_jobs(client: httpx.Client, query: str, location: str, max_results: int) -> list[dict]:
+def _search_themuse_jobs(
+    client: httpx.Client, query: str, location: str, max_results: int
+) -> list[dict]:
     """The Muse — curated professional jobs (US/UK/EU strong). No key for low volume."""
     try:
         params = {"page": 0, "descending": "true"}
@@ -506,14 +807,16 @@ def _search_themuse_jobs(client: httpx.Client, query: str, location: str, max_re
         title = j.get("name", "")
         if not _matches_query({"title": title}, query):
             continue
-        jobs.append({
-            "title": title,
-            "company": (j.get("company") or {}).get("name", ""),
-            "location": loc_str,
-            "description": _strip_html(j.get("contents", ""))[:600],
-            "job_url": j.get("refs", {}).get("landing_page", ""),
-            "platform": "themuse",
-        })
+        jobs.append(
+            {
+                "title": title,
+                "company": (j.get("company") or {}).get("name", ""),
+                "location": loc_str,
+                "description": _strip_html(j.get("contents", ""))[:600],
+                "job_url": j.get("refs", {}).get("landing_page", ""),
+                "platform": "themuse",
+            }
+        )
         if len(jobs) >= max_results:
             break
     return jobs
@@ -525,9 +828,15 @@ def _search_authentic_jobs(client: httpx.Client, query: str, max_results: int) -
         # Authentic Jobs is RSS. Use hardened parsing for provider responses.
         from defusedxml import ElementTree as ET
 
-        r = client.get("https://authenticjobs.com/api/",
-                       params={"api_key": "", "method": "aj.jobs.search",
-                               "keywords": query, "count": max_results * 2})
+        r = client.get(
+            "https://authenticjobs.com/api/",
+            params={
+                "api_key": "",
+                "method": "aj.jobs.search",
+                "keywords": query,
+                "count": max_results * 2,
+            },
+        )
         root = ET.fromstring(r.text)
     except Exception as exc:
         logger.debug("Authentic Jobs API failed (RSS): %s", exc)
@@ -541,14 +850,16 @@ def _search_authentic_jobs(client: httpx.Client, query: str, max_results: int) -
         desc = (job.findtext("description") or job.findtext("body") or "").strip()
         if not title or not link:
             continue
-        jobs.append({
-            "title": title,
-            "company": company,
-            "location": loc or "Remote",
-            "description": _strip_html(desc)[:600],
-            "job_url": link,
-            "platform": "authenticjobs",
-        })
+        jobs.append(
+            {
+                "title": title,
+                "company": company,
+                "location": loc or "Remote",
+                "description": _strip_html(desc)[:600],
+                "job_url": link,
+                "platform": "authenticjobs",
+            }
+        )
         if len(jobs) >= max_results:
             break
     return jobs
@@ -561,7 +872,9 @@ def _search_4dayweek_jobs(client: httpx.Client, query: str, max_results: int) ->
     "work_arrangement", "locations": [{"city", "state", "country"}], ...}]}
     """
     try:
-        r = client.get("https://4dayweek.io/api/jobs", params={"q": query, "limit": max_results * 2})
+        r = client.get(
+            "https://4dayweek.io/api/jobs", params={"q": query, "limit": max_results * 2}
+        )
         payload = r.json() or {}
         items = payload.get("jobs") or (payload if isinstance(payload, list) else [])
     except Exception as exc:
@@ -580,15 +893,16 @@ def _search_4dayweek_jobs(client: httpx.Client, query: str, max_results: int) ->
             location = ", ".join(p for p in parts if p) or "Remote"
         else:
             location = j.get("location", "") or "Remote"
-        jobs.append({
-            "title": title,
-            "company": j.get("company_name", "") or j.get("company", ""),
-            "location": location,
-            "description": _strip_html(j.get("description", ""))[:600],
-            "job_url": j.get("url", "")
-                     or f"https://4dayweek.io/jobs/{j.get('slug', '')}",
-            "platform": "4dayweek",
-        })
+        jobs.append(
+            {
+                "title": title,
+                "company": j.get("company_name", "") or j.get("company", ""),
+                "location": location,
+                "description": _strip_html(j.get("description", ""))[:600],
+                "job_url": j.get("url", "") or f"https://4dayweek.io/jobs/{j.get('slug', '')}",
+                "platform": "4dayweek",
+            }
+        )
         if len(jobs) >= max_results:
             break
     return jobs
@@ -602,19 +916,22 @@ def _search_4dayweek_jobs(client: httpx.Client, query: str, max_results: int) ->
 
 def _search_greenhouse_board(client: httpx.Client, board: str) -> list[dict]:
     """Public Greenhouse board — https://boards-api.greenhouse.io/v1/boards/{board}/jobs"""
-    r = client.get(f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs",
-                   params={"content": "true"})
+    r = client.get(
+        f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs", params={"content": "true"}
+    )
     r.raise_for_status()
     out: list[dict] = []
     for j in (r.json() or {}).get("jobs", []) or []:
-        out.append({
-            "title": j.get("title", ""),
-            "company": board,
-            "location": (j.get("location") or {}).get("name", ""),
-            "description": _strip_html(j.get("content", ""))[:600],
-            "job_url": j.get("absolute_url", ""),
-            "platform": "greenhouse",
-        })
+        out.append(
+            {
+                "title": j.get("title", ""),
+                "company": board,
+                "location": (j.get("location") or {}).get("name", ""),
+                "description": _strip_html(j.get("content", ""))[:600],
+                "job_url": j.get("absolute_url", ""),
+                "platform": "greenhouse",
+            }
+        )
     return out
 
 
@@ -624,14 +941,18 @@ def _search_lever_company(client: httpx.Client, company: str) -> list[dict]:
     r.raise_for_status()
     out: list[dict] = []
     for j in r.json() or []:
-        out.append({
-            "title": j.get("text", ""),
-            "company": company,
-            "location": (j.get("categories") or {}).get("location", ""),
-            "description": _strip_html((j.get("description") or "") + " " + (j.get("lists") or [{}])[0].get("text", ""))[:600],
-            "job_url": j.get("hostedUrl", "") or j.get("applyUrl", ""),
-            "platform": "lever",
-        })
+        out.append(
+            {
+                "title": j.get("text", ""),
+                "company": company,
+                "location": (j.get("categories") or {}).get("location", ""),
+                "description": _strip_html(
+                    (j.get("description") or "") + " " + (j.get("lists") or [{}])[0].get("text", "")
+                )[:600],
+                "job_url": j.get("hostedUrl", "") or j.get("applyUrl", ""),
+                "platform": "lever",
+            }
+        )
     return out
 
 
@@ -660,22 +981,25 @@ def _search_ashby_jobs(client: httpx.Client, company: str) -> list[dict]:
         return []
     out: list[dict] = []
     for j in jobs_raw:
-        out.append({
-            "title": j.get("title", ""),
-            "company": company,
-            "location": j.get("locationName", ""),
-            "description": _strip_html(j.get("descriptionHtml", ""))[:600],
-            "job_url": j.get("applyUrl", ""),
-            "platform": "ashby",
-        })
+        out.append(
+            {
+                "title": j.get("title", ""),
+                "company": company,
+                "location": j.get("locationName", ""),
+                "description": _strip_html(j.get("descriptionHtml", ""))[:600],
+                "job_url": j.get("applyUrl", ""),
+                "platform": "ashby",
+            }
+        )
     return out
 
 
 def _search_smartrecruiters_jobs(client: httpx.Client, company: str) -> list[dict]:
     """Public SmartRecruiters postings — https://api.smartrecruiters.com/v1/companies/{company}/postings"""
     try:
-        r = client.get(f"https://api.smartrecruiters.com/v1/companies/{company}/postings",
-                       params={"limit": 50})
+        r = client.get(
+            f"https://api.smartrecruiters.com/v1/companies/{company}/postings", params={"limit": 50}
+        )
         r.raise_for_status()
         items = (r.json() or {}).get("content", []) or []
     except Exception as exc:
@@ -684,15 +1008,22 @@ def _search_smartrecruiters_jobs(client: httpx.Client, company: str) -> list[dic
     out: list[dict] = []
     for j in items:
         loc_obj = j.get("location") or {}
-        loc = ", ".join(p for p in (loc_obj.get("city"), loc_obj.get("region"), loc_obj.get("country")) if p)
-        out.append({
-            "title": j.get("name", ""),
-            "company": company,
-            "location": loc or "—",
-            "description": _strip_html(j.get("jobAd", {}).get("sections", {}).get("companyDescription", ""))[:600],
-            "job_url": j.get("ref", "") and f"https://jobs.smartrecruiters.com/{company}/{j['ref']}",
-            "platform": "smartrecruiters",
-        })
+        loc = ", ".join(
+            p for p in (loc_obj.get("city"), loc_obj.get("region"), loc_obj.get("country")) if p
+        )
+        out.append(
+            {
+                "title": j.get("name", ""),
+                "company": company,
+                "location": loc or "—",
+                "description": _strip_html(
+                    j.get("jobAd", {}).get("sections", {}).get("companyDescription", "")
+                )[:600],
+                "job_url": j.get("ref", "")
+                and f"https://jobs.smartrecruiters.com/{company}/{j['ref']}",
+                "platform": "smartrecruiters",
+            }
+        )
     return out
 
 
@@ -706,28 +1037,111 @@ def _search_smartrecruiters_jobs(client: httpx.Client, company: str) -> list[dic
 # Common Workday tenants (major companies using Workday for hiring).
 # Pattern: https://{tenant}.wd{N}.myworkdaysite.com/en-US/external/search
 WORKDAY_TENANTS = (
-    "nvidia", "salesforce", "apple", "walmart", "target", "disney",
-    "pepsico", "visa", "mastercard", "jpmorgan", "goldmansachs", "morganstanley",
-    "citi", "wellsfargo", "bankofamerica", "amex", "capitalone",
-    "accenture", "deloitte", "pwc", "kpmg", "ey", "mckinsey", "bain",
-    "lockheedmartin", "boeing", "raytheon", "northropgrumman", "generalelectric",
-    "3m", "honeywell", "caterpillar", "johndeere", "dow", "dupont",
-    "jnj", "pfizer", "merck", "abbvie", "bristolmyers", "lilly", "gsk",
-    "abbott", "medtronic", "bostonscientific", "stryker",
-    "exxonmobil", "conocophillips", "chevron", "valero", "phillips66",
-    "fedex", "ups", "dhl", "amazon", "alphabet", "microsoft", "meta",
-    "netflix", "spotify", "uber", "lyft", "airbnb", "doordash", "instacart",
+    "nvidia",
+    "salesforce",
+    "apple",
+    "walmart",
+    "target",
+    "disney",
+    "pepsico",
+    "visa",
+    "mastercard",
+    "jpmorgan",
+    "goldmansachs",
+    "morganstanley",
+    "citi",
+    "wellsfargo",
+    "bankofamerica",
+    "amex",
+    "capitalone",
+    "accenture",
+    "deloitte",
+    "pwc",
+    "kpmg",
+    "ey",
+    "mckinsey",
+    "bain",
+    "lockheedmartin",
+    "boeing",
+    "raytheon",
+    "northropgrumman",
+    "generalelectric",
+    "3m",
+    "honeywell",
+    "caterpillar",
+    "johndeere",
+    "dow",
+    "dupont",
+    "jnj",
+    "pfizer",
+    "merck",
+    "abbvie",
+    "bristolmyers",
+    "lilly",
+    "gsk",
+    "abbott",
+    "medtronic",
+    "bostonscientific",
+    "stryker",
+    "exxonmobil",
+    "conocophillips",
+    "chevron",
+    "valero",
+    "phillips66",
+    "fedex",
+    "ups",
+    "dhl",
+    "amazon",
+    "alphabet",
+    "microsoft",
+    "meta",
+    "netflix",
+    "spotify",
+    "uber",
+    "lyft",
+    "airbnb",
+    "doordash",
+    "instacart",
 )
 
 # Common BambooHR tenants (public JSON at /jobs/list.json).
 BAMBOOHR_TENACTS = (
-    "taxfix", "primer-io", "babylonhealth", "glovo", "wefox", "tessian",
-    "solarwinds", "mongodb", "skyscanner", "trustpilot", "asos",
-    "olx", "luno", "yoco", "revolut", "wise", "monzo", "starling",
-    "bunq", "n26", "fig", "grafana", "snyk", "sonarqube",
-    "youtrack", "jetbrains-careers", "kotlin", "scala",
-    "warnerbros", "paramount", "sony", "ea", "activision",
-    "zynga", "riot", "epicgames",
+    "taxfix",
+    "primer-io",
+    "babylonhealth",
+    "glovo",
+    "wefox",
+    "tessian",
+    "solarwinds",
+    "mongodb",
+    "skyscanner",
+    "trustpilot",
+    "asos",
+    "olx",
+    "luno",
+    "yoco",
+    "revolut",
+    "wise",
+    "monzo",
+    "starling",
+    "bunq",
+    "n26",
+    "fig",
+    "grafana",
+    "snyk",
+    "sonarqube",
+    "youtrack",
+    "jetbrains-careers",
+    "kotlin",
+    "scala",
+    "warnerbros",
+    "paramount",
+    "sony",
+    "ea",
+    "activision",
+    "zynga",
+    "riot",
+    "epicgames",
 )
 
 
@@ -743,12 +1157,16 @@ def _search_workday_company(client: httpx.Client, tenant: str) -> list[dict]:
     for wd_idx in (5, 1, 2, 3, 4):
         url = f"https://{tenant}.wd{wd_idx}.myworkdaysite.com/en-US/external/search"
         try:
-            r = client.post(url, json={
-                "appliedFacets": {},
-                "limit": 20,
-                "offset": 0,
-                "searchText": "",
-            }, timeout=10)
+            r = client.post(
+                url,
+                json={
+                    "appliedFacets": {},
+                    "limit": 20,
+                    "offset": 0,
+                    "searchText": "",
+                },
+                timeout=10,
+            )
         except Exception as exc:
             logger.debug("Workday %s wd%d connection failed: %s", tenant, wd_idx, exc)
             continue
@@ -759,21 +1177,27 @@ def _search_workday_company(client: httpx.Client, tenant: str) -> list[dict]:
         except Exception:
             continue
         # Workday's response shape: {"jobPostings": [{"title":..., "externalPath":..., "locationsText":...}]}
-        for j in (data.get("jobPostings") or []):
+        for j in data.get("jobPostings") or []:
             title = j.get("title") or j.get("bulletFields", [""])[0]
             ext = j.get("externalPath") or ""
             loc = j.get("locationsText") or j.get("location", "")
-            full_url = f"https://{tenant}.wd{wd_idx}.myworkdaysite.com/en-US{ext}" if ext.startswith("/") else ext
+            full_url = (
+                f"https://{tenant}.wd{wd_idx}.myworkdaysite.com/en-US{ext}"
+                if ext.startswith("/")
+                else ext
+            )
             if not title:
                 continue
-            out.append({
-                "title": title,
-                "company": tenant,
-                "location": loc,
-                "description": (j.get("shortDescription") or "")[:600],
-                "job_url": full_url,
-                "platform": "workday",
-            })
+            out.append(
+                {
+                    "title": title,
+                    "company": tenant,
+                    "location": loc,
+                    "description": (j.get("shortDescription") or "")[:600],
+                    "job_url": full_url,
+                    "platform": "workday",
+                }
+            )
         if out:
             return out  # one wd_N is enough
     return out
@@ -806,15 +1230,17 @@ def _search_bamboohr_company(client: httpx.Client, tenant: str) -> list[dict]:
             loc = f"{loc}, {loc_obj['state']}" if loc else loc_obj["state"]
         if loc_obj.get("country"):
             loc = f"{loc}, {loc_obj['country']}" if loc else loc_obj["country"]
-        out.append({
-            "title": j.get("title", ""),
-            "company": tenant,
-            "location": loc or "—",
-            "description": (j.get("description", "") or "")[:600],
-            "job_url": j.get("absolute_url", "") or
-                        f"https://{tenant}.bamboohr.com/jobs/view.php?id={j.get('id', '')}",
-            "platform": "bamboohr",
-        })
+        out.append(
+            {
+                "title": j.get("title", ""),
+                "company": tenant,
+                "location": loc or "—",
+                "description": (j.get("description", "") or "")[:600],
+                "job_url": j.get("absolute_url", "")
+                or f"https://{tenant}.bamboohr.com/jobs/view.php?id={j.get('id', '')}",
+                "platform": "bamboohr",
+            }
+        )
     return out
 
 
@@ -853,8 +1279,11 @@ def _search_via_search_presets(query: str, location: str, max_results: int) -> l
         # Direct-fetch presets: just hit the URL.
         if preset.get("method") == "fetch":
             try:
-                with httpx.Client(timeout=10, follow_redirects=True,
-                                  headers={"User-Agent": "Mozilla/5.0 (CareerCraft)"}) as c:
+                with httpx.Client(
+                    timeout=10,
+                    follow_redirects=True,
+                    headers={"User-Agent": "Mozilla/5.0 (CareerCraft)"},
+                ) as c:
                     r = c.get(url)
                 r.raise_for_status()
                 # RSS / JSON: parse if obvious.
@@ -862,38 +1291,43 @@ def _search_via_search_presets(query: str, location: str, max_results: int) -> l
                 if "xml" in ctype or url.endswith(".rss"):
                     # Quick RSS title-link extraction.
                     import re
+
                     for m in re.finditer(
                         r"<item>.*?<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>.*?"
                         r"<link>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>",
-                        r.text, flags=re.S,
+                        r.text,
+                        flags=re.S,
                     ):
                         title, link = m.group(1).strip(), m.group(2).strip()
                         if not link or "weworkremotely" not in link and "remoteok" not in link:
                             continue
-                        out.append({
-                            "title": title,
-                            "company": _domain_of(link),
-                            "location": "Remote",
-                            "description": "",
-                            "job_url": link,
-                            "platform": preset["name"].split(" — ")[0].lower(),
-                        })
+                        out.append(
+                            {
+                                "title": title,
+                                "company": _domain_of(link),
+                                "location": "Remote",
+                                "description": "",
+                                "job_url": link,
+                                "platform": preset["name"].split(" — ")[0].lower(),
+                            }
+                        )
                         if len(out) >= max_results:
                             break
             except Exception as exc:
                 logger.debug("Preset %s failed: %s", preset["name"], exc)
         else:
             # browser_use / jobspy: return the URL as a lead.
-            out.append({
-                "title": preset["name"],
-                "company": preset["name"].split(" — ")[0],
-                "location": location or preset.get("region", ""),
-                "description": preset.get("notes", ""),
-                "job_url": url,
-                "platform": preset.get("method", "preset"),
-            })
+            out.append(
+                {
+                    "title": preset["name"],
+                    "company": preset["name"].split(" — ")[0],
+                    "location": location or preset.get("region", ""),
+                    "description": preset.get("notes", ""),
+                    "job_url": url,
+                    "platform": preset.get("method", "preset"),
+                }
+            )
     return out
-
 
 
 def _search_open_job_apis(
@@ -920,8 +1354,9 @@ def _search_open_job_apis(
         blob = text.lower()
         return any(t in blob for t in terms)
 
-    with httpx.Client(timeout=15, follow_redirects=True,
-                      headers={"User-Agent": "Mozilla/5.0 (CareerCraft)"}) as client:
+    with httpx.Client(
+        timeout=15, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (CareerCraft)"}
+    ) as client:
         # 0a) JSearch (RapidAPI) — aggregates Google for Jobs / LinkedIn / Indeed /
         # Naukri. Best coverage incl. India. Real apply links. Used when key is set.
         if not keyless_only and app_settings.RAPIDAPI_KEY:
@@ -939,16 +1374,20 @@ def _search_open_job_apis(
                 )
                 for j in (r.json().get("data") or [])[: max_results * 2]:
                     loc = ", ".join(
-                        p for p in (j.get("job_city"), j.get("job_state"), j.get("job_country")) if p
+                        p
+                        for p in (j.get("job_city"), j.get("job_state"), j.get("job_country"))
+                        if p
                     )
-                    jobs.append({
-                        "title": j.get("job_title", ""),
-                        "company": j.get("employer_name", ""),
-                        "location": loc or "—",
-                        "description": _strip_html(j.get("job_description", ""))[:600],
-                        "job_url": j.get("job_apply_link", ""),
-                        "platform": "jsearch",
-                    })
+                    jobs.append(
+                        {
+                            "title": j.get("job_title", ""),
+                            "company": j.get("employer_name", ""),
+                            "location": loc or "—",
+                            "description": _strip_html(j.get("job_description", ""))[:600],
+                            "job_url": j.get("job_apply_link", ""),
+                            "platform": "jsearch",
+                        }
+                    )
             except Exception as exc:
                 logger.warning("JSearch API failed: %s", exc)
 
@@ -966,66 +1405,78 @@ def _search_open_job_apis(
                         "content-type": "application/json",
                     },
                 )
-                for j in (r.json().get("results") or []):
-                    jobs.append({
-                        "title": j.get("title", ""),
-                        "company": (j.get("company") or {}).get("display_name", ""),
-                        "location": (j.get("location") or {}).get("display_name", ""),
-                        "description": _strip_html(j.get("description", ""))[:600],
-                        "job_url": j.get("redirect_url", ""),
-                        "platform": "adzuna",
-                    })
+                for j in r.json().get("results") or []:
+                    jobs.append(
+                        {
+                            "title": j.get("title", ""),
+                            "company": (j.get("company") or {}).get("display_name", ""),
+                            "location": (j.get("location") or {}).get("display_name", ""),
+                            "description": _strip_html(j.get("description", ""))[:600],
+                            "job_url": j.get("redirect_url", ""),
+                            "platform": "adzuna",
+                        }
+                    )
             except Exception as exc:
                 logger.warning("Adzuna API failed: %s", exc)
 
         # 1) Remotive — supports server-side search.
         try:
-            r = client.get("https://remotive.com/api/remote-jobs",
-                           params={"search": q or first_term, "limit": max_results})
+            r = client.get(
+                "https://remotive.com/api/remote-jobs",
+                params={"search": q or first_term, "limit": max_results},
+            )
             for j in (r.json().get("jobs") or [])[: max_results * 2]:
-                jobs.append({
-                    "title": j.get("title", ""),
-                    "company": j.get("company_name", ""),
-                    "location": j.get("candidate_required_location") or "Remote",
-                    "description": _strip_html(j.get("description", ""))[:600],
-                    "job_url": j.get("url", ""),
-                    "platform": "remotive",
-                })
+                jobs.append(
+                    {
+                        "title": j.get("title", ""),
+                        "company": j.get("company_name", ""),
+                        "location": j.get("candidate_required_location") or "Remote",
+                        "description": _strip_html(j.get("description", ""))[:600],
+                        "job_url": j.get("url", ""),
+                        "platform": "remotive",
+                    }
+                )
         except Exception as exc:
             logger.warning("Remotive API failed: %s", exc)
 
         # 2) Arbeitnow — recent ATS-sourced board; filter client-side by query.
         try:
             r = client.get("https://www.arbeitnow.com/api/job-board-api")
-            for j in (r.json().get("data") or []):
+            for j in r.json().get("data") or []:
                 title = j.get("title", "")
                 tags = " ".join(j.get("tags") or [])
                 if not _relevant(f"{title} {tags} {j.get('description','')[:300]}"):
                     continue
-                jobs.append({
-                    "title": title,
-                    "company": j.get("company_name", ""),
-                    "location": j.get("location") or ("Remote" if j.get("remote") else ""),
-                    "description": _strip_html(j.get("description", ""))[:600],
-                    "job_url": j.get("url", ""),
-                    "platform": "arbeitnow",
-                })
+                jobs.append(
+                    {
+                        "title": title,
+                        "company": j.get("company_name", ""),
+                        "location": j.get("location") or ("Remote" if j.get("remote") else ""),
+                        "description": _strip_html(j.get("description", ""))[:600],
+                        "job_url": j.get("url", ""),
+                        "platform": "arbeitnow",
+                    }
+                )
         except Exception as exc:
             logger.warning("Arbeitnow API failed: %s", exc)
 
         # 3) Jobicy — remote jobs feed, tag-filtered.
         try:
-            r = client.get("https://jobicy.com/api/v2/remote-jobs",
-                           params={"count": max_results, "tag": first_term})
+            r = client.get(
+                "https://jobicy.com/api/v2/remote-jobs",
+                params={"count": max_results, "tag": first_term},
+            )
             for j in (r.json() or {}).get("jobs", []) or []:
-                jobs.append({
-                    "title": j.get("jobTitle", ""),
-                    "company": j.get("companyName", ""),
-                    "location": j.get("jobGeo") or "Remote",
-                    "description": _strip_html(j.get("jobExcerpt", ""))[:600],
-                    "job_url": j.get("url", ""),
-                    "platform": "jobicy",
-                })
+                jobs.append(
+                    {
+                        "title": j.get("jobTitle", ""),
+                        "company": j.get("companyName", ""),
+                        "location": j.get("jobGeo") or "Remote",
+                        "description": _strip_html(j.get("jobExcerpt", ""))[:600],
+                        "job_url": j.get("url", ""),
+                        "platform": "jobicy",
+                    }
+                )
         except Exception as exc:
             logger.warning("Jobicy API failed: %s", exc)
 
@@ -1124,22 +1575,22 @@ def _search_ai_jobs_net(
         url, title = m.group(1), m.group(2).strip()
         if not title or len(title) < 3:
             continue
-        out.append({
-            "title": title,
-            "company": "—",  # ai-jobs.net shows company on detail page only
-            "location": location or "Remote",
-            "description": "",
-            "job_url": f"https://ai-jobs.net{url}" if url.startswith("/") else url,
-            "platform": "ai-jobs.net",
-        })
+        out.append(
+            {
+                "title": title,
+                "company": "—",  # ai-jobs.net shows company on detail page only
+                "location": location or "Remote",
+                "description": "",
+                "job_url": f"https://ai-jobs.net{url}" if url.startswith("/") else url,
+                "platform": "ai-jobs.net",
+            }
+        )
         if len(out) >= max_results:
             break
     return out
 
 
-def _search_turing_jobs(
-    client: httpx.Client, query: str, max_results: int
-) -> list[dict]:
+def _search_turing_jobs(client: httpx.Client, query: str, max_results: int) -> list[dict]:
     """Turing.com — public jobs page, HTML scraping (no key required for list)."""
     out: list[dict] = []
     try:
@@ -1166,22 +1617,22 @@ def _search_turing_jobs(
         url, title = m.group(1), m.group(2).strip()
         if not title or "turing" in title.lower():
             continue
-        out.append({
-            "title": title,
-            "company": "Turing client",
-            "location": "Remote",
-            "description": "",
-            "job_url": f"https://www.turing.com{url}",
-            "platform": "turing",
-        })
+        out.append(
+            {
+                "title": title,
+                "company": "Turing client",
+                "location": "Remote",
+                "description": "",
+                "job_url": f"https://www.turing.com{url}",
+                "platform": "turing",
+            }
+        )
         if len(out) >= max_results:
             break
     return out
 
 
-def _search_huggingface_jobs(
-    client: httpx.Client, query: str, max_results: int
-) -> list[dict]:
+def _search_huggingface_jobs(client: httpx.Client, query: str, max_results: int) -> list[dict]:
     """Hugging Face Jobs board — public JSON at https://huggingface.co/api/jobs.
 
     No key required. Returns a list of community-posted job listings.
@@ -1212,19 +1663,19 @@ def _search_huggingface_jobs(
             blob = f"{title} {company} {loc}".lower()
             if not any(t in blob for t in terms):
                 continue
-        out.append({
-            "title": title,
-            "company": company,
-            "location": loc,
-            "description": (j.get("description") or "")[:600],
-            "job_url": f"https://huggingface.co/jobs/{j.get('id', '')}",
-            "platform": "huggingface",
-        })
+        out.append(
+            {
+                "title": title,
+                "company": company,
+                "location": loc,
+                "description": (j.get("description") or "")[:600],
+                "job_url": f"https://huggingface.co/jobs/{j.get('id', '')}",
+                "platform": "huggingface",
+            }
+        )
         if len(out) >= max_results:
             break
     return out
-
-
 
 
 REQUIRED_CTX = ["titles"]
@@ -1269,7 +1720,9 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
     from sqlalchemy import select
     from app.services.job_connectors import posted
 
-    candidates = [j for j in scored if (j.get("match_score") or 0) >= SAVE_MIN_SCORE and j.get("url")]
+    candidates = [
+        j for j in scored if (j.get("match_score") or 0) >= SAVE_MIN_SCORE and j.get("url")
+    ]
     if not candidates:
         return 0
     factory = _get_sync_factory()
@@ -1285,19 +1738,21 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
             if exists is not None:
                 continue
             red_flags = job.get("red_flags") or []
-            session.add(JobApplication(
-                user_id=_to_uuid(user_id),
-                company=job.get("company", "") or "Unknown",
-                role=job.get("title", "") or "Unknown",
-                location=job.get("location"),
-                job_url=job["url"],
-                jd_text=(job.get("description") or "")[:4000],
-                match_score=job.get("match_score"),
-                status="saved",
-                source=job.get("platform"),
-                posted_at=posted(job.get("posted_at")),
-                notes=("; ".join(red_flags[:3])) if red_flags else None,
-            ))
+            session.add(
+                JobApplication(
+                    user_id=_to_uuid(user_id),
+                    company=job.get("company", "") or "Unknown",
+                    role=job.get("title", "") or "Unknown",
+                    location=job.get("location"),
+                    job_url=job["url"],
+                    jd_text=(job.get("description") or "")[:4000],
+                    match_score=job.get("match_score"),
+                    status="saved",
+                    source=job.get("platform"),
+                    posted_at=posted(job.get("posted_at")),
+                    notes=("; ".join(red_flags[:3])) if red_flags else None,
+                )
+            )
             saved += 1
         session.commit()
     return saved
@@ -1306,9 +1761,10 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
 def job_search_agent_node(state: AgentState) -> AgentState:
     """Public discovery and selected-resume matching, logged by the existing harness."""
     from app.services.job_matching import rank_jobs
+
     ctx = state.get("context", {})
     if not ctx.get("titles") and not ctx.get("search_query"):
-        return {**state,"status":"failed","error":"missing: titles (or search_query)"}
+        return {**state, "status": "failed", "error": "missing: titles (or search_query)"}
     user_id, run_id = state["user_id"], state["run_id"]
     query = {
         **ctx,
@@ -1326,14 +1782,31 @@ def job_search_agent_node(state: AgentState) -> AgentState:
         try:
             saved = _persist_saved_jobs(user_id, matches)
         except Exception as exc:
-            logger.warning("job_persistence_failed: %s",type(exc).__name__)
+            logger.warning("job_persistence_failed: %s", type(exc).__name__)
             saved = 0
             warnings.append("Matches found, but saved applications are unavailable")
-        result = {"matches": matches, "top_pick_id": matches[0]["job_id"] if matches else None,
-                  "total_found": len(jobs), "saved_count": saved, "warnings": warnings}
+        result = {
+            "matches": matches,
+            "top_pick_id": matches[0]["job_id"] if matches else None,
+            "total_found": len(jobs),
+            "saved_count": saved,
+            "warnings": warnings,
+        }
         emit(run_id, "complete", {"result": {"total_found": len(jobs), "saved_count": saved}})
-        return {**state, "status": "completed", "result": result,
-                "messages": state.get("messages", []) + [AIMessage(content=f"Found {len(jobs)} jobs.")]}  # noqa: E501
+        return {
+            **state,
+            "status": "completed",
+            "result": result,
+            "messages": state.get("messages", []) + [AIMessage(content=f"Found {len(jobs)} jobs.")],
+        }  # noqa: E501
     except Exception as exc:
-        logger.warning("job_search_failed: %s",type(exc).__name__, extra={"run_id": run_id, "error_type": type(exc).__name__})  # noqa: E501
-        return {**state, "status": "failed", "error": "Job search unavailable or selected resume no longer exists"}  # noqa: E501
+        logger.warning(
+            "job_search_failed: %s",
+            type(exc).__name__,
+            extra={"run_id": run_id, "error_type": type(exc).__name__},
+        )  # noqa: E501
+        return {
+            **state,
+            "status": "failed",
+            "error": "Job search unavailable or selected resume no longer exists",
+        }  # noqa: E501

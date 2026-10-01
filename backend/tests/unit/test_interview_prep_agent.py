@@ -61,7 +61,7 @@ def test_interview_prep_pauses_with_generated_payload_for_review(mock_llm):
             "app.agents.interview_prep_agent.retrieve",
             return_value=[MagicMock(page_content="Python experience")],
         ),
-        patch("app.agents.interview_prep_agent._build_llm", return_value=mock_llm),
+        patch("app.agents.interview_prep_agent.build_agent_llm", return_value=mock_llm),
         patch("app.agents.thinking.think_and_select", return_value="Focus on Python ownership"),
         patch("app.core.event_bus.emit"),
     ):

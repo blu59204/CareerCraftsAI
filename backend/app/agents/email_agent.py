@@ -6,11 +6,12 @@ from app.agents._llm_json import call_llm_json
 from app.agents.prompts.email_prompt import OUTPUT_SCHEMA, SYSTEM_PROMPT, build_user_prompt
 from app.agents.state import AgentState
 from app.agents.thinking import think_and_select
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings
 from app.services.gmail_service import GmailMCPClient
 
 logger = logging.getLogger(__name__)
+
 
 def email_agent_node(state: AgentState) -> AgentState:
     try:
@@ -26,9 +27,7 @@ def email_agent_node(state: AgentState) -> AgentState:
 
         try:
             gmail = GmailMCPClient(user_id)
-            threads = gmail.search_threads(
-                f"from:{recipient} OR subject:{company}", max_results=3
-            )
+            threads = gmail.search_threads(f"from:{recipient} OR subject:{company}", max_results=3)
         except Exception as exc:
             logger.warning("Email thread lookup failed for user %s: %s", user_id, exc)
             threads = []
@@ -36,7 +35,7 @@ def email_agent_node(state: AgentState) -> AgentState:
             "\n".join(str(t) for t in threads[:2]) if threads else "No prior threads found."
         )
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
 
         # ── Think: What angle to take, what to emphasize ─────────────
         thinking = think_and_select(
@@ -50,13 +49,15 @@ def email_agent_node(state: AgentState) -> AgentState:
         draft = call_llm_json(
             llm,
             SYSTEM_PROMPT,
-            build_user_prompt({
-                "company": company,
-                "role": role,
-                "recipient": recipient,
-                "thread": thread_context,
-                "purpose": thinking,
-            }),
+            build_user_prompt(
+                {
+                    "company": company,
+                    "role": role,
+                    "recipient": recipient,
+                    "thread": thread_context,
+                    "purpose": thinking,
+                }
+            ),
             OUTPUT_SCHEMA,
         )
 
@@ -70,9 +71,8 @@ def email_agent_node(state: AgentState) -> AgentState:
                 "body": draft.body,
                 "thinking": draft.intent_detected,
             },
-            "messages": state["messages"] + [
-                AIMessage(content=f"Email draft ready for {recipient}. Review before sending.")
-            ],
+            "messages": state["messages"]
+            + [AIMessage(content=f"Email draft ready for {recipient}. Review before sending.")],
         }
     except Exception as exc:
         logger.exception("Email agent failed for user %s", state.get("user_id"))
@@ -80,7 +80,6 @@ def email_agent_node(state: AgentState) -> AgentState:
             **state,
             "status": "failed",
             "error": f"Email drafting failed: {str(exc)[:200]}",
-            "messages": state["messages"] + [
-                AIMessage(content="Email drafting failed; no fabricated message was created.")
-            ],
+            "messages": state["messages"]
+            + [AIMessage(content="Email drafting failed; no fabricated message was created.")],
         }

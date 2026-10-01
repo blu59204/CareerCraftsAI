@@ -17,7 +17,7 @@ import re
 from langchain_core.messages import HumanMessage
 
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings
 from app.services.gmail_service import GmailMCPClient
 
@@ -105,7 +105,7 @@ def email_monitor_node(state: AgentState) -> AgentState:
             }
 
         # Classify each notification
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
         updates: list[dict] = []
 
         for notif in all_notifications[:15]:  # Cap to avoid token burn

@@ -19,7 +19,7 @@ from langchain_core.messages import HumanMessage
 from app.agents.resume_agent import resume_agent_node
 from app.agents.state import AgentState
 from app.core.event_bus import emit
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
 from app.services.email_finder_service import find_recruiter_email as find_email_for_company
 from app.services.job_platforms_service import JobListing, scrape_jobs
@@ -164,7 +164,7 @@ async def run_auto_apply_pipeline(
         return results
 
     user_profile = fetch_user_profile_text(user_id)
-    llm = _build_llm(model_settings)
+    llm = build_agent_llm(model_settings)
 
     scored_jobs: list[tuple[JobListing, int]] = []
     for job in jobs[: max_applications * 2]:

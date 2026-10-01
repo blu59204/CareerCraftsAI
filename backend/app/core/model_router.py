@@ -63,7 +63,11 @@ def _total_tokens(response: LLMResult) -> int:
     # Providers/clients that report usage only per message (usage_metadata).
     try:
         return sum(
-            (getattr(gen, "message", None) and (gen.message.usage_metadata or {}).get("total_tokens")) or 0
+            (
+                getattr(gen, "message", None)
+                and (gen.message.usage_metadata or {}).get("total_tokens")
+            )
+            or 0
             for gens in response.generations
             for gen in gens
         )
@@ -83,8 +87,10 @@ class TokenTrackingCallback(BaseCallbackHandler):
         if total > 0:
             _add_tokens(total)
             from app.services.token_budget_service import consume_tokens
+
             try:
                 import asyncio
+
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     loop.call_soon_threadsafe(
@@ -313,6 +319,20 @@ def _build_llm(model_settings) -> BaseChatModel:
     return llm
 
 
+def build_agent_llm(model_settings) -> BaseChatModel:
+    """The LLM every agent node uses: it reaches the provider through the
+    internal gateway with a short-lived session token, so the member's real
+    API key never enters agent memory, prompts or traces. Same budget check
+    and token tracking as _build_llm, which stays for the key test in
+    Settings (it must call the provider directly)."""
+    from app.core.llm_gateway import build_gateway_llm
+
+    user_id = getattr(model_settings, "user_id", None)
+    if not user_id:
+        raise ValueError("Agent LLMs are built for a member; model settings have no user_id")
+    return build_gateway_llm(model_settings, str(user_id))
+
+
 # ── LLM response caching (Redis, 1h TTL) ────────────────────────
 # Cache is skipped for email/auto_apply tasks since they're always
 # unique and shouldn't be cached. Uses sha256 of (user_id, task_type,
@@ -329,6 +349,7 @@ def _get_llm_cache():
     global _llm_cache
     if _llm_cache is None:
         import redis as sync_redis
+
         url = settings.REDIS_URL
         if url.startswith("redis://"):
             url = url.replace("redis://", "", 1)
@@ -371,6 +392,7 @@ class CachingLLM:
             if cached:
                 import json
                 from langchain_core.messages import AIMessage
+
                 data = json.loads(cached)
                 return AIMessage(content=data["content"])
         except Exception:
@@ -379,6 +401,7 @@ class CachingLLM:
         try:
             content = result.content if hasattr(result, "content") else str(result)
             import json
+
             self._cache.setex(key, 3600, json.dumps({"content": content}))
         except Exception:
             pass

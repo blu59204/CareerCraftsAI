@@ -9,7 +9,7 @@ from app.agents.prompts.interview_prep_prompt import (
     build_user_prompt,
 )
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings
 from app.services.rag_service import retrieve
 
@@ -34,7 +34,7 @@ def interview_prep_agent_node(state: AgentState) -> AgentState:
             "\n".join(c.page_content for c in chunks) if chunks else "No resume context available."
         )
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
 
         # ── Think: What are the candidate's strengths/gaps for this role ──
         from app.agents.thinking import think_and_select

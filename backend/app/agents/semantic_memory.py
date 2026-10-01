@@ -49,8 +49,11 @@ class SemanticMemoryBridge:
             return {
                 "provider": model_settings.provider,
                 "model_name": model_settings.model_name,
-                "api_key": decrypt_api_key(model_settings.api_key_enc, settings.APP_SECRET_KEY)
-                if model_settings.api_key_enc else "",
+                "api_key": (
+                    decrypt_api_key(model_settings.api_key_enc, settings.APP_SECRET_KEY)
+                    if model_settings.api_key_enc
+                    else ""
+                ),
                 "ollama_url": model_settings.ollama_url,
             }, model_settings
         except Exception as exc:
@@ -138,9 +141,9 @@ class SemanticMemoryBridge:
                 llm = None
                 if model_settings is not None:
                     try:
-                        from app.core.model_router import _build_llm
+                        from app.core.model_router import build_agent_llm
 
-                        llm = _build_llm(model_settings)
+                        llm = build_agent_llm(model_settings)
                     except Exception as exc:
                         logger.debug("Semantic memory LLM unavailable: %s", exc)
                 if llm is not None:

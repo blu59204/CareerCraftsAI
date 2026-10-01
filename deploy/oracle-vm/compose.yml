@@ -50,6 +50,9 @@ services:
     network_mode: host
     env_file: /opt/careercraft-secrets/backend.env
     command: python -m app.temporal_worker
+    # Agents reach their model through the backend's gateway (host network).
+    environment:
+      LLM_GATEWAY_URL: http://127.0.0.1:18100/llm-gateway/v1
     init: true
     volumes:
       - docstore:/data/documents

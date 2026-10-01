@@ -66,7 +66,6 @@ def _node_patches(**overrides):
     defaults = dict(
         fetch_model_settings=MagicMock(provider="openai"),
         fetch_user_profile_text="profile",
-        _build_llm=MagicMock(),
         search_all_platforms=([], []),
         call_llm_json=None,
         _persist_saved_jobs=0,
@@ -78,7 +77,6 @@ def _node_patches(**overrides):
         patch.object(
             js, "fetch_user_profile_text", return_value=defaults["fetch_user_profile_text"]
         ),
-        patch.object(js, "_build_llm", return_value=defaults["_build_llm"]),
         patch.object(js, "search_all_platforms", return_value=defaults["search_all_platforms"]),
         patch.object(js, "emit"),
     ]
@@ -90,7 +88,7 @@ def test_search_returns_empty_complete_with_warnings_and_no_llm_call():
     patches = _node_patches(search_all_platforms=([], ["open_apis failed: Timeout"]))
     from unittest.mock import AsyncMock
 
-    with patches[0], patches[1], patches[2], patches[3], patches[4]:
+    with patches[0], patches[1], patches[2], patches[3]:
         with patch("app.services.job_matching.rank_jobs", AsyncMock(return_value=([], []))):
             with patch.object(js, "call_llm_json") as mock_score:
                 result = js.job_search_agent_node(make_state())
@@ -110,7 +108,7 @@ def test_45_postings_all_scored_then_ranked_before_truncation():
     matches = [{**jobs[40], "match_score": 99}] + [{**j, "match_score": 50} for j in jobs[:24]]
     rank = AsyncMock(return_value=(matches, []))
     patches = _node_patches(search_all_platforms=(jobs, []))
-    with patches[0], patches[1], patches[2], patches[3], patches[4]:
+    with patches[0], patches[1], patches[2], patches[3]:
         with (
             patch("app.services.job_matching.rank_jobs", rank),
             patch.object(js, "_persist_saved_jobs", return_value=25),

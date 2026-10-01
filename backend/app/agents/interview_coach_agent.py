@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.agents._llm_json import call_llm_json
 from app.agents.state import AgentState
-from app.core.model_router import _build_llm
+from app.core.model_router import build_agent_llm
 from app.core.sync_db import _get_sync_factory, fetch_model_settings
 from app.services.rag_service import retrieve
 
@@ -243,7 +243,7 @@ def start_session_node(state: AgentState) -> AgentState:
             type_instructions=type_instructions,
         )
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
         try:
             questions = call_llm_json(
                 llm,
@@ -382,7 +382,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
             answer=answer_text,
         )
 
-        llm = _build_llm(model_settings)
+        llm = build_agent_llm(model_settings)
         try:
             evaluation = call_llm_json(
                 llm,

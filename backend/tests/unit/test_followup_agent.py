@@ -73,7 +73,7 @@ def test_build_followup_draft_uses_db_settings_fallback():
     parsed = types.SimpleNamespace(subject="Checking in", body="Hello")
     with (
         patch("app.core.sync_db.fetch_model_settings", return_value=model_settings) as fetch,
-        patch("app.core.model_router._build_llm", return_value=object()) as build_llm,
+        patch("app.core.model_router.build_agent_llm", return_value=object()) as build_llm,
         patch("app.agents._llm_json.call_llm_json", return_value=parsed),
     ):
         result = build_followup_draft("user", "Acme", "Engineer", None, 5)

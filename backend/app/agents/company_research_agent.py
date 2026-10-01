@@ -424,9 +424,9 @@ def _source_digest(company_name: str, results: dict[str, Any]) -> str:
 
 def _synthesize(model_settings: Any, company_name: str, results: dict[str, Any]) -> _Brief:
     from app.agents._llm_json import call_llm_json
-    from app.core.model_router import _build_llm
+    from app.core.model_router import build_agent_llm
 
-    llm = _build_llm(model_settings)
+    llm = build_agent_llm(model_settings)
     return call_llm_json(llm, _BRIEF_SYSTEM, _source_digest(company_name, results), _Brief)
 
 
