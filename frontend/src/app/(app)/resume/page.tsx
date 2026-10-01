@@ -64,6 +64,7 @@ import { ScoreExplanation } from "@/components/resume/ScoreExplanation";
 import { scoreAnalysisSchema, tailoredResumeSchema } from "@/lib/profile-contracts";
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
+import { generateCoverLetter as requestCoverLetter } from "@/lib/agent-run";
 import { getResumeInsightData } from "@/lib/resume-insights";
 import { isCurrentAnalysis } from "@/lib/resume-state";
 import { takePendingJd } from "@/lib/job-handoff";
@@ -1104,21 +1105,12 @@ export default function ResumePage() {
       "Story-driven": "bold",
     };
     try {
-      // Call the real cover-letter endpoint, which runs the cover_letter agent
-      // synchronously and returns the generated content.
-      const { data } = await apiClient.post<{
-        run_id: string;
-        status: string;
-        content: string | null;
-        tone: string | null;
-      }>("/cover-letter/generate", {
-        tone: toneMap[coverTone],
-        jd_text: coverJd.trim(),
-      });
+      // Queue the cover_letter agent and wait for its draft.
+      const data = await requestCoverLetter(toneMap[coverTone], coverJd.trim());
 
       if (data.content) {
         setCoverLetter(data.content);
-        await apiClient.post(`/agents/${data.run_id}/approve`, { approved: true });
+        await apiClient.post(`/agents/${data.runId}/approve`, { approved: true });
         toast.success("Cover letter generated");
       } else {
         toast.error("No cover letter content returned — check model settings");
@@ -1127,8 +1119,8 @@ export default function ResumePage() {
       const apiError = error as { response?: { status?: number } };
       if (apiError.response?.status === 400) {
         toast.error("Add a job description before generating your cover letter.");
-      } else if (apiError.response?.status === 504) {
-        toast.error("Cover letter generation timed out. Please try again.");
+      } else if (apiError.response?.status === 429) {
+        toast.error("Wait for your current agent runs to finish, then try again.");
       } else {
         toast.error("We couldn’t generate a cover letter. Check your active AI model in Settings and try again.");
       }

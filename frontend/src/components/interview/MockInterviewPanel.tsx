@@ -16,7 +16,8 @@ import {
   Trophy,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { apiClient, getApiErrorMessage } from "@/lib/api";
+import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
+import { waitForAgentRun } from "@/lib/agent-run";
 import {
   Bezel,
   Eyebrow,
@@ -52,6 +53,14 @@ interface SessionSummary {
   overall_score: number;
   count: number;
   rating: string;
+}
+
+/** Client-side fallback mirroring compute_session_summary in the backend. */
+function summarize(feedbacks: AnswerFeedback[]): SessionSummary {
+  const scores = feedbacks.map((fb) => Number(fb.score) || 0);
+  const overall = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  const rating = overall > 75 ? "excellent" : overall > 50 ? "good" : overall > 25 ? "fair" : "poor";
+  return { overall_score: overall, count: scores.length, rating };
 }
 
 const QUESTION_TYPES: ReadonlyArray<{ value: QuestionType; label: string }> = [
@@ -131,35 +140,60 @@ export function MockInterviewPanel() {
   const [summary, setSummary] = useState<SessionSummary | null>(null);
 
   const startSession = useMutation({
-    mutationFn: () =>
-      apiClient.post("/interview/session/start", {
+    mutationFn: async () => {
+      const { data } = await apiClient.post<{ run_id: string }>("/interview/session/start", {
         role,
         company: company || undefined,
         question_type: questionType,
-      }),
-    onSuccess: (res) => {
-      setSessionId(res.data.session_id);
-      setCurrentQuestion(res.data.question);
-      setQuestionIndex(res.data.question_index ?? 0);
+      });
+      const run = await waitForAgentRun(data.run_id);
+      const output = (run.output ?? {}) as { session_id?: string; questions?: Question[] };
+      if (run.status === "failed" || !output.session_id || !output.questions?.length) {
+        throw new UserFacingError("We couldn’t start the session. Check your active AI model in Settings and try again.");
+      }
+      return { sessionId: output.session_id, question: output.questions[0] };
+    },
+    onSuccess: ({ sessionId: id, question }) => {
+      setSessionId(id);
+      setCurrentQuestion(question);
+      setQuestionIndex(0);
       toast.success("Session started!");
     },
     onError: (error) => toast.error(getApiErrorMessage(error, "Failed to start session")),
   });
 
   const submitAnswer = useMutation({
-    mutationFn: () =>
-      apiClient.post(`/interview/session/${sessionId}/answer`, {
+    mutationFn: async () => {
+      const { data } = await apiClient.post<{ run_id: string }>(`/interview/session/${sessionId}/answer`, {
         question_index: questionIndex,
         answer_text: answer,
-      }),
-    onSuccess: (res) => {
-      setFeedbacks((prev) => [...prev, res.data.feedback]);
+      });
+      const run = await waitForAgentRun(data.run_id);
+      if (run.status === "failed") {
+        throw new UserFacingError("We couldn’t score that answer. Please try again.");
+      }
+      // The agent saved the score on the session; read it back for the next
+      // question, or the summary once every question has an answer.
+      const { data: session } = await apiClient.get<{
+        questions: Question[] | null;
+        summary: SessionSummary | null;
+        status: string | null;
+      }>(`/interview/session/${sessionId}/summary`);
+      const questions = session.questions ?? [];
+      return {
+        feedback: run.output as unknown as AnswerFeedback,
+        nextQuestion: questions[questionIndex + 1] ?? null,
+        summary: session.summary,
+      };
+    },
+    onSuccess: ({ feedback, nextQuestion, summary: sessionSummary }) => {
+      setFeedbacks((prev) => [...prev, feedback]);
       setAnswer("");
-      if (res.data.next_question) {
-        setCurrentQuestion(res.data.next_question);
-        setQuestionIndex(res.data.question_index + 1);
+      if (nextQuestion) {
+        setCurrentQuestion(nextQuestion);
+        setQuestionIndex(questionIndex + 1);
       } else {
-        setSummary(res.data.summary);
+        setSummary(sessionSummary ?? summarize(feedbacks.concat(feedback)));
         setCurrentQuestion(null);
       }
     },

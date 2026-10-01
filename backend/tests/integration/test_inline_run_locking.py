@@ -1,10 +1,10 @@
-"""Inline agent routes must not deadlock against the orchestrator's run upsert.
+"""Agent runs must never deadlock against the orchestrator's run upsert.
 
-The routes insert the agent_runs row on the request's async session, then the
-orchestrator records the run through a separate sync connection. When the row
-was only flushed, that sync INSERT waited on the request's open transaction
-while blocking the event loop, so the request could never finish and the whole
-API process stalled.
+Routes used to insert the agent_runs row on the request's async session and
+run the agent inline; the orchestrator then recorded the run through a
+separate sync connection whose INSERT waited on the request's open
+transaction while blocking the event loop, stalling the whole API process.
+Routes now queue durable runs, and the upsert runs off the event loop.
 
 Run docker compose -p careercraft-workflow-tests -f docker-compose.test.yml up -d
 then RUN_WORKFLOW_INTEGRATION=1 pytest tests/integration/test_inline_run_locking.py.
@@ -61,27 +61,22 @@ async def _new_user(factory):
         return user
 
 
-class _OrchestratorLikeHarness:
-    """Records the run the way orchestrator._run_agent_safely does."""
-
-    async def run(self, *, run_id, **_kwargs):
-        from app.core.agent_runs_repository import upsert_agent_run
-
-        output = {"cover_letter_markdown": "Dear hiring team,"}
-        await upsert_agent_run(run_id=run_id, status="completed", output=output)
-        return {"status": "completed", "result": output}
-
-
-async def test_cover_letter_route_completes_when_orchestrator_records_the_run(
-    database, monkeypatch
-):
+async def test_cover_letter_route_queues_a_committed_durable_run(database, monkeypatch):
+    """The route no longer runs the agent in the request: it commits a queued
+    row (which the workflow's first activity reads) and starts the workflow."""
     from app.api.v1 import cover_letter
     from app.models.db import AgentRun
+    from app.workflows import starters
 
-    async def get_harness():
-        return _OrchestratorLikeHarness()
+    started = []
 
-    monkeypatch.setattr(cover_letter, "get_harness", get_harness)
+    async def start_agent_run(run_id, user_id):
+        # The row must already be committed and visible to other connections.
+        async with database() as other:
+            row = await other.get(AgentRun, uuid.UUID(run_id))
+        started.append((run_id, row.status if row else None))
+
+    monkeypatch.setattr(starters, "start_agent_run", start_agent_run)
     user = await _new_user(database)
 
     async with database() as db:
@@ -95,13 +90,12 @@ async def test_cover_letter_route_completes_when_orchestrator_records_the_run(
         )
         await db.commit()
 
-    assert response.status == "completed"
-    assert response.content == "Dear hiring team,"
+    assert response.status == "queued"
+    assert started == [(response.run_id, "queued")]
     async with database() as db:
         run = await db.scalar(select(AgentRun).where(AgentRun.id == uuid.UUID(response.run_id)))
-    assert run is not None
-    assert run.status == "completed"
-    assert run.user_id == user.id
+    assert run.agent_type == "cover_letter"
+    assert run.input["context"]["jd_text"] == "Backend engineer, Python."
 
 
 async def test_run_upsert_waiting_on_a_lock_does_not_block_the_event_loop(database):

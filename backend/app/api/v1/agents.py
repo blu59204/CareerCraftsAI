@@ -75,52 +75,9 @@ async def run_agent(
     if payload.task_type not in VALID_TASKS:
         raise HTTPException(status_code=400, detail=f"Invalid task_type: {payload.task_type}")
 
-    # Serialize admission for this user across all API replicas.
-    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
-    # Concurrent run check. Applications waiting in the user's own browser
-    # (extension mode) use no server capacity and can wait for hours, so
-    # they never block other agents.
-    active_runs = await db.execute(
-        select(AgentRun.id).where(
-            AgentRun.user_id == current_user.id,
-            AgentRun.status.in_(["queued", "running"]),
-            AgentRun.agent_type != "apply_prepare",
-        )
-    )
-    active_run_ids = [str(run_id) for run_id in active_runs.scalars().all()]
-    count = len(active_run_ids)
-    max_concurrent = getattr(settings, "AGENT_MAX_CONCURRENT_PER_USER", 2)
-    if count >= max_concurrent:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "message": f"Max {max_concurrent} concurrent agent runs reached. Wait for current runs to complete.",
-                "run_ids": active_run_ids,
-            },
-        )
+    from app.api.v1.run_utils import queue_agent_run
 
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type=payload.task_type,
-        status="queued",
-        input={"task_type": payload.task_type, "context": payload.context},
-    )
-    db.add(agent_run)
-    # Committed before the workflow starts: its first activity reads the row.
-    await db.commit()
-
-    from app.workflows.starters import WorkflowUnavailable, start_agent_run
-
-    try:
-        await start_agent_run(run_id, current_user.id)
-    except WorkflowUnavailable as exc:
-        agent_run.status = "failed"
-        agent_run.output = {"error": "Agent service unavailable — try again shortly"}
-        agent_run.completed_at = datetime.now(UTC)
-        await db.commit()
-        raise HTTPException(status_code=503, detail="Agent service unavailable") from exc
+    run_id = await queue_agent_run(db, current_user, payload.task_type, payload.context)
 
     stream_url = str(request.base_url).rstrip("/") + f"/api/v1/agents/{run_id}/stream"
     return {"run_id": run_id, "status": "queued", "stream_url": stream_url}

@@ -3,17 +3,16 @@ import logging
 import re
 import urllib.parse
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.job_basis import router as basis_router
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import apply_harness_result
+from app.api.v1.job_basis import router as basis_router
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, JobApplication, User, UserDocument, UserPreferences
 from app.schemas.jobs import JobSearchQuerySchema
@@ -51,7 +50,6 @@ def make_job_search_id(
     """Content hash of a search — identical repeat clicks reuse the run
     that is already in flight instead of starting another."""
     import hashlib
-
     import json
 
     digest = hashlib.sha256(
@@ -113,19 +111,6 @@ class StatusUpdateBody(BaseModel):
 
 class PrepareApplyBody(BaseModel):
     live_browser: bool = False
-
-
-class NLSearchRequest(BaseModel):
-    query: str = Field(min_length=5, max_length=500)
-
-    @field_validator("query")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        import re
-
-        v = v.replace("\x00", "")
-        v = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", v)
-        return v[:500]
 
 
 def is_example_job_url(job_url: str | None) -> bool:
@@ -240,7 +225,7 @@ def _infer_years_experience(resume_text: str | None) -> int | None:
     if any(word in text for word in ("fresher", "new graduate", "recent graduate", "student")):
         return 0
     date_years = [int(y) for y in re.findall(r"\b(20\d{2}|19\d{2})\b", text)]
-    current_year = datetime.now(timezone.utc).year
+    current_year = datetime.now(UTC).year
     plausible_starts = [year for year in date_years if 1990 <= year <= current_year]
     if plausible_starts:
         oldest = min(plausible_starts)
@@ -694,53 +679,6 @@ async def list_search_presets(
     }
 
 
-@router.post("/search/natural")
-@limiter.limit("10/minute")
-async def natural_language_search(
-    request: Request,
-    payload: NLSearchRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Accept a natural language job query, extract parameters, return interpretation + results."""
-    from app.agents.harness import get_harness
-
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="nl_job_search",
-        status="running",
-        input={"query": payload.query},
-    )
-    db.add(agent_run)
-    # Committed, not just flushed: the orchestrator records the run through a
-    # separate sync connection, which would otherwise block on this open
-    # transaction's uncommitted insert and stall the event loop.
-    await db.commit()
-
-    harness = await get_harness()
-    try:
-        harness_result = await asyncio.wait_for(
-            harness.run(
-                user_id=str(current_user.id),
-                task_type="nl_job_search",
-                context={"query": payload.query},
-                user_settings={},
-                run_id=run_id,
-            ),
-            timeout=NL_SEARCH_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        agent_run.status = "failed"
-        agent_run.output = {"error": f"Timed out after {NL_SEARCH_TIMEOUT_SECONDS}s"}
-        await db.commit()
-        raise HTTPException(status_code=504, detail="Natural language search timed out") from None
-    apply_harness_result(agent_run, harness_result)
-    await db.flush()
-    return {"run_id": run_id, "status": agent_run.status}
-
-
 async def _resolve_live_browser(
     db: AsyncSession,
     current_user: User,
@@ -948,7 +886,7 @@ async def update_application_status(
     app.status = body.status
     if body.status == "applied":
         if not app.applied_at:
-            app.applied_at = datetime.now(timezone.utc)
+            app.applied_at = datetime.now(UTC)
         # Shown by the tracker and dashboard; FollowupWorkflow drafts the
         # emails on these same dates.
         if not app.followup_day5:

@@ -58,7 +58,6 @@ from app.agents.linkedin_outreach_agent import linkedin_outreach_agent_node
 from app.agents.email_monitor_agent import email_monitor_node
 from app.agents.auto_apply_pipeline import run_auto_apply_pipeline
 
-
 # ---- Wrapper nodes for agents with non-standard signatures ----
 
 
@@ -86,9 +85,10 @@ async def _auto_apply_wrapper(state: AgentState) -> AgentState:
 
 async def _interview_coach_wrapper(state: AgentState) -> AgentState:
     ctx = state.get("context", {})
+    # Both nodes make blocking LLM and DB calls; keep them off the event loop.
     if ctx.get("session_id"):
-        return evaluate_answer_node(state)
-    return start_session_node(state)
+        return await asyncio.to_thread(evaluate_answer_node, state)
+    return await asyncio.to_thread(start_session_node, state)
 
 
 # ---- Safe agent runner (handles both sync and async node functions) ----
@@ -105,7 +105,9 @@ async def _run_agent_safely(agent_fn: Callable, state: AgentState) -> AgentState
         else:
             result = await asyncio.to_thread(agent_fn, state)
         duration_ms = int((time.time() - start) * 1000)
-        tokens = get_and_reset_tokens() or (result.get("tokens_used") if isinstance(result, dict) else None)
+        tokens = get_and_reset_tokens() or (
+            result.get("tokens_used") if isinstance(result, dict) else None
+        )
 
         if state.get("context", {}).get("_durable"):
             return {**result, "tokens_used": tokens}
@@ -167,7 +169,9 @@ def _make_node_runner(node_name: str, agent_fn: Callable) -> Callable:
             emit(state["run_id"], "checkpoint", result_state.get("pending_action") or {})
         elif status == "failed":
             if result_state.get("error"):
-                logger.warning("Agent failed for run %s: %s", state["run_id"], result_state.get("error"))
+                logger.warning(
+                    "Agent failed for run %s: %s", state["run_id"], result_state.get("error")
+                )
             emit(state["run_id"], "error", CLIENT_SAFE_AGENT_ERROR)
         elif status == "completed":
             emit(state["run_id"], "complete", result_state.get("result") or {})

@@ -10,13 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import apply_harness_result
+from app.api.v1.run_utils import queue_agent_run
 from app.models.db import AgentRun, LinkedInOutreachQueue, User
 
 router = APIRouter(prefix="/linkedin", tags=["linkedin"])
 logger = logging.getLogger(__name__)
-
-HARNESS_TIMEOUT_SECONDS = 120
 
 
 class ProfileOptimizeResponse(BaseModel):
@@ -145,48 +143,17 @@ async def identify_contacts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.agents.harness import get_harness
+    """Find contacts at a company via Proxycurl, filter, and draft messages.
 
-    """Find contacts at a company via Proxycurl, filter, and draft messages."""
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="linkedin_outreach",
-        status="running",
-        input={"company_name": body.company_name, "role_context": body.role_context},
+    Runs as a durable agent run; drafts appear in GET /outreach/queue.
+    """
+    run_id = await queue_agent_run(
+        db,
+        current_user,
+        "linkedin_outreach",
+        {"company_name": body.company_name, "role_context": body.role_context},
     )
-    db.add(agent_run)
-    # Committed, not just flushed: the orchestrator records the run through a
-    # separate sync connection, which would otherwise block on this open
-    # transaction's uncommitted insert and stall the event loop.
-    await db.commit()
-
-    harness = await get_harness()
-    try:
-        harness_result = await asyncio.wait_for(
-            harness.run(
-                user_id=str(current_user.id),
-                task_type="linkedin_outreach",
-                context={
-                    "company_name": body.company_name,
-                    "role_context": body.role_context,
-                },
-                user_settings={},
-                run_id=run_id,
-            ),
-            timeout=HARNESS_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        agent_run.status = "failed"
-        agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.commit()
-        raise HTTPException(
-            status_code=504, detail="LinkedIn outreach identification timed out"
-        ) from None
-    apply_harness_result(agent_run, harness_result)
-    await db.flush()
-    return {"run_id": run_id, "status": agent_run.status}
+    return {"run_id": run_id, "status": "queued"}
 
 
 @router.get("/outreach/queue")
