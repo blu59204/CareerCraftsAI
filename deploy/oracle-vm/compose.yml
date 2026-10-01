@@ -177,23 +177,8 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
-  sandbox-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    network_mode: host
-    env_file: /opt/careercraft-secrets/sandbox.env
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./sandbox.toml:/etc/opensandbox.toml:ro
-      - sandbox_metadata:/root/.opensandbox
-    environment:
-      SANDBOX_CONFIG_PATH: /etc/opensandbox.toml
-    mem_limit: 512m
-    cpus: 0.25
-    restart: unless-stopped
+
 volumes:
   redis_data:
-  sandbox_metadata:
   pgdata:
   docstore:

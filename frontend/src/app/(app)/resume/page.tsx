@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import {
   UploadSimple,
@@ -58,9 +59,13 @@ import { KeywordCoverage } from "@/components/resume/KeywordCoverage";
 import { SuggestionsList } from "@/components/resume/SuggestionsList";
 import { ResumePreview } from "@/components/resume/ResumePreview";
 import { ResumeFixPanel } from "@/components/resume/ResumeFixPanel";
+import { GithubProjects } from "@/components/resume/GithubProjects";
+import { ScoreExplanation } from "@/components/resume/ScoreExplanation";
+import { scoreAnalysisSchema, tailoredResumeSchema } from "@/lib/profile-contracts";
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
 import { getResumeInsightData } from "@/lib/resume-insights";
+import { isCurrentAnalysis } from "@/lib/resume-state";
 import { takePendingJd } from "@/lib/job-handoff";
 import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
 import {
@@ -77,6 +82,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface AtsData {
+  content_version?: string;
   matched_keywords: string[];
   missing_keywords: string[];
   suggestions: string[];
@@ -100,12 +106,7 @@ type OptimizeResult = ResumeOptimizeResponse;
 /** A tailored-document reply plus the document generation its request started on. */
 type Tailored = { data: TailoredResume; generation: number };
 
-interface JobAtsAnalysis {
-  composite_score: number;
-  matched_keywords: string[];
-  missing_keywords: string[];
-  suggestions: string[];
-}
+
 
 interface AgentRun {
   id: string;
@@ -143,7 +144,7 @@ const RESUME_TEMPLATES: Array<{
     id: "classic",
     name: "Classic",
     description: "Times serif, black and white, the most conservative ATS choice",
-    badge: "Taleo-Safe",
+    badge: "Classic",
   },
   {
     id: "technical",
@@ -646,6 +647,7 @@ function HistoryTab({ agentRuns, isLoading, onDownload, onOpen, openingId, busy 
 // ---------------------------------------------------------------------------
 
 export default function ResumePage() {
+  const { userId } = useAuth();
   const queryClient = useQueryClient();
   const reduceMotion = useReducedMotion();
 
@@ -706,7 +708,9 @@ export default function ResumePage() {
   /** The name the PDF prints (profile full name); "" uses the markdown `# Name`. */
   const [displayName, setDisplayName] = useState("");
   const [previewZoom, setPreviewZoom] = useState(1);
-  const [jobAts, setJobAts] = useState<{ documentId: string; jdText: string; data: JobAtsAnalysis } | null>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState<TailoredResume | null>(null);
+  const [pageTarget, setPageTarget] = useState<1 | 2>(2);
+  const [exportFormat, setExportFormat] = useState<"pdf" | "docx">("pdf");
 
   // Bumped whenever the current document is replaced wholesale (new optimize,
   // new upload, history open). A tailored request captures it when it starts
@@ -736,7 +740,7 @@ export default function ResumePage() {
   // Query: resume documents (polls while ATS score is computing)
   // -------------------------------------------------------------------------
   const { data: resumeDocs, isLoading: docsLoading, isError: docsError } = useQuery<ResumeDoc[]>({
-    queryKey: ["resume-docs"],
+    queryKey: ["resume-docs", userId],
     queryFn: async () => {
       const { data } = await apiClient.get("/rag/documents?doc_type=resume");
       return data as ResumeDoc[];
@@ -749,25 +753,38 @@ export default function ResumePage() {
   });
 
   const primaryDoc = resumeDocs?.find((d) => d.is_primary) ?? resumeDocs?.[0] ?? null;
-  const activeJobAts = jobAts && jobAts.documentId === primaryDoc?.id && jobAts.jdText === jdText.trim() ? jobAts.data : null;
-  const insightData = getResumeInsightData(activeJobAts, primaryDoc);
-
-  const atsMutation = useMutation<JobAtsAnalysis, Error, { documentId: string; jdText: string }>({
-    mutationFn: async ({ documentId, jdText: description }) => {
-      const { data } = await apiClient.post("/resume/ats-score", { document_id: documentId, jd_text: description });
-      return data as JobAtsAnalysis;
-    },
-    onSuccess: (data, variables) => setJobAts({ ...variables, data }),
-    onError: (err: unknown) => {
-      toast.error(getApiErrorMessage(err, "Could not analyze this resume and job description"));
+  const scoreDocumentId = lastDocId ?? primaryDoc?.id;
+  const scoreVersion = savedSnapshot?.content_version ?? primaryDoc?.ats_data?.content_version;
+  const [scoreTarget, setScoreTarget] = useState(jdText.trim());
+  useEffect(() => {
+    const timer = setTimeout(() => setScoreTarget(jdText.trim()), 600);
+    return () => clearTimeout(timer);
+  }, [jdText]);
+  const tailoredPending = useIsMutating({ mutationKey: RESUME_TAILORED_KEY }) > 0;
+  const scoreQuery = useQuery({
+    queryKey: ["resume-score", userId, scoreDocumentId, scoreVersion, scoreTarget],
+    enabled: !!scoreDocumentId && !!userId && !editingText && !tailoredPending && scoreTarget === jdText.trim(),
+    retry: false,
+    queryFn: async () => {
+      const response = await apiClient.post("/resume/ats-score", { document_id: scoreDocumentId, jd_text: scoreTarget });
+      const analysis = scoreAnalysisSchema.parse(response.data);
+      if (scoreVersion && analysis.content_version !== scoreVersion) {
+        throw new UserFacingError("This resume changed in another tab. Reopen it to view its current score.");
+      }
+      return analysis;
     },
   });
+  const activeJobAts = !scoreQuery.isError && scoreQuery.data && isCurrentAnalysis(
+    { documentId: scoreDocumentId ?? "", contentVersion: scoreQuery.data.content_version, jdText: scoreTarget },
+    scoreDocumentId, scoreVersion ?? scoreQuery.data.content_version, jdText,
+  ) ? scoreQuery.data : null;
+  const insightData = getResumeInsightData(activeJobAts, null);
 
   // -------------------------------------------------------------------------
   // Query: agent runs for history tab
   // -------------------------------------------------------------------------
   const { data: agentRuns, isLoading: runsLoading } = useQuery<AgentRun[]>({
-    queryKey: ["agent-runs", "resume"],
+    queryKey: ["agent-runs", "resume", userId],
     queryFn: async () => {
       const { data } = await apiClient.get("/agents/runs?limit=20");
       return ((Array.isArray(data) ? data : data.runs ?? []) as AgentRun[]).filter((r) => ["resume", "resume_optimize"].includes(r.agent_type));
@@ -779,6 +796,11 @@ export default function ResumePage() {
   // Tailored document: apply a server snapshot (fix / template / open)
   // -------------------------------------------------------------------------
   const applyTailored = useCallback((r: TailoredResume) => {
+    const location = new URL(window.location.href);
+    location.searchParams.set("document", r.document_id);
+    window.history.replaceState(null, "", location);
+    setPageTarget(r.page_target ?? 2);
+    setSavedSnapshot(r);
     setResumePreviewText(r.resume_markdown);
     setLastReview(r.review);
     setLastWarnings(r.warnings ?? []);
@@ -792,7 +814,9 @@ export default function ResumePage() {
     setAiChanges(r.changes_made ?? []);
     setAiSummary(r.summary ?? null);
     setDisplayName(r.display_name ?? "");
-  }, []);
+    void queryClient.invalidateQueries({ queryKey: ["resume-docs"] });
+    void queryClient.invalidateQueries({ queryKey: ["resume-score"] });
+  }, [queryClient]);
 
   /** Applies `r` only if no newer document replaced the one the request started on. */
   const applyIfCurrent = useCallback(
@@ -810,7 +834,7 @@ export default function ResumePage() {
     mutationFn: async (template) => {
       if (!lastDocId) throw new UserFacingError("Tailor your resume first.");
       const generation = docGenRef.current;
-      return { data: await postResumeFix(lastDocId, { template }), generation };
+      return { data: await postResumeFix(lastDocId, { template, page_target: pageTarget, expected_version: savedSnapshot?.content_version }), generation };
     },
     // The preview switches instantly (previewTemplate); this request only
     // re-renders the downloadable PDF in the new theme.
@@ -829,7 +853,7 @@ export default function ResumePage() {
     mutationFn: async (markdown) => {
       if (!lastDocId) throw new UserFacingError("Tailor your resume first.");
       const generation = docGenRef.current;
-      return { data: await postResumeFix(lastDocId, { resume_markdown: markdown }), generation };
+      return { data: await postResumeFix(lastDocId, { resume_markdown: markdown, page_target: pageTarget, expected_version: savedSnapshot?.content_version }), generation };
     },
     onSuccess: ({ data, generation }) => {
       if (!applyIfCurrent(data, generation)) return;
@@ -849,7 +873,7 @@ export default function ResumePage() {
       // Opening a document replaces the current one: older replies are stale.
       const generation = ++docGenRef.current;
       const { data } = await apiClient.get(`/resume/tailored/${documentId}`);
-      return { data: data as TailoredResume, generation };
+      return { data: tailoredResumeSchema.parse(data) as TailoredResume, generation };
     },
     onSuccess: ({ data, generation }) => {
       if (generation !== docGenRef.current) return;
@@ -864,6 +888,12 @@ export default function ResumePage() {
     setDraftMarkdown(resumePreviewText ?? "");
     setEditingText(true);
   };
+
+  const reopenSaved = openTailoredMutation.mutate;
+  useEffect(() => {
+    const id = new URL(window.location.href).searchParams.get("document");
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) reopenSaved(id);
+  }, [reopenSaved]);
 
   const cancelEditingText = () => {
     setDraftMarkdown(resumePreviewText ?? "");
@@ -885,6 +915,7 @@ export default function ResumePage() {
       const { data } = await apiClient.post("/resume/optimize", {
         jd_text: jd,
         template: selectedTemplate,
+        page_target: pageTarget,
       }, { timeout: 120_000 });
       return { data: data as OptimizeResult, generation };
     },
@@ -903,6 +934,11 @@ export default function ResumePage() {
       // A new run replaces the previous document; without a stored PDF there
       // is nothing to fix or download, so don't keep pointing at the old one.
       setLastDocId(data.pdf_document_id ?? null);
+      setSavedSnapshot(null);
+      if (data.pdf_document_id) {
+        const snapshot = await apiClient.get<TailoredResume>(`/resume/tailored/${data.pdf_document_id}`);
+        if (generation === docGenRef.current) applyTailored(snapshot.data);
+      }
       setLastReview(data.review ?? null);
       setContactSuggestions(data.contact_suggestions ?? {});
       setLastTemplate(isTemplateId(data.template) ? data.template : selectedTemplate);
@@ -916,7 +952,7 @@ export default function ResumePage() {
       const openIssues = countOpenIssues(data.review);
       if (openIssues > 0) toast.warning(`Resume tailored — ${openIssues} detail(s) need your input below.`);
       else if (data.warnings?.length) toast.warning(data.warnings[0]);
-      else toast.success(data.ats_score != null ? `Resume tailored! ATS score ${data.ats_score}.` : "Resume tailored.");
+      else toast.success(data.ats_score != null ? `Resume tailored! estimated ATS compatibility ${data.ats_score}.` : "Resume tailored.");
     },
     onError: (err: unknown) => {
       const status = (err as { response?: { status?: number } })?.response?.status;
@@ -933,7 +969,6 @@ export default function ResumePage() {
   });
 
   /** Any request that replaces the tailored document is in flight. */
-  const tailoredPending = useIsMutating({ mutationKey: RESUME_TAILORED_KEY }) > 0;
   const busy = tailoredPending || optimizeMutation.isPending;
   // Theme shown in the preview: the one being switched to (instant), else the
   // one the PDF was rendered with, else the one picked for the next tailor run.
@@ -1001,6 +1036,10 @@ export default function ResumePage() {
       // A new resume replaces the current document: in-flight replies are stale.
       docGenRef.current += 1;
       setLastDocId(null);
+      const location = new URL(window.location.href);
+      location.searchParams.delete("document");
+      window.history.replaceState(null, "", location);
+      setSavedSnapshot(null);
       setResumePreviewText(null);
       setLastReview(null);
       setContactSuggestions({});
@@ -1012,8 +1051,7 @@ export default function ResumePage() {
       setAiChanges([]);
       setAiSummary(null);
       setDisplayName("");
-      setJobAts(null);
-      toast.success(`Resume uploaded: ${file.name}`);
+        toast.success(`Resume uploaded: ${file.name}`);
       if ((data as { warning?: string }).warning) {
         toast.warning((data as { warning: string }).warning);
       }
@@ -1037,18 +1075,19 @@ export default function ResumePage() {
     }
     try {
       const response = await apiClient.get(`/resume/download/${id}`, {
+        params: { format: exportFormat, pages: pageTarget },
         responseType: "blob",
       });
       const url = URL.createObjectURL(
-        new Blob([response.data as BlobPart], { type: "application/pdf" })
+        new Blob([response.data as BlobPart], { type: exportFormat === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document" })
       );
       const a = document.createElement("a");
       a.href = url;
-      a.download = "resume.pdf";
+      a.download = `resume.${exportFormat}`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Download failed");
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Download failed. Try fewer optional bullets or two pages."));
     }
   };
 
@@ -1104,7 +1143,7 @@ export default function ResumePage() {
   const panelVariants = reduceMotion
     ? { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } }, exit: { opacity: 0, transition: { duration: 0.15 } } }
     : panelSwap;
-  const scoreComputing = !!primaryDoc && primaryDoc.ats_score === null && !activeJobAts;
+  const scoreComputing = tailoredPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !activeJobAts && !savedSnapshot);
   const canShowTemplateBar = !!(lastDocId && resumePreviewText && !editingText);
 
   const heroActions = (
@@ -1235,9 +1274,9 @@ export default function ResumePage() {
             <Bezel lifted coreClassName="p-5 md:p-6">
               <div className="flex items-center justify-between gap-3">
                 <h2 id="primary-resume-heading" className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                  Primary resume
+                  Current resume
                 </h2>
-                {primaryDoc && !docsLoading ? (
+                {scoreDocumentId && !docsLoading ? (
                   scoreComputing ? (
                     <StatusPill tone="primary" live>Scoring</StatusPill>
                   ) : activeJobAts ? (
@@ -1258,33 +1297,35 @@ export default function ResumePage() {
                       <p className="text-xs text-muted-foreground">Loading resume…</p>
                     </div>
                   </div>
-                ) : primaryDoc ? (
+                ) : scoreDocumentId ? (
                   <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
-                    {insightData.score != null ? (
+                    {!scoreComputing && insightData.score != null ? (
                       <AtsScoreRing score={insightData.score} size={136} />
                     ) : (
                       <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
                         <span className="flex flex-col items-center gap-2 text-center text-[11px] text-muted-foreground">
-                          <Spinner size={18} />
-                          Calculating
+                          {!scoreQuery.isError && <Spinner size={18} />}
+                          {scoreQuery.isError ? "Score unavailable" : "Scoring…"}
                         </span>
                       </div>
                     )}
                     <div className="min-w-0 flex-1 space-y-3">
                       <div className="flex min-w-0 items-center gap-2">
                         <FilePdf size={16} weight="light" aria-hidden="true" className="shrink-0 text-muted-foreground" />
-                        <span className="truncate font-geist-mono text-xs text-foreground" title={primaryDoc.filename}>
-                          {primaryDoc.filename}
+                        <span className="truncate font-geist-mono text-xs text-foreground" title={savedSnapshot ? "Tailored resume" : primaryDoc?.filename}>
+                          {savedSnapshot ? "Tailored resume" : primaryDoc?.filename}
                         </span>
                       </div>
                       <Hairline />
-                      {insightData.score != null ? (
+                      {scoreQuery.isError && <p role="alert" className="text-sm text-danger">Could not calculate compatibility. <button type="button" className="underline" onClick={() => void scoreQuery.refetch()}>Retry</button></p>}
+                      {!scoreComputing && <ScoreExplanation estimate={activeJobAts?.estimate} />}
+                      {!scoreComputing && insightData.score != null ? (
                         <p className="text-xs leading-5 text-muted-foreground">
                           <span className="font-medium text-foreground">{insightData.scoreLabel}</span>
-                          {activeJobAts ? " for this job" : " · run Analyze match for job-specific results"}
+                          {activeJobAts?.estimate.mode === "target_job" ? " for this job" : " · general document assessment"}
                         </p>
                       ) : (
-                        <p className="text-xs leading-5 text-muted-foreground">Calculating your baseline ATS score…</p>
+                        <p className="text-xs leading-5 text-muted-foreground">{scoreQuery.isError ? "Reopen the resume or retry scoring." : "Calculating estimated ATS compatibility…"}</p>
                       )}
                     </div>
                   </div>
@@ -1438,11 +1479,11 @@ export default function ResumePage() {
                                 <IslandButton
                                   tone="ghost"
                                   size="sm"
-                                  disabled={!primaryDoc || atsMutation.isPending || !jdText.trim()}
-                                  onClick={() => primaryDoc && atsMutation.mutate({ documentId: primaryDoc.id, jdText: jdText.trim() })}
-                                  icon={atsMutation.isPending ? <Spinner size={14} /> : <Crosshair size={14} weight="light" />}
+                                  disabled={!primaryDoc || scoreQuery.isFetching || !jdText.trim()}
+                                  onClick={() => void scoreQuery.refetch()}
+                                  icon={scoreQuery.isFetching ? <Spinner size={14} /> : <Crosshair size={14} weight="light" />}
                                 >
-                                  {atsMutation.isPending ? "Analyzing…" : "Analyze match"}
+                                  {scoreQuery.isFetching ? "Analyzing…" : "Analyze match"}
                                 </IslandButton>
                                 <IslandButton
                                   tone="primary"
@@ -1487,6 +1528,7 @@ export default function ResumePage() {
                   </section>
 
                   {/* Preview */}
+                  <GithubProjects />
                   <section aria-labelledby="resume-preview-heading">
                     <Bezel coreClassName="p-4 md:p-6">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1496,7 +1538,7 @@ export default function ResumePage() {
                           </h2>
                           {lastAtsScore != null ? (
                             <p className="mt-1 text-xs text-muted-foreground">
-                              Tailored ATS score: <span className="font-medium tabular-nums text-foreground">{lastAtsScore}</span>
+                              Estimated ATS compatibility: <span className="font-medium tabular-nums text-foreground">{lastAtsScore}</span>
                               {lastMissingKeywords.length > 0 &&
                                 ` · missing: ${lastMissingKeywords.slice(0, 5).join(", ")}`}
                             </p>
@@ -1526,7 +1568,7 @@ export default function ResumePage() {
                               onClick={() => handleDownloadPdf()}
                               icon={<DownloadSimple size={14} weight="light" />}
                             >
-                              Download PDF
+                              Download {exportFormat.toUpperCase()}
                             </IslandButton>
                           )}
                         </div>
@@ -1565,6 +1607,13 @@ export default function ResumePage() {
                         </div>
                       )}
 
+                      {(canShowTemplateBar || (resumePreviewText && !editingText)) && (
+                        <div className="mt-4 flex flex-wrap gap-4 text-sm">
+                          <label>Maximum pages <select className="ml-2 rounded bg-background p-2" value={pageTarget} disabled={busy} onChange={(event) => setPageTarget(Number(event.target.value) as 1 | 2)}><option value={1}>1 page</option><option value={2}>2 pages</option></select></label>
+                          <label>Export format <select className="ml-2 rounded bg-background p-2" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as "pdf" | "docx")}><option value="pdf">PDF</option><option value="docx">DOCX</option></select></label>
+                          <p className="text-muted-foreground">Exports determine pagination. DOCX may reflow in Word.</p>
+                        </div>
+                      )}
                       {(canShowTemplateBar || (resumePreviewText && !editingText)) && (
                         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                           {canShowTemplateBar ? (
@@ -1740,6 +1789,7 @@ export default function ResumePage() {
                   {lastDocId && lastReview && !editingText && (
                     <ResumeFixPanel
                       documentId={lastDocId}
+                      expectedVersion={savedSnapshot?.content_version}
                       review={lastReview}
                       contactSuggestions={contactSuggestions}
                       warnings={lastWarnings}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ValidationError
@@ -37,7 +37,9 @@ def call_llm_json(llm, system_text: str, human_text: str, schema_cls: type[BaseM
         return schema_cls.model_validate_json(_strip_fences(content))
     except ValidationError as exc:
         err_text = str(exc)[:1000]
-        logger.warning("LLM JSON parse failed, retrying once: %s", err_text)
+        logger.warning(
+            "llm_json_repair schema=%s error_type=%s", schema_cls.__name__, type(exc).__name__
+        )
         # Include the model's own broken output so it repairs it rather than
         # regenerating from scratch (which tends to repeat the same failure).
         retry_messages = messages + [
@@ -47,7 +49,7 @@ def call_llm_json(llm, system_text: str, human_text: str, schema_cls: type[BaseM
                     f"Your previous output failed validation: {err_text}. "
                     f"Return ONLY valid JSON matching this schema: {schema_text}"
                 )
-            )
+            ),
         ]
         retry_response = llm.invoke(retry_messages)
         retry_content = (

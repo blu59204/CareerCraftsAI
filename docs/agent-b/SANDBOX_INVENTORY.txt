@@ -1,0 +1,194 @@
+﻿.env.example:100:STATUS_CHECK_INTERVAL_HOURS=6               # server_browser mode only
+.env.example:124:# server_browser — isolated OpenSandbox browsers (OPEN_SANDBOX_* below).
+.env.example:154:# OpenSandbox lifecycle server base URL, WITHOUT /v1 (APPLY_EXECUTION_MODE=
+.env.example:155:# server_browser only). Must be privately reachable from both the API and the
+.env.example:156:# Temporal worker, along with the returned sandbox CDP endpoints.
+.env.example:157:OPEN_SANDBOX_URL=
+.env.example:158:OPEN_SANDBOX_API_KEY=
+.env.example:159:OPEN_SANDBOX_CHROME_IMAGE=careercraft-browser:1
+.env.example:160:SANDBOX_MAX_ACTIVE=4
+.env.example:161:SANDBOX_TTL_SECONDS=1800
+.env.example:162:SANDBOX_CPU=1000m
+.env.example:163:SANDBOX_MEMORY=1024Mi
+.env.example:166:SANDBOX_ALLOWED_DOMAINS=boards.greenhouse.io,job-boards.greenhouse.io,*.greenhouse.io
+.github/workflows/ci.yml:5:    branches: [master, main, develop, deploy/scalable-sandbox-workflows]
+.github/workflows/ci.yml:7:    branches: [master, main, develop, deploy/scalable-sandbox-workflows]
+README.md:85:│  Company Research     │  │  in server_browser mode)         │
+README.md:123:— nothing is submitted until you press **Submit**. `server_browser` is the
+README.md:124:legacy mode that drives an isolated sandbox browser on the server instead.
+README.md:424:│   │   │   ├── auto_apply.py             # AutoApplyWorkflow (extension + server_browser modes)
+README.md:604:For a single small VM, `deploy/oracle-vm/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway, and the OpenSandbox server (`server_browser` apply mode only). The Temporal server itself is a separate stack, `deploy/oracle-vm/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
+backend/app/agents/auto_apply_pipeline.py:219:        and not app_settings.OPEN_SANDBOX_URL
+backend/app/agents/auto_apply_pipeline.py:451:        # Drafts mode also allows document review followed by sandbox preparation.
+backend/app/api/v1/browser.py:16:from app.services.sandbox_service import browser_page, validate_browser_url
+backend/app/api/v1/browser.py:43:    if not session.sandbox_id or session.status == "provisioning":
+backend/app/core/config.py:161:    # "server_browser": drive an isolated OpenSandbox browser (needs the
+backend/app/core/config.py:162:    # OPEN_SANDBOX_* settings below).
+backend/app/core/config.py:163:    APPLY_EXECUTION_MODE: Literal["extension", "server_browser"] = "extension"
+backend/app/core/config.py:201:    # OpenSandbox runs on dedicated infrastructure, never in the API process.
+backend/app/core/config.py:202:    OPEN_SANDBOX_URL: str = ""
+backend/app/core/config.py:203:    OPEN_SANDBOX_API_KEY: str = ""
+backend/app/core/config.py:204:    OPEN_SANDBOX_CHROME_IMAGE: str = "careercraft-browser:1"
+backend/app/core/config.py:205:    SANDBOX_TTL_SECONDS: int = Field(default=1800, ge=600, le=7200)
+backend/app/core/config.py:206:    SANDBOX_MAX_ACTIVE: int = Field(default=4, ge=1, le=1000)
+backend/app/core/config.py:207:    SANDBOX_CPU: str = "1000m"
+backend/app/core/config.py:208:    SANDBOX_MEMORY: str = "1024Mi"
+backend/app/core/config.py:210:    SANDBOX_ALLOWED_DOMAINS: str = ""
+backend/app/models/db.py:225:    sandbox_id: Mapped[str | None] = mapped_column(String)
+backend/app/services/application_workflow.py:21:from app.services.sandbox_service import (
+backend/app/services/browser_control_service.py:473:        managed = bool(settings.OPEN_SANDBOX_URL)
+backend/app/services/browser_control_service.py:476:                raise ValueError("A durable run ID is required for sandbox browser tasks")
+backend/app/services/browser_control_service.py:477:            from app.services.sandbox_service import acquire_session, OpenSandboxProvider
+backend/app/services/browser_control_service.py:480:            cdp_url, cdp_headers = await OpenSandboxProvider().cdp(session.sandbox_id)
+backend/app/services/browser_control_service.py:484:                raise RuntimeError("Production browser tasks require OpenSandbox")
+backend/app/services/sandbox_service.py:1:"""OpenSandbox lifecycle and tenant-scoped, encrypted browser session state.
+backend/app/services/sandbox_service.py:28:    return [s.strip().lower() for s in settings.SANDBOX_ALLOWED_DOMAINS.split(",") if s.strip()]
+backend/app/services/sandbox_service.py:47:        raise ValueError("This portal is not in SANDBOX_ALLOWED_DOMAINS")
+backend/app/services/sandbox_service.py:51:class OpenSandboxProvider:
+backend/app/services/sandbox_service.py:52:    """Adapter for the documented /v1/sandboxes lifecycle API."""
+backend/app/services/sandbox_service.py:58:        if not settings.OPEN_SANDBOX_URL or not settings.OPEN_SANDBOX_API_KEY:
+backend/app/services/sandbox_service.py:59:            raise RuntimeError("OpenSandbox is not configured")
+backend/app/services/sandbox_service.py:60:        url = settings.OPEN_SANDBOX_URL.rstrip("/") + "/v1" + path
+backend/app/services/sandbox_service.py:61:        headers = {"OPEN-SANDBOX-API-KEY": settings.OPEN_SANDBOX_API_KEY}
+backend/app/services/sandbox_service.py:75:        result = await self.request("POST", "/sandboxes", json={
+backend/app/services/sandbox_service.py:76:            "image": {"uri": settings.OPEN_SANDBOX_CHROME_IMAGE},
+backend/app/services/sandbox_service.py:78:            "timeout": settings.SANDBOX_TTL_SECONDS,
+backend/app/services/sandbox_service.py:79:            "resourceLimits": {"cpu": settings.SANDBOX_CPU, "memory": settings.SANDBOX_MEMORY},
+backend/app/services/sandbox_service.py:88:    async def destroy(self, sandbox_id: str) -> None:
+backend/app/services/sandbox_service.py:89:        await self.request("DELETE", f"/sandboxes/{sandbox_id}")
+backend/app/services/sandbox_service.py:91:    async def endpoint(self, sandbox_id: str) -> tuple[str, dict]:
+backend/app/services/sandbox_service.py:92:        result = await self.request("GET", f"/sandboxes/{sandbox_id}/endpoints/9222")
+backend/app/services/sandbox_service.py:95:            raise RuntimeError("Sandbox provider returned an invalid endpoint")
+backend/app/services/sandbox_service.py:97:            endpoint = urlparse(settings.OPEN_SANDBOX_URL).scheme + "://" + endpoint
+backend/app/services/sandbox_service.py:100:    async def cdp(self, sandbox_id: str) -> tuple[str, dict]:
+backend/app/services/sandbox_service.py:101:        endpoint, headers = await self.endpoint(sandbox_id)
+backend/app/services/sandbox_service.py:135:            if not existing.sandbox_id or existing.status == "provisioning":
+backend/app/services/sandbox_service.py:146:        if count >= settings.SANDBOX_MAX_ACTIVE or user_active:
+backend/app/services/sandbox_service.py:149:                                 status="provisioning", expires_at=now + timedelta(seconds=settings.SANDBOX_TTL_SECONDS))
+backend/app/services/sandbox_service.py:152:    provider = OpenSandboxProvider()
+backend/app/services/sandbox_service.py:153:    sandbox_id = None
+backend/app/services/sandbox_service.py:155:        sandbox_id = await provider.create(session)
+backend/app/services/sandbox_service.py:159:            saved.sandbox_id = sandbox_id
+backend/app/services/sandbox_service.py:161:        session.sandbox_id = sandbox_id
+backend/app/services/sandbox_service.py:186:                saved.status = "closing" if sandbox_id else "failed"
+backend/app/services/sandbox_service.py:194:    if not session.sandbox_id or session.expires_at <= datetime.now(timezone.utc):
+backend/app/services/sandbox_service.py:196:    ws, headers = await OpenSandboxProvider().cdp(session.sandbox_id)
+backend/app/services/sandbox_service.py:224:    if not settings.OPEN_SANDBOX_URL:
+backend/app/services/sandbox_service.py:235:                if session.sandbox_id:
+backend/app/services/sandbox_service.py:236:                    await OpenSandboxProvider().destroy(session.sandbox_id)
+backend/app/services/sandbox_service.py:239:                logger.exception("Browser reaper failed to destroy sandbox; retrying")
+backend/app/services/scheduled_jobs.py:569:                # The sandbox browser path requires an owned durable run to
+backend/app/workflows/auto_apply.py:10:* "server_browser" — an isolated OpenSandbox browser is driven through
+backend/app/workflows/auto_apply.py:21:would otherwise trip Temporal's workflow sandbox.
+backend/app/workflows/auto_apply.py:57:    mode: str = "server_browser"  # or "extension"
+backend/app/workflows/job_activities.py:89:    and reap server-side browser sandboxes."""
+backend/app/workflows/job_activities.py:198:    if settings.APPLY_EXECUTION_MODE == "server_browser":
+backend/app/workflows/job_activities.py:199:        from app.services.sandbox_service import reap_sessions
+backend/app/workflows/notification_workflow.py:24:    # sandbox makes pydantic-settings open .env (Path.expanduser), which the
+backend/app/workflows/notification_workflow.py:25:    # sandbox forbids, and the worker then refuses to start.
+backend/app/workflows/scheduled.py:79:    if settings.APPLY_EXECUTION_MODE == "server_browser":
+backend/tests/integration/test_durable_workflows.py:29:    from app.services import application_workflow, sandbox_service, workflow_service
+backend/tests/integration/test_durable_workflows.py:37:    for module in (workflow_service, sandbox_service, application_workflow, core_database):
+backend/tests/integration/test_durable_workflows.py:294:    from app.services.sandbox_service import OpenSandboxProvider
+backend/tests/integration/test_durable_workflows.py:297:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.test")
+backend/tests/integration/test_durable_workflows.py:299:        OpenSandboxProvider, "endpoint", AsyncMock(return_value=("http://127.0.0.1:59222", {}))
+backend/tests/integration/test_durable_workflows.py:306:        sandbox_id="test-browser",
+backend/tests/integration/test_durable_workflows.py:328:        ws, headers = await OpenSandboxProvider().cdp("test-browser")
+backend/tests/integration/test_durable_workflows.py:533:    from app.services.sandbox_service import OpenSandboxProvider
+backend/tests/integration/test_durable_workflows.py:535:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.ashbyhq.com")
+backend/tests/integration/test_durable_workflows.py:537:        OpenSandboxProvider, "endpoint", AsyncMock(return_value=("http://127.0.0.1:59222", {}))
+backend/tests/integration/test_durable_workflows.py:543:        ws, headers = await OpenSandboxProvider().cdp("test-browser")
+backend/tests/unit/test_ats_greenhouse.py:4:page.set_content() — no network access, no sandbox container.
+backend/tests/unit/test_ats_lever.py:4:page.set_content() — no network access, no sandbox container.
+backend/tests/unit/test_internal_status_check.py:7:  2. Missing run_id — the managed-sandbox browser path requires an owned
+backend/tests/unit/test_temporal_api_integration.py:16:@pytest.mark.parametrize("mode", ["extension", "server_browser"])
+backend/tests/unit/test_temporal_workflows.py:472:        ("server_browser", {"daily-job-search", "maintenance", "application-status-check"}),
+backend/tests/unit/test_workflow_runtime.py:11:from app.services.sandbox_service import OpenSandboxProvider, validate_browser_url
+backend/tests/unit/test_workflow_runtime.py:82:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com,*.example.org")
+backend/tests/unit/test_workflow_runtime.py:94:    monkeypatch.setattr(settings, "OPEN_SANDBOX_URL", "http://sandbox.test")
+backend/tests/unit/test_workflow_runtime.py:95:    monkeypatch.setattr(settings, "OPEN_SANDBOX_API_KEY", "private-key")
+backend/tests/unit/test_workflow_runtime.py:96:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:101:        return httpx.Response(202, json={"id": "sandbox-1"})
+backend/tests/unit/test_workflow_runtime.py:104:        provider = OpenSandboxProvider(client)
+backend/tests/unit/test_workflow_runtime.py:109:    assert result == "sandbox-1"
+backend/tests/unit/test_workflow_runtime.py:110:    assert requests[0].headers["OPEN-SANDBOX-API-KEY"] == "private-key"
+backend/tests/unit/test_workflow_runtime.py:319:        sandbox_id=None,
+backend/tests/unit/test_workflow_runtime.py:347:    import app.services.sandbox_service as sandbox_service
+backend/tests/unit/test_workflow_runtime.py:356:        sandbox_id="dead",
+backend/tests/unit/test_workflow_runtime.py:364:        sandbox_id="live",
+backend/tests/unit/test_workflow_runtime.py:387:    monkeypatch.setattr(sandbox_service, "AsyncSessionLocal", lambda: _fake_session_cm(fake))
+backend/tests/unit/test_workflow_runtime.py:388:    monkeypatch.setattr(sandbox_service.settings, "OPEN_SANDBOX_URL", "http://sandbox.test")
+backend/tests/unit/test_workflow_runtime.py:390:    monkeypatch.setattr(sandbox_service.OpenSandboxProvider, "destroy", destroy)
+backend/tests/unit/test_workflow_runtime.py:391:    await sandbox_service.reap_sessions()
+backend/tests/unit/test_workflow_runtime.py:490:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:533:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:794:async def test_sandbox_endpoint_rejects_invalid_provider_payload(monkeypatch):
+backend/tests/unit/test_workflow_runtime.py:796:    from app.services.sandbox_service import OpenSandboxProvider
+backend/tests/unit/test_workflow_runtime.py:798:    monkeypatch.setattr(settings, "OPEN_SANDBOX_URL", "http://sandbox.test")
+backend/tests/unit/test_workflow_runtime.py:799:    monkeypatch.setattr(settings, "OPEN_SANDBOX_API_KEY", "private-key")
+backend/tests/unit/test_workflow_runtime.py:805:        provider = OpenSandboxProvider(client)
+backend/tests/unit/test_workflow_runtime.py:807:            await provider.endpoint("sandbox-1")
+backend/tests/unit/test_workflow_runtime.py:898:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:962:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:1060:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:1334:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_runtime.py:1413:    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.com")
+backend/tests/unit/test_workflow_sandbox.py:1:"""Every workflow must load inside Temporal's workflow sandbox.
+backend/tests/unit/test_workflow_sandbox.py:3:The sandbox re-imports each workflow module with restricted builtins, so any
+backend/tests/unit/test_workflow_sandbox.py:14:from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner  # noqa: E402
+backend/tests/unit/test_workflow_sandbox.py:28:async def test_workflow_passes_sandbox_validation(workflow_cls, tmp_path, monkeypatch):
+backend/tests/unit/test_workflow_sandbox.py:30:    # pydantic-settings tries to open when config is imported unsandboxed.
+backend/tests/unit/test_workflow_sandbox.py:36:    SandboxedWorkflowRunner().prepare_workflow(defn)
+deploy/oracle-vm/Dockerfile:2:RUN pip install --no-cache-dir opensandbox-server==0.2.3
+deploy/oracle-vm/Dockerfile:3:CMD ["opensandbox-server"]
+deploy/oracle-vm/compose.yml:155:  sandbox-server:
+deploy/oracle-vm/compose.yml:160:    env_file: /opt/careercraft-secrets/sandbox.env
+deploy/oracle-vm/compose.yml:163:      - ./sandbox.toml:/etc/opensandbox.toml:ro
+deploy/oracle-vm/compose.yml:164:      - sandbox_metadata:/root/.opensandbox
+deploy/oracle-vm/compose.yml:166:      SANDBOX_CONFIG_PATH: /etc/opensandbox.toml
+deploy/oracle-vm/compose.yml:172:  sandbox_metadata:
+deploy/oracle-vm/sandbox.toml:4:max_sandbox_timeout_seconds = 3600
+deploy/oracle-vm/sandbox.toml:8:execd_image = "opensandbox/execd:v1.0.6"
+deploy/oracle-vm/sandbox.toml:19:image = "opensandbox/egress:v1.1.7"
+docker-compose.test.yml:21:    build: ./sandbox
+docs/AGENTS_TROUBLESHOOTING.md:73:| Daily search / status check / maintenance not running | Schedules not registered | Every worker registers them at start-up (`ensure_schedules`) if `TEMPORAL_SCHEDULES_ENABLED=true`. Check the Temporal UI's Schedules tab for `daily-job-search`, `maintenance`, `application-status-check` (the latter only exists when `APPLY_EXECUTION_MODE=server_browser`) |
+docs/ARCHITECTURE.md:80:  TWorker["temporal-worker<br/>python -m app.temporal_worker<br/>task_queue=careercraft<br/>AgentRunWorkflow, JobSearchWorkflow,<br/>AutoApplyWorkflow, FollowupWorkflow<br/>+ Schedules: daily search, maintenance,<br/>(status check in server_browser mode)"]
+docs/ARCHITECTURE.md:97:  BrowserCloud["OpenSandbox<br/>server_browser mode only"]
+docs/ARCHITECTURE.md:208:| `/browser` | `api/v1/browser.py` | sandbox provision / review |
+docs/ARCHITECTURE.md:284:| **EmailMonitorAgent** | `agents/email_monitor_agent.py` | Gmail poll | Temporal `StatusCheckWorkflow` every `STATUS_CHECK_INTERVAL_HOURS` (6h default, `server_browser` apply mode only) → threads needing action + draft replies | 60s / 3000 |
+docs/ARCHITECTURE.md:374:| `maintenance` | `MAINTENANCE_INTERVAL_SECONDS` (60s) | Reconciles `agent_runs` with Temporal, expires orphaned extension tasks, reaps server-side browser sandboxes |
+docs/ARCHITECTURE.md:375:| `application-status-check` | `STATUS_CHECK_INTERVAL_HOURS` (6h) | Only registered when `APPLY_EXECUTION_MODE=server_browser` — the extension flow has no server-held portal session to poll |
+docs/ARCHITECTURE.md:448:| `application_attempts` | idempotency ledger for one apply attempt (shared by extension and `server_browser` modes); carries `workflow_id`/`temporal_run_id` |
+docs/ARCHITECTURE.md:449:| `browser_sessions` | `run_id (unique), user_id, sandbox_id, status, expires_at, review JSONB` — `server_browser` apply mode only |
+docs/ARCHITECTURE.md:517:**Email:** `GET /email/threads` (Gmail) → `EmailAgent` draft (Hunter + RAG) → `checkpoint` → `ApprovalModal` → `POST /email/approve/{id}` (sole send path) → Resend/Gmail send → `FollowUpAgent` scheduled (`FollowupWorkflow`); `EmailMonitorAgent` (`StatusCheckWorkflow`, 6h, `server_browser` mode only) drafts replies to recruiter responses (HITL before any reply).
+docs/ARCHITECTURE.md:527:- **Infra:** there is no HTTP route that runs a background job outside Temporal — activities call `scheduled_jobs.py` in-process; nginx still returns 404 for `/internal/*` as defense in depth. Browser `mem 2.5g/shm 256m`, session caps (`BROWSER_USE_MAX_CONCURRENT_SESSIONS=4`, `SANDBOX_MAX_ACTIVE=4`, TTL 1800s, domain allowlist); Bandit SAST on CI.
+docs/ARCHITECTURE.md:543:| Playwright / BrowserUse / OpenSandbox / AgentQL / Firecrawl | AutoApply, JobSearch, FormFiller, BrowserControl | `OPEN_SANDBOX_*`, `AGENTQL_API_KEY`, `FIRECRAWL_API_KEY`; Ollama controller (`BROWSER_USE_OLLAMA_URL/MODEL`) |
+docs/ARCHITECTURE.md:552:Required: `APP_SECRET_KEY, DATABASE_URL, REDIS_URL`. Auth: `CLERK_JWKS_URL/ISSUER/SECRET/AUDIENCE`. App: `APP_ENV, LOG_LEVEL, FRONTEND_URL, CORS_ORIGINS, NEXT_PUBLIC_*`. Temporal: `TEMPORAL_ADDRESS(_DOCKER), TEMPORAL_NAMESPACE, TEMPORAL_TASK_QUEUE=careercraft, TEMPORAL_WORKER_CONCURRENCY=4, TEMPORAL_SCHEDULES_ENABLED, DAILY_SEARCH_INTERVAL_HOURS, STATUS_CHECK_INTERVAL_HOURS, MAINTENANCE_INTERVAL_SECONDS, TEMPORAL_TLS_*`. Applying: `APPLY_EXECUTION_MODE=extension|server_browser, EXTENSION_TASK_CLAIM_TIMEOUT_S, EXTENSION_TASK_COMPLETE_TIMEOUT_S`. Decision engine: `DECISION_ENGINE_PROVIDER=auto|jev|laya|none, DECISION_ENGINE_MIN_CONFIDENCE, TYPESAFE_API_KEY, LAYA_URL`. Browser: `BROWSER_USE_*`, `SANDBOX_*`, `OPEN_SANDBOX_*` (`server_browser` mode only). RAG: `RAG_CHUNK_SIZE=500, RAG_CHUNK_OVERLAP=50, RAG_TOP_K=5`. Limits: `RATE_LIMIT_*`, `AGENT_*`. Storage: `DOCUMENT_STORAGE_DIR=/data/documents`. See [docs/CONFIGURATION.md](CONFIGURATION.md) for the full reference; all external API keys are optional.
+docs/ARCHITECTURE.md:565:- **`server_browser`** — the legacy mode: an isolated OpenSandbox browser is
+docs/ARCHITECTURE.md:587:**Server-browser flow** (legacy, `APPLY_EXECUTION_MODE=server_browser`):
+docs/ARCHITECTURE.md:639:- Services: `backend/app/services/{rag_service,workflow_service,scheduled_jobs,extension_service,decision_engine,sse_service,llm_gateway,llm_proxy_service,job_search_service,job_platforms_service,indian_platforms_service,naukri_service,gmail_service,resend_service,hunter_service,email_finder_service,proxycurl_service,exa_service,youtube_service,ats_service,pdf_service,persona_service,browser_control_service,form_filler_service,sandbox_service,storage_service,drive_service,integration_proxy_service,application_workflow,auto_apply_service,linkedin_outreach_service,token_budget_service,model_catalog_service,search_presets}.py`
+docs/BROWSER_SCALING_ARCHITECTURE.md:93:    return await run_task_on_server_browser(llm, task, user_id, max_steps, run_id)
+docs/BROWSER_SCALING_ARCHITECTURE.md:378:                '--no-sandbox',
+docs/BROWSER_SCALING_ARCHITECTURE.md:379:                '--disable-setuid-sandbox',
+docs/CONFIGURATION.md:107:The settings below describe `APPLY_EXECUTION_MODE=server_browser` (Chromium
+docs/CONFIGURATION.md:111:browser automation through the isolated `sandbox-server` (OpenSandbox)
+docs/CONFIGURATION.md:113:Kept here as reference if `server_browser` mode is ever run directly again:
+docs/CONFIGURATION.md:182:| `TEMPORAL_WORKFLOW_EXECUTION_TIMEOUT_S` | `600` | Hard execution cap for `server_browser` applications only; the extension flow waits on the user and is bounded by the `EXTENSION_TASK_*` timeouts instead. |
+docs/CONFIGURATION.md:188:| `STATUS_CHECK_INTERVAL_HOURS` | `6` | Interval of the `application-status-check` Schedule — only registered when `APPLY_EXECUTION_MODE=server_browser`. |
+docs/CONFIGURATION.md:189:| `MAINTENANCE_INTERVAL_SECONDS` | `60` | Interval of the `maintenance` Schedule (reconciles `agent_runs`, expires stale extension tasks, reaps browser sandboxes). |
+docs/CONFIGURATION.md:198:| `APPLY_EXECUTION_MODE` | `extension` | `extension` — fill and submit in the user's own browser via the CareerCraft extension. `server_browser` — legacy mode: drive an isolated OpenSandbox browser server-side. |
+docs/CONFIGURATION.md:209:| `OPEN_SANDBOX_URL` / `OPEN_SANDBOX_API_KEY` / `OPEN_SANDBOX_CHROME_IMAGE` | *(empty)* / *(empty)* / `careercraft-browser:1` | OpenSandbox lifecycle server — `server_browser` mode only. |
+docs/CONFIGURATION.md:210:| `SANDBOX_MAX_ACTIVE` | `4` | Max concurrent sandbox browsers. |
+docs/CONFIGURATION.md:211:| `SANDBOX_TTL_SECONDS` | `1800` | Sandbox lifetime before it's reaped. |
+docs/CONFIGURATION.md:212:| `SANDBOX_CPU` / `SANDBOX_MEMORY` | `1000m` / `1024Mi` | Per-sandbox resource limits. |
+docs/CONFIGURATION.md:213:| `SANDBOX_ALLOWED_DOMAINS` | *(empty)* | Comma-separated domain allowlist for sandbox network egress. Empty fails closed. |
+docs/DEPLOYMENT.md:33:│   └── sandbox-server     (OpenSandbox — isolated browser execution)
+docs/DEPLOYMENT.md:64:  - `postgres.env`, `redis.conf`, `sandbox.env`, `nango.env`, `temporal.env`
+docs/DEPLOYMENT.md:107:`postgres`/`redis`/`gateway`/`sandbox-server` is never needed for an
+docs/DEPLOYMENT.md:153:   `maintenance` and, in `server_browser` apply mode only,
+docs/agent-system-technical-spec.md:335:| `application-status-check` | `STATUS_CHECK_INTERVAL_HOURS` (6h), server_browser mode only | `StatusCheckWorkflow` |
+extension/test/e2e_live.py:199:                "--no-sandbox",
+sandbox/Dockerfile:3:    chromium chromium-sandbox socat ca-certificates fonts-liberation tini \
+sandbox/start.sh:3:# CDP is private to the sandbox network; never publish this port publicly.
+sandbox/start.sh:7:chromium --headless=new --no-sandbox --remote-debugging-port=9223 --remote-debugging-address=127.0.0.1 \
+supabase/migrations/20260909180254_durable_agent_workflows.sql:28:    sandbox_id text,

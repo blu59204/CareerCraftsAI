@@ -1,8 +1,9 @@
 """Unit tests for the Greenhouse ATS adapter (Task 3, slice 3c).
 
 Loads a hand-crafted fixture into a real headless Chromium page via
-page.set_content() — no network access, no sandbox container.
+page.set_content() — no network access, no remote browser container.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,9 +34,12 @@ async def test_detect_true_for_boards_url(page):
 
 
 async def test_detect_true_for_embed_url(page):
-    assert await greenhouse_adapter.detect(
-        "https://www.acme.com/careers?greenhouse.io/embed/job_app", page
-    ) is True
+    assert (
+        await greenhouse_adapter.detect(
+            "https://www.acme.com/careers?greenhouse.io/embed/job_app", page
+        )
+        is True
+    )
 
 
 async def test_detect_true_via_dom_fallback(page):
@@ -48,7 +52,9 @@ async def test_detect_false_for_unrelated_page():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         pg = await browser.new_page()
-        await pg.set_content("<html><body><form action='https://example.com/apply'></form></body></html>")
+        await pg.set_content(
+            "<html><body><form action='https://example.com/apply'></form></body></html>"
+        )
         assert await greenhouse_adapter.detect("https://example.com/careers", pg) is False
         await browser.close()
 

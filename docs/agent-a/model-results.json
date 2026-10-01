@@ -1,0 +1,21 @@
+{
+  "checks": [
+    "Real configured local model: LinkedIn before/after edits with supporting quotes",
+    "Real configured local model: resume generation retains approval state",
+    "Both runs persisted with positive token usage and terminal timestamps"
+  ],
+  "runs": [
+    {
+      "agent": "linkedin_pdf",
+      "status": "completed",
+      "tokens": 1804,
+      "duration_ms": 46575
+    },
+    {
+      "agent": "resume",
+      "status": "awaiting_approval",
+      "tokens": 2040,
+      "duration_ms": 16980
+    }
+  ]
+}

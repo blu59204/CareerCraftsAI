@@ -1,12 +1,12 @@
 """ATS adapter contract (Task 3, slice 3b).
 
 Each supported ATS (Greenhouse, Lever, Ashby, ...) implements this Protocol
-against its own DOM structure. application_workflow.py tries adapters in
-order via `detect()` and falls back to the generic DOM path only when none
-match. All methods operate on a Playwright `page` — no adapter method
-touches the database directly (persistence stays in application_workflow.py
-and the answer resolver).
+against its own DOM structure. detect_adapter() tries adapters in
+registration order, with the generic adapter last. All methods operate on
+a Playwright `page`; persistence belongs to the workflow activities and
+the answer resolver.
 """
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -26,11 +26,13 @@ class ATSAdapter(Protocol):
         an 'Apply' button if the ATS requires it)."""
         ...
 
-    async def extract_fields(self, page) -> list[ApplicationField]:
-        ...
+    async def extract_fields(self, page) -> list[ApplicationField]: ...
 
     async def fill_fields(
-        self, page, fields: list[ApplicationField], answers: list[ResolvedAnswer],
+        self,
+        page,
+        fields: list[ApplicationField],
+        answers: list[ResolvedAnswer],
     ) -> None:
         """Fill every field whose ResolvedAnswer has a non-None value. Never
         fill a field whose answer is unresolved — that is a checkpoint, not
@@ -38,15 +40,17 @@ class ATSAdapter(Protocol):
         ...
 
     async def upload_documents(
-        self, page, resume: bytes, cover_letter: bytes | None = None,
+        self,
+        page,
+        resume: bytes,
+        cover_letter: bytes | None = None,
     ) -> None:
         """Identify the resume upload field explicitly; upload the cover
         letter to its own field only when the form has one — never to the
         resume field."""
         ...
 
-    async def validate(self, page, fields: list[ApplicationField]) -> list[ValidationIssue]:
-        ...
+    async def validate(self, page, fields: list[ApplicationField]) -> list[ValidationIssue]: ...
 
     async def locate_submit(self, page):
         """Return the submit control locator, or None if not present/unique/enabled."""

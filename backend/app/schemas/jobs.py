@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from uuid import UUID
 
 
 class JobSearchQuerySchema(BaseModel):
@@ -13,7 +14,29 @@ class JobSearchQuerySchema(BaseModel):
 
     titles: list[str] = Field(default_factory=list)
     locations: list[str] = Field(default_factory=list)
-    platforms: list[str] = Field(default_factory=lambda: ["linkedin", "indeed", "naukri"])
+    platforms: list[str] = Field(default_factory=list, max_length=100)
+    resume_id: UUID | None = None
+    persona_id: UUID | None = None
+    basis: dict | None = None
+    sources: list[str] | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def resolve_explicit_basis(self):
+        if self.basis:
+            if set(self.basis) != {"kind", "id"} or self.basis["kind"] not in {"resume", "persona"}:
+                raise ValueError("Invalid search basis")
+            if self.resume_id or self.persona_id:
+                raise ValueError("Use a single basis selection")
+            if self.basis["kind"] == "resume":
+                self.resume_id = UUID(str(self.basis["id"]))
+            else:
+                self.persona_id = UUID(str(self.basis["id"]))
+        if self.resume_id and self.persona_id:
+            raise ValueError("Choose a resume or persona, not both")
+        if self.sources is not None:
+            self.platforms = self.sources
+        return self
+
     remote: str = "any"
     # Accepted for forward-compat; sources currently use fixed windows
     # (e.g. JobSpy hours_old=72). Wired per-source when providers support it.

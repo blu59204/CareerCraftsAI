@@ -1,0 +1,64 @@
+
+> jobagent-frontend@0.1.0 build
+> next build
+
+▲ Next.js 16.3.8 (Turbopack)
+- Environments: .env.local
+✓ Running next.config.js took 54ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 17.4s
+  Running TypeScript ...
+  Finished TypeScript in 8.7s ...
+  Collecting page data using 11 workers ...
+  Generating static pages using 11 workers (0/41) ...
+  Generating static pages using 11 workers (10/41) 
+  Generating static pages using 11 workers (20/41) 
+  Generating static pages using 11 workers (30/41) 
+✓ Generating static pages using 11 workers (41/41) in 3.9s
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /about
+├ ○ /agents
+├ ○ /applications
+├ ○ /company
+├ ○ /contact
+├ ○ /cookies
+├ ○ /cover-letter
+├ ○ /dashboard
+├ ○ /docs
+├ ○ /email
+├ ○ /icon.svg
+├ ○ /interview
+├ ○ /interview-prep
+├ ○ /jobs
+├ ○ /leads
+├ ○ /linkedin
+├ ○ /linkedin/outreach
+├ ○ /login
+├ ○ /onboarding
+├ ○ /opengraph-image
+├ ○ /pricing
+├ ○ /privacy
+├ ○ /refund
+├ ○ /register
+├ ○ /resume
+├ ○ /robots.txt
+├ ○ /salary
+├ ○ /session-task
+├ ○ /settings
+├ ○ /settings/account
+├ ○ /settings/integrations
+├ ○ /settings/models
+├ ○ /settings/profile
+├ ○ /sitemap.xml
+├ ○ /sso-callback
+├ ○ /status
+└ ○ /terms
+
+
+○  (Static)  prerendered as static content
+

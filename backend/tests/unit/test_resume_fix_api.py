@@ -19,6 +19,62 @@ AI engineer building LLM tools.
 **Languages:** Python, SQL
 """
 
+
+@pytest.mark.asyncio
+async def test_unexpected_optimize_failure_finishes_run_without_error_leak(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.api.v1.deps import get_current_user, get_db
+    from app.core.model_router import _add_tokens
+
+    rows = []
+    db = SimpleNamespace(add=rows.append, flush=AsyncMock(), commit=AsyncMock())
+    app, _ = _build_app()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4())
+    app.dependency_overrides[get_db] = lambda: db
+
+    def fail(state):
+        _add_tokens(80)
+        raise RuntimeError("Private model output")
+
+    monkeypatch.setattr("app.agents.resume_agent.resume_agent_node", fail)
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+        response = await client.post("/api/v1/resume/optimize", json={"jd_text": "Python Engineer"})
+    assert response.status_code == 500 and "Private model output" not in response.text
+    assert rows[0].status == "failed" and rows[0].tokens_used == 80
+    assert rows[0].completed_at is not None and rows[0].duration_ms >= 0
+    assert db.commit.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_edit_without_jd_recomputes_and_survives_reload(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    edited = SPARSE_RESUME + "\n## EDUCATION\nBSc Computer Science, Pune University, 2020\n"
+    response = await h.fix({"resume_markdown": edited, "remember": False})
+    assert response.status_code == 200
+    saved = response.json()
+    assert saved["ats_score"] != 70
+    assert saved["estimate"]["mode"] == "general"
+    assert saved["content_version"] == saved["estimate"]["content_version"]
+    reloaded = (await h.get()).json()
+    assert reloaded["resume_markdown"] == saved["resume_markdown"]
+    assert reloaded["estimate"] == saved["estimate"]
+
+
+@pytest.mark.asyncio
+async def test_outdated_full_text_edit_fails_before_storage(monkeypatch):
+    doc = _doc(uuid.uuid4())
+    h = _Harness(monkeypatch, doc)
+    response = await h.fix(
+        {"resume_markdown": SPARSE_RESUME + "New text", "expected_version": "0" * 64}
+    )
+    assert response.status_code == 409
+    assert doc.raw_text == SPARSE_RESUME
+    assert h.uploaded == [] and h.saved_facts == []
+
+
 FULL_EMPLOYER = "Agentic Universe (Qultured Media Pvt. Ltd.)"
 FIXED_HEADING = f"### Prompt Engineer Intern | {FULL_EMPLOYER} | Remote | Jun 2025 - Present"
 
@@ -64,24 +120,18 @@ def _doc(user_id, *, raw_text=SPARSE_RESUME, ats_data=None):
 
 
 def _build_app() -> tuple[FastAPI, bool]:
-    """The real app when it imports (it needs temporalio); otherwise a minimal
-    app hosting only the resume router, configured the way app.main does."""
-    try:
-        from app.main import app
+    """Exercise the resume router without importing unrelated application agents."""
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
 
-        return app, True
-    except ModuleNotFoundError:
-        from slowapi import _rate_limit_exceeded_handler
-        from slowapi.errors import RateLimitExceeded
+    from app.api.v1.resume import router
+    from app.core.rate_limit import limiter
 
-        from app.api.v1.resume import router
-        from app.core.rate_limit import limiter
-
-        app = FastAPI()
-        app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-        app.include_router(router, prefix="/api/v1")
-        return app, False
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.include_router(router, prefix="/api/v1")
+    return app, False
 
 
 class _Harness:
@@ -264,10 +314,15 @@ async def test_get_returns_review_with_issues_for_sparse_doc(monkeypatch):
     assert body["template"] == "modern"
     assert body["resume_markdown"] == SPARSE_RESUME
     assert body["summary"] == "Tailored."
-    assert body["ats_score"] == 70
-    assert body["keywords_matched"] == ["Python"]
+    assert body["ats_score"] == body["estimate"]["composite_score"]
+    assert body["keywords_matched"] == []
     codes = {i["code"] for i in body["review"]["issues"]}
-    assert codes == {"missing_phone", "truncated_employer", "missing_dates", "missing_education"}
+    assert codes == {
+        "missing_phone",
+        "truncated_employer",
+        "missing_dates",
+        "missing_education",
+    }
     assert body["review"]["contact"]["email"] == "jane@example.com"
     assert body["review"]["has_education_section"] is False
     [entry] = body["review"]["experience"]
@@ -366,7 +421,7 @@ async def test_fix_rescores_when_jd_is_recorded(monkeypatch):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["ats_score"] == 91
-    assert resp.json()["keywords_missing"] == ["Azure"]
+    assert resp.json()["keywords_missing"] == ["azure"]
     assert h.ats_calls and h.ats_calls[0][1] == "Python, Azure"
 
 
@@ -452,7 +507,8 @@ async def test_resolved_warnings_are_filtered_and_skill_gaps_kept(monkeypatch):
 async def test_get_filters_warnings_without_rewriting_them(monkeypatch):
     warnings = [DATES_WARNING, EDUCATION_WARNING, AZURE_WARNING]
     fixed = SPARSE_RESUME.replace(
-        "### Prompt Engineer Intern | Agentic Universe (Qultured Media Pvt.", FIXED_HEADING
+        "### Prompt Engineer Intern | Agentic Universe (Qultured Media Pvt.",
+        FIXED_HEADING,
     )
     doc = _doc(uuid.uuid4(), raw_text=fixed, ats_data={"warnings": list(warnings)})
     h = _Harness(monkeypatch, doc)

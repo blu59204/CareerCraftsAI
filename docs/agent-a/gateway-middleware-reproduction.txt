@@ -1,0 +1,336 @@
+FFFFFFFFFF.                                                              [100%]
+================================== FAILURES ===================================
+____________ test_native_adapter_returns_text_and_usage[anthropic] ____________
+
+transport = <httpx.ASGITransport object at 0x0000021BB07FEF90>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BA9C535C0>
+provider = 'anthropic'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider", ["anthropic", "google", "deepseek", "ollama"])
+    async def test_native_adapter_returns_text_and_usage(transport, monkeypatch, provider):
+        session = await gateway._get_session("session")
+        session["provider"] = provider
+        invoke = AsyncMock(
+            return_value=AIMessage(
+                content=[{"type": "text", "text": "Grounded edit"}],
+                usage_metadata={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+            )
+        )
+    
+        def adapter(config, key):
+            assert config.provider == provider
+            assert config.model_name == "configured-model"
+            assert key == "private-key"
+            return SimpleNamespace(ainvoke=invoke)
+    
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/llm-gateway/v1/chat/completions",
+                headers={"Authorization": "Bearer session"},
+                json={"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]},
+            )
+>       assert response.status_code == 200
+E       assert 401 == 200
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:58: AssertionError
+------------------------------ Captured log call ------------------------------
+ERROR    app.core.clerk_auth:clerk_auth.py:69 Clerk auth is not configured � set CLERK_JWKS_URL or CLERK_ISSUER
+_____________ test_native_adapter_returns_text_and_usage[google] ______________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0967C50>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB087F2F0>
+provider = 'google'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider", ["anthropic", "google", "deepseek", "ollama"])
+    async def test_native_adapter_returns_text_and_usage(transport, monkeypatch, provider):
+        session = await gateway._get_session("session")
+        session["provider"] = provider
+        invoke = AsyncMock(
+            return_value=AIMessage(
+                content=[{"type": "text", "text": "Grounded edit"}],
+                usage_metadata={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+            )
+        )
+    
+        def adapter(config, key):
+            assert config.provider == provider
+            assert config.model_name == "configured-model"
+            assert key == "private-key"
+            return SimpleNamespace(ainvoke=invoke)
+    
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/llm-gateway/v1/chat/completions",
+                headers={"Authorization": "Bearer session"},
+                json={"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]},
+            )
+>       assert response.status_code == 200
+E       assert 401 == 200
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:58: AssertionError
+------------------------------ Captured log call ------------------------------
+ERROR    app.core.clerk_auth:clerk_auth.py:69 Clerk auth is not configured � set CLERK_JWKS_URL or CLERK_ISSUER
+____________ test_native_adapter_returns_text_and_usage[deepseek] _____________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0AD5A90>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB09BA030>
+provider = 'deepseek'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider", ["anthropic", "google", "deepseek", "ollama"])
+    async def test_native_adapter_returns_text_and_usage(transport, monkeypatch, provider):
+        session = await gateway._get_session("session")
+        session["provider"] = provider
+        invoke = AsyncMock(
+            return_value=AIMessage(
+                content=[{"type": "text", "text": "Grounded edit"}],
+                usage_metadata={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+            )
+        )
+    
+        def adapter(config, key):
+            assert config.provider == provider
+            assert config.model_name == "configured-model"
+            assert key == "private-key"
+            return SimpleNamespace(ainvoke=invoke)
+    
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/llm-gateway/v1/chat/completions",
+                headers={"Authorization": "Bearer session"},
+                json={"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]},
+            )
+>       assert response.status_code == 200
+E       assert 401 == 200
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:58: AssertionError
+------------------------------ Captured log call ------------------------------
+ERROR    app.core.clerk_auth:clerk_auth.py:69 Clerk auth is not configured � set CLERK_JWKS_URL or CLERK_ISSUER
+_____________ test_native_adapter_returns_text_and_usage[ollama] ______________
+
+transport = <httpx.ASGITransport object at 0x0000021BB08A76F0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB0B0CA50>
+provider = 'ollama'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("provider", ["anthropic", "google", "deepseek", "ollama"])
+    async def test_native_adapter_returns_text_and_usage(transport, monkeypatch, provider):
+        session = await gateway._get_session("session")
+        session["provider"] = provider
+        invoke = AsyncMock(
+            return_value=AIMessage(
+                content=[{"type": "text", "text": "Grounded edit"}],
+                usage_metadata={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
+            )
+        )
+    
+        def adapter(config, key):
+            assert config.provider == provider
+            assert config.model_name == "configured-model"
+            assert key == "private-key"
+            return SimpleNamespace(ainvoke=invoke)
+    
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/llm-gateway/v1/chat/completions",
+                headers={"Authorization": "Bearer session"},
+                json={"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]},
+            )
+>       assert response.status_code == 200
+E       assert 401 == 200
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:58: AssertionError
+------------------------------ Captured log call ------------------------------
+ERROR    app.core.clerk_auth:clerk_auth.py:69 Clerk auth is not configured � set CLERK_JWKS_URL or CLERK_ISSUER
+__________ test_invalid_request_never_reaches_provider[change0-403] ___________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0B1A2C0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB0AD37A0>
+change = {'model': 'other-model'}, status = 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change,status",
+        [
+            ({"model": "other-model"}, 403),
+            ({"stream": True}, 422),
+            ({"messages": []}, 422),
+            ({"tools": [{"type": "function"}]}, 422),
+            ({"messages": [{"role": "user", "content": "x" * 260000}]}, 413),
+        ],
+    )
+    async def test_invalid_request_never_reaches_provider(transport, monkeypatch, change, status):
+        adapter = AsyncMock()
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        payload = {"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]}
+        payload.update(change)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/llm-gateway/v1/chat/completions", json=payload)
+>       assert response.status_code == status
+E       assert 401 == 403
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:83: AssertionError
+__________ test_invalid_request_never_reaches_provider[change1-422] ___________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0AE9250>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB09C6EB0>
+change = {'stream': True}, status = 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change,status",
+        [
+            ({"model": "other-model"}, 403),
+            ({"stream": True}, 422),
+            ({"messages": []}, 422),
+            ({"tools": [{"type": "function"}]}, 422),
+            ({"messages": [{"role": "user", "content": "x" * 260000}]}, 413),
+        ],
+    )
+    async def test_invalid_request_never_reaches_provider(transport, monkeypatch, change, status):
+        adapter = AsyncMock()
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        payload = {"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]}
+        payload.update(change)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/llm-gateway/v1/chat/completions", json=payload)
+>       assert response.status_code == status
+E       assert 401 == 422
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:83: AssertionError
+__________ test_invalid_request_never_reaches_provider[change2-422] ___________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0B485A0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB099FE90>
+change = {'messages': []}, status = 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change,status",
+        [
+            ({"model": "other-model"}, 403),
+            ({"stream": True}, 422),
+            ({"messages": []}, 422),
+            ({"tools": [{"type": "function"}]}, 422),
+            ({"messages": [{"role": "user", "content": "x" * 260000}]}, 413),
+        ],
+    )
+    async def test_invalid_request_never_reaches_provider(transport, monkeypatch, change, status):
+        adapter = AsyncMock()
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        payload = {"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]}
+        payload.update(change)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/llm-gateway/v1/chat/completions", json=payload)
+>       assert response.status_code == status
+E       assert 401 == 422
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:83: AssertionError
+__________ test_invalid_request_never_reaches_provider[change3-422] ___________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0B4A7A0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB0B17540>
+change = {'tools': [{'type': 'function'}]}, status = 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change,status",
+        [
+            ({"model": "other-model"}, 403),
+            ({"stream": True}, 422),
+            ({"messages": []}, 422),
+            ({"tools": [{"type": "function"}]}, 422),
+            ({"messages": [{"role": "user", "content": "x" * 260000}]}, 413),
+        ],
+    )
+    async def test_invalid_request_never_reaches_provider(transport, monkeypatch, change, status):
+        adapter = AsyncMock()
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        payload = {"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]}
+        payload.update(change)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/llm-gateway/v1/chat/completions", json=payload)
+>       assert response.status_code == status
+E       assert 401 == 422
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:83: AssertionError
+__________ test_invalid_request_never_reaches_provider[change4-413] ___________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0B0D350>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB0B1D4F0>
+change = {'messages': [{'role': 'user', 'content': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}]}
+status = 413
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change,status",
+        [
+            ({"model": "other-model"}, 403),
+            ({"stream": True}, 422),
+            ({"messages": []}, 422),
+            ({"tools": [{"type": "function"}]}, 422),
+            ({"messages": [{"role": "user", "content": "x" * 260000}]}, 413),
+        ],
+    )
+    async def test_invalid_request_never_reaches_provider(transport, monkeypatch, change, status):
+        adapter = AsyncMock()
+        monkeypatch.setattr(model_router, "_make_llm", adapter)
+        payload = {"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]}
+        payload.update(change)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post("/llm-gateway/v1/chat/completions", json=payload)
+>       assert response.status_code == status
+E       assert 401 == 413
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:83: AssertionError
+________________________ test_provider_failure_is_safe ________________________
+
+transport = <httpx.ASGITransport object at 0x0000021BB0B59550>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000021BB0B4C440>
+
+    @pytest.mark.asyncio
+    async def test_provider_failure_is_safe(transport, monkeypatch):
+        monkeypatch.setattr(
+            model_router,
+            "_make_llm",
+            lambda *args: SimpleNamespace(
+                ainvoke=AsyncMock(side_effect=RuntimeError("private-key provider body"))
+            ),
+        )
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/llm-gateway/v1/chat/completions",
+                json={"model": "configured-model", "messages": [{"role": "user", "content": "Source"}]},
+            )
+>       assert response.status_code == 502
+E       assert 401 == 502
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+tests\unit\test_gateway_transport.py:101: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/unit/test_gateway_transport.py::test_native_adapter_returns_text_and_usage[anthropic]
+FAILED tests/unit/test_gateway_transport.py::test_native_adapter_returns_text_and_usage[google]
+FAILED tests/unit/test_gateway_transport.py::test_native_adapter_returns_text_and_usage[deepseek]
+FAILED tests/unit/test_gateway_transport.py::test_native_adapter_returns_text_and_usage[ollama]
+FAILED tests/unit/test_gateway_transport.py::test_invalid_request_never_reaches_provider[change0-403]
+FAILED tests/unit/test_gateway_transport.py::test_invalid_request_never_reaches_provider[change1-422]
+FAILED tests/unit/test_gateway_transport.py::test_invalid_request_never_reaches_provider[change2-422]
+FAILED tests/unit/test_gateway_transport.py::test_invalid_request_never_reaches_provider[change3-422]
+FAILED tests/unit/test_gateway_transport.py::test_invalid_request_never_reaches_provider[change4-413]
+FAILED tests/unit/test_gateway_transport.py::test_provider_failure_is_safe - ...
+10 failed, 1 passed in 7.66s

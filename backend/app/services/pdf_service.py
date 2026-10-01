@@ -675,7 +675,15 @@ def generate_resume_pdf(
     resume_text: str,
     full_name: str = "",
     template: Template = "modern",
+    *,
+    theme_override: Theme | None = None,
+    strict: bool = False,
+    page_target: int | None = None,
 ) -> bytes:
+    if page_target is not None:
+        from app.services.resume_export import fit_resume
+
+        return fit_resume(resume_text, full_name, template, page_target).pdf
     full_name = full_name or ""
     if not resume_text or not resume_text.strip():
         raise ValueError("resume_text cannot be empty")
@@ -685,11 +693,19 @@ def generate_resume_pdf(
     if not cleaned.strip():
         raise ValueError("resume_text cannot be empty")
 
-    theme, glyphs = _document_fonts(THEMES[template], f"{full_name}\n{cleaned}")
+    theme, glyphs = _document_fonts(theme_override or THEMES[template], f"{full_name}\n{cleaned}")
     if dropped := _dropped(f"{full_name}\n{cleaned}", glyphs):
+        if strict:
+            raise ValueError(
+                "Some characters cannot be represented safely. Use a supported fon"
+                "t or transliteration."
+            )
         # Count only: the text itself is candidate PII.
         logger.warning(
-            "Resume PDF (%s): %d character(s) have no glyph in any available font and were dropped",
+            (
+                "Resume PDF (%s): %d character(s) have no glyph in any available f"
+                "ont and were dropped"
+            ),
             template,
             dropped,
         )
@@ -779,7 +795,10 @@ def generate_resume_pdf(
             continue
         is_entry = level >= 3 or (line.startswith("**") and "|" in line and _DATE.search(plain))
         if is_entry:
-            story.extend(_entry_rows(line, st, glyphs))
+            if strict:
+                story.append(_Para(mk(line), st.body))
+            else:
+                story.extend(_entry_rows(line, st, glyphs))
             continue
         story.append(_Para(mk(line), st.body))
 

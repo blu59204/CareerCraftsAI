@@ -1,18 +1,16 @@
 """
-ATS Resume Scoring Engine.
+Estimated ATS compatibility and legacy diagnostic adapters.
 
-Implements keyword coverage (50%), readability (30%), and format compliance (20%)
-weighted sub-scores to produce a composite ATS compatibility score (0-100).
-
-Based on parsing rules for Greenhouse, Workday, Taleo, iCIMS (2026).
+The estimator measures supplied evidence, not any vendor's ranking formula.
 
 No external NLP dependencies — uses stdlib re, collections, math only.
 """
 
 import collections
-import math
 import re
 from dataclasses import dataclass, field
+
+from app.services.ats_estimator import estimate_resume
 
 
 @dataclass
@@ -29,6 +27,7 @@ class AtsScoreResult:
     flesch_kincaid: float
     avg_sentence_length: float
     format_checks: dict[str, bool]
+    estimate: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +280,10 @@ def _check_format_compliance(text: str) -> dict[str, bool]:
         or re.search(r"[\+]?[(]?[0-9]{3}[)]?[-\s\.]?[0-9]{3}[-\s\.]?[0-9]{4,6}", text)
     )
 
-    has_tables = bool(re.search(r"\||\+---", text) or re.search(r"<table", text, re.IGNORECASE))
+    has_tables = bool(
+        re.search(r"^\s*\|?\s*:?-{3,}:?\s*\|", text, re.M)
+        or re.search(r"<table", text, re.IGNORECASE)
+    )
 
     has_standard_headings = False
     for name, pattern in SECTION_PATTERNS.items():
@@ -323,7 +325,8 @@ def generate_suggestions(score_result: AtsScoreResult) -> list[str]:
 
     if score_result.keyword_score < 50:
         suggestions.append(
-            "Rewrite your skills section to mirror the exact terminology used in the job description"
+            "Rewrite your skills section to mirror the exact terminology used "
+            "in the job description"
         )
 
     # Readability suggestions
@@ -338,7 +341,8 @@ def generate_suggestions(score_result: AtsScoreResult) -> list[str]:
             )
         if score_result.flesch_kincaid > 14:
             suggestions.append(
-                "Simplify language — use common industry terms instead of overly academic vocabulary"
+                "Simplify language — use common industry terms instead of overly"
+                " academic vocabulary"
             )
 
     # Format compliance suggestions
@@ -347,7 +351,7 @@ def generate_suggestions(score_result: AtsScoreResult) -> list[str]:
 
     if not score_result.format_checks.get("no_tables", True):
         suggestions.append(
-            "Remove tables and use plain text formatting — most ATS systems cannot parse tables"
+            "Remove tables and use plain text formatting — most ATS systems " "cannot parse tables"
         )
 
     if not score_result.format_checks.get("has_standard_headings", True):
@@ -408,9 +412,11 @@ def score_resume_baseline(resume_text: str, target_jd_text: str | None) -> tuple
     against: the score covers readability and format only, and
     ``keyword_score`` is None. Returns (composite score, ats_data).
     """
+    estimate = estimate_resume(resume_text, target_jd_text or "")
     if target_jd_text and target_jd_text.strip():
         result = compute_ats_score(resume_text, target_jd_text)
         return result.composite_score, {
+            **estimate,
             "keyword_basis": "saved_jobs",
             "keyword_score": result.keyword_score,
             "readability_score": result.readability_score,
@@ -428,7 +434,7 @@ def score_resume_baseline(resume_text: str, target_jd_text: str | None) -> tuple
     format_checks = _check_format_compliance(resume_text)
     format_score = _format_score_from_checks(format_checks)
     # Same 0.3 : 0.2 weighting as the full composite, rescaled to 100.
-    composite = max(0, min(100, round(readability * 0.6 + format_score * 0.4)))
+    composite = estimate["composite_score"]
     partial = AtsScoreResult(
         composite_score=composite,
         keyword_score=100,  # not measured — keeps keyword advice out of the suggestions
@@ -442,6 +448,7 @@ def score_resume_baseline(resume_text: str, target_jd_text: str | None) -> tuple
         format_checks=format_checks,
     )
     return composite, {
+        **estimate,
         "keyword_basis": None,
         "keyword_score": None,
         "readability_score": readability,
@@ -506,6 +513,11 @@ def compute_ats_score(resume_text: str, jd_text: str) -> AtsScoreResult:
     )
 
     # Generate suggestions
-    result.suggestions = generate_suggestions(result)
+    result.estimate = estimate_resume(resume_text, jd_text)
+    result.composite_score = result.estimate["composite_score"]
+    result.matched_keywords = result.estimate["matched_keywords"]
+    result.missing_keywords = result.estimate["missing_keywords"]
+    result.keyword_score = result.estimate["sub_scores"]["match"]["score"] or 0
+    result.suggestions = result.estimate["suggestions"]
 
     return result

@@ -1,0 +1,26 @@
+(node:34144) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/CareerCraft-agent-a/frontend/src/lib/profile-contracts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\CareerCraft-agent-a\frontend\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ malformed model or integration responses fail validation (2.7664ms)
+(node:36508) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/CareerCraft-agent-a/frontend/src/lib/resume-insights.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\CareerCraft-agent-a\frontend\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ job-specific ATS analysis replaces generic upload metrics (3.7934ms)
+✔ without a job analysis, only the real baseline score is shown (0.2785ms)
+✔ missing resume data does not invent scores, keywords, or suggestions (0.1954ms)
+(node:33152) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///D:/CareerCraft-agent-a/frontend/src/lib/resume-state.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\D:\CareerCraft-agent-a\frontend\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ upload score cannot be used for the saved tailored document (1.1122ms)
+✔ late analysis for old content or target is discarded (0.2687ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1745.2747

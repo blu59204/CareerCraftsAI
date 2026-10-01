@@ -20,12 +20,17 @@ def _doc(user_id, ats_data):
     )
 
 
-async def _download(monkeypatch, doc, *, render=None):
+async def _download(monkeypatch, doc, *, render=None, pinned=False, params=None):
     from app.api.v1.deps import get_current_user, get_db
     from app.main import app
     from app.models.db import User
 
     calls = {"render": [], "stored": 0}
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        "app.api.v1.resume._pinned_by_pending_approval", AsyncMock(return_value=pinned)
+    )
 
     def fake_render(text, full_name="", template="modern"):
         calls["render"].append(template)
@@ -59,11 +64,38 @@ async def _download(monkeypatch, doc, *, render=None):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.get(
-                f"/api/v1/resume/download/{doc.id}", headers={"Authorization": "Bearer t"}
+                f"/api/v1/resume/download/{doc.id}",
+                headers={"Authorization": "Bearer t"},
+                params=params,
             )
     finally:
         app.dependency_overrides.clear()
     return resp, calls
+
+
+@pytest.mark.asyncio
+async def test_pinned_pdf_serves_exact_stored_bytes(monkeypatch):
+    doc = _doc(uuid.uuid4(), {"template": "classic", "page_target": 1})
+    response, calls = await _download(monkeypatch, doc, pinned=True)
+    assert response.content == b"%PDF-stored"
+    assert calls["render"] == [] and calls["stored"] == 1
+
+
+@pytest.mark.asyncio
+async def test_page_query_coerces_strings_and_rejects_out_of_range(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "app.services.resume_export.fit_resume",
+        lambda *args: SimpleNamespace(pdf=b"%PDF-fitted", page_count=1),
+    )
+    doc = _doc(uuid.uuid4(), {"template": "classic"})
+    for pages in ("1", "2"):
+        response, _ = await _download(monkeypatch, doc, params={"pages": pages})
+        assert response.status_code == 200 and response.content == b"%PDF-fitted"
+    for pages in ("0", "3", "one"):
+        response, _ = await _download(monkeypatch, doc, params={"pages": pages})
+        assert response.status_code == 422
 
 
 @pytest.mark.asyncio

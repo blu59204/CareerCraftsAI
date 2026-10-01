@@ -1,17 +1,17 @@
 import asyncio
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.resume_agent import resume_agent_node
 from app.agents.state import AgentState
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class OptimizeRequest(BaseModel):
     jd_text: str = Field(max_length=20000)
     template: Literal["modern", "classic", "technical"] = Field(default="modern")
+    page_target: Literal[1, 2] = 2
 
 
 class OptimizeResponse(BaseModel):
@@ -96,6 +97,8 @@ class ResumeFixRequest(BaseModel):
         default_factory=list, max_length=10, description="At most 10 education entries."
     )
     remember: bool = True
+    expected_version: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    page_target: Literal[1, 2] | None = None
 
 
 class TailoredResumeResponse(BaseModel):
@@ -115,6 +118,11 @@ class TailoredResumeResponse(BaseModel):
     review: dict
     contact_suggestions: dict[str, str] = Field(default_factory=dict)
     display_name: str = ""
+    content_version: str = ""
+    revision: int = 1
+    estimate: dict | None = None
+    page_target: Literal[1, 2] = 2
+    page_count: int | None = None
 
 
 class AtsScoreRequest(BaseModel):
@@ -133,6 +141,8 @@ class AtsScoreResponse(BaseModel):
     flesch_kincaid: float
     avg_sentence_length: float
     format_checks: dict[str, bool]
+    estimate: dict = Field(default_factory=dict)
+    content_version: str = ""
 
 
 @router.post("/optimize", response_model=OptimizeResponse)
@@ -143,6 +153,8 @@ async def optimize_resume(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.agents.resume_agent import resume_agent_node
+
     if not payload.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty")
 
@@ -152,24 +164,44 @@ async def optimize_resume(
         user_id=current_user.id,
         agent_type="resume",
         status="running",
-        input={"jd_text": payload.jd_text[:500]},
+        input={
+            "jd_text_length": len(payload.jd_text),
+            "template": payload.template,
+            "page_target": payload.page_target,
+        },
     )
     db.add(agent_run)
     await db.flush()
+    await db.commit()
 
     state = AgentState(
         user_id=str(current_user.id),
         run_id=run_id,
         task_type="resume_optimize",
         messages=[HumanMessage(content=payload.jd_text)],
-        context={"jd_text": payload.jd_text, "template": payload.template},
+        context={
+            "jd_text": payload.jd_text,
+            "template": payload.template,
+            "page_target": payload.page_target,
+        },
         status="running",
         pending_action=None,
         result=None,
         error=None,
     )
 
-    result_state = await asyncio.get_running_loop().run_in_executor(None, resume_agent_node, state)
+    from app.core.model_router import begin_token_tracking, get_and_reset_tokens
+
+    begin_token_tracking()
+    start = time.monotonic()
+    try:
+        result_state = await asyncio.to_thread(resume_agent_node, state)
+    except Exception as exc:
+        logger.warning("resume_optimize_failed run_id=%s error_type=%s", run_id, type(exc).__name__)
+        result_state = {"status": "failed"}
+    finally:
+        agent_run.tokens_used = get_and_reset_tokens()
+        agent_run.duration_ms = int((time.monotonic() - start) * 1000)
 
     agent_run.status = result_state["status"]
     agent_run.completed_at = datetime.now(UTC)
@@ -183,10 +215,11 @@ async def optimize_resume(
         }
 
     if result_state["status"] in ("failed", "error"):
-        logger.warning(
-            "Resume optimize agent failed for run %s: %s", run_id, result_state.get("error")
-        )
+        await db.commit()
+        logger.warning("Resume optimize agent failed run_id=%s", run_id)
         raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
+
+    await db.commit()
 
     suggestions = await _contact_suggestions(db, current_user)
     return OptimizeResponse(
@@ -209,7 +242,11 @@ async def optimize_resume(
 
 
 async def _contact_suggestions(db: AsyncSession, user: User) -> dict[str, str]:
-    from app.services.resume_facts import contact_suggestions, load_facts_row, load_profile
+    from app.services.resume_facts import (
+        contact_suggestions,
+        load_facts_row,
+        load_profile,
+    )
 
     try:
         profile = await load_profile(db, user.id)
@@ -251,15 +288,27 @@ def _tailored_response(
     from app.services.resume_structure import filter_resolved_warnings, review_resume
 
     data = doc.ats_data or {}
+    from app.services.ats_estimator import ESTIMATOR_VERSION, estimate_resume
+    from app.services.resume_version import content_version
+
+    version = content_version(doc.raw_text or "")
+    estimate = data.get("estimate") or {}
+    if (
+        estimate.get("content_version") != version
+        or estimate.get("estimator_version") != ESTIMATOR_VERSION
+        or estimate.get("target_hash") != content_version((data.get("jd_text") or "").strip())
+    ):
+        estimate = estimate_resume(doc.raw_text or "", data.get("jd_text") or "")
+
     review = review_resume(doc.raw_text or "")
     return TailoredResumeResponse(
         document_id=str(doc.id),
         template=data.get("template") or "modern",
         resume_markdown=doc.raw_text or "",
         summary=data.get("summary"),
-        ats_score=doc.ats_score,
-        keywords_matched=data.get("keywords_matched") or [],
-        keywords_missing=data.get("keywords_missing") or [],
+        ats_score=estimate["composite_score"],
+        keywords_matched=estimate["matched_keywords"],
+        keywords_missing=estimate["missing_keywords"],
         changes_made=data.get("changes_made") or [],
         # ats_data keeps the model's original warnings; hide the ones the
         # current text has resolved (they come back if the gap reappears).
@@ -267,6 +316,11 @@ def _tailored_response(
         review=review,
         contact_suggestions=suggestions,
         display_name=display_name,
+        content_version=content_version(doc.raw_text or ""),
+        revision=data.get("revision", 1),
+        estimate=estimate,
+        page_target=data.get("page_target", 2),
+        page_count=data.get("page_count"),
     )
 
 
@@ -397,12 +451,23 @@ async def fix_tailored_resume(
     from app.services.ats_service import compute_ats_score
     from app.services.pdf_service import generate_resume_pdf
     from app.services.resume_facts import save_facts
-    from app.services.resume_structure import apply_fixes, clean_placeholders, review_resume
+    from app.services.resume_structure import (
+        apply_fixes,
+        clean_placeholders,
+        review_resume,
+    )
     from app.services.storage_service import delete_file, upload_file
 
     # Locked until the commit below: concurrent fixes of one document are
     # serialised, so the second one edits the text the first one saved.
     doc = await _get_tailored_doc(db, document_id, current_user, for_update=True)
+    from app.services.resume_version import content_version
+
+    if payload.expected_version and payload.expected_version != content_version(doc.raw_text or ""):
+        raise HTTPException(
+            status_code=409,
+            detail="This resume changed in another tab. Reopen it before saving; keep your draft.",
+        )
     data = dict(doc.ats_data or {})
     template = payload.template or data.get("template") or "modern"
     base = clean_placeholders(
@@ -433,24 +498,56 @@ async def fix_tailored_resume(
         raise HTTPException(status_code=422, detail="Resume text cannot be empty")
 
     try:
-        pdf_bytes = await asyncio.to_thread(
-            generate_resume_pdf,
-            markdown,
-            full_name=current_user.full_name or "",
-            template=template,
-        )
+        if payload.page_target is not None or data.get("page_target"):
+            from app.services.resume_export import PageOverflow, fit_resume
+
+            try:
+                layout = await asyncio.to_thread(
+                    fit_resume,
+                    markdown,
+                    current_user.full_name or "",
+                    template,
+                    payload.page_target or data.get("page_target", 2),
+                )
+            except PageOverflow as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            pdf_bytes = layout.pdf
+            data["page_target"] = layout.page_target
+            data["page_count"] = layout.page_count
+        else:
+            pdf_bytes = await asyncio.to_thread(
+                generate_resume_pdf,
+                markdown,
+                full_name=current_user.full_name or "",
+                template=template,
+            )
+    except HTTPException:
+        raise
     except Exception:  # noqa: BLE001 — ValueError, LayoutError, any ReportLab failure
         # The real message can carry ReportLab markup and internals: log it only.
         logger.exception("Resume PDF render failed for document %s", doc.id)
         raise HTTPException(status_code=422, detail=_RENDER_ERROR) from None
 
     # Score before uploading so a scoring failure cannot orphan a new file.
-    ats_score = doc.ats_score
     jd_text = data.get("jd_text") or ""
+    from app.services.ats_estimator import estimate_resume
+
+    baseline = estimate_resume(markdown, jd_text)
+    ats_score = baseline["composite_score"]
     if jd_text:
         ats = await asyncio.to_thread(compute_ats_score, markdown, jd_text)
         ats_score = ats.composite_score
         data["keywords_missing"] = list(ats.missing_keywords[:10])
+    else:
+        data["keywords_missing"] = []
+    data["keywords_matched"] = baseline.get("matched_keywords", [])
+    data["revision"] = data.get("revision", 1) + int(markdown != doc.raw_text)
+    data["estimate"] = {
+        **baseline,
+        "composite_score": ats_score,
+        "content_version": content_version(markdown),
+        "mode": "target_job" if jd_text else "general",
+    }
     review = review_resume(markdown)
     # data["warnings"] stays the model's original list; it is filtered when read.
     data["template"] = template
@@ -509,7 +606,9 @@ async def fix_tailored_resume(
             logger.warning("Could not delete superseded resume PDF %s", old_path)
 
     return _tailored_response(
-        target, await _contact_suggestions(db, current_user), current_user.full_name or ""
+        target,
+        await _contact_suggestions(db, current_user),
+        current_user.full_name or "",
     )
 
 
@@ -551,6 +650,8 @@ def _experience_facts(fixes: list[dict], before: dict, after: dict) -> list[dict
 @router.get("/download/{document_id}")
 async def download_pdf(
     document_id: str,
+    format: Literal["pdf", "docx"] = "pdf",
+    pages: int | None = Query(default=None, ge=1, le=2),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -569,6 +670,65 @@ async def download_pdf(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    # Approval identity is the stored bytes, even when template code changes.
+    pinned = doc.doc_type == "resume_tailored" and await _pinned_by_pending_approval(db, doc)
+    if pinned and format == "pdf":
+        try:
+            stored = await asyncio.to_thread(download_file, doc.storage_path, str(current_user.id))
+        except (PermissionError, RuntimeError):
+            raise HTTPException(status_code=502, detail="Storage download failed") from None
+        return Response(
+            content=stored,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=resume_{document_id[:8]}.pdf",
+            },
+        )
+    if format == "docx" or pages is not None or (doc.ats_data or {}).get("page_target"):
+        from app.services.resume_export import (
+            PageOverflow,
+            fit_resume,
+            generate_resume_docx,
+        )
+
+        if not doc.raw_text or doc.doc_type not in ("resume", "resume_tailored"):
+            raise HTTPException(
+                status_code=422, detail="No editable resume text available for export"
+            )
+        try:
+            layout = await asyncio.to_thread(
+                fit_resume,
+                doc.raw_text,
+                current_user.full_name or "",
+                (doc.ats_data or {}).get("template", "modern"),
+                pages or (doc.ats_data or {}).get("page_target", 2),
+            )
+            exported = (
+                layout.pdf
+                if format == "pdf"
+                else await asyncio.to_thread(
+                    generate_resume_docx,
+                    layout,
+                    current_user.full_name or "",
+                )
+            )
+        except PageOverflow as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        except ValueError:
+            raise HTTPException(status_code=422, detail=_RENDER_ERROR) from None
+        media = (
+            "application/pdf"
+            if format == "pdf"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        return Response(
+            content=exported,
+            media_type=media,
+            headers={
+                "Content-Disposition": f"attachment; filename=resume_{document_id[:8]}.{format}",
+                "X-Resume-Page-Count": str(layout.page_count),
+            },
+        )
     pdf_bytes = None
     # Re-render tailored resumes so they pick up template improvements, but only
     # when the chosen template was recorded. Older documents did not store it;
@@ -592,7 +752,8 @@ async def download_pdf(
             )
         except Exception:
             logger.exception(
-                "Resume re-render failed for document %s; serving stored PDF", document_id
+                "Resume re-render failed for document %s; serving stored PDF",
+                document_id,
             )
     if pdf_bytes is None:
         try:
@@ -626,7 +787,7 @@ async def compute_resume_ats_score(
             select(UserDocument).where(
                 UserDocument.id == payload.document_id,
                 UserDocument.user_id == current_user.id,
-                UserDocument.doc_type == "resume",
+                UserDocument.doc_type.in_(("resume", "resume_tailored")),
             )
         )
         doc = result.scalar_one_or_none()
@@ -649,9 +810,27 @@ async def compute_resume_ats_score(
     if not resume_text:
         raise HTTPException(status_code=404, detail="No resume found. Upload a resume first.")
 
-    loop = asyncio.get_running_loop()
-    score_result = await loop.run_in_executor(None, compute_ats_score, resume_text, payload.jd_text)
-    return AtsScoreResponse(**score_result.__dict__)
+    from app.services.ats_service import score_resume_baseline
+    from app.services.resume_version import content_version
+
+    if not payload.jd_text.strip():
+        score, data = await asyncio.to_thread(score_resume_baseline, resume_text, None)
+        return AtsScoreResponse(
+            composite_score=score,
+            keyword_score=0,
+            readability_score=data["readability_score"],
+            format_score=data["format_score"],
+            matched_keywords=[],
+            missing_keywords=[],
+            suggestions=data["suggestions"],
+            flesch_kincaid=data["flesch_kincaid"],
+            avg_sentence_length=data["avg_sentence_length"],
+            format_checks=data["format_checks"],
+            estimate=data,
+            content_version=content_version(resume_text),
+        )
+    score_result = await asyncio.to_thread(compute_ats_score, resume_text, payload.jd_text)
+    return AtsScoreResponse(**score_result.__dict__, content_version=content_version(resume_text))
 
 
 # ---------------------------------------------------------------------------

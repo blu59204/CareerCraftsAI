@@ -32,10 +32,12 @@ from app.applications.models import ApplicationField
 from app.applications.question_normalizer import normalize_question
 from app.applications.schema_extractor import extract_fields
 from app.models.db import (
+    AgentRun,
     CandidateAnswer,
     ExtensionDevice,
     ExtensionTask,
     User,
+    UserDocument,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,6 @@ TOKEN_PREFIX = "ccx_"  # noqa: S105  # nosec B105
 RESUME_TOKEN = "__resume__"  # noqa: S105  # nosec B105
 MAX_FIELDS = 120
 MAX_GENERATED_ANSWERS = 3
-GENERATION_TIMEOUT_S = 25
 
 # Personal details the User row already knows, for users who never filled
 # the structured candidate profile.
@@ -155,10 +156,12 @@ async def get_device_task(
 ) -> ExtensionTask | None:
     return (
         await db.execute(
-            select(ExtensionTask).where(
+            select(ExtensionTask)
+            .where(
                 ExtensionTask.id == task_id,
                 ExtensionTask.user_id == device.user_id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
 
@@ -185,12 +188,25 @@ def _narrative_generator(user_id: uuid.UUID, task: ExtensionTask, budget: list[i
             from langchain_core.messages import HumanMessage, SystemMessage
 
             from app.core.database import AsyncSessionLocal
-            from app.core.model_router import get_llm
-            from app.core.sync_db import fetch_user_profile_text
+            from app.core.model_router import begin_token_tracking, get_and_reset_tokens, get_llm
 
             async with AsyncSessionLocal() as db:
                 llm = await get_llm(str(user_id), db, task_type="auto_apply")
-            resume = (await asyncio.to_thread(fetch_user_profile_text, str(user_id)) or "")[:6000]
+                document_id = payload.get("resume_document_id")
+                if not document_id:
+                    return None
+                document = (
+                    await db.execute(
+                        select(UserDocument).where(
+                            UserDocument.id == uuid.UUID(document_id),
+                            UserDocument.user_id == user_id,
+                            UserDocument.doc_type == "resume",
+                        )
+                    )
+                ).scalar_one_or_none()
+                if document is None:
+                    return None
+                resume = (document.raw_text or "")[:6000]
             messages = [
                 SystemMessage(
                     content=(
@@ -209,13 +225,27 @@ def _narrative_generator(user_id: uuid.UUID, task: ExtensionTask, budget: list[i
                     )
                 ),
             ]
-            result = await asyncio.wait_for(
-                asyncio.to_thread(llm.invoke, messages), GENERATION_TIMEOUT_S
-            )
+            begin_token_tracking()
+            try:
+                # The model router bounds provider timeout/retries. Do not cancel
+                # a thread while its billable call can still finish unaccounted.
+                result = await asyncio.to_thread(llm.invoke, messages)
+            finally:
+                tokens = get_and_reset_tokens()
+                if tokens and task.run_id:
+                    from sqlalchemy import func, update
+
+                    async with AsyncSessionLocal() as db:
+                        await db.execute(
+                            update(AgentRun)
+                            .where(AgentRun.id == task.run_id, AgentRun.user_id == user_id)
+                            .values(tokens_used=func.coalesce(AgentRun.tokens_used, 0) + tokens)
+                        )
+                        await db.commit()
             text = (getattr(result, "content", "") or "").strip()
             return text[:4000] or None
         except Exception as exc:
-            logger.info("Draft answer unavailable for %r: %s", field.label[:80], type(exc).__name__)
+            logger.info("Draft answer unavailable for task %s: %s", task.id, type(exc).__name__)
             return None
 
     return generate

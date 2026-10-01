@@ -5,6 +5,7 @@
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-agent-a/
 .venv_win/
 __pycache__/
 **/__pycache__/

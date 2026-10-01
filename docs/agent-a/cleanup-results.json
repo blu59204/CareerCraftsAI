@@ -1,0 +1,8 @@
+{
+  "checks": [
+    "Verified both tracked accounts are disposable agent-a-* example.com identities",
+    "Removed only those users, their document files and namespaced vector rows",
+    "Deleted disposable Clerk accounts and OS-temp credentials"
+  ],
+  "count": 3
+}

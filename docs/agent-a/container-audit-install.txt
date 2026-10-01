@@ -1,0 +1,69 @@
+Collecting pip-audit
+  Downloading pip_audit-2.10.1-py3-none-any.whl.metadata (28 kB)
+Collecting CacheControl>=0.13.0 (from CacheControl[filecache]>=0.13.0->pip-audit)
+  Downloading cachecontrol-0.14.4-py3-none-any.whl.metadata (3.1 kB)
+Collecting cyclonedx-python-lib<12,>=5 (from pip-audit)
+  Downloading cyclonedx_python_lib-11.12.0-py3-none-any.whl.metadata (6.9 kB)
+Requirement already satisfied: packaging>=23.0.0 in /usr/local/lib/python3.12/site-packages (from pip-audit) (26.3)
+Collecting pip-api>=0.0.28 (from pip-audit)
+  Downloading pip_api-0.0.35-py3-none-any.whl.metadata (17 kB)
+Collecting pip-requirements-parser>=32.0.0 (from pip-audit)
+  Downloading pip_requirements_parser-32.0.1-py3-none-any.whl.metadata (9.3 kB)
+Requirement already satisfied: requests>=2.31.0 in /usr/local/lib/python3.12/site-packages (from pip-audit) (2.34.2)
+Requirement already satisfied: rich>=12.4 in /usr/local/lib/python3.12/site-packages (from pip-audit) (15.0.0)
+Collecting tomli>=2.2.1 (from pip-audit)
+  Downloading tomli-2.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (10 kB)
+Collecting tomli-w>=1.2.0 (from pip-audit)
+  Downloading tomli_w-1.2.0-py3-none-any.whl.metadata (5.7 kB)
+Requirement already satisfied: platformdirs>=4.2.0 in /usr/local/lib/python3.12/site-packages (from pip-audit) (4.12.2)
+Collecting license-expression<31,>=30 (from cyclonedx-python-lib<12,>=5->pip-audit)
+  Downloading license_expression-30.4.4-py3-none-any.whl.metadata (11 kB)
+Collecting packageurl-python<2,>=0.11 (from cyclonedx-python-lib<12,>=5->pip-audit)
+  Downloading packageurl_python-0.17.6-py3-none-any.whl.metadata (5.1 kB)
+Collecting py-serializable<3.0.0,>=2.1.0 (from cyclonedx-python-lib<12,>=5->pip-audit)
+  Downloading py_serializable-2.1.0-py3-none-any.whl.metadata (4.3 kB)
+Requirement already satisfied: sortedcontainers<3.0.0,>=2.4.0 in /usr/local/lib/python3.12/site-packages (from cyclonedx-python-lib<12,>=5->pip-audit) (2.4.0)
+Requirement already satisfied: typing_extensions<5.0,>=4.6 in /usr/local/lib/python3.12/site-packages (from cyclonedx-python-lib<12,>=5->pip-audit) (4.16.0)
+Collecting boolean.py>=4.0 (from license-expression<31,>=30->cyclonedx-python-lib<12,>=5->pip-audit)
+  Downloading boolean_py-5.0-py3-none-any.whl.metadata (2.3 kB)
+Requirement already satisfied: defusedxml<0.8.0,>=0.7.1 in /usr/local/lib/python3.12/site-packages (from py-serializable<3.0.0,>=2.1.0->cyclonedx-python-lib<12,>=5->pip-audit) (0.7.1)
+Collecting msgpack<2.0.0,>=0.5.2 (from CacheControl>=0.13.0->CacheControl[filecache]>=0.13.0->pip-audit)
+  Downloading msgpack-1.2.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+Collecting filelock>=3.8.0 (from CacheControl[filecache]>=0.13.0->pip-audit)
+  Downloading filelock-4.0.7-py3-none-any.whl.metadata (2.0 kB)
+Requirement already satisfied: pip in /usr/local/lib/python3.12/site-packages (from pip-api>=0.0.28->pip-audit) (26.2.1)
+Requirement already satisfied: pyparsing in /usr/local/lib/python3.12/site-packages (from pip-requirements-parser>=32.0.0->pip-audit) (3.3.3)
+Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.12/site-packages (from requests>=2.31.0->pip-audit) (3.5.2)
+Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.12/site-packages (from requests>=2.31.0->pip-audit) (3.18)
+Requirement already satisfied: urllib3<3,>=1.26 in /usr/local/lib/python3.12/site-packages (from requests>=2.31.0->pip-audit) (2.8.0)
+Requirement already satisfied: certifi>=2023.5.7 in /usr/local/lib/python3.12/site-packages (from requests>=2.31.0->pip-audit) (2026.7.22)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /usr/local/lib/python3.12/site-packages (from rich>=12.4->pip-audit) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /usr/local/lib/python3.12/site-packages (from rich>=12.4->pip-audit) (2.21.0)
+Requirement already satisfied: mdurl~=0.1 in /usr/local/lib/python3.12/site-packages (from markdown-it-py>=2.2.0->rich>=12.4->pip-audit) (0.1.2)
+Downloading pip_audit-2.10.1-py3-none-any.whl (62 kB)
+Downloading cyclonedx_python_lib-11.12.0-py3-none-any.whl (529 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 529.5/529.5 kB 893.5 kB/s  0:00:00
+Downloading license_expression-30.4.4-py3-none-any.whl (120 kB)
+Downloading packageurl_python-0.17.6-py3-none-any.whl (36 kB)
+Downloading py_serializable-2.1.0-py3-none-any.whl (23 kB)
+Downloading boolean_py-5.0-py3-none-any.whl (26 kB)
+Downloading cachecontrol-0.14.4-py3-none-any.whl (22 kB)
+Downloading msgpack-1.2.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (472 kB)
+Downloading filelock-4.0.7-py3-none-any.whl (109 kB)
+Downloading pip_api-0.0.35-py3-none-any.whl (123 kB)
+Downloading pip_requirements_parser-32.0.1-py3-none-any.whl (35 kB)
+Downloading tomli-2.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (253 kB)
+Downloading tomli_w-1.2.0-py3-none-any.whl (6.7 kB)
+Installing collected packages: boolean.py, tomli-w, tomli, py-serializable, pip-requirements-parser, pip-api, packageurl-python, msgpack, license-expression, filelock, cyclonedx-python-lib, CacheControl, pip-audit
+
+Successfully installed CacheControl-0.14.4 boolean.py-5.0 cyclonedx-python-lib-11.12.0 filelock-4.0.7 license-expression-30.4.4 msgpack-1.2.3 packageurl-python-0.17.6 pip-api-0.0.35 pip-audit-2.10.1 pip-requirements-parser-32.0.1 py-serializable-2.1.0 tomli-2.4.1 tomli-w-1.2.0
+docker : WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the 
+system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment 
+instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want 
+to suppress this warning.
+At line:2 char:1
++ docker exec careercraft-local-prod-backend-1 python -m pip install pi ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING: Runnin...s this warning.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

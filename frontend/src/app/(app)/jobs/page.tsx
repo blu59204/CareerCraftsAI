@@ -28,6 +28,7 @@ import {
 import { toast } from "sonner";
 import { setPendingJd } from "@/lib/job-handoff";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
+import { JobSearchBasis } from "@/components/jobs/JobSearchBasis";
 import { wakeExtension } from "@/lib/extension-bridge";
 import { cn } from "@/lib/utils";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
@@ -103,6 +104,8 @@ interface SavedJob {
   match_score: number | null;
   status: string;
   applied_at: string | null;
+  source?: string | null;
+  posted_at?: string | null;
 }
 
 interface JobSearchPrefs {
@@ -680,6 +683,7 @@ function FeaturedJobCard({
             Top match
           </Eyebrow>
           <StatusPill tone={statusTone(job.status)}>{statusLabel(job.status)}</StatusPill>
+          <span className="text-xs text-muted-foreground">{job.source || "Source unavailable"} · {job.posted_at ? new Date(job.posted_at).toLocaleDateString() : "Posted date unknown"}</span>
         </div>
 
         <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
@@ -1193,6 +1197,9 @@ export default function JobsPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [xrayQuery, setXrayQuery] = useState(XRAY_TEMPLATES[0]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchBasis, setSearchBasis] = useState("");
+  const [jobSource, setJobSource] = useState("");
+  const [postedDays, setPostedDays] = useState(30);
   const [searchLocation, setSearchLocation] = useState("");
   const [agentRunning, setAgentRunning] = useState(false);
   const [liveBrowser, setLiveBrowser] = useState(true);
@@ -1220,9 +1227,11 @@ export default function JobsPage() {
   );
 
   const { data: jobs = [], isLoading } = useQuery<SavedJob[]>({
-    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(",")],
+    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(","),jobSource,postedDays],
     queryFn: async () => {
       const params = new URLSearchParams({ status: "saved" });
+      if (jobSource) params.set("source",jobSource);
+      if (postedDays!==30) params.set("posted_within_days",String(postedDays));
       // Pass active filters to backend
       const locations = Array.from(activeFilters).filter((f) =>
         ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"].includes(f)
@@ -1306,6 +1315,10 @@ export default function JobsPage() {
 
   const searchMutation = useMutation({
     mutationFn: (payload: {
+      resume_id?: string;
+      persona_id?: string;
+      platforms?: string[];
+      posted_within_days?: number;
       search_query: string;
       location: string;
       max_results: number;
@@ -1503,6 +1516,10 @@ export default function JobsPage() {
     const locationFromProfile = manualLocations[0] ?? "";
     const primaryWorkMode = primaryCsvValue(workMode);
     searchMutation.mutate({
+      resume_id: searchBasis.startsWith("resume:") ? searchBasis.split(":")[1] : undefined,
+      persona_id: searchBasis.startsWith("persona:") ? searchBasis.split(":")[1] : undefined,
+      platforms: jobSource ? [jobSource] : [],
+      posted_within_days: postedDays,
       search_query: query,
       // An explicitly typed location wins; otherwise fall back to filters/profile as before.
       location:
@@ -1540,6 +1557,7 @@ export default function JobsPage() {
                 busy={searchBusy}
                 running={agentRunning}
               />
+              <JobSearchBasis value={searchBasis} onChange={setSearchBasis} source={jobSource} onSource={setJobSource} days={postedDays} onDays={setPostedDays} />
 
               <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
                 <label className="inline-flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-foreground/85">

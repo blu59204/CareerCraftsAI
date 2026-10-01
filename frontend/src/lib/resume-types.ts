@@ -61,6 +61,11 @@ export interface ResumeReview {
 
 /** GET /resume/tailored/{id} and POST /resume/tailored/{id}/fix response. */
 export interface TailoredResume {
+  page_target?: 1 | 2;
+  page_count?: number | null;
+  content_version?: string;
+  revision?: number;
+  estimate?: Record<string, unknown> | null;
   document_id: string;
   template: ResumeTemplateId;
   resume_markdown: string;
@@ -130,6 +135,8 @@ export interface EducationFix {
 
 /** POST /resume/tailored/{id}/fix body. Every field is optional. */
 export interface ResumeFixPayload {
+  page_target?: 1 | 2;
+  expected_version?: string;
   /** Full manual edit of the markdown (max 30000 chars). */
   resume_markdown?: string;
   /** Re-render in another template (no LLM call). */

@@ -318,15 +318,7 @@ def _extension_activities():
     async def followup(params: dict) -> None:
         calls["followups"].append(params)
 
-    @activity.defn(name="run_application_stage_activity")
-    async def stage(params: dict) -> dict:
-        raise AssertionError("extension mode must not drive a server browser")
-
-    @activity.defn(name="apply_answers_and_resume_activity")
-    async def answers(params: dict) -> dict:
-        raise AssertionError("extension mode must not drive a server browser")
-
-    return calls, [reserve, create, finish, followup, stage, answers]
+    return calls, [reserve, create, finish, followup]
 
 
 def _intent(**overrides):
@@ -465,20 +457,12 @@ async def _wait_for_state(handle, expected):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "mode,expected",
-    [
-        ("extension", {"daily-job-search", "maintenance"}),
-        ("server_browser", {"daily-job-search", "maintenance", "application-status-check"}),
-    ],
-)
-async def test_ensure_schedules_registers_recurring_jobs(monkeypatch, mode, expected):
+async def test_ensure_schedules_registers_recurring_jobs(monkeypatch):
     from temporalio.client import ScheduleAlreadyRunningError
 
     from app.core.config import settings
     from app.workflows import scheduled
 
-    monkeypatch.setattr(settings, "APPLY_EXECUTION_MODE", mode)
     created = {}
 
     async def create_schedule(schedule_id, schedule):
@@ -501,11 +485,13 @@ async def test_ensure_schedules_registers_recurring_jobs(monkeypatch, mode, expe
 
     await scheduled.ensure_schedules(client)
 
-    assert set(created) | {"maintenance"} == expected
+    assert set(created) | {"maintenance"} == {
+        "daily-job-search",
+        "maintenance",
+        "public-job-catalog-refresh",
+    }
     handles["maintenance"].update.assert_awaited_once()  # existing one is updated
-    if mode == "extension":
-        # The status check needs a server-side portal session; removed here.
-        handles["application-status-check"].delete.assert_awaited_once()
+    handles["application-status-check"].delete.assert_awaited_once()
     daily = created["daily-job-search"]
     assert daily.spec.intervals[0].every == timedelta(hours=settings.DAILY_SEARCH_INTERVAL_HOURS)
 
@@ -515,7 +501,6 @@ def test_every_started_workflow_is_registered_with_the_worker():
     from app.workflows.scheduled import (
         DailySearchWorkflow,
         MaintenanceWorkflow,
-        StatusCheckWorkflow,
     )
 
     for workflow_cls in (
@@ -525,7 +510,6 @@ def test_every_started_workflow_is_registered_with_the_worker():
         JobSearchWorkflow,
         DailySearchWorkflow,
         MaintenanceWorkflow,
-        StatusCheckWorkflow,
     ):
         assert workflow_cls in WORKFLOWS
     names = {a.__temporal_activity_definition.name for a in ACTIVITIES}

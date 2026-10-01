@@ -74,6 +74,7 @@ import {
 
 export interface ResumeFixPanelProps {
   documentId: string;
+  expectedVersion?: string;
   review: ResumeReview;
   contactSuggestions: Partial<ContactFields>;
   warnings: string[];
@@ -747,6 +748,7 @@ interface ResumeFixFormProps extends ResumeFixPanelProps {
 }
 
 function ResumeFixForm({
+  expectedVersion,
   documentId,
   review,
   contactSuggestions,
@@ -946,7 +948,7 @@ function ResumeFixForm({
   });
   const mutation = useMutation<TailoredResume, unknown, { body: ResumeFixPayload; generation: number }>({
     mutationKey: [...RESUME_TAILORED_KEY, "fix"],
-    mutationFn: ({ body }) => postResumeFix(documentId, body),
+    mutationFn: ({ body }) => postResumeFix(documentId, { ...body, expected_version: expectedVersion }),
     onSuccess: (data, variables) => {
       if (!onFixedRef.current(data, variables.generation)) return;
       toast.success("Resume updated");

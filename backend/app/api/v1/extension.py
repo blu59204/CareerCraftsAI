@@ -14,10 +14,15 @@ signals; the workflow alone records the final outcome.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import ipaddress
+import json
 import logging
+import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -28,7 +33,7 @@ from temporalio.service import RPCError
 from app.api.v1.deps import get_current_user, get_db
 from app.core.event_bus import publish
 from app.core.rate_limit import limiter
-from app.models.db import AgentRun, ExtensionDevice, ExtensionTask, User
+from app.models.db import AgentRun, ApplicationAttempt, ExtensionDevice, ExtensionTask, User
 from app.services import extension_service
 from app.workflows.starters import WorkflowUnavailable
 
@@ -210,7 +215,7 @@ async def _device_task(
     task = await extension_service.get_device_task(db, device, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    if task.device_id not in (None, device.id):
+    if task.device_id != device.id:
         raise HTTPException(
             status_code=409, detail="Another browser is working on this application"
         )
@@ -291,6 +296,151 @@ class TaskEvent(BaseModel):
     confirmation_text: str | None = Field(default=None, max_length=2000)
     confirmation_url: str | None = Field(default=None, max_length=2000)
     error: str | None = Field(default=None, max_length=1000)
+    submission_token: str | None = Field(default=None, max_length=200)
+    # False only when the extension never consumed its submit permit, so no
+    # click can have happened. Older extensions omit it: treated as attempted.
+    submit_attempted: bool = True
+
+
+class ReviewField(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    label: str = Field(default="", max_length=500)
+    type: Literal[
+        "text",
+        "textarea",
+        "email",
+        "tel",
+        "url",
+        "number",
+        "date",
+        "select",
+        "checkbox",
+        "radio",
+        "file",
+        "other",
+    ]
+    value: str | bool | list[str] | None = None
+    digest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class ReviewRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+    fields: list[ReviewField] = Field(max_length=120)
+    submit_control: str = Field(min_length=1, max_length=2000)
+
+
+class SubmitApproval(BaseModel):
+    review_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    user_confirmed: Literal[True]
+
+
+def _review_url(url: str) -> None:
+    """No fetch occurs here; nevertheless never authorize credentials/local targets."""
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="Review requires a public HTTPS job URL")
+    if parsed.hostname.lower() == "localhost" or "." not in parsed.hostname:
+        raise HTTPException(status_code=422, detail="Review requires a public job host")
+    try:
+        address = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        return
+    if not address.is_global:
+        raise HTTPException(status_code=422, detail="Review requires a public job host")
+
+
+async def _task_attempt(db: AsyncSession, task: ExtensionTask) -> ApplicationAttempt:
+    try:
+        attempt_id = uuid.UUID((task.payload or {}).get("attempt_id", ""))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=409, detail="Application attempt is unavailable") from exc
+    attempt = (
+        await db.execute(
+            select(ApplicationAttempt)
+            .where(
+                ApplicationAttempt.id == attempt_id,
+                ApplicationAttempt.user_id == task.user_id,
+                ApplicationAttempt.job_application_id == task.job_application_id,
+                ApplicationAttempt.run_id == task.run_id,
+                ApplicationAttempt.workflow_id == task.workflow_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if attempt is None:
+        raise HTTPException(status_code=409, detail="Application attempt is unavailable")
+    return attempt
+
+
+@router.post("/device/tasks/{task_id}/review")
+@limiter.limit("30/minute")
+async def review_task(
+    request: Request,
+    task_id: uuid.UUID,
+    body: ReviewRequest,
+    device: ExtensionDevice = Depends(get_device),
+    db: AsyncSession = Depends(get_db),
+):
+    _review_url(body.url)
+    snapshot = body.model_dump()
+    encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    if len(encoded.encode()) > 64 * 1024:
+        raise HTTPException(status_code=422, detail="Review is too large")
+    task = await _device_task(db, device, task_id)
+    if task.status != "review" or task.approved_at:
+        raise HTTPException(status_code=409, detail="Request a fresh form review before submitting")
+    attempt = await _task_attempt(db, task)
+    if attempt.state not in {"preparing", "awaiting_approval"}:
+        raise HTTPException(status_code=409, detail="Application cannot be submitted again")
+    document_id = (task.payload or {}).get("resume_document_id")
+    resume_digest = None
+    if document_id:
+        from app.applications.submission import load_resume
+
+        try:
+            _, resume_digest = await load_resume(task.user_id, document_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Approved resume is unavailable") from exc
+    binding = [str(task.id), str(device.id), document_id, resume_digest, snapshot]
+    task.review_hash = hashlib.sha256(json.dumps(binding, sort_keys=True).encode()).hexdigest()
+    task.review_url = body.url
+    task.review_expires_at = datetime.now(UTC) + timedelta(minutes=5)
+    attempt.state = "awaiting_approval"
+    await db.commit()
+    return {"review_hash": task.review_hash, "expires_at": task.review_expires_at.isoformat()}
+
+
+@router.post("/device/tasks/{task_id}/approve-submit")
+@limiter.limit("30/minute")
+async def approve_submit(
+    request: Request,
+    task_id: uuid.UUID,
+    body: SubmitApproval,
+    device: ExtensionDevice = Depends(get_device),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _device_task(db, device, task_id)
+    now = datetime.now(UTC)
+    if (
+        task.status != "review"
+        or task.approved_at
+        or task.review_hash != body.review_hash
+        or not task.review_expires_at
+        or task.review_expires_at <= now
+    ):
+        raise HTTPException(status_code=409, detail="Review expired, changed or already approved")
+    attempt = await _task_attempt(db, task)
+    if attempt.state != "awaiting_approval":
+        raise HTTPException(status_code=409, detail="Application cannot be submitted again")
+    token = secrets.token_urlsafe(32)
+    task.submission_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    task.submission_expires_at = now + timedelta(minutes=2)
+    task.approved_at = now
+    task.status = "submitting"
+    attempt.state = "submitting"
+    attempt.approved_snapshot_hash = task.review_hash
+    await db.commit()
+    return {"submission_token": token, "expires_at": task.submission_expires_at.isoformat()}
 
 
 async def _record_progress(db: AsyncSession, task: ExtensionTask, stage: str, message: str) -> None:
@@ -326,6 +476,25 @@ async def task_event(
     if task.status not in extension_service_open_statuses():
         return {"status": task.status, "active": False}
 
+    if task.submission_reported_at:
+        raise HTTPException(status_code=409, detail="Submission outcome already reported")
+    if task.status == "submitting" and event.stage not in TERMINAL_STAGES:
+        raise HTTPException(status_code=409, detail="Submission is in progress; do not retry")
+    if event.stage == "submitted":
+        digest = hashlib.sha256((event.submission_token or "").encode()).hexdigest()
+        if (
+            task.status != "submitting"
+            or not task.approved_at
+            or not task.submission_token_hash
+            or not secrets.compare_digest(digest, task.submission_token_hash)
+            or not task.submission_expires_at
+            or task.submission_expires_at <= datetime.now(UTC)
+            or not event.confirmation_text
+        ):
+            raise HTTPException(
+                status_code=409, detail="Submission requires an approved review and confirmation"
+            )
+
     if event.stage in TERMINAL_STAGES:
         details = {
             k: v
@@ -337,7 +506,21 @@ async def task_event(
             }.items()
             if v
         }
-        await _signal(task.workflow_id, {"stage": event.stage, "details": details})
+        details["submit_attempted"] = event.submit_attempted
+        reporting = task.status == "submitting"
+        if reporting:
+            # Committed before signalling: finish_extension_task_activity only
+            # trusts a "submitted" outcome once this is recorded.
+            task.submission_reported_at = datetime.now(UTC)
+            await db.commit()
+        try:
+            await _signal(task.workflow_id, {"stage": event.stage, "details": details})
+        except HTTPException:
+            if reporting:
+                # The workflow never got the outcome; let the extension retry.
+                task.submission_reported_at = None
+                await db.commit()
+            raise
         return {"status": event.stage, "active": False}
 
     await _signal(task.workflow_id, {"stage": event.stage})
@@ -444,6 +627,13 @@ async def decide(
     if len(str(state)) > decision_engine.MAX_STATE_CHARS:
         raise HTTPException(status_code=413, detail="State too large")
     try:
-        return await decision_engine.decide(state, body.questions)
+        decision_engine.validate_questions(body.questions)
+        return {
+            "provider": "heuristic",
+            "answers": {
+                key: decision_engine._heuristic(state, question)
+                for key, question in body.questions.items()
+            },
+        }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

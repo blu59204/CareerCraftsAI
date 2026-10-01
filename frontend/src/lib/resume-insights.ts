@@ -20,7 +20,7 @@ export function getResumeInsightData(
   if (jobAnalysis) {
     return {
       score: jobAnalysis.composite_score,
-      scoreLabel: "Job match",
+      scoreLabel: "Estimated ATS compatibility",
       matched: jobAnalysis.matched_keywords,
       missing: jobAnalysis.missing_keywords,
       suggestions: jobAnalysis.suggestions,
@@ -29,7 +29,7 @@ export function getResumeInsightData(
 
   return {
     score: resume?.ats_score ?? null,
-    scoreLabel: resume?.ats_score != null ? "Baseline ATS" : "ATS score",
+    scoreLabel: resume?.ats_score != null ? "Estimated ATS compatibility" : "Estimated ATS compatibility",
     matched: [],
     missing: [],
     suggestions: [],

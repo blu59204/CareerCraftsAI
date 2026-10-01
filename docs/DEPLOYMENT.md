@@ -29,8 +29,7 @@ APP VM  "chola-public", 10.0.0.183  (Oracle "Always Free" ARM,
 │   ├── temporal-worker       (python -m app.temporal_worker — runs every workflow)
 │   ├── notification-worker   (python -m app.notification_worker — in-app + email notifications)
 │   ├── postgres              (pgvector/pgvector:pg16, :18132 — self-hosted DB)
-│   ├── redis                 (SSE pub/sub, rate limiting, LLM sessions — no queues)
-│   └── sandbox-server        (OpenSandbox — isolated browser execution)
+│   └── redis                 (SSE pub/sub, rate limiting, LLM sessions — no queues)
 └── temporal-isolated  (deploy/oracle-vm/temporal-compose.yml)
     └── self-hosted Temporal server + its own Postgres + Web UI, ALL on
         loopback: 127.0.0.1:7233 (frontend), 6933–6939 (membership),
@@ -68,7 +67,7 @@ later.
     (frontend build args — see the note in `deploy/oracle-vm/compose.yml`
     about why these are passed as build `args`, not runtime env, and never
     merged into `backend.env`)
-  - `postgres.env`, `redis.conf`, `sandbox.env`, `temporal.env` (APP VM —
+  - `postgres.env`, `redis.conf`, `temporal.env` (APP VM —
     `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_PWD`/`POSTGRES_DB` for
     Temporal's own Postgres)
   - `nango.env`, `nango-redis.conf` (INFRA VM only)
@@ -114,7 +113,7 @@ sudo docker compose up -d backend frontend temporal-worker notification-worker
 ```
 
 Only rebuild the services whose code actually changed — rebuilding
-`postgres`/`redis`/`gateway`/`sandbox-server` is never needed for an
+`postgres`/`redis`/`gateway` is never needed for an
 application code change.
 
 **Important:** `NEXT_PUBLIC_*` variables (the Clerk publishable key,
@@ -171,8 +170,7 @@ production:
    **Log rotation:** the Temporal services and `notification-worker` use the
    `json-file` driver capped at 10 MB × 3 files each.
 4. **Schedules.** Each worker start registers `daily-job-search`,
-   `maintenance` and, in `server_browser` apply mode only,
-   `application-status-check` (`TEMPORAL_SCHEDULES_ENABLED=true`). Check with
+   `maintenance` (`TEMPORAL_SCHEDULES_ENABLED=true`). Check with
    `temporal schedule list`.
 5. **Retire the old queue workers** on any host that predates the Temporal
    migration: stop and remove the Node `worker` and Python `agent-worker`
@@ -281,3 +279,17 @@ way the forward migration was applied in step 2 above.
   `deploy/oracle-vm/nango-compose.yml` describe the current layout as
   "for now," suggesting this is understood to be a transitional setup, not
   the intended long-term architecture.
+
+### Retired application executor: rollout order
+
+Stop new application starts on the old release, then complete or cancel all its
+application workflows and stop the old workers before deploying this release.
+Do not replay histories for the retired executor against the new worker.
+`ensure_schedules()` removes the obsolete `application-status-check` schedule.
+Apply `20260930090000_b_retire_browser_execution.sql` only after the drain;
+it archives encrypted state and revokes runtime access without deleting data.
+For rollback, drain the new workers, apply
+`docs/agent-b/rollback/b_retire_browser_execution.sql`, and restore the previous
+release. Data purge is a separate operator-authorized retention operation.
+Applications require a paired extension; server browser tasks fail closed in
+production. Local browser search tools remain for development only.

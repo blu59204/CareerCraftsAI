@@ -35,6 +35,31 @@ def _valid_resume_json() -> str:
     )
 
 
+def test_general_score_replaces_model_self_grade():
+    from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA
+    from app.agents.resume_agent import _score_parsed_resume
+    from app.services.ats_estimator import estimate_resume
+
+    parsed = OUTPUT_SCHEMA.model_validate_json(_valid_resume_json())
+    parsed.ats_score = 99
+    expected = estimate_resume(parsed.resume_markdown)["composite_score"]
+    assert _score_parsed_resume(parsed, "").ats_score == expected
+
+
+def test_general_generation_persists_estimate_without_job(monkeypatch):
+    from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA
+    from app.agents.resume_agent import _persist_resume_document, _score_parsed_resume
+
+    parsed = _score_parsed_resume(OUTPUT_SCHEMA.model_validate_json(_valid_resume_json()), "")
+    session = MagicMock()
+    monkeypatch.setattr("app.core.sync_db._get_sync_factory", lambda: lambda: session)
+    monkeypatch.setattr("app.agents.resume_agent.upload_file", lambda *args: "test/resume.pdf")
+    _persist_resume_document(str(uuid.uuid4()), None, "modern", parsed, "", b"%PDF-test")
+    document = session.__enter__.return_value.add.call_args.args[0]
+    assert document.ats_data["estimate"]["mode"] == "general"
+    assert document.ats_score == document.ats_data["estimate"]["composite_score"]
+
+
 def test_resume_agent_pauses_for_approval(mock_llm):
     from app.agents.resume_agent import resume_agent_node
 
@@ -42,14 +67,17 @@ def test_resume_agent_pauses_for_approval(mock_llm):
     mock_chunks = [MagicMock(page_content="5 years Python experience")]
 
     with (
-        patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch(
+            "app.core.sync_db.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
         patch("app.agents.resume_agent.retrieve", return_value=mock_chunks),
         patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"),
         patch(
             "app.agents.resume_agent._persist_resume_document", return_value="doc-123"
         ) as persist,
         patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
-        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
         patch("app.core.event_bus.emit"),
     ):
@@ -90,7 +118,10 @@ def test_resume_agent_degrades_without_pdf_storage(mock_llm):
     mock_chunks = [MagicMock(page_content="5 years Python experience")]
 
     with (
-        patch("app.core.sync_db.fetch_model_settings", return_value=MagicMock(provider="openai")),
+        patch(
+            "app.core.sync_db.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
         patch("app.agents.resume_agent.retrieve", return_value=mock_chunks),
         patch("app.agents.resume_agent.generate_resume_pdf", return_value=b"%PDF-fake"),
         patch(
@@ -98,7 +129,7 @@ def test_resume_agent_degrades_without_pdf_storage(mock_llm):
             side_effect=Exception("storage down"),
         ),
         patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
-        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
         patch("app.core.event_bus.emit"),
     ):
@@ -110,9 +141,10 @@ def test_resume_agent_degrades_without_pdf_storage(mock_llm):
 
 
 def test_call_llm_json_retries_once_on_invalid():
+    from langchain_core.messages import AIMessage
+
     from app.agents._llm_json import call_llm_json
     from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA
-    from langchain_core.messages import AIMessage
 
     calls = {"n": 0}
 
@@ -163,7 +195,7 @@ def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None):
         patch("app.agents.resume_agent.generate_resume_pdf", render),
         patch("app.agents.resume_agent._persist_resume_document", persist),
         patch("app.core.sync_db.fetch_user_full_name", return_value="Jane Doe"),
-        patch("app.core.model_router._build_llm", return_value=mock_llm),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
         patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=facts),
         patch(
             "app.agents.resume_agent.compute_ats_score",
@@ -209,7 +241,11 @@ def test_saved_facts_and_verified_contact_are_applied_to_the_draft(mock_llm):
             }
         ],
         "education": [
-            {"degree": "B.Tech Computer Science", "institution": "SPPU", "end": "May 2025"}
+            {
+                "degree": "B.Tech Computer Science",
+                "institution": "SPPU",
+                "end": "May 2025",
+            }
         ],
     }
 
@@ -266,3 +302,40 @@ def test_failing_saved_facts_do_not_skip_contact_or_name(mock_llm):
     assert "jane@example.com" in rendered and "+91 98765 43210" in rendered
     assert rendered.startswith("# Jane Doe\n")
     assert result["pending_action"]["resume_markdown"] == rendered
+
+
+def test_resume_agent_keeps_template_render_when_fit_overflows(mock_llm):
+    from app.agents.resume_agent import resume_agent_node
+    from app.services.resume_export import PageOverflow
+
+    mock_llm.responses = [_valid_resume_json()]
+    calls = []
+
+    def render(*args, **kwargs):
+        calls.append(kwargs.get("page_target"))
+        if kwargs.get("page_target"):
+            raise PageOverflow(3, 2)
+        return b"%PDF-fallback"
+
+    persist = MagicMock(return_value="doc-789")
+    with (
+        patch(
+            "app.core.sync_db.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.resume_agent.retrieve", return_value=[]),
+        patch("app.agents.resume_agent.generate_resume_pdf", render),
+        patch("app.agents.resume_agent._persist_resume_document", persist),
+        patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
+        patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
+        patch("app.core.event_bus.emit"),
+    ):
+        result = resume_agent_node(make_state())
+
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_action"]["pdf_document_id"] == "doc-789"
+    assert calls == [2, None]
+    assert persist.call_args.args[5] == b"%PDF-fallback"
+    assert persist.call_args.kwargs["page_target"] is None
+    assert any("pages" in w for w in persist.call_args.kwargs["warnings"])

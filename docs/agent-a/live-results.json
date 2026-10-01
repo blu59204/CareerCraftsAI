@@ -1,0 +1,14 @@
+{
+  "checks": [
+    "Clerk session verified; disposable user provisioned and consent recorded",
+    "Edit/save/reload persists new text and recomputes general score",
+    "Concurrent full-text edits: one commit and one 409; winner survives reload",
+    "Overflow save fails safely and leaves previous version intact",
+    "General/per-job scores deterministic and bound to saved content",
+    "Authenticated PDF/DOCX round trips: three templates, both page targets",
+    "Authenticated LinkedIn wrong-type/malformed/oversized/image-only rejection",
+    "Valid LinkedIn PDF reaches gateway; missing model returns safe 400",
+    "Second real Clerk user cannot read/edit/score/download the first user's resume"
+  ],
+  "count": 9
+}

@@ -1,10 +1,11 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY requirements.txt constraints.txt ./
+COPY requirements.txt constraints.txt provider-tools.txt ./
 
 # Install system dependencies for Playwright
-RUN apt-get update && apt-get install -y \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y \
     wget \
     gnupg \
     ca-certificates \
@@ -31,12 +32,10 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-# browser-use and python-jobspy conflict on markdownify version.
-# Install browser-use with --no-deps, then install its deps minus markdownify,
-# so python-jobspy's markdownify version wins (both work fine with 0.13.x).
+# Resolve audited dependencies first, then tools with obsolete upstream pins.
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --no-deps browser-use==0.12.9 && \
     pip install --no-cache-dir -r requirements.txt -c constraints.txt && \
+    pip install --no-cache-dir --no-deps -r provider-tools.txt && \
     playwright install chromium
 
 COPY app/ ./app/

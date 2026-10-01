@@ -5,10 +5,14 @@ from langchain_core.messages import AIMessage
 from app.agents._llm_json import call_llm_json
 from app.agents.prompts.resume_prompt import OUTPUT_SCHEMA as ResumeOutput
 from app.agents.prompts.resume_prompt import SYSTEM_PROMPT as RESUME_JSON_SYSTEM_PROMPT
-from app.agents.prompts.resume_prompt import build_user_prompt as build_resume_json_prompt
+from app.agents.prompts.resume_prompt import (
+    build_user_prompt as build_resume_json_prompt,
+)
 from app.agents.state import AgentState
+from app.services.ats_estimator import estimate_resume
 from app.services.ats_service import compute_ats_score
 from app.services.pdf_service import generate_resume_pdf
+from app.services.resume_export import PageOverflow
 from app.services.rag_service import retrieve
 from app.services.resume_structure import (
     apply_fixes,
@@ -31,6 +35,7 @@ def _persist_resume_document(
     jd_text: str,
     pdf_bytes: bytes,
     warnings: list[str] | None = None,
+    page_target: int | None = 2,
 ) -> str:
     """Upload the tailored PDF to storage and record a UserDocument row.
 
@@ -57,6 +62,8 @@ def _persist_resume_document(
                 raw_text=parsed.resume_markdown,
                 ats_score=parsed.ats_score,
                 ats_data={
+                    "page_target": page_target,
+                    "estimate": estimate_resume(parsed.resume_markdown, jd_text),
                     "template": template,
                     "keywords_matched": parsed.keywords_matched,
                     "keywords_missing": parsed.keywords_missing,
@@ -122,12 +129,16 @@ def _finalize_markdown(
 
 def _score_parsed_resume(parsed: "ResumeOutput", jd_text: str) -> "ResumeOutput":
     """Overwrite the self-graded ATS score with the real computed score."""
-    if not jd_text:
+    if not jd_text.strip():
+        estimate = estimate_resume(parsed.resume_markdown)
+        parsed.ats_score = estimate["composite_score"]
+        parsed.keywords_missing = []
+        parsed.keywords_matched = []
         return parsed
     ats = compute_ats_score(parsed.resume_markdown, jd_text)
     parsed.ats_score = ats.composite_score
-    if getattr(ats, "missing_keywords", None):
-        parsed.keywords_missing = list(ats.missing_keywords[:10])
+    parsed.keywords_missing = list(ats.missing_keywords[:10])
+    parsed.keywords_matched = list(ats.matched_keywords)
     return parsed
 
 
@@ -148,9 +159,9 @@ def resume_agent_node(state: AgentState) -> AgentState:
     is placed in state, SSE events, or the DB — the PDF is stored on local
     disk and downloaded via GET /resume/download/{document_id}.
     """
-    from app.core.sync_db import fetch_model_settings, fetch_user_full_name
-    from app.core.model_router import _build_llm
     from app.core.event_bus import emit
+    from app.core.llm_gateway import build_gateway_llm
+    from app.core.sync_db import fetch_model_settings, fetch_user_full_name
 
     run_id = state["run_id"]
     user_id = state["user_id"]
@@ -178,7 +189,10 @@ def resume_agent_node(state: AgentState) -> AgentState:
         emit(
             run_id,
             "tool_call",
-            {"tool": "rag_retrieve", "input": {"doc_type": "resume", "query_len": len(jd_text)}},
+            {
+                "tool": "rag_retrieve",
+                "input": {"doc_type": "resume", "query_len": len(jd_text)},
+            },
         )
         resume_chunks = retrieve(user_id, "resume", jd_text, model_settings, k=8)
         chunk_texts = [
@@ -190,7 +204,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
             {"tool": "rag_retrieve", "output": {"chunks": len(resume_chunks)}},
         )
 
-        llm = _build_llm(model_settings)
+        llm = build_gateway_llm(model_settings, user_id)
 
         emit(
             run_id,
@@ -218,15 +232,48 @@ def resume_agent_node(state: AgentState) -> AgentState:
         if review is None:
             # The source was empty/unreadable: there is no resume to render
             # or score.
-            emit(run_id, "tool_result", {"tool": "pdf_store", "output": {"pdf_document_id": None}})
+            emit(
+                run_id,
+                "tool_result",
+                {"tool": "pdf_store", "output": {"pdf_document_id": None}},
+            )
         else:
             parsed = _score_parsed_resume(parsed, jd_text)
             parsed.warnings = filter_resolved_warnings(model_warnings, review)
-            emit(run_id, "thinking", {"step": "pdf", "message": "Generating PDF and storing..."})
-            emit(run_id, "tool_call", {"tool": "pdf_store", "input": {"template": template}})
-            pdf_bytes = generate_resume_pdf(
-                parsed.resume_markdown, full_name=full_name, template=template
+            emit(
+                run_id,
+                "thinking",
+                {"step": "pdf", "message": "Generating PDF and storing..."},
             )
+            emit(
+                run_id,
+                "tool_call",
+                {"tool": "pdf_store", "input": {"template": template}},
+            )
+            page_target = ctx.get("page_target", 2)
+            try:
+                pdf_bytes = generate_resume_pdf(
+                    parsed.resume_markdown,
+                    full_name=full_name,
+                    template=template,
+                    page_target=page_target,
+                )
+            except ValueError as fit_error:
+                # Fitting is strict (readable fonts, every glyph). A resume that
+                # can't meet it still gets the template's own render instead of
+                # failing the run; the editor can re-fit it later.
+                logger.info("Resume fit failed, using template layout: %s", fit_error)
+                pdf_bytes = generate_resume_pdf(
+                    parsed.resume_markdown, full_name=full_name, template=template
+                )
+                page_target = None
+                fit_warning = (
+                    str(fit_error)
+                    if isinstance(fit_error, PageOverflow)
+                    else "Some characters could not be rendered in this template's fonts."
+                )
+                model_warnings = list(model_warnings or []) + [fit_warning]
+                parsed.warnings = list(parsed.warnings or []) + [fit_warning]
             try:
                 pdf_document_id = _persist_resume_document(
                     user_id,
@@ -236,6 +283,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
                     jd_text,
                     pdf_bytes,
                     warnings=model_warnings,
+                    page_target=page_target,
                 )
             except Exception as se:
                 logger.warning("Resume PDF persist failed, continuing without download: %s", se)
@@ -262,9 +310,9 @@ def resume_agent_node(state: AgentState) -> AgentState:
             + [AIMessage(content=parsed.resume_markdown[:200])],
         }
     except Exception as exc:
-        logger.exception("Resume agent failed for user %s", user_id)
+        logger.warning("resume_agent_failed user_id=%s error_type=%s", user_id, type(exc).__name__)
         return {
             **state,
             "status": "failed",
-            "error": f"Resume generation failed: {str(exc)[:200]}",
+            "error": "Resume generation failed. Check your model settings and try again.",
         }

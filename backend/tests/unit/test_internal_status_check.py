@@ -4,7 +4,7 @@ Covers three bugs:
   1. Tenant isolation — grouping must be by (user_id, platform), never by
      platform alone, so one user's applications are never checked under
      another user's model/account.
-  2. Missing run_id — the managed-sandbox browser path requires an owned
+  2. Missing run_id — the browser activity requires an owned
      durable run id; the status-check browser call must always supply one.
   3. Key-case bug — the prompt asks for COMPANY/STATUS and the parser must
      read those same keys back out (case-insensitively) or well-formed

@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "Injected stale score response is rejected instead of displaying an old estimate",
+    "Real Clerk browser: edit, save, reload, preserved text and current score",
+    "Failed save preserves the local draft and leaves the server version unchanged",
+    "Real browser LinkedIn upload sends bounded multipart data and displays parse error"
+  ],
+  "count": 4
+}
