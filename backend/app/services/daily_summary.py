@@ -112,7 +112,16 @@ async def send_summary(user_id: str) -> bool:
     text = format_summary(await build_summary(user_id))
     if text is None:
         return False
+    from app.core.config import settings
+
+    # One summary per member per interval, even if the activity is retried.
+    window = int(datetime.now(UTC).timestamp() // (settings.DAILY_SUMMARY_INTERVAL_HOURS * 3600))
     await start_notification(
-        user_id, type="daily_summary", title=text[0], body=text[1], link="/applications"
+        user_id,
+        type="daily_summary",
+        title=text[0],
+        body=text[1],
+        link="/applications",
+        dedupe_key=f"daily-summary/{user_id}/{window}",
     )
     return True

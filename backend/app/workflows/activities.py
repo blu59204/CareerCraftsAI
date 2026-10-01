@@ -22,7 +22,10 @@ async def _recent_attempt_stats(db, user_id, exclude_id, now):
         conditions.append(ApplicationAttempt.id != exclude_id)
     row = (
         await db.execute(
-            select(func.count(), func.max(ApplicationAttempt.created_at)).where(*conditions)
+            select(
+                func.count(),
+                func.max(func.coalesce(ApplicationAttempt.scheduled_start_at, ApplicationAttempt.created_at)),
+            ).where(*conditions)
         )
     ).one()
     return row[0], row[1]
@@ -113,6 +116,7 @@ async def reserve_application_attempt(params: dict) -> dict:
         if error:
             raise ValueError(error)
         wait_seconds = apply_limits.pacing_wait_seconds(last_started, now)
+        scheduled_start = now + timedelta(seconds=wait_seconds)
 
         _, resume_sha256 = await load_resume(user_id, str(app_row.resume_id))
 
@@ -150,12 +154,14 @@ async def reserve_application_attempt(params: dict) -> dict:
             # A retry is a new start: it counts toward the 24h cap and the
             # pacing gap from now, not from the attempt's first creation.
             attempt.created_at = now
+            attempt.scheduled_start_at = scheduled_start
         else:
             attempt = ApplicationAttempt(
                 user_id=user_id,
                 job_application_id=job_application_id,
                 run_id=run_id,
                 workflow_id=workflow_id,
+                scheduled_start_at=scheduled_start,
                 state="preparing",
             )
             db.add(attempt)

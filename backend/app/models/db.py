@@ -296,6 +296,9 @@ class ApplicationAttempt(Base):
 
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When this attempt is allowed to start (after the pacing gap). The next
+    # reservation spaces itself from this, so a batch is spread out.
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

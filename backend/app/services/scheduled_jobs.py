@@ -222,6 +222,26 @@ async def run_followup(
 
         from app.services.email_finder_service import find_recruiter_email
 
+        # A retried activity (timeout, lost worker) must not draft a second
+        # email for the same application and day.
+        existing = (
+            await db.execute(
+                select(AgentRun).where(
+                    AgentRun.user_id == uuid.UUID(payload.user_id),
+                    AgentRun.agent_type == "followup",
+                    AgentRun.input["application_id"].astext == payload.application_id,
+                    AgentRun.input["day"].astext == str(payload.day),
+                )
+            )
+        ).scalars().first()
+        if existing is not None:
+            return {
+                "status": existing.status,
+                "run_id": str(existing.id),
+                "day": payload.day,
+                "application_id": payload.application_id,
+            }
+
         try:
             recruiter = await find_recruiter_email(application.company)
         except Exception as exc:
