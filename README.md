@@ -524,12 +524,14 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 
 - **API keys** encrypted at rest with AES-256-GCM (PBKDF2, unique salt per key, decrypted only at request time)
 - **Authentication** via Clerk session JWTs, verified locally on every protected route against Clerk's JWKS (RS256)
-- **Data isolation** enforced in the API: every query is scoped to the authenticated user (RLS policies from the migrations remain as defense in depth)
+- **Data isolation** enforced in the API: every query is scoped to the authenticated user. The RLS policies in the migrations do not apply to the API, which connects as the table owner (see `deploy/oracle-vm/postgres-bootstrap.sql`)
 - **Rate limiting** per-route limits via slowapi, keyed by user
+- **Model calls** every agent reaches its model through the internal LLM gateway with a short-lived session token, so the member's API key stays out of agent memory; the gateway adds the shared untrusted-content rules to every request. Embeddings still use the key inside the worker
+- **Account deletion** after the 15-day grace period, the sweep stops the member's workflows, revokes integrations, and deletes files, RAG collections, agent memory, Redis keys and the Clerk identity before the database row
 - **No out-of-band job triggers** — background jobs run only as Temporal workflows; nginx still returns 404 for `/internal/*` as defense in depth
 - **Browser isolation** Playwright creates a separate browser context per user
-- **Dependency audit** `pip-audit` + `npm audit` in CI; `bandit` SAST on every PR
-- **CVE-2025-68664** (LangChain serialization) — patched, using langchain-core 1.4.0
+- **Dependency audit** backend installs from `requirements.lock`, and CI fails on a stale lock or a `pip-audit` finding; `npm audit` runs as a non-blocking report; `bandit` SAST on every PR
+- **CVE-2025-68664** (LangChain serialization) — patched (langchain-core 1.4.0 or later; see the lock file)
 - **CVE-2025-67644** (LangGraph SQLite injection) — blocked via `constraints.txt`
 - **langchain-community** sunset — replaced with `langchain-postgres` for vector store
 
@@ -539,7 +541,7 @@ This is enforced server-side — the `/approve` endpoint is the only code path t
 
 ## Database Schema
 
-37 migrations in `supabase/migrations/`, including:
+The migrations in `supabase/migrations/`, applied in order by `scripts/migrate.py`, include:
 
 | Migration | Table / Change |
 |---|---|

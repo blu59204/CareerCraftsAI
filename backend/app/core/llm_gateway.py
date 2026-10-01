@@ -143,6 +143,7 @@ async def proxy_llm_request(path: str, request: Request) -> Response:
     from langchain_core.messages import convert_to_messages
     from pydantic import BaseModel, Field, ValidationError
 
+    from app.agents.prompts import with_security_rules
     from app.core.model_router import _make_llm
     from app.services.llm_proxy_service import get_redaction_callback, redact_keys
 
@@ -167,7 +168,9 @@ async def proxy_llm_request(path: str, request: Request) -> Response:
             for message in payload.messages
         ):
             raise ValueError("Only text messages are supported")
-        messages = convert_to_messages(payload.messages)
+        # Every agent's calls pass here, so this is where the shared
+        # untrusted-content rules are guaranteed, inline prompts included.
+        messages = with_security_rules(convert_to_messages(payload.messages))
     except (ValidationError, ValueError, TypeError):
         raise HTTPException(status_code=422, detail="Invalid chat request") from None
     if payload.model != session["model_name"]:

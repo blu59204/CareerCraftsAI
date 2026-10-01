@@ -54,3 +54,20 @@ def test_agent_llm_requires_a_member():
 
     with pytest.raises(ValueError, match="user_id"):
         model_router.build_agent_llm(SimpleNamespace(provider="openai", model_name="m"))
+
+
+def test_security_rules_are_merged_into_the_system_prompt_once():
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.agents.prompts import _COMMON, SECURITY_RULES, with_security_rules
+
+    bare = with_security_rules([HumanMessage(content="Classify this email")])
+    assert [type(m) for m in bare] == [SystemMessage, HumanMessage]
+    assert bare[0].content == SECURITY_RULES
+
+    merged = with_security_rules([SystemMessage(content="Score this job."), HumanMessage("x")])
+    assert len(merged) == 2
+    assert merged[0].content == f"{SECURITY_RULES}\n\nScore this job."
+
+    already = [SystemMessage(content=_COMMON), HumanMessage("x")]
+    assert with_security_rules(already) == already
