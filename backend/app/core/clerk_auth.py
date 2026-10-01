@@ -201,8 +201,12 @@ async def _repair_placeholder_profile(db: AsyncSession, user: User) -> None:
     await db.refresh(user)
 
 
-async def delete_clerk_user(subject: str, *, client: httpx.AsyncClient | None = None) -> None:
-    """Delete the Clerk user via the Backend API. Best-effort — logs and swallows failures.
+async def delete_clerk_user(
+    subject: str, *, client: httpx.AsyncClient | None = None, strict: bool = False
+) -> None:
+    """Delete the Clerk user via the Backend API. A user Clerk no longer has
+    counts as deleted. Other failures are logged, or raised when strict, so
+    the account sweep can keep the row and retry.
 
     Called from account deletion so a removed local row can't be re-provisioned
     by the same Clerk identity signing back in.
@@ -222,8 +226,12 @@ async def delete_clerk_user(subject: str, *, client: httpx.AsyncClient | None = 
         )
         if response.status_code not in (200, 404):
             logger.warning("Clerk user deletion for %s returned %s", subject, response.status_code)
+            if strict:
+                raise RuntimeError(f"Clerk user deletion returned {response.status_code}")
     except httpx.RequestError as exc:
         logger.warning("Clerk user deletion request failed for %s: %s", subject, exc)
+        if strict:
+            raise
     finally:
         if owns_client:
             await client.aclose()
