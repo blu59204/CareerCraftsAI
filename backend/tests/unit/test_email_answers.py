@@ -48,22 +48,25 @@ def test_message_text_reads_nested_plain_part():
     assert message_text(message) == "1: hello"
 
 
-def test_only_the_members_own_message_counts_as_an_answer():
-    def msg(sender, when):
+def test_only_the_members_own_sent_message_counts_as_an_answer():
+    def msg(sender, when, labels):
         return {
-            "id": sender,
+            "id": f"{sender}-{when}",
             "internalDate": str(when),
+            "labelIds": labels,
             "payload": {"headers": [{"name": "From", "value": sender}]},
         }
 
     thread = {
         "messages": [
-            msg("CareerCraft <noreply@jobagent.ai>", 1),
-            msg("Me <me@example.com>", 2),
-            msg("someone@else.com", 3),
+            msg("CareerCraft <noreply@jobagent.ai>", 1, ["INBOX"]),
+            msg("Me <me@example.com>", 2, ["SENT"]),
+            msg("someone@else.com", 3, ["INBOX"]),
+            # forged: claims to be the member but arrived in the inbox
+            msg("Me <me@example.com>", 4, ["INBOX"]),
         ]
     }
-    assert member_reply(thread, "ME@example.com")["id"] == "Me <me@example.com>"
+    assert member_reply(thread, "ME@example.com")["id"] == "Me <me@example.com>-2"
     assert member_reply(thread, "other@example.com") is None
 
 

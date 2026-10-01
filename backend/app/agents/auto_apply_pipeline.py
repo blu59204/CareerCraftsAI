@@ -85,6 +85,7 @@ Write a 3-paragraph email:
 1. Hook — mention the specific role and something about the company
 2. Value — 2-3 sentences on why I'm a fit (reference specific skills from JD)
 3. CTA — ask for a quick call, suggest availability
+Mention that my resume is attached.
 
 Keep it under 150 words. Be direct, not generic.
 Format: Subject: <subject>\n\n<body>"""
@@ -281,7 +282,17 @@ async def _apply_to_job(
                 },
             )
         # ── Find and verify the recruiter's email ───────────────────
-        contact = (await find_recruiter_contact(job.company, posting_text=job.description)).best
+        from app.services.recruiter_email import employer_domain
+
+        domain = employer_domain(job.job_url, job.description)
+        contact = (
+            await find_recruiter_contact(
+                job.company,
+                domain=domain,
+                domain_confirmed=bool(domain),
+                posting_text=job.description,
+            )
+        ).best
         recruiter_email = contact.email if contact else None
         recruiter_name = (contact.name if contact else "") or "Hiring Manager"
 
@@ -350,6 +361,7 @@ async def _apply_to_job(
                     await _get_or_create_job_application(user_id, job) if job.job_url else None
                 ),
                 resume_version=(resume_sha256 or "")[:16] or None,
+                resume_document_id=resume_draft.get("pdf_document_id"),
             )
             result["outreach_state"] = queued.state if queued else "not_queued"
 

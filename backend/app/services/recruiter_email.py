@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 import httpx
 
 from app.core.config import settings
-from app.services.email_finder_service import _company_to_domain, _generate_emails
+from app.services.email_finder_service import PATTERNS, _company_to_domain, _generate_emails
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,103 @@ _NOT_A_PERSON = ("noreply", "no-reply", "donotreply", "do-not-reply", "mailer-da
 _ROLE_MAILBOXES = ("jobs", "careers", "recruiting", "talent", "hr")
 _MAX_VERIFICATIONS = 6  # verifier credits are the member's money
 _TIMEOUT = httpx.Timeout(10.0)
+
+
+_FREE_MAIL = {
+    "gmail.com",
+    "yahoo.com",
+    "yahoo.in",
+    "outlook.com",
+    "hotmail.com",
+    "icloud.com",
+    "proton.me",
+    "protonmail.com",
+    "rediffmail.com",
+}
+# Boards, ATS hosts and VC portfolio boards: a job link on one of these says
+# nothing about the employer's own email domain.
+_JOB_HOSTS = (
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "myworkdayjobs.com",
+    "myworkdaysite.com",
+    "smartrecruiters.com",
+    "workable.com",
+    "recruitee.com",
+    "teamtailor.com",
+    "bamboohr.com",
+    "icims.com",
+    "linkedin.com",
+    "naukri.com",
+    "indeed.com",
+    "glassdoor.com",
+    "foundit.in",
+    "wellfound.com",
+    "angel.co",
+    "instahyre.com",
+    "cutshort.io",
+    "hirist.tech",
+    "internshala.com",
+    "shine.com",
+    "freshersworld.com",
+    "ziprecruiter.com",
+    "remoteok.com",
+    "remotive.com",
+    "weworkremotely.com",
+    "himalayas.app",
+    "workingnomads.com",
+    "careerjet.co.in",
+    "jooble.org",
+    "adzuna.com",
+    "adzuna.in",
+    "themuse.com",
+    "ycombinator.com",
+    "getro.com",
+    "google.com",
+    "peakxv.com",
+    "accel.com",
+    "lightspeedvp.com",
+    "elevationcapital.com",
+    "blume.vc",
+    "nexusvp.com",
+    "z47.com",
+    "kalaari.com",
+    "news.ycombinator.com",
+)
+_SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu"}
+
+
+def registrable_domain(host: str) -> str:
+    labels = [part for part in host.lower().strip(".").split(".") if part]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    if len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _is_board(domain: str) -> bool:
+    return any(domain == h or domain.endswith("." + h) for h in _JOB_HOSTS)
+
+
+def employer_domain(job_url: str | None, posting_text: str = "") -> str | None:
+    """The employer's own domain: the job link when it is on the company's
+    site, else the most common non-free-mail address domain in the posting.
+    None when it cannot be told, so nobody is emailed at a guessed domain
+    without the member looking first."""
+    host = urlsplit(job_url or "").hostname
+    if host:
+        domain = registrable_domain(host)
+        if domain and not _is_board(domain):
+            return domain
+    seen = Counter(
+        registrable_domain(address.split("@", 1)[1])
+        for address in emails_in_text(posting_text)
+        if registrable_domain(address.split("@", 1)[1]) not in _FREE_MAIL
+        and not _is_board(registrable_domain(address.split("@", 1)[1]))
+    )
+    return seen.most_common(1)[0][0] if seen else None
 
 
 @dataclass
@@ -208,10 +307,94 @@ async def apollo_candidates(
     return []
 
 
-def pattern_candidates(domain: str, first: str, last: str) -> list[Contact]:
+def infer_pattern(known: list[Contact]) -> str | None:
+    """The company's own address format, read from named addresses already
+    found at the domain (for example "{first}.{last}")."""
+    votes: Counter = Counter()
+    for contact in known:
+        parts = contact.name.lower().split()
+        if len(parts) < 2 or "@" not in contact.email:
+            continue
+        first, last = parts[0], parts[-1]
+        local = contact.email.split("@", 1)[0]
+        for pattern in PATTERNS:
+            if pattern.format(first=first, last=last, f=first[0], l=last[0]) == local:
+                votes[pattern] += 1
+    return votes.most_common(1)[0][0] if votes else None
+
+
+def pattern_candidates(
+    domain: str, first: str, last: str, preferred: str | None = None
+) -> list[Contact]:
     if not (first and last):
         return []
-    return [Contact(email, "pattern") for email, _ in _generate_emails(first, last, domain)[:4]]
+    guesses = _generate_emails(first, last, domain)
+    guesses.sort(key=lambda guess: guess[1] != preferred)  # stable: preferred first
+    return [Contact(email, "pattern") for email, _ in guesses[:4]]
+
+
+async def prospeo_candidates(
+    client: httpx.AsyncClient, domain: str, first: str = "", last: str = ""
+) -> list[Contact]:
+    if not settings.PROSPEO_API_KEY or not (first and last):
+        return []
+    try:
+        response = await client.post(
+            "https://api.prospeo.io/email-finder",
+            headers={"X-KEY": settings.PROSPEO_API_KEY},
+            json={"first_name": first, "last_name": last, "company": domain},
+        )
+        response.raise_for_status()
+        email = ((response.json() or {}).get("response") or {}).get("email")
+    except Exception as exc:
+        logger.warning("prospeo request failed: %s", type(exc).__name__)
+        return []
+    return [Contact(email.lower(), "prospeo", name=f"{first} {last}")] if email else []
+
+
+async def findymail_candidates(
+    client: httpx.AsyncClient, domain: str, first: str = "", last: str = ""
+) -> list[Contact]:
+    if not settings.FINDYMAIL_API_KEY or not (first and last):
+        return []
+    try:
+        response = await client.post(
+            "https://app.findymail.com/api/search/name",
+            headers={"Authorization": f"Bearer {settings.FINDYMAIL_API_KEY}"},
+            json={"name": f"{first} {last}", "domain": domain},
+        )
+        response.raise_for_status()
+        email = ((response.json() or {}).get("contact") or {}).get("email")
+    except Exception as exc:
+        logger.warning("findymail request failed: %s", type(exc).__name__)
+        return []
+    return [Contact(email.lower(), "findymail", name=f"{first} {last}")] if email else []
+
+
+_SITE_PAGES = ("", "careers", "contact", "about")
+
+
+async def website_candidates(domain: str) -> list[Contact]:
+    """Addresses the company publishes on its own careers, contact and about
+    pages, such as careers@ or hr@."""
+    from app.services.public_http import public_get
+
+    found: list[Contact] = []
+    for page in _SITE_PAGES:
+        try:
+            response = await public_get(f"https://{domain}/{page}", max_bytes=500_000)
+            if response.status_code != 200:
+                continue
+            text = response.text
+        except Exception as exc:
+            logger.info("Company page unavailable: %s", type(exc).__name__)
+            continue
+        for address in emails_in_text(text, domain):
+            if all(address != c.email for c in found):
+                found.append(Contact(address, "website"))
+        if len(found) >= 4:
+            break
+    return found[:4]
 
 
 def role_mailboxes(domain: str) -> list[Contact]:
@@ -225,13 +408,18 @@ async def find_recruiter_contact(
     company: str,
     *,
     domain: str | None = None,
+    domain_confirmed: bool = False,
     recruiter_name: str = "",
     posting_text: str = "",
     client: httpx.AsyncClient | None = None,
 ) -> Lookup:
     """The first verified-valid contact in source order, else the best held
-    one. Invalid addresses are returned in `rejected`, never as `best`."""
-    domain = domain or _company_to_domain(company)
+    one. Invalid addresses are returned in `rejected`, never as `best`.
+
+    A domain that was only guessed from the company name is never trusted:
+    even a deliverable address there is held for the member to look at."""
+    if not domain:
+        domain, domain_confirmed = _company_to_domain(company), False
     parts = recruiter_name.split()
     first, last = (parts[0], parts[-1]) if len(parts) >= 2 else ("", "")
 
@@ -239,9 +427,14 @@ async def find_recruiter_contact(
     client = client or httpx.AsyncClient(timeout=_TIMEOUT)
     try:
         queue: list[Contact] = [Contact(e, "posting") for e in emails_in_text(posting_text, domain)]
-        queue += await hunter_candidates(client, domain, first, last)
+        if domain_confirmed:
+            queue += await website_candidates(domain)
+        hunter = await hunter_candidates(client, domain, first, last)
+        queue += hunter
         queue += await apollo_candidates(client, domain, company, first, last)
-        queue += pattern_candidates(domain, first, last)
+        queue += await prospeo_candidates(client, domain, first, last)
+        queue += await findymail_candidates(client, domain, first, last)
+        queue += pattern_candidates(domain, first, last, infer_pattern(hunter))
         queue += role_mailboxes(domain)
 
         lookup = Lookup()
@@ -255,6 +448,10 @@ async def find_recruiter_contact(
                 break
             checked += 1
             contact.verdict, contact.verified_by = await verify_address(client, contact.email)
+            if contact.verdict == VALID and not domain_confirmed:
+                contact.verdict = RISKY  # right mailbox, unconfirmed company
+                lookup.best = lookup.best or contact
+                return lookup
             if contact.action == SKIP:
                 lookup.rejected.append(contact)
             elif contact.action == SEND:
