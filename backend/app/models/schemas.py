@@ -63,6 +63,7 @@ class UserPreferencesSchema(BaseModel):
     notify_agent_alerts: bool | None = None
     notify_followup_reminders: bool | None = None
     notify_weekly_digest: bool | None = None
+    daily_search_enabled: bool | None = None
 
 
 class UserPreferencesResponse(UserPreferencesSchema):

@@ -55,6 +55,13 @@ async def draft_followup_activity(params: dict) -> dict:
 
 
 @activity.defn
+async def list_daily_search_users_activity(params: dict) -> dict:
+    from app.services.scheduled_jobs import list_daily_search_users
+
+    return {"user_ids": await list_daily_search_users()}
+
+
+@activity.defn
 async def daily_search_activity(params: dict) -> dict:
     from app.services.scheduled_jobs import StatusCheckTrigger, daily_search
 

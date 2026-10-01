@@ -500,6 +500,7 @@ def test_every_started_workflow_is_registered_with_the_worker():
     from app.workflows.registry import ACTIVITIES, WORKFLOWS
     from app.workflows.scheduled import (
         DailySearchWorkflow,
+        DailyUserSearchWorkflow,
         MaintenanceWorkflow,
     )
 
@@ -509,6 +510,7 @@ def test_every_started_workflow_is_registered_with_the_worker():
         FollowupWorkflow,
         JobSearchWorkflow,
         DailySearchWorkflow,
+        DailyUserSearchWorkflow,
         MaintenanceWorkflow,
     ):
         assert workflow_cls in WORKFLOWS
@@ -522,6 +524,45 @@ def test_every_started_workflow_is_registered_with_the_worker():
         "run_job_search_activity",
         "fail_job_search_activity",
         "draft_followup_activity",
+        "daily_search_activity",
+        "list_daily_search_users_activity",
         "maintenance_activity",
         "reserve_application_attempt",
     } <= names
+
+
+# ── DailySearchWorkflow ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_daily_search_runs_each_opted_in_member_separately():
+    from app.workflows.scheduled import DailySearchWorkflow, DailyUserSearchWorkflow
+
+    user_ids = [f"u{i}" for i in range(7)]  # more than one batch
+    searched = []
+
+    @activity.defn(name="list_daily_search_users_activity")
+    async def list_users(params: dict) -> dict:
+        return {"user_ids": user_ids}
+
+    @activity.defn(name="daily_search_activity")
+    async def search(params: dict) -> dict:
+        if params["user_id"] == "u3":
+            raise RuntimeError("job board down")
+        searched.append(params["user_id"])
+        return {"status": "ok"}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[DailySearchWorkflow, DailyUserSearchWorkflow],
+            activities=[list_users, search],
+        ):
+            result = await env.client.execute_workflow(
+                DailySearchWorkflow.run, id="daily-search", task_queue=QUEUE
+            )
+
+    # One member failing every retry does not stop anyone else's search.
+    assert result == {"users": 7, "failed": 1}
+    assert sorted(searched) == [u for u in user_ids if u != "u3"]

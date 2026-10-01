@@ -369,23 +369,55 @@ class StatusCheckTrigger(BaseModel):
     user_id: str
 
 
+def _daily_search_eligible_ids():
+    """Members who opted into the daily search, have an active model and saved
+    target roles, and have not asked for their account to be deleted."""
+    from sqlalchemy import select
+
+    from app.models.db import User as UserModel
+    from app.models.db import UserModelSettings, UserPreferences
+
+    return (
+        select(UserModel.id)
+        .join(UserModelSettings, UserModelSettings.user_id == UserModel.id)
+        .join(UserPreferences, UserPreferences.user_id == UserModel.id)
+        .where(
+            UserModelSettings.is_active == True,  # noqa: E712
+            UserPreferences.daily_search_enabled == True,  # noqa: E712
+            UserPreferences.target_roles.is_not(None),
+            UserModel.deletion_scheduled_for.is_(None),
+        )
+        .distinct()
+    )
+
+
+async def list_daily_search_users() -> list[str]:
+    """User ids the scheduled daily search fans out to, one child each."""
+    from app.core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(_daily_search_eligible_ids())
+        return [str(user_id) for user_id in rows.scalars().all()]
+
+
 async def daily_search(payload: StatusCheckTrigger):
     """Daily automated job search based on user preferences.
 
     Fetches user preferences from memory, searches all platforms + Google Jobs,
     scores matches, and saves top results as applications.
 
-    Honors per-user opt-in: only members who (1) have an active LLM model
-    configured and (2) have saved job preferences (target_roles /
-    preferred_locations) get a daily search. "all" fans out across all
-    eligible members; an explicit user_id targets just that member.
+    Honors per-user opt-in: only members who turned on the daily search in
+    Settings, have an active LLM model and saved target roles, and are not
+    pending deletion get one. The Temporal schedule starts one child
+    workflow per member with an explicit user_id; "all" runs every eligible
+    member in this one call and is kept for manual runs.
     """
     from sqlalchemy import select
 
     from app.agents.memory.manager import MemoryManager
     from app.core.database import AsyncSessionLocal
     from app.core.model_router import get_llm
-    from app.models.db import JobApplication, UserModelSettings, UserPreferences
+    from app.models.db import JobApplication, UserPreferences
     from app.models.db import User as UserModel
     from app.services.indian_platforms_service import search_google_jobs
     from app.services.job_platforms_service import scrape_all_platforms
@@ -396,24 +428,10 @@ async def daily_search(payload: StatusCheckTrigger):
     visible_browser_opted_in = 0  # how many users have prefer_live_browser=True
 
     async with AsyncSessionLocal() as db:
-        if payload.user_id == "all":
-            # Fan-out: every user with an active model + saved preferences.
-            res = await db.execute(
-                select(UserModel)
-                .join(UserModelSettings, UserModelSettings.user_id == UserModel.id)
-                .join(UserPreferences, UserPreferences.user_id == UserModel.id)
-                .where(
-                    UserModelSettings.is_active == True,  # noqa: E712
-                    UserPreferences.target_roles.is_not(None),
-                )
-                .distinct()
-            )
-            users = res.scalars().all()
-        else:
-            res = await db.execute(
-                select(UserModel).where(UserModel.clerk_user_id == payload.user_id)
-            )
-            users = res.scalars().all()
+        query = select(UserModel).where(UserModel.id.in_(_daily_search_eligible_ids()))
+        if payload.user_id != "all":
+            query = query.where(UserModel.id == uuid.UUID(payload.user_id))
+        users = (await db.execute(query)).scalars().all()
 
         for user in users:
             try:
@@ -445,12 +463,18 @@ async def daily_search(payload: StatusCheckTrigger):
                 user_ctx = await mgr.get_user_context(user_id)
                 await mgr.close()
 
-                search_term = user_ctx.get("target_roles", "software engineer")
-                location = user_ctx.get("preferred_locations", "Bangalore")
-                if isinstance(search_term, list) and search_term:
-                    search_term = search_term[0]
-                if isinstance(location, list) and location:
-                    location = location[0]
+                search_term = user_ctx.get("target_roles") or (prefs_row and prefs_row.target_roles)
+                location = user_ctx.get("preferred_locations") or (
+                    prefs_row and prefs_row.preferred_locations
+                )
+                if isinstance(search_term, list):
+                    search_term = search_term[0] if search_term else None
+                if isinstance(location, list):
+                    location = location[0] if location else None
+                # No invented defaults: search only for what the member saved.
+                location = location or (
+                    "Remote" if prefs_row and prefs_row.work_mode == "remote" else None
+                )
                 if not search_term or not location:
                     logger.debug("Skipping daily search for %s: missing prefs", user_id)
                     continue

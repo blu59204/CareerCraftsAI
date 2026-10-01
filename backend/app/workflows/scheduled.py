@@ -3,6 +3,7 @@ those Schedules."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -12,6 +13,7 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from app.workflows.job_activities import (
         daily_search_activity,
+        list_daily_search_users_activity,
         maintenance_activity,
         refresh_job_catalog_activity,
     )
@@ -21,16 +23,54 @@ logger = logging.getLogger(__name__)
 _RETRY = RetryPolicy(initial_interval=timedelta(minutes=1), maximum_attempts=3)
 
 
+# Members searched at once. Each search runs browser automation on its own
+# member's key, so this bounds worker load, not anyone's spend.
+_DAILY_SEARCH_BATCH = 5
+
+
+@workflow.defn
+class DailyUserSearchWorkflow:
+    """One member's daily search, with its own timeout and retries, so a slow
+    or failing member never holds up or restarts anyone else's."""
+
+    @workflow.run
+    async def run(self, user_id: str) -> dict:
+        return await workflow.execute_activity(
+            daily_search_activity,
+            {"user_id": user_id},
+            start_to_close_timeout=timedelta(minutes=30),
+            retry_policy=_RETRY,
+        )
+
+
 @workflow.defn
 class DailySearchWorkflow:
     @workflow.run
     async def run(self) -> dict:
-        return await workflow.execute_activity(
-            daily_search_activity,
-            {"user_id": "all"},
-            start_to_close_timeout=timedelta(minutes=30),
+        listed = await workflow.execute_activity(
+            list_daily_search_users_activity,
+            {},
+            start_to_close_timeout=timedelta(minutes=2),
             retry_policy=_RETRY,
         )
+        user_ids: list[str] = listed.get("user_ids", [])
+        parent_id = workflow.info().workflow_id
+        failed = 0
+        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
+            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
+            results = await asyncio.gather(
+                *(
+                    workflow.execute_child_workflow(
+                        DailyUserSearchWorkflow.run,
+                        user_id,
+                        id=f"{parent_id}/user/{user_id}",
+                    )
+                    for user_id in batch
+                ),
+                return_exceptions=True,
+            )
+            failed += sum(isinstance(result, BaseException) for result in results)
+        return {"users": len(user_ids), "failed": failed}
 
 
 @workflow.defn

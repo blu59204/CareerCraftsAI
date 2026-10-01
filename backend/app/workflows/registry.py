@@ -21,15 +21,17 @@ from app.workflows.job_activities import (
     daily_search_activity,
     draft_followup_activity,
     fail_job_search_activity,
+    list_daily_search_users_activity,
     maintenance_activity,
-    run_job_search_activity,
     refresh_job_catalog_activity,
+    run_job_search_activity,
 )
 from app.workflows.job_search import JobSearchWorkflow
 from app.workflows.scheduled import (
     DailySearchWorkflow,
-    MaintenanceWorkflow,
+    DailyUserSearchWorkflow,
     JobCatalogRefreshWorkflow,
+    MaintenanceWorkflow,
 )
 
 WORKFLOWS = [
@@ -39,6 +41,7 @@ WORKFLOWS = [
     JobSearchWorkflow,
     FollowupWorkflow,
     DailySearchWorkflow,
+    DailyUserSearchWorkflow,
     MaintenanceWorkflow,
 ]
 
@@ -55,5 +58,6 @@ ACTIVITIES = [
     fail_job_search_activity,
     draft_followup_activity,
     daily_search_activity,
+    list_daily_search_users_activity,
     maintenance_activity,
 ]

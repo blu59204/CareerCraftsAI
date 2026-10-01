@@ -570,6 +570,11 @@ class UserPreferences(Base):
     notify_weekly_digest: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Opt-in: the scheduled daily search runs browser automation and LLM
+    # calls on the member's own API key, so it never starts unasked.
+    daily_search_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

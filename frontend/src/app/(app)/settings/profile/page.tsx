@@ -8,6 +8,7 @@ import {
   Briefcase,
   Browser,
   Check,
+  CalendarCheck,
   CircleNotch,
   CurrencyDollar,
   FloppyDisk,
@@ -54,6 +55,8 @@ interface UserPreferences {
   // When true, autonomous job search + apply open a visible Chromium and
   // stream browser_frame SSE events to the UI.  Default false (headless).
   prefer_live_browser: boolean;
+  // Opt-in: the scheduled morning search runs only for members who turn it on.
+  daily_search_enabled: boolean;
 }
 
 interface FormState {
@@ -68,6 +71,7 @@ interface FormState {
   preferred_locations: string;
   bio: string;
   prefer_live_browser: boolean;
+  daily_search_enabled: boolean;
 }
 
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
@@ -109,6 +113,7 @@ const DEFAULT_FORM: FormState = {
   preferred_locations: "",
   bio: "",
   prefer_live_browser: false,
+  daily_search_enabled: false,
 };
 
 function prefsToForm(prefs: UserPreferences): FormState {
@@ -124,6 +129,7 @@ function prefsToForm(prefs: UserPreferences): FormState {
     preferred_locations: (prefs.preferred_locations ?? []).join(", "),
     bio: prefs.bio ?? "",
     prefer_live_browser: Boolean(prefs.prefer_live_browser),
+    daily_search_enabled: Boolean(prefs.daily_search_enabled),
   };
 }
 
@@ -217,6 +223,7 @@ function ProfileSkeleton() {
     "lg:col-span-4 h-52",
     "lg:col-span-7 h-56",
     "lg:col-span-5 h-56",
+    "lg:col-span-12 h-44",
   ];
   return (
     <div role="status" aria-live="polite" className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -334,6 +341,7 @@ export default function ProfilePreferencesPage() {
         preferred_locations: parsedLocations,
         bio: form.bio || undefined,
         prefer_live_browser: form.prefer_live_browser,
+        daily_search_enabled: form.daily_search_enabled,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -716,6 +724,36 @@ export default function ProfilePreferencesPage() {
                 </div>
                 <StatusPill tone={form.prefer_live_browser ? "primary" : "neutral"}>
                   {form.prefer_live_browser ? "Visible Chromium" : "Headless (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* H — daily search */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.12}
+                tone={form.daily_search_enabled ? "primary" : "muted"}
+                icon={<CalendarCheck size={16} weight="light" />}
+                title="Daily job search"
+                meta={
+                  <Toggle
+                    checked={form.daily_search_enabled}
+                    onChange={(next) => set("daily_search_enabled", next)}
+                    label="Search for new jobs every morning"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Search for new jobs every morning
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    When on, CareerCraft searches each morning for your target roles in your preferred locations,
+                    using your own AI model and key. It needs at least one target role, and a location unless your
+                    work mode is remote. Nothing is applied for without your approval.
+                  </p>
+                </div>
+                <StatusPill tone={form.daily_search_enabled ? "primary" : "neutral"}>
+                  {form.daily_search_enabled ? "Every morning" : "Off (default)"}
                 </StatusPill>
               </PrefCard>
             </div>
