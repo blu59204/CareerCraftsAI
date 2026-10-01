@@ -41,7 +41,10 @@ All optional — features gracefully degrade if not set.
 
 | Variable | Provider | Used By | Description |
 |---|---|---|---|
-| `HUNTER_API_KEY` | [hunter.io](https://hunter.io) | EmailAgent, LeadsAgent | Finds recruiter email addresses by domain + name. |
+| `HUNTER_API_KEY` | [hunter.io](https://hunter.io) | Recruiter outreach, EmailAgent, LeadsAgent | Finds recruiter email addresses by domain + name. |
+| `APOLLO_API_KEY` | [apollo.io](https://apollo.io) | Recruiter outreach | Second finder; matches a named recruiter at a company. |
+| `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `MILLIONVERIFIER_API_KEY` | the provider | Recruiter outreach | Verifies an address before it is emailed. Without one, nothing counts as verified and every email waits for the member's approval. |
+| `APPLY_DAILY_CAP`, `APPLY_MIN_GAP_SECONDS`, `AUTO_APPLY_MIN_SCORE` | none | Applications | Applications per rolling 24 hours (25), seconds between two (120), and the match score an automatic application needs (70). |
 | `PROXYCURL_API_KEY` | [proxycurl.com](https://proxycurl.com) | LinkedInAgent | Fetches LinkedIn profile data without scraping. |
 | `EXA_API_KEY` | [exa.ai](https://exa.ai) | CompanyResearchAgent, SalaryAgent, InterviewPrepAgent | Neural web search for research tasks. |
 | `RESEND_API_KEY` | [resend.com](https://resend.com) | ResendService | Sends transactional emails (account notifications, not job emails). |
