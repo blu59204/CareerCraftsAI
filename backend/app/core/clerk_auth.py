@@ -182,12 +182,43 @@ async def fetch_clerk_profile(subject: str) -> dict[str, Any] | None:
     return {"email": email, "full_name": name, "avatar_url": data.get("image_url") or None}
 
 
+# After a failed repair, wait this long before asking Clerk again, so a
+# member whose email cannot be repaired does not cost two Clerk calls on
+# every request.
+_REPAIR_RETRY_SECONDS = 3600
+
+
+def _repair_backoff_key(user: User) -> str:
+    return f"clerk_profile_repair:{user.id}"
+
+
+async def _repair_recently_failed(user: User) -> bool:
+    from app.core.redis_client import get_redis
+
+    try:
+        return bool(await get_redis().exists(_repair_backoff_key(user)))
+    except Exception:
+        return False  # Redis down: try the repair as before
+
+
+async def _remember_failed_repair(user: User) -> None:
+    from app.core.redis_client import get_redis
+
+    try:
+        await get_redis().set(_repair_backoff_key(user), "1", ex=_REPAIR_RETRY_SECONDS)
+    except Exception:
+        logger.debug("Could not record failed profile repair for %s", user.id)
+
+
 async def _repair_placeholder_profile(db: AsyncSession, user: User) -> None:
     """Replace a placeholder email (and empty name) from Clerk, once."""
     if not (user.email or "").endswith(PLACEHOLDER_EMAIL_DOMAIN) or not user.clerk_user_id:
         return
+    if await _repair_recently_failed(user):
+        return
     profile = await fetch_clerk_profile(user.clerk_user_id)
     if not profile:
+        await _remember_failed_repair(user)
         return
     user.email = profile["email"]
     user.full_name = user.full_name or profile["full_name"]
@@ -198,6 +229,7 @@ async def _repair_placeholder_profile(db: AsyncSession, user: User) -> None:
         # Another row already owns that email; keep the placeholder.
         await db.rollback()
         logger.warning("Could not repair placeholder email for %s: email in use", user.id)
+        await _remember_failed_repair(user)
     await db.refresh(user)
 
 

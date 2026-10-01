@@ -81,3 +81,21 @@ async def test_missing_bearer_token_still_401(mock_db):
         await get_current_user(request, db=mock_db)
 
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_reuses_claims_the_jwt_middleware_already_verified(mock_user, mock_db):
+    mock_user.policy_accepted_at = datetime.now(UTC)
+    request = _make_request("GET", "/api/v1/dashboard")
+    request.state.user = {"sub": "user_123"}
+    verify = MagicMock()
+
+    with (
+        patch("app.api.v1.deps.verify_auth_jwt", verify),
+        patch("app.api.v1.deps.subject_from_payload", return_value="user_123") as subject,
+        patch("app.api.v1.deps.get_or_provision_user", AsyncMock(return_value=mock_user)),
+    ):
+        assert await get_current_user(request, db=mock_db) is mock_user
+
+    verify.assert_not_called()
+    subject.assert_called_once_with({"sub": "user_123"})

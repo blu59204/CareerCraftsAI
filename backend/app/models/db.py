@@ -6,12 +6,14 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -61,6 +63,15 @@ class User(Base):
 
 class UserModelSettings(Base):
     __tablename__ = "user_model_settings"
+    # At most one active model per member (migration 20261001102000).
+    __table_args__ = (
+        Index(
+            "user_model_settings_one_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
