@@ -15,6 +15,16 @@ from temporalio.exceptions import ApplicationError
 from app.workflows import notification_activities
 
 
+@pytest.fixture(autouse=True)
+def _activity_info():
+    with patch.object(
+        notification_activities.activity,
+        "info",
+        return_value=SimpleNamespace(workflow_id="notification/test"),
+    ):
+        yield
+
+
 def _session_cm(db):
     """AsyncSessionLocal() is used as `async with AsyncSessionLocal() as db`
     — wrap a mock db in a minimal async context manager returning it."""
@@ -32,6 +42,7 @@ def _session_cm(db):
 @pytest.mark.asyncio
 async def test_create_notification_activity_returns_ids_when_delivery_created():
     db = AsyncMock()
+    db.get.return_value = None
     notification_id = uuid.uuid4()
     delivery_id = uuid.uuid4()
     notification = SimpleNamespace(id=notification_id)
@@ -68,6 +79,7 @@ async def test_create_notification_activity_returns_ids_when_delivery_created():
 @pytest.mark.asyncio
 async def test_create_notification_activity_returns_none_ids_when_gated_off():
     db = AsyncMock()
+    db.get.return_value = None
 
     with (
         patch("app.core.database.AsyncSessionLocal", return_value=_session_cm(db)),
@@ -186,3 +198,23 @@ async def test_mark_delivery_dead_activity_calls_service():
         await notification_activities.mark_delivery_dead_activity({"delivery_id": str(delivery_id)})
 
     mock_dead.assert_awaited_once_with(db, delivery_id)
+
+
+@pytest.mark.asyncio
+async def test_create_notification_activity_retry_reuses_existing_notification():
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(id="existing")
+    create = AsyncMock()
+    with (
+        patch("app.core.database.AsyncSessionLocal", return_value=_session_cm(db)),
+        patch("app.services.notification_service.create_notification", create),
+        patch(
+            "app.services.notification_service.get_pending_email_delivery",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        result = await notification_activities.create_notification_activity(
+            {"user_id": str(uuid.uuid4()), "type": "job_matches", "title": "t"}
+        )
+    create.assert_not_awaited()
+    assert result["notification_id"] and result["email_delivery_id"] is None

@@ -102,3 +102,13 @@ def test_funding_bonus_cannot_lift_a_job_over_the_threshold(monkeypatch):
     assert with_bonus(40) == 45
     assert with_bonus(72) == 77
     assert with_bonus(98) == 100
+
+
+def test_detect_platform_recognises_more_portals():
+    from app.workflows.extension_activities import detect_platform
+
+    assert detect_platform("https://acme.icims.com/jobs/1/job") == "icims"
+    assert detect_platform("https://acme.taleo.net/careersection/x") == "taleo"
+    assert detect_platform("https://career5.successfactors.eu/x") == "successfactors"
+    assert detect_platform("https://acme.darwinbox.in/ms/candidate") == "darwinbox"
+    assert detect_platform("https://acme.keka.com/careers/jobdetails/1") == "keka"

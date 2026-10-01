@@ -20,7 +20,7 @@
   // Controls that lead from a job description to its application form.
   const APPLY_LINK_RE = /^(apply|apply now|apply here|apply for this (job|position|role)|apply to this job|apply online|start (your )?application|i'?m interested)$/i;
   // Hosted application forms that company career sites embed in an iframe.
-  const ATS_FRAME_RE = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|jobvite\.com|icims\.com|bamboohr\.com|recruitee\.com|myworkdayjobs\.com)$/i;
+  const ATS_FRAME_RE = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|jobvite\.com|icims\.com|bamboohr\.com|recruitee\.com|myworkdayjobs\.com|taleo\.net|successfactors\.(com|eu)|darwinbox\.(in|com)|keka\.com)$/i;
 
   // Returned by a driver that sent the tab to another page: the runner stops
   // quietly and the background re-runs it once that page has loaded.
@@ -755,6 +755,39 @@
     },
   };
 
+
+  // ── Wizard portals without a Workday-style marker set ───────────────────
+  // iCIMS, Taleo, SuccessFactors, Darwinbox and Keka share one shape: a job
+  // page with an Apply control, then a form (one page or several steps) that
+  // the wizard loop fills. Hosted-tenant selectors only differ in how the
+  // Apply control is found, so they share a factory. Sign-in is detected by
+  // a visible password field and handed to the member, never filled.
+  function formPortalCfg(label, applySelector) {
+    const cfg = {
+      label,
+      success: ATS_SUCCESS_RE,
+      stepDelay: [1200, 1700],
+      loginMessage: `Sign in or create your ${label} account in this tab, then press Continue. CareerCraft never sees your password.`,
+      signedOut: () => !!visibleOne("input[type=password]") && !cfg.findRoot(),
+      findRoot() {
+        const forms = Array.from(document.forms).filter((f) => dom.isVisible(f) || f.querySelector("input,select,textarea"));
+        return forms.find(looksLikeApplication) || null;
+      },
+      findPrimary: (root) => primaryFrom(dom.deepQueryAll(root, ANY_BUTTON)),
+      async enter(ctx) {
+        const apply = visibleOne(applySelector) || findApplyControl();
+        return apply ? clickThrough(ctx, apply, () => cfg.findRoot() || cfg.signedOut()) : null;
+      },
+    };
+    return cfg;
+  }
+
+  const icimsCfg = formPortalCfg("iCIMS", 'a[href*="mode=apply"], a.iCIMS_Anchor[href*="apply"], a[href*="/apply"]');
+  const taleoCfg = formPortalCfg("Taleo", 'a[href*="apply"], [id*="applyButton"], input[value*="Apply"]');
+  const successFactorsCfg = formPortalCfg("SuccessFactors", '[id*="applyButton"], a[href*="/apply"], button[data-testid*="apply"]');
+  const darwinboxCfg = formPortalCfg("Darwinbox", 'a[href*="apply"], button[class*="apply"]');
+  const kekaCfg = formPortalCfg("Keka", 'a[href*="apply"], button[class*="apply"]');
+
   async function ensureSignedIn(ctx, cfg) {
     for (let attempt = 0; attempt < 5 && cfg.signedOut(); attempt++) {
       await ctx.api.event("login_required", { message: cfg.loginMessage });
@@ -881,6 +914,11 @@
   const workdayDriver = makeAtsDriver(workdayCfg);
   const smartRecruitersDriver = makeAtsDriver(smartRecruitersCfg);
   const workableDriver = makeAtsDriver(workableCfg);
+  const icimsDriver = makeAtsDriver(icimsCfg);
+  const taleoDriver = makeAtsDriver(taleoCfg);
+  const successFactorsDriver = makeAtsDriver(successFactorsCfg);
+  const darwinboxDriver = makeAtsDriver(darwinboxCfg);
+  const kekaDriver = makeAtsDriver(kekaCfg);
 
   // ── Selection ────────────────────────────────────────────────────────────
 
@@ -893,10 +931,24 @@
     if (/(^|\.)myworkdayjobs\.com$/.test(host) || /(^|\.)myworkdaysite\.com$/.test(host) || platform === "workday" || document.querySelector('[data-automation-id="adventureButton"], [data-automation-id="jobPostingHeader"]')) return "workday";
     if (/(^|\.)smartrecruiters\.com$/.test(host) || platform === "smartrecruiters") return "smartrecruiters";
     if (/(^|\.)workable\.com$/.test(host) || platform === "workable") return "workable";
+    if (/(^|\.)icims\.com$/.test(host) || platform === "icims") return "icims";
+    if (/(^|\.)taleo\.net$/.test(host) || platform === "taleo") return "taleo";
+    if (/(^|\.)successfactors\.(com|eu)$/.test(host) || platform === "successfactors") return "successfactors";
+    if (/(^|\.)darwinbox\.(in|com)$/.test(host) || platform === "darwinbox") return "darwinbox";
+    if (/(^|\.)keka\.com$/.test(host) || platform === "keka") return "keka";
     return null;
   }
 
-  const ATS_DRIVERS = { workday: workdayDriver, smartrecruiters: smartRecruitersDriver, workable: workableDriver };
+  const ATS_DRIVERS = {
+    workday: workdayDriver,
+    smartrecruiters: smartRecruitersDriver,
+    workable: workableDriver,
+    icims: icimsDriver,
+    taleo: taleoDriver,
+    successfactors: successFactorsDriver,
+    darwinbox: darwinboxDriver,
+    keka: kekaDriver,
+  };
 
   function select(task) {
     const platform = (task && task.platform) || "";
@@ -915,5 +967,5 @@
     await reportConfirmationResult(ctx, result, "The page after submitting does not show a confirmation.");
   }
 
-  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, workdayDriver, smartRecruitersDriver, workableDriver, NAVIGATING };
+  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, workdayDriver, smartRecruitersDriver, workableDriver, icimsDriver, taleoDriver, successFactorsDriver, darwinboxDriver, kekaDriver, NAVIGATING };
 })();

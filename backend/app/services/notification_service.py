@@ -47,6 +47,7 @@ async def create_notification(
     title: str,
     body: str | None = None,
     link: str | None = None,
+    notification_id: uuid.UUID | None = None,
 ) -> Notification | None:
     """Create an in-app notification, and a pending email NotificationDelivery
     row alongside it if the user's notify_email preference and this type's
@@ -66,7 +67,12 @@ async def create_notification(
         return None
 
     notification = Notification(
-        id=uuid.uuid4(), user_id=user_id, type=type, title=title, body=body, link=link
+        id=notification_id or uuid.uuid4(),
+        user_id=user_id,
+        type=type,
+        title=title,
+        body=body,
+        link=link,
     )
     db.add(notification)
     await db.flush()

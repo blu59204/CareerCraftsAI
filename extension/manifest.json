@@ -42,6 +42,13 @@
     "https://*.myworkdayjobs.com/*",
     "https://jobs.smartrecruiters.com/*",
     "https://apply.workable.com/*",
+    "https://*.icims.com/*",
+    "https://*.taleo.net/*",
+    "https://*.successfactors.com/*",
+    "https://*.successfactors.eu/*",
+    "https://*.darwinbox.in/*",
+    "https://*.darwinbox.com/*",
+    "https://*.keka.com/*",
     "https://*.indeed.com/*",
     "https://www.foundit.in/*",
     "https://www.instahyre.com/*"

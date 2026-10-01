@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import Base
-from app.models.db import User
+from app.models.db import Notification, NotificationDelivery, User
 
 
 def _json_safe(value: object) -> object:
@@ -56,6 +56,16 @@ async def build_user_data_export(db: AsyncSession, user: User) -> bytes:
             rows = [_row_to_dict(row) for row in result.scalars().all()]
             if rows:
                 zf.writestr(f"{model.__tablename__}.json", json.dumps(rows, indent=2))
+
+        # Delivery records hang off notifications rather than the user.
+        result = await db.execute(
+            select(NotificationDelivery)
+            .join(Notification, Notification.id == NotificationDelivery.notification_id)
+            .where(Notification.user_id == user.id)
+        )
+        rows = [_row_to_dict(row) for row in result.scalars().all()]
+        if rows:
+            zf.writestr("notification_deliveries.json", json.dumps(rows, indent=2))
 
         zf.writestr(
             "README.txt",

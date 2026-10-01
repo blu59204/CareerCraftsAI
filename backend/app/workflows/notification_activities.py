@@ -25,7 +25,19 @@ async def create_notification_activity(params: dict) -> dict:
     from app.core.database import AsyncSessionLocal
     from app.services.notification_service import create_notification, get_pending_email_delivery
 
+    # Derived from the workflow, so a retry after a lost reply finds the
+    # notification it already created instead of adding a second.
+    notification_id = uuid.uuid5(uuid.NAMESPACE_URL, activity.info().workflow_id)
+
     async with AsyncSessionLocal() as db:
+        from app.models.db import Notification
+
+        if await db.get(Notification, notification_id) is not None:
+            delivery = await get_pending_email_delivery(db, notification_id)
+            return {
+                "notification_id": str(notification_id),
+                "email_delivery_id": str(delivery.id) if delivery else None,
+            }
         notification = await create_notification(
             db,
             uuid.UUID(params["user_id"]),
@@ -33,6 +45,7 @@ async def create_notification_activity(params: dict) -> dict:
             title=params["title"],
             body=params.get("body"),
             link=params.get("link"),
+            notification_id=notification_id,
         )
         if notification is None:
             await db.commit()
