@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { OnboardingStepper } from "@/components/onboarding/OnboardingStepper";
+import { GitHubSettings } from "@/components/integrations/GitHubSettings";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { apiClient } from "@/lib/api";
 import { PROVIDERS, type Provider } from "@/lib/model-providers";
@@ -136,7 +137,7 @@ export default function OnboardingPage() {
     modelName: "claude-3-5-sonnet-20241022",
   });
 
-  const TOTAL_STEPS = 6;
+  const TOTAL_STEPS = 7;
   const isLast = i === TOTAL_STEPS - 1;
   const selectedRoles = splitCsv(formData.targetRoles);
 
@@ -264,6 +265,7 @@ export default function OnboardingPage() {
   );
 
   const steps = [
+    { id: "github", title: "GitHub (optional — skip anytime)", content: wrap(<GitHubSettings onboarding />) },
     {
       id: "welcome",
       title: "Welcome to CareerCraft AI.",

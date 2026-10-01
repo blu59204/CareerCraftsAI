@@ -40,6 +40,7 @@ import {
 } from "@/components/vanguard";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { openNangoConnectWindow } from "@/lib/nango-connect";
+import { GitHubSettings } from "@/components/integrations/GitHubSettings";
 import { cn } from "@/lib/utils";
 
 type Provider = "gmail" | "google_drive" | "google_calendar" | "outlook_mail" | "outlook_calendar";
@@ -500,6 +501,7 @@ export default function IntegrationsSettingsPage() {
 
   return (
     <Screen>
+      <GitHubSettings />
       <PageHero
         eyebrow="Settings · Connected accounts"
         title="Integrations"

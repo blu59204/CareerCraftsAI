@@ -37,6 +37,9 @@ from app.integrations.webhooks import verify_nango_webhook, webhook_event_hash
 from app.models.db import IntegrationConnection, User
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+from app.api.v1.github import router as github_router
+
+router.include_router(github_router)
 
 
 class ConnectSessionRequest(BaseModel):
@@ -143,6 +146,10 @@ async def create_connect_session(
     current_user: User = Depends(get_current_user),
     gateway: IntegrationGateway = Depends(get_integration_gateway),
 ) -> ConnectSessionResponse:
+    if payload.provider == "github" and not settings.NANGO_GITHUB_PUBLIC_ONLY:
+        raise HTTPException(
+            503, "Configure a public-only GitHub OAuth template or use a public profile URL"
+        )
     try:
         provider_definition(payload.provider)
         return_path = validate_return_path(payload.return_path)
@@ -235,6 +242,10 @@ async def revoke_connection(
     current_user: User = Depends(get_current_user),
     gateway: IntegrationGateway = Depends(get_integration_gateway),
 ) -> Response:
+    if provider == "github":
+        from app.services.github_profile import delete_profile
+
+        await delete_profile(current_user.id)
     try:
         provider_definition(provider)
         await gateway.revoke_connection(user_id=current_user.id, provider=provider)

@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     RAPIDAPI_KEY: str | None = None
     ADZUNA_APP_ID: str | None = None
     ADZUNA_APP_KEY: str | None = None
+    WORKABLE_API_TOKENS: dict[str, str] = {}
+    JOB_SOURCE_OVERRIDES: list[dict] = []
 
     # ── Search providers ───────────────────────────────────────────────
     TAVILY_API_KEY: str | None = None
@@ -182,6 +184,7 @@ class Settings(BaseSettings):
     NANGO_BASE_URL: str = "https://api.nango.dev"
     NANGO_SECRET_KEY: str = ""
     NANGO_PUBLIC_KEY: str = ""
+    NANGO_GITHUB_PUBLIC_ONLY: bool = False
     NANGO_WEBHOOK_SECRET: str = ""
     # JSON mapping from product provider to this environment's Nango
     # integration unique key, e.g. {"gmail": "google-mail-production"}.
