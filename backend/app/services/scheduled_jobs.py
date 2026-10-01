@@ -117,8 +117,7 @@ async def run_job_search(
                     uuid.UUID(payload.user_id),
                     type="job_matches",
                     title=(
-                        f"Job Agent found {saved_count} new "
-                        f"match{'es' if saved_count != 1 else ''}"
+                        f"Job Agent found {saved_count} new match{'es' if saved_count != 1 else ''}"
                     ),
                     body=f'Search: "{payload.search_query}" in {payload.location}',
                     link="/jobs",
@@ -225,15 +224,19 @@ async def run_followup(
         # A retried activity (timeout, lost worker) must not draft a second
         # email for the same application and day.
         existing = (
-            await db.execute(
-                select(AgentRun).where(
-                    AgentRun.user_id == uuid.UUID(payload.user_id),
-                    AgentRun.agent_type == "followup",
-                    AgentRun.input["application_id"].astext == payload.application_id,
-                    AgentRun.input["day"].astext == str(payload.day),
+            (
+                await db.execute(
+                    select(AgentRun).where(
+                        AgentRun.user_id == uuid.UUID(payload.user_id),
+                        AgentRun.agent_type == "followup",
+                        AgentRun.input["application_id"].astext == payload.application_id,
+                        AgentRun.input["day"].astext == str(payload.day),
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if existing is not None:
             return {
                 "status": existing.status,
