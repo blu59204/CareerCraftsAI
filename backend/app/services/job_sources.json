@@ -2613,5 +2613,14 @@
     "refresh_hours": 3,
     "provenance": "official licensed API; inactive without credentials",
     "policy": "operator API contract required"
+  },
+  {
+    "id": "jooble:india",
+    "family": "jooble",
+    "tenant": "India",
+    "permitted": true,
+    "refresh_hours": 3,
+    "provenance": "official partner API; inactive without a key",
+    "policy": "operator API key required; outbound original link; respect terms"
   }
 ]

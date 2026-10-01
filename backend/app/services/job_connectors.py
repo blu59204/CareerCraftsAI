@@ -27,6 +27,7 @@ FAMILIES = {
     "remoteok",
     "arbeitnow",
     "himalayas",
+    "jooble",
     "hn_hiring",
     "rss",
     "jsonld",
@@ -425,9 +426,16 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
                 raise ValueError("Robots disallows access")
     elif family == "rss":
         url = canonical_url(source.url)
+    elif family == "jooble":
+        if not settings.JOOBLE_API_KEY:
+            raise ValueError("Jooble credentials are not configured")
+        url = f"https://jooble.org/api/{settings.JOOBLE_API_KEY}"
+        jooble_body = {"keywords": query or "", "location": tenant, "page": page}
     else:
         url = urls[family]
-    response = await public_get(url, headers=headers)
+    response = await public_get(
+        url, headers=headers, json_body=jooble_body if family == "jooble" else None
+    )
     response.raise_for_status()
     data = response.json() if family not in {"jsonld", "rss"} else None
     rows, next_cursor = [], None
@@ -564,6 +572,21 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
             for j in data.get("data", [])
         ]
         next_cursor = str(page + 1) if (data.get("links") or {}).get("next") else None
+    elif family == "jooble":
+        rows = [
+            {
+                "id": j.get("id"),
+                "title": j.get("title"),
+                "company": j.get("company"),
+                "url": j.get("link"),
+                "location": j.get("location"),
+                "description": j.get("snippet"),
+                "posted_at": j.get("updated"),
+                "salary_text": j.get("salary"),
+            }
+            for j in data.get("jobs", [])
+        ]
+        next_cursor = str(page + 1) if page * 20 < int(data.get("totalCount") or 0) else None
     elif family == "himalayas":
         rows = [
             {

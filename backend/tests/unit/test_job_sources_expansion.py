@@ -137,3 +137,38 @@ def test_new_sources_load_with_their_refresh_tier():
     )
     assert by_id["rss:weworkremotely"].url.startswith("https://weworkremotely.com/")
     assert by_id["greenhouse:stripe"].refresh_hours == 1
+
+
+@pytest.mark.asyncio
+async def test_jooble_posts_the_search_and_needs_a_key(monkeypatch):
+    from app.core.config import settings
+
+    seen = {}
+
+    async def post(url, **kwargs):
+        seen.update(kwargs, url=url)
+        payload = {
+            "totalCount": 1,
+            "jobs": [
+                {
+                    "id": 7,
+                    "title": "QA Engineer",
+                    "company": "Initech",
+                    "link": "https://jooble.org/desc/7",
+                    "location": "Pune",
+                    "snippet": "Test things",
+                    "updated": "2026-10-01T00:00:00",
+                }
+            ],
+        }
+        return httpx.Response(200, json=payload, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(connectors, "public_get", post)
+    source = Source("jooble:india", "jooble", "India")
+    monkeypatch.setattr(settings, "JOOBLE_API_KEY", None)
+    with pytest.raises(ValueError, match="not configured"):
+        await connectors.fetch_page(source, "qa")
+    monkeypatch.setattr(settings, "JOOBLE_API_KEY", "k-123")
+    page = await connectors.fetch_page(source, "qa")
+    assert seen["json_body"] == {"keywords": "qa", "location": "India", "page": 1}
+    assert page.jobs[0]["company"] == "Initech" and page.next_cursor is None

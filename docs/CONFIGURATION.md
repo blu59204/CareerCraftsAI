@@ -42,6 +42,7 @@ All optional — features gracefully degrade if not set.
 | Variable | Provider | Used By | Description |
 |---|---|---|---|
 | `HUNTER_API_KEY` | [hunter.io](https://hunter.io) | Recruiter outreach, EmailAgent, LeadsAgent | Finds recruiter email addresses by domain + name. |
+| `JOOBLE_API_KEY` | [jooble.org](https://jooble.org/api/about) | Job discovery | Enables the Jooble source (India). Inactive without a key. |
 | `APOLLO_API_KEY` | [apollo.io](https://apollo.io) | Recruiter outreach | Second finder; matches a named recruiter at a company. |
 | `ZEROBOUNCE_API_KEY` / `NEVERBOUNCE_API_KEY` / `MILLIONVERIFIER_API_KEY` | the provider | Recruiter outreach | Verifies an address before it is emailed. Without one, nothing counts as verified and every email waits for the member's approval. |
 | `APPLY_DAILY_CAP`, `APPLY_MIN_GAP_SECONDS`, `AUTO_APPLY_MIN_SCORE` | none | Applications | Applications per rolling 24 hours (25), seconds between two (120), and the match score an automatic application needs (70). |

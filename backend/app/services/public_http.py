@@ -10,7 +10,9 @@ from urllib.parse import urlsplit
 import httpx
 
 
-async def public_get(url: str, *, headers: dict | None = None, max_bytes=4_000_000):
+async def public_get(
+    url: str, *, headers: dict | None = None, max_bytes=4_000_000, json_body: dict | None = None
+):
     for _ in range(4):
         parsed = urlsplit(url)
         if (
@@ -43,12 +45,15 @@ async def public_get(url: str, *, headers: dict | None = None, max_bytes=4_000_0
         }
         async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False) as client:
             async with client.stream(
-                "GET",
+                "GET" if json_body is None else "POST",
                 pinned,
                 headers=request_headers,
+                json=json_body,
                 extensions={"sni_hostname": parsed.hostname.encode()},
             ) as response:
                 if response.status_code in (301, 302, 303, 307, 308):
+                    if json_body is not None:
+                        raise ValueError("A POST is never redirected")
                     next_url = original.join(response.headers["location"])
                     if next_url.host != original.host:
                         headers = {

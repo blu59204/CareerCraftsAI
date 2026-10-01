@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     FIRECRAWL_API_KEY: str | None = None
     SEARXNG_URL: str | None = None
     RAPIDAPI_KEY: str | None = None
+    JOOBLE_API_KEY: str | None = None
     ADZUNA_APP_ID: str | None = None
     ADZUNA_APP_KEY: str | None = None
     WORKABLE_API_TOKENS: dict[str, str] = {}
