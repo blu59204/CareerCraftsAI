@@ -105,3 +105,57 @@ async def test_google_search_is_inert_without_keys_and_one_page_with_them(monkey
     page = await connectors.fetch_page(source, query="python")
     assert len(page.jobs) == 2 and page.next_cursor is None
     assert "site%3Aboards.greenhouse.io+python" in seen[0] and "key=k" in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_working_nomads_listing_becomes_remote_jobs(monkeypatch):
+    feed = [
+        {
+            "url": "https://www.workingnomads.com/jobs/dev-1",
+            "title": "Python Developer",
+            "company_name": "Acme",
+            "pub_date": "2026-10-01T08:00:00Z",
+        },
+        {"title": "No url"},
+    ]
+
+    async def get(url, **kwargs):
+        return httpx.Response(200, json=feed, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(connectors, "public_get", get)
+    page = await connectors.fetch_page(Source(id="workingnomads", family="workingnomads"))
+    assert [(j["title"], j["remote"]) for j in page.jobs] == [("Python Developer", "remote")]
+
+
+@pytest.mark.asyncio
+async def test_careerjet_is_inert_without_a_key_and_pages_with_one(monkeypatch):
+    source = Source(id="careerjet:in", family="careerjet", tenant="en_IN")
+    monkeypatch.setattr(connectors.settings, "CAREERJET_API_KEY", None)
+    with pytest.raises(ValueError, match="not configured"):
+        await connectors.fetch_page(source)
+
+    monkeypatch.setattr(connectors.settings, "CAREERJET_API_KEY", "secret")
+    seen = {}
+
+    async def get(url, **kwargs):
+        seen["url"], seen["headers"] = url, kwargs["headers"]
+        body = {
+            "pages": 3,
+            "jobs": [
+                {
+                    "title": "Analyst",
+                    "company": "Globex",
+                    "url": "https://www.careerjet.co.in/jobad/abc",
+                    "locations": "Pune",
+                    "date": "Wed, 01 Oct 2026 08:00:00 GMT",
+                }
+            ],
+        }
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(connectors, "public_get", get)
+    page = await connectors.fetch_page(source, query="analyst")
+    assert page.jobs[0]["company"] == "Globex" and page.next_cursor == "2"
+    assert "locale_code=en_IN" in seen["url"] and seen["headers"]["Authorization"].startswith(
+        "Basic "
+    )

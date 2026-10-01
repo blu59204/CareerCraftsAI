@@ -176,11 +176,66 @@ async def collect_answers(user_id: str, gmail_factory=None) -> dict:
                 saved += 1
             payload["answered_by_message"] = reply.get("id")
             payload["open_questions"] = [q for i, q in enumerate(questions, 1) if i not in answers]
+            if not payload["open_questions"] and task.job_application_id:
+                payload["restart_pending"] = True
             task.payload = payload
             tasks_answered += 1
             await _confirm(owner, task, len(answers), len(payload["open_questions"]))
         await db.commit()
-    return {"answers_saved": saved, "tasks_answered": tasks_answered}
+    restarted = await restart_answered(user_id)
+    return {"answers_saved": saved, "tasks_answered": tasks_answered, "restarted": restarted}
+
+
+async def restart_answered(user_id: str) -> int:
+    """Run the application again once all its questions are answered: the
+    paused attempt is closed and a new one starts, which fills the saved
+    answers by itself. If the old attempt has not finished closing yet, the
+    restart waits for the next pass (30 minutes)."""
+    from app.workflows.extension_activities import OPEN_TASK_STATUSES
+    from app.workflows.starters import signal_extension_update, start_auto_apply
+
+    owner = uuid.UUID(user_id)
+    restarted = 0
+    async with AsyncSessionLocal() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(ExtensionTask).where(
+                        ExtensionTask.user_id == owner,
+                        ExtensionTask.updated_at > datetime.now(UTC) - _WINDOW,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for task in rows:
+            payload = dict(task.payload or {})
+            if not payload.get("restart_pending") or not task.job_application_id:
+                continue
+            try:
+                if task.status in OPEN_TASK_STATUSES:
+                    await signal_extension_update(
+                        task.workflow_id,
+                        {
+                            "stage": "cancelled",
+                            "details": {"message": "Restarting with your answers"},
+                        },
+                    )
+                    await asyncio.sleep(3)
+                    await db.refresh(task)
+                    if task.status in OPEN_TASK_STATUSES:
+                        continue
+                result = await start_auto_apply(owner, task.job_application_id)
+            except Exception:
+                logger.warning("Could not restart application %s", task.id, exc_info=True)
+                continue
+            if result.get("status") == "queued":
+                payload.pop("restart_pending")
+                task.payload = payload
+                restarted += 1
+        await db.commit()
+    return restarted
 
 
 async def _confirm(owner: uuid.UUID, task: ExtensionTask, saved: int, left: int) -> None:
@@ -192,7 +247,7 @@ async def _confirm(owner: uuid.UUID, task: ExtensionTask, saved: int, left: int)
     body += (
         f" {left} question{'s are' if left != 1 else ' is'} still open."
         if left
-        else " Open the extension panel to continue the application."
+        else " The application is starting again with your answers."
     )
     try:
         await start_notification(

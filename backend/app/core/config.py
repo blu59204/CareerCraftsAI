@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     SEARXNG_URL: str | None = None
     RAPIDAPI_KEY: str | None = None
     JOOBLE_API_KEY: str | None = None
+    CAREERJET_API_KEY: str | None = None
+    # Careerjet asks for the IP of the person searching; this is the server's.
+    CAREERJET_USER_IP: str = "127.0.0.1"
     GOOGLE_CSE_API_KEY: str | None = None
     GOOGLE_CSE_ID: str | None = None
     # Startup-news RSS feeds read for "X raises ..." headlines; empty disables.

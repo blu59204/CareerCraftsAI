@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -27,6 +28,8 @@ FAMILIES = {
     "remoteok",
     "arbeitnow",
     "himalayas",
+    "workingnomads",
+    "careerjet",
     "jooble",
     "hn_hiring",
     "getro",
@@ -527,6 +530,7 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         "remoteok": "https://remoteok.com/api",
         "arbeitnow": f"https://www.arbeitnow.com/api/job-board-api?page={page}",
         "himalayas": f"https://himalayas.app/jobs/api?limit=100&offset={(page-1)*100}",
+        "workingnomads": "https://www.workingnomads.com/api/exposed_jobs/",
     }
     if family == "workable":
         token = settings.WORKABLE_API_TOKENS.get(tenant)
@@ -558,6 +562,22 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
                 raise ValueError("Robots disallows access")
     elif family == "rss":
         url = canonical_url(source.url)
+    elif family == "careerjet":
+        if not settings.CAREERJET_API_KEY:
+            raise ValueError("Careerjet credentials are not configured")
+        url = "https://search.api.careerjet.net/v4/query?" + urlencode(
+            {
+                "locale_code": source.tenant or "en_IN",
+                "keywords": query or "",
+                "page": page,
+                "page_size": 100,
+                "user_ip": settings.CAREERJET_USER_IP,
+                "user_agent": "CareerCraftJobDiscovery",
+            }
+        )
+        headers["Authorization"] = (
+            "Basic " + base64.b64encode(f"{settings.CAREERJET_API_KEY}:".encode()).decode()
+        )
     elif family == "jooble":
         if not settings.JOOBLE_API_KEY:
             raise ValueError("Jooble credentials are not configured")
@@ -741,6 +761,35 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         ]
         total = int(data.get("totalCount") or 0)
         next_cursor = str(page + 1) if page * 100 < total else None
+    elif family == "workingnomads":
+        rows = [
+            {
+                "id": j.get("url"),
+                "title": j.get("title"),
+                "company": j.get("company_name"),
+                "url": j.get("url"),
+                "location": j.get("location") or "Worldwide",
+                "remote": True,
+                "description": j.get("description"),
+                "posted_at": j.get("pub_date"),
+            }
+            for j in (data if isinstance(data, list) else [])
+        ]
+    elif family == "careerjet":
+        rows = [
+            {
+                "id": j.get("url"),
+                "title": j.get("title"),
+                "company": j.get("company"),
+                "url": j.get("url"),
+                "location": j.get("locations"),
+                "description": j.get("description"),
+                "posted_at": j.get("date"),
+                "salary_text": j.get("salary"),
+            }
+            for j in data.get("jobs", [])
+        ]
+        next_cursor = str(page + 1) if page < int(data.get("pages") or 0) else None
     elif family == "rss":
         rows = parse_rss(response.text, url)
     elif family == "jsonld":

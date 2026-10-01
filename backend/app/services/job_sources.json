@@ -2730,5 +2730,22 @@
     "refresh_hours": 24,
     "provenance": "Google Programmable Search; needs GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID, inert without them",
     "policy": "official search API; one page per day; links go to the employer's ATS"
+  },
+  {
+    "id": "workingnomads",
+    "family": "workingnomads",
+    "permitted": true,
+    "refresh_hours": 6,
+    "provenance": "Working Nomads public jobs feed",
+    "policy": "public API; stop on denial"
+  },
+  {
+    "id": "careerjet:in",
+    "family": "careerjet",
+    "tenant": "en_IN",
+    "permitted": true,
+    "refresh_hours": 12,
+    "provenance": "Careerjet partner API (India); needs CAREERJET_API_KEY, inert without it",
+    "policy": "official API; stop on denial"
   }
 ]

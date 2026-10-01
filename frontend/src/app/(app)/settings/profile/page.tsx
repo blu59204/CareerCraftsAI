@@ -63,6 +63,7 @@ interface UserPreferences {
   // Recruiter emails per rolling 24 hours, and whether approved-before senders go out unattended.
   outreach_daily_cap: number;
   outreach_auto_send: boolean;
+  outreach_track_opens: boolean;
   // Opt-in: tailor a resume and queue applications for saved jobs above the match threshold.
   auto_apply_enabled: boolean;
 }
@@ -83,6 +84,7 @@ interface FormState {
   inbox_tracking_enabled: boolean;
   outreach_daily_cap: string;
   outreach_auto_send: boolean;
+  outreach_track_opens: boolean;
   auto_apply_enabled: boolean;
 }
 
@@ -129,6 +131,7 @@ const DEFAULT_FORM: FormState = {
   inbox_tracking_enabled: false,
   outreach_daily_cap: "25",
   outreach_auto_send: false,
+  outreach_track_opens: false,
   auto_apply_enabled: false,
 };
 
@@ -149,6 +152,7 @@ function prefsToForm(prefs: UserPreferences): FormState {
     inbox_tracking_enabled: Boolean(prefs.inbox_tracking_enabled),
     outreach_daily_cap: String(prefs.outreach_daily_cap ?? 25),
     outreach_auto_send: Boolean(prefs.outreach_auto_send),
+    outreach_track_opens: Boolean(prefs.outreach_track_opens),
     auto_apply_enabled: Boolean(prefs.auto_apply_enabled),
   };
 }
@@ -366,6 +370,7 @@ export default function ProfilePreferencesPage() {
         inbox_tracking_enabled: form.inbox_tracking_enabled,
         outreach_daily_cap: Math.min(100, Math.max(1, parseInt(form.outreach_daily_cap, 10) || 25)),
         outreach_auto_send: form.outreach_auto_send,
+        outreach_track_opens: form.outreach_track_opens,
         auto_apply_enabled: form.auto_apply_enabled,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
@@ -883,6 +888,21 @@ export default function ProfilePreferencesPage() {
                       onChange={(e) => set("outreach_daily_cap", e.target.value)}
                     />
                   </label>
+                  <div className="mt-4 flex items-start justify-between gap-4 border-t border-border/60 pt-3">
+                    <div>
+                      <p className="text-sm font-medium tracking-[-0.01em] text-foreground">Show when emails are opened</p>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        Off by default. Adds a tiny invisible image to your emails so the Outreach page can show an
+                        open. Some mail apps load images in advance, so treat it as a hint, and it can lower
+                        deliverability with some providers.
+                      </p>
+                    </div>
+                    <Toggle
+                      checked={form.outreach_track_opens}
+                      onChange={(next) => set("outreach_track_opens", next)}
+                      label="Show when emails are opened"
+                    />
+                  </div>
                 </div>
                 <StatusPill tone={form.outreach_auto_send ? "primary" : "neutral"}>
                   {form.outreach_auto_send ? "Auto-send after 3 approvals" : "Approve each (default)"}

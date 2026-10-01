@@ -526,6 +526,11 @@ async def task_event(
 
     await _signal(task.workflow_id, {"stage": event.stage})
     previous_stage = task.status
+    if event.stage in {"needs_input", "login_required"} and not (task.payload or {}).get(
+        "needed_you"
+    ):
+        # Counted by the "no user input" metric.
+        task.payload = {**(task.payload or {}), "needed_you": True}
     await _record_progress(db, task, event.stage, event.message or STAGE_MESSAGES[event.stage])
     await notify_needs_attention(
         task.user_id, event.stage, previous_stage, task.payload, task_id=task.id
