@@ -777,57 +777,9 @@ async def test_prepare_application_apply_rejects_missing_resume(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_prepare_application_apply_starts_durable_browser_prepare_task(monkeypatch):
-    """Approval of a Jobs-page Apply must go through the same durable
-    browser_prepare/browser_input/browser_review path the auto-apply
-    pipeline already uses — not the old asyncio.create_task bypass whose
-    'submit_application' checkpoint validate_approval() rejects."""
-    from app.services import application_workflow, workflow_service
-
-    app_row = MagicMock()
-    app_row.user_id = uuid.uuid4()
-    app_row.job_url = "https://boards.greenhouse.io/acme/jobs/1"
-    app_row.company = "Acme"
-    app_row.role = "Backend Engineer"
-    app_row.status = "saved"
-    app_row.resume_id = uuid.uuid4()
-    app, db = _override_prepare_apply(monkeypatch, app_row)
-
-    monkeypatch.setattr(
-        application_workflow,
-        "load_resume",
-        AsyncMock(return_value=(b"%PDF-1.4 ...", "deadbeef")),
-    )
-    added_tasks = []
-    monkeypatch.setattr(
-        workflow_service,
-        "add_task",
-        lambda db_, run, kind, payload: added_tasks.append((run, kind, payload)),
-    )
-
-    resp = await _post_prepare_apply(app, uuid.uuid4())
-
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["status"] == "queued"
-    assert "run_id" in body
-    assert len(added_tasks) == 1
-    run, kind, payload = added_tasks[0]
-    assert run.status == "queued"
-    assert run.agent_type == "apply_prepare"
-    assert kind == "continue"
-    assert payload["type"] == "browser_prepare"
-    assert payload["job_url"] == app_row.job_url
-    assert payload["company"] == "Acme"
-    assert payload["role"] == "Backend Engineer"
-    assert payload["pdf_document_id"] == str(app_row.resume_id)
-    assert payload["resume_sha256"] == "deadbeef"
-    assert "attempt_id" in payload
-    db.commit.assert_called_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("blocking_state", ["submitting", "submitted", "verified"])
+@pytest.mark.parametrize(
+    "blocking_state", ["submitting", "submitted", "verified", "outcome_unknown"]
+)
 async def test_prepare_application_apply_rejects_active_submission_attempt(
     monkeypatch, blocking_state
 ):
@@ -850,47 +802,40 @@ async def test_prepare_application_apply_rejects_active_submission_attempt(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "resumable_state", ["preparing", "awaiting_approval", "outcome_unknown", "failed", "cancelled"]
-)
-async def test_prepare_application_apply_reuses_attempt_in_non_blocking_state(
-    monkeypatch, resumable_state
-):
-    """A prior attempt that never reached submitting is reused (reset), not
-    rejected — the unique (user_id, job_application_id) constraint forces
-    reuse, and nothing here should require a separate 'reset' endpoint."""
-    from app.services import application_workflow, workflow_service
-
-    app_row = MagicMock()
-    app_row.user_id = uuid.uuid4()
-    app_row.job_url = "https://boards.greenhouse.io/acme/jobs/1"
-    app_row.company = "Acme"
-    app_row.role = "Backend Engineer"
-    app_row.status = "saved"
-    app_row.resume_id = uuid.uuid4()
-
-    existing_attempt = MagicMock()
-    existing_attempt.state = resumable_state
-    existing_attempt.id = uuid.uuid4()
-    app, db = _override_prepare_apply(monkeypatch, app_row, existing_attempt=existing_attempt)
-
+async def test_prepare_application_apply_requires_paired_extension(monkeypatch):
+    row = MagicMock()
+    row.user_id = uuid.uuid4()
+    row.job_url = "https://boards.greenhouse.io/acme/jobs/1"
+    row.status = "saved"
+    row.resume_id = uuid.uuid4()
+    app, _ = _override_prepare_apply(monkeypatch, row)
     monkeypatch.setattr(
-        application_workflow,
-        "load_resume",
-        AsyncMock(return_value=(b"%PDF-1.4 ...", "deadbeef")),
+        "app.services.extension_service.has_active_device", AsyncMock(return_value=False)
     )
-    added_tasks = []
+    response = await _post_prepare_apply(app, uuid.uuid4())
+    assert response.status_code == 409
+    assert "extension" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_prepare_application_apply_starts_extension_workflow(monkeypatch):
+    row = MagicMock()
+    row.user_id = uuid.uuid4()
+    row.job_url = "https://boards.greenhouse.io/acme/jobs/1"
+    row.status = "saved"
+    row.resume_id = uuid.uuid4()
+    app, db = _override_prepare_apply(monkeypatch, row)
     monkeypatch.setattr(
-        workflow_service,
-        "add_task",
-        lambda db_, run, kind, payload: added_tasks.append((run, kind, payload)),
+        "app.services.extension_service.has_active_device", AsyncMock(return_value=True)
     )
-
-    resp = await _post_prepare_apply(app, uuid.uuid4())
-
-    assert resp.status_code == 200, resp.text
-    assert existing_attempt.state == "preparing"
-    assert existing_attempt.submission_token is None
-    assert existing_attempt.last_error is None
-    assert len(added_tasks) == 1
-    assert added_tasks[0][2]["attempt_id"] == str(existing_attempt.id)
+    starter = AsyncMock(
+        return_value={"status": "queued", "mode": "extension", "run_id": "test-run"}
+    )
+    monkeypatch.setattr("app.api.v1.jobs._start_temporal_auto_apply", starter)
+    application_id = uuid.uuid4()
+    response = await _post_prepare_apply(app, application_id)
+    assert response.status_code == 200, response.text
+    assert response.json()["mode"] == "extension"
+    starter.assert_awaited_once()
+    assert starter.call_args.args[1] == application_id
+    db.commit.assert_called_once()

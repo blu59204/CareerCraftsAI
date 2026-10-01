@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -12,13 +11,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from temporalio.service import RPCError, RPCStatusCode
 
 from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
-from app.core.event_bus import stream_events, publish
+from app.core.event_bus import publish, stream_events
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, ApplicationAttempt, User
-from temporalio.service import RPCError, RPCStatusCode
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 logger = logging.getLogger(__name__)
@@ -234,6 +233,11 @@ async def approve_or_cancel(
         publish(run_id, "error", {"error": "Action cancelled by user"})
         return {"status": "cancelled"}
 
+    if apply_workflow_id:
+        raise HTTPException(
+            status_code=409, detail="Review and submit this application in the browser extension"
+        )
+
     pending = run.output or {}
     redis_action_type = pending.get("type") or pending.get("action_type")
     if payload.action_type and redis_action_type and payload.action_type != redis_action_type:
@@ -255,16 +259,13 @@ async def approve_or_cancel(
     run.completed_at = None
     await db.commit()
     try:
-        if apply_workflow_id:
-            await _signal_temporal_approval(run, redis_action_type, continuation)
-        else:
-            await signal_agent_decision(
-                run_id,
-                current_user.id,
-                True,
-                redis_action_type,
-                continuation,
-            )
+        await signal_agent_decision(
+            run_id,
+            current_user.id,
+            True,
+            redis_action_type,
+            continuation,
+        )
     except (WorkflowUnavailable, RPCError) as exc:
         logger.error("Approval signal failed for run %s: %s", run_id, exc)
         run.status = "awaiting_approval"
@@ -291,26 +292,6 @@ async def _signal_if_running(run_id: str, user_id) -> None:
     except RPCError as exc:
         if exc.status != RPCStatusCode.NOT_FOUND:
             raise
-
-
-async def _signal_temporal_approval(run: AgentRun, action_type: str, continuation: dict) -> None:
-    from app.workflows.auto_apply import AutoApplyWorkflow
-    from app.workflows.starters import auto_apply_handle
-
-    workflow_id = (run.input or {}).get("workflow_id")
-    if not workflow_id:
-        raise HTTPException(
-            status_code=500, detail="Temporal-backed run is missing its workflow_id"
-        )
-
-    handle = await auto_apply_handle(workflow_id)
-    if action_type == "application_answers_required":
-        await handle.signal(AutoApplyWorkflow.provide_answers, continuation.get("answers") or {})
-    else:
-        # browser_review (final submit) and browser_input (resume
-        # preparation) share one generic approval signal — see
-        # auto_apply.py's workflow loop for why.
-        await handle.signal(AutoApplyWorkflow.approve)
 
 
 @router.get("/runs")

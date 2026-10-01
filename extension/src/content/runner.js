@@ -36,12 +36,14 @@
     return {
       async event(stage, extra) {
         const response = await send({ type: "CC_EVENT", taskId: task.id, stage, ...(extra || {}) });
+        if (response.error) throw new Error(response.error);
         if (TERMINAL.has(stage)) {
           state.finished = true;
           state.outcome = stage;
           return response;
         }
         if (inactive(response)) throw new StopTask("Task is no longer active");
+        if (response.error) throw new Error(response.error);
         return response;
       },
       async plan(url, fields) {
@@ -51,17 +53,55 @@
       },
       async resume() {
         const response = await send({ type: "CC_RESUME", taskId: task.id });
+        if (response.error) throw new Error(response.error);
         return response.data || null;
       },
       async answer(label, value, questionKey) {
-        const response = await send({ type: "CC_ANSWER", label, value, question_key: questionKey });
+        const response = await send({ type: "CC_ANSWER", taskId: task.id, label, value, question_key: questionKey });
         return response.data || null;
       },
-      async markSubmitting() {
-        await send({ type: "CC_MARK_SUBMITTING", taskId: task.id });
+      async markSubmitting(root, submit) {
+        const dom = window.CareerCraftDOM;
+        async function snapshot() {
+          if (!submit?.isConnected || submit.disabled || !dom.isVisible(submit)) throw new Error("The submit control changed. Review the form again.");
+          const fields = [];
+          for (const field of dom.snapshot(root).fields.filter((field) => field.visible)) {
+            const el = document.getElementById(field.id);
+            let digest = null;
+            if (field.type === "file" && el?.files?.length) {
+              const hashes = [];
+              for (const file of el.files) {
+                if (file.size > 10 * 1024 * 1024) throw new Error("Review files must be smaller than 10 MB.");
+                hashes.push(Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))).map((b) => b.toString(16).padStart(2, "0")).join(""));
+              }
+              digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(hashes.join(","))))).map((b) => b.toString(16).padStart(2, "0")).join("");
+            }
+            const types = ["text", "textarea", "email", "tel", "url", "number", "date", "select", "checkbox", "radio", "file"];
+            fields.push({ id: field.id.slice(0, 200), label: field.label.slice(0, 500), type: types.includes(field.type) ? field.type : "other", value: field.type === "checkbox" || field.type === "radio" ? field.checked : field.value, digest });
+          }
+          return { url: location.href, fields, submit_control: JSON.stringify([submit.tagName, submit.id, submit.name, submit.type, dom.textOf(submit), submit.getAttribute("aria-label"), submit.form?.action || ""]) };
+        }
+        const reviewed = await snapshot();
+        const response = await send({ type: "CC_REVIEW", taskId: task.id, snapshot: reviewed, url: location.href });
+        if (response.error) throw new Error(response.error);
+        window.CareerCraftPanel.showStatus("Review the final form and confirm Submit in the CareerCraft extension popup.");
+        const deadline = Date.now() + 5 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await dom.delay(800, 1200);
+          const status = await send({ type: "CC_SUBMIT_STATUS", taskId: task.id });
+          if (status.error) throw new Error(status.error);
+          if (!status.approved) continue;
+          await dom.delay(300, 800);
+          const current = await snapshot();
+          if (JSON.stringify(current) !== JSON.stringify(reviewed)) throw new Error("The form changed after review. Nothing was clicked; verify before retrying.");
+          const claim = await send({ type: "CC_SUBMIT_STATUS", taskId: task.id, consume: true, snapshot: current });
+          if (!claim.ok) throw new Error(claim.error || "Submission approval is unavailable.");
+          return;
+        }
+        throw new Error("Review expired without submission approval.");
       },
       async decide(stateText, questions) {
-        const response = await send({ type: "CC_DECIDE", state: stateText, questions });
+        const response = await send({ type: "CC_DECIDE", taskId: task.id, state: stateText, questions });
         return response.data || null;
       },
     };
@@ -101,7 +141,9 @@
       }
       if (!state.finished) {
         const reason = (e && e.message ? e.message : String(e)).slice(0, 300);
-        await api.event("failed", { error: `Unexpected page structure: ${reason}` });
+        try { await api.event("failed", { error: reason }); } catch { /* Preserve the original error for the user. */ }
+        panel.showStatus(reason, subtitle);
+        return;
       }
     }
 

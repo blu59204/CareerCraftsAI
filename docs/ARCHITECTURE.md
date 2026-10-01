@@ -31,7 +31,7 @@ CareerCraft AI/
 │       │   ├── registry.py     # WORKFLOWS / ACTIVITIES the worker hosts
 │       │   ├── starters.py     # API-side start/signal helpers (503 if down)
 │       │   ├── agent_run.py, job_search.py, auto_apply.py, followup.py
-│       │   └── scheduled.py    # Temporal Schedules (daily search, maintenance, status check)
+│       │   └── scheduled.py    # Temporal Schedules (daily search, maintenance)
 │       ├── tools/ models/ schemas/
 │       └── temporal_worker.py  # `python -m app.temporal_worker` — runs every workflow/activity
 ├── extension/               # Chrome extension — applies in the user's own browser
@@ -77,7 +77,7 @@ subgraph Backend["Backend — FastAPI — backend:8000"]
 end
 subgraph Workers["Temporal"]
   TemporalSrv[("Temporal Server<br/>self-hosted (temporal service)<br/>or Temporal Cloud")]
-  TWorker["temporal-worker<br/>python -m app.temporal_worker<br/>task_queue=careercraft<br/>AgentRunWorkflow, JobSearchWorkflow,<br/>AutoApplyWorkflow, FollowupWorkflow<br/>+ Schedules: daily search, maintenance,<br/>(status check in server_browser mode)"]
+  TWorker["temporal-worker<br/>python -m app.temporal_worker<br/>task_queue=careercraft<br/>AgentRunWorkflow, JobSearchWorkflow,<br/>AutoApplyWorkflow, FollowupWorkflow<br/>+ Schedules: daily search, maintenance"]
   TUI["Temporal UI<br/>inspect workflow history"]
 end
 subgraph ExtLayer["Browser Extension"]
@@ -94,7 +94,6 @@ subgraph External["External Services"]
   Gmail["Gmail + Drive API<br/>via Nango"]
   JobBoards["Job Boards<br/>LinkedIn, Indeed, Naukri,<br/>Shine, Adzuna, Remotive,<br/>Arbeitnow, Jobicy"]
   Enrich["Enrichment<br/>Hunter, ProxyCurl,<br/>Exa, Tavily/Brave/Serp,<br/>YouTube, Resend"]
-  BrowserCloud["OpenSandbox<br/>server_browser mode only"]
   DecisionSvc["TypeSafe Jev (hosted)<br/>or self-hosted Laya"]
 end
 Browser --> Nginx
@@ -124,7 +123,6 @@ Backend --> Docs
 Backend --> Gmail
 Backend --> JobBoards
 Backend --> Enrich
-Backend --> BrowserCloud
 Frontend --> Clerk
 Backend --> Clerk
 ```
@@ -207,7 +205,6 @@ apiErrorMessage(err, fallback) // prefers FastAPI `detail`, handles 422 list
 | `/leads` | `api/v1/leads.py` | `GET /leads`, `POST /leads/{id}/action` |
 | `/email` | `api/v1/email.py` | `GET /email/threads`, `POST /email/compose`, `POST /email/approve/{id}` (only send path) |
 | `/agents` | `api/v1/agents.py` | `POST /agents/run`, `GET /agents/{id}/stream` (SSE), `POST /agents/{id}/approve`, `GET /agents/runs/{id}` |
-| `/browser` | `api/v1/browser.py` | sandbox provision / review |
 | `/interview` | `api/v1/interview.py` | `POST /interview/session`, `POST /interview/answer` |
 | `/interview-prep` | `api/v1/interview_prep.py` | `POST /interview-prep/generate` |
 | `/cover-letter` | `api/v1/cover_letter.py` | `POST /cover-letter/generate` |
@@ -283,7 +280,7 @@ graph TD
 | **CoverLetterAgent** | `agents/cover_letter_agent.py` | `RAGService.retrieve()`, `ThinkingWrapper` (extended thinking) | `{job_description, tone} → {cover_letter, document_id}` | 90s / 6000 |
 | **EmailAgent** | `agents/email_agent.py` | `GmailService.get_threads()`, `HunterService.find_email()`, `RAGService.retrieve()` | thread context → recruiter draft; send **only** via `/email/approve/{id}` | 60s / 3000 |
 | **FollowUpAgent** | `agents/followup_agent.py` | `start_followups()` (Temporal `FollowupWorkflow`), `GmailService.get_threads()`, `RAGService.retrieve()` | application → day-5 + day-12 draft timers; auto-cancel on reply | 60s / 3000 |
-| **EmailMonitorAgent** | `agents/email_monitor_agent.py` | Gmail poll | Temporal `StatusCheckWorkflow` every `STATUS_CHECK_INTERVAL_HOURS` (6h default, `server_browser` apply mode only) → threads needing action + draft replies | 60s / 3000 |
+| **EmailMonitorAgent** | `agents/email_monitor_agent.py` | Gmail poll | On-demand `email_monitor` agent run → threads needing action + draft replies | 60s / 3000 |
 | **InterviewCoachAgent** | `agents/interview_coach_agent.py` | live session graph | `POST /interview/session` start → `POST /interview/answer` loop; scores clarity/relevance/depth 0-10 | 30s/turn / 2000 |
 | **InterviewPrepAgent** | `agents/interview_prep_agent.py` | `RAGService.retrieve()`, `EXAService.search()`, `YouTubeService.search()` | role → question bank + study guide (no live session) | 60s / 3000 |
 | **CompanyResearchAgent** | `agents/company_research_agent.py` | `EXAService.search()`, `EXAService.get_page()` | company → `{culture, interview_process, financials, recent_news, key_people}`; cached 7d in `company_intel` | 120s / 5000 |
@@ -373,8 +370,7 @@ Registered/updated idempotently by every worker at start-up
 | Schedule id | Interval (setting) | Runs |
 |---|---|---|
 | `daily-job-search` | `DAILY_SEARCH_INTERVAL_HOURS` (24h) | `daily_search_activity` for all users |
-| `maintenance` | `MAINTENANCE_INTERVAL_SECONDS` (60s) | Reconciles `agent_runs` with Temporal, expires orphaned extension tasks, reaps server-side browser sandboxes |
-| `application-status-check` | `STATUS_CHECK_INTERVAL_HOURS` (6h) | Only registered when `APPLY_EXECUTION_MODE=server_browser` — the extension flow has no server-held portal session to poll |
+| `maintenance` | `MAINTENANCE_INTERVAL_SECONDS` (60s) | Reconciles `agent_runs` with Temporal, expires orphaned extension tasks, reconciles application attempts |
 
 ### API-side starters (`backend/app/workflows/starters.py`)
 
@@ -397,8 +393,7 @@ calling endpoint returns **503**.
   There is no task-queue-wide rate limit on `careercraft` (the notification
   email queue has one, `NOTIFICATION_EMAIL_RATE_LIMIT_PER_SECOND`).
 - **Retries:** job search 2 attempts, then `fail_job_search_activity` marks
-  the run failed; follow-up drafts 3 attempts (30s initial); daily search and
-  status check 3 attempts (1 min initial); maintenance 1 attempt (it runs
+  the run failed; follow-up drafts 3 attempts (30s initial); daily search 3 attempts (1 min initial); maintenance 1 attempt (it runs
   again on the next tick); agent execution 2 attempts; a continuation (which
   may send an email or click Submit) never retries.
 - **Cancellation:** a rejected checkpoint is a `decide(approved=False)`
@@ -447,9 +442,7 @@ ambiguous outcome becomes `needs_verification`, never an automatic retry.
 | `cover_letter_versions` | `user_id, job_application_id, document_id, tone, version_number` |
 | `extension_devices` | `user_id, name, token_hash (SHA-256 of a "ccx_…" device token), created_at, last_seen_at, revoked_at` |
 | `extension_tasks` | `user_id, device_id?, job_application_id, run_id, attempt_id, workflow_id, status, created_at` — claimed by the extension, progress relayed to `AutoApplyWorkflow` as signals |
-| `application_attempts` | idempotency ledger for one apply attempt (shared by extension and `server_browser` modes); carries `workflow_id`/`temporal_run_id` |
-| `browser_sessions` | `run_id (unique), user_id, sandbox_id, status, expires_at, review JSONB` — `server_browser` apply mode only |
-| `browser_account_states` | `user_id PK, state_enc, updated_at` |
+| `application_attempts` | idempotency ledger for one apply attempt (used by the extension); carries `workflow_id`/`temporal_run_id` |
 | `interview_sessions` | `user_id, job_application_id?, role, company, questions/answers/scores JSONB, overall_score, status` |
 | `salary_reports` | `user_id, role, company, location, p25/p50/p75, offer_amount, classification, negotiation_script, data_sources` |
 | `company_intel` | `user_id, company_name, overview, culture_summary, news_items, tech_stack, glassdoor_sentiment` (7-day cache) |
@@ -516,7 +509,7 @@ BE->>T: signal_agent_decision() — `decide` signal
 
 **Job application (extension mode):** click Apply → `start_auto_apply()` starts `AutoApplyWorkflow(id=auto-apply/{user}/{application})` → `reserve_application_attempt` → `create_extension_task_activity` (an `extension_tasks` row) → the user's browser polls, claims it (`POST /extension/device/tasks/claim`), fills the form, and shows a review panel → user presses Submit → the extension reports `submitted` (`POST /extension/device/tasks/{id}/events`), relayed as an `extension_update` signal to the workflow → `finish_extension_task_activity` → `schedule_followup_activity` starts the `FollowupWorkflow`. See §16.
 
-**Email:** `GET /email/threads` (Gmail) → `EmailAgent` draft (Hunter + RAG) → `checkpoint` → `ApprovalModal` → `POST /email/approve/{id}` (sole send path) → Resend/Gmail send → `FollowUpAgent` scheduled (`FollowupWorkflow`); `EmailMonitorAgent` (`StatusCheckWorkflow`, 6h, `server_browser` mode only) drafts replies to recruiter responses (HITL before any reply).
+**Email:** `GET /email/threads` (Gmail) → `EmailAgent` draft (Hunter + RAG) → `checkpoint` → `ApprovalModal` → `POST /email/approve/{id}` (sole send path) → Resend/Gmail send → `FollowUpAgent` scheduled (`FollowupWorkflow`); `EmailMonitorAgent` (on-demand `email_monitor` agent run) drafts replies to recruiter responses (HITL before any reply).
 
 ---
 
@@ -526,7 +519,7 @@ BE->>T: signal_agent_decision() — `decide` signal
 - **Secrets:** `api_key_enc`, `linkedin_*_enc`, `google_*_token_enc`, `state_enc` all AES-256 (`security.py`, `APP_SECRET_KEY`); plaintext never in `user_model_settings`; gateway session-token pattern (above).
 - **Isolation:** RLS everywhere; JWT verified per-request (Clerk RS256 JWKS or Supabase HS256); `agent_runs` audit of every run (input/output/tokens/duration); client only ever sees `"Agent failed"`.
 - **Transport/limits:** TLS via nginx + HSTS; exact-origin CORS; SlowAPI (`60/min` default, `10/min` agent-run, `5/min` upload, `100/min` strict); 2 concurrent runs/user; token budgets per agent (table §5, overridable `user_model_settings.token_budget`); timeouts per agent (table §5).
-- **Infra:** there is no HTTP route that runs a background job outside Temporal — activities call `scheduled_jobs.py` in-process; nginx still returns 404 for `/internal/*` as defense in depth. Browser `mem 2.5g/shm 256m`, session caps (`BROWSER_USE_MAX_CONCURRENT_SESSIONS=4`, `SANDBOX_MAX_ACTIVE=4`, TTL 1800s, domain allowlist); Bandit SAST on CI.
+- **Infra:** there is no HTTP route that runs a background job outside Temporal — activities call `scheduled_jobs.py` in-process; nginx still returns 404 for `/internal/*` as defense in depth. Browser `mem 2.5g/shm 256m`, session caps (`BROWSER_USE_MAX_CONCURRENT_SESSIONS=4`); Bandit SAST on CI.
 - **Extension device tokens:** `ccx_`-prefixed, only their SHA-256 hash is stored (`extension_devices.token_hash`); revocable per-device in Settings; rate-limited per device (`rate_limit.py` keys on the token hash), separate from per-user limits.
 
 ---
@@ -542,30 +535,28 @@ BE->>T: signal_agent_decision() — `decide` signal
 | Nango (Gmail / Drive) | EmailAgent, EmailMonitor, Drive | Nango environment key + provider config keys |
 | Resend | transactional email | `RESEND_API_KEY` |
 | YouTube | InterviewPrep videos | `YOUTUBE_API_KEY` (optional) |
-| Playwright / BrowserUse / OpenSandbox / AgentQL / Firecrawl | AutoApply, JobSearch, FormFiller, BrowserControl | `OPEN_SANDBOX_*`, `AGENTQL_API_KEY`, `FIRECRAWL_API_KEY`; Ollama controller (`BROWSER_USE_OLLAMA_URL/MODEL`) |
+| Playwright / BrowserUse / AgentQL / Firecrawl | AutoApply, JobSearch, FormFiller, BrowserControl | `AGENTQL_API_KEY`, `FIRECRAWL_API_KEY`; Ollama controller (`BROWSER_USE_OLLAMA_URL/MODEL`) |
 | Clerk | identity, JWT verification | `CLERK_ISSUER` / `CLERK_JWKS_URL`, `CLERK_SECRET_KEY` |
-| CareerCraft browser extension | `APPLY_EXECUTION_MODE=extension` apply flow — fills and submits in the user's own signed-in browser | device token (`ccx_…`), see §13 |
+| CareerCraft browser extension | Application flow — fills and submits in the user's own signed-in browser | device token (`ccx_…`), see §13 |
 | TypeSafe Jev / self-hosted Laya | decision engine for in-page choices the extension can't resolve by exact text match | `TYPESAFE_API_KEY` or `LAYA_URL` (`deploy/laya/`); falls back to built-in heuristics |
 
 ---
 
 ## 15. Configuration (`backend/app/core/config.py`)
 
-Required: `APP_SECRET_KEY, DATABASE_URL, REDIS_URL`. Auth: `CLERK_JWKS_URL/ISSUER/SECRET/AUDIENCE`. App: `APP_ENV, LOG_LEVEL, FRONTEND_URL, CORS_ORIGINS, NEXT_PUBLIC_*`. Temporal: `TEMPORAL_ADDRESS(_DOCKER), TEMPORAL_NAMESPACE, TEMPORAL_TASK_QUEUE=careercraft, TEMPORAL_WORKER_CONCURRENCY=4, TEMPORAL_SCHEDULES_ENABLED, DAILY_SEARCH_INTERVAL_HOURS, STATUS_CHECK_INTERVAL_HOURS, MAINTENANCE_INTERVAL_SECONDS, TEMPORAL_TLS_*`. Applying: `APPLY_EXECUTION_MODE=extension|server_browser, EXTENSION_TASK_CLAIM_TIMEOUT_S, EXTENSION_TASK_COMPLETE_TIMEOUT_S`. Decision engine: `DECISION_ENGINE_PROVIDER=auto|jev|laya|none, DECISION_ENGINE_MIN_CONFIDENCE, TYPESAFE_API_KEY, LAYA_URL`. Browser: `BROWSER_USE_*`, `SANDBOX_*`, `OPEN_SANDBOX_*` (`server_browser` mode only). RAG: `RAG_CHUNK_SIZE=500, RAG_CHUNK_OVERLAP=50, RAG_TOP_K=5`. Limits: `RATE_LIMIT_*`, `AGENT_*`. Storage: `DOCUMENT_STORAGE_DIR=/data/documents`. See [docs/CONFIGURATION.md](CONFIGURATION.md) for the full reference; all external API keys are optional.
+Required: `APP_SECRET_KEY, DATABASE_URL, REDIS_URL`. Auth: `CLERK_JWKS_URL/ISSUER/SECRET/AUDIENCE`. App: `APP_ENV, LOG_LEVEL, FRONTEND_URL, CORS_ORIGINS, NEXT_PUBLIC_*`. Temporal: `TEMPORAL_ADDRESS(_DOCKER), TEMPORAL_NAMESPACE, TEMPORAL_TASK_QUEUE=careercraft, TEMPORAL_WORKER_CONCURRENCY=4, TEMPORAL_SCHEDULES_ENABLED, DAILY_SEARCH_INTERVAL_HOURS, MAINTENANCE_INTERVAL_SECONDS, TEMPORAL_TLS_*`. Applying: `EXTENSION_TASK_CLAIM_TIMEOUT_S, EXTENSION_TASK_COMPLETE_TIMEOUT_S`. Decision engine: `DECISION_ENGINE_PROVIDER=auto|jev|laya|none, DECISION_ENGINE_MIN_CONFIDENCE, TYPESAFE_API_KEY, LAYA_URL`. Browser: `BROWSER_USE_*` (development search tools only). RAG: `RAG_CHUNK_SIZE=500, RAG_CHUNK_OVERLAP=50, RAG_TOP_K=5`. Limits: `RATE_LIMIT_*`, `AGENT_*`. Storage: `DOCUMENT_STORAGE_DIR=/data/documents`. See [docs/CONFIGURATION.md](CONFIGURATION.md) for the full reference; all external API keys are optional.
 
 ---
 
 ## 16. Auto-Apply: Temporal Workflow + Browser Extension
 
 Auto-Apply (submitting one job application) runs as `AutoApplyWorkflow`
-(`backend/app/workflows/auto_apply.py`) under one of two execution modes,
-chosen by `APPLY_EXECUTION_MODE`:
+(`backend/app/workflows/auto_apply.py`) executes only in the paired browser
+extension:
 
 - **`extension`** (default) — the application is handed to the user's own
   browser through the CareerCraft Chrome extension (`extension/`). No server
   ever holds the user's job-site session.
-- **`server_browser`** — the legacy mode: an isolated OpenSandbox browser is
-  driven server-side through `application_workflow.run_application_stage`.
 
 **Extension flow:**
 ```
@@ -586,16 +577,7 @@ POST /jobs/applications/{application_id}/prepare-apply
   Signals: extension_update(dict)   Query: status() -> state/pending_action/result/error
 ```
 
-**Server-browser flow** (legacy, `APPLY_EXECUTION_MODE=server_browser`):
-```
-  └─▶ loop: activity run_application_stage_activity (browser_prepare → browser_input → browser_review)
-        ├─ application_answers_required → wait signal `provide_answers` → activity apply_answers_and_resume_activity
-        ├─ browser_review / browser_input → wait signal `approve` (same signal — see comment in auto_apply.py)
-        └─ browser_review approved → activity run_application_stage_activity (max_attempts=1) → submit
-  Signals: approve, cancel, provide_answers(dict)
-```
-Both modes share the same `ApplicationAttempt` idempotency ledger and the
-same `schedule_followup_activity` step.
+The workflow retains the `ApplicationAttempt` ledger and starts follow-ups only on confirmed submission.
 
 **Decision engine** (`backend/app/services/decision_engine.py`): while
 filling a form, the extension asks `POST /extension/device/decide` for
@@ -609,7 +591,11 @@ below `DECISION_ENGINE_MIN_CONFIDENCE`, falls back to built-in heuristics
 [`extension/README.md`](../extension/README.md) and
 [`deploy/laya/README.md`](../deploy/laya/README.md).
 
-**Retry and idempotency policy:** preparation activities retry with bounded exponential backoff (`_PREP_RETRY_POLICY`, max 5 attempts). The one activity call that can reach the actual Submit click uses `maximum_attempts=1` (`_SUBMIT_RETRY_POLICY`) — an ambiguous outcome becomes workflow state `needs_verification`, never an automatic retry. `reserve_application_attempt`'s `run_id` is generated once via `workflow.uuid4()` (deterministic, replay-safe) and passed as activity input rather than generated inside the activity, so an at-least-once retry reuses the same `AgentRun` row instead of orphaning a new one.
+**Retry and idempotency policy:** reservation and task completion activities use
+bounded retries. The reservation reuses its deterministic run ID under
+at-least-once execution. A submitted or uncertain attempt cannot be reset,
+including when a workflow ID is reused for a new execution. External submit
+clicks belong to the user's extension and must follow explicit form review.
 
 **Deployment topology:** the Temporal server is self-hosted (`temporal` +
 `temporal-postgres` + `temporal-ui` services in `docker-compose.yml`) or
@@ -638,7 +624,7 @@ uvicorn app.main:app --reload --port 8000
 - Agents: `backend/app/agents/*.py` (see §5 table)
 - API: `backend/app/api/v1/*.py` (incl. `extension.py`)
 - Core: `backend/app/core/{config,database,redis_client,event_bus,supabase_auth,security,llm_gateway,model_router,rate_limit,temporal_client,agent_runs_repository}.py`
-- Services: `backend/app/services/{rag_service,workflow_service,scheduled_jobs,extension_service,decision_engine,sse_service,llm_gateway,llm_proxy_service,job_search_service,job_platforms_service,indian_platforms_service,naukri_service,gmail_service,resend_service,hunter_service,email_finder_service,proxycurl_service,exa_service,youtube_service,ats_service,pdf_service,persona_service,browser_control_service,form_filler_service,sandbox_service,storage_service,drive_service,integration_proxy_service,application_workflow,auto_apply_service,linkedin_outreach_service,token_budget_service,model_catalog_service,search_presets}.py`
+- Services: `backend/app/services/{rag_service,workflow_service,scheduled_jobs,extension_service,decision_engine,sse_service,llm_gateway,llm_proxy_service,job_search_service,job_platforms_service,indian_platforms_service,naukri_service,gmail_service,resend_service,hunter_service,email_finder_service,proxycurl_service,exa_service,youtube_service,ats_service,pdf_service,persona_service,browser_control_service,form_filler_service,storage_service,drive_service,integration_proxy_service,auto_apply_service,linkedin_outreach_service,token_budget_service,model_catalog_service,search_presets}.py`
 - Extension: `extension/src/background.js`, `extension/src/content/*.js`, `extension/README.md`
 - Decision engine: `backend/app/services/decision_engine.py`, `deploy/laya/`
 - Frontend: `frontend/src/lib/{api,sse,supabase-token}.ts`, `frontend/src/store/agentStore.ts`

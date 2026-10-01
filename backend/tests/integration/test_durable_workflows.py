@@ -9,11 +9,10 @@ import asyncio
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 pytestmark = pytest.mark.skipif(
@@ -25,8 +24,9 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 async def database(monkeypatch):
     import app.core.database as core_database
+    from app.applications import submission
     from app.core.database import Base
-    from app.services import application_workflow, sandbox_service, workflow_service
+    from app.services import workflow_service
 
     engine = create_async_engine(
         "postgresql+asyncpg://workflow_test:workflow_test@127.0.0.1:55439/workflow_test"
@@ -34,7 +34,7 @@ async def database(monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-    for module in (workflow_service, sandbox_service, application_workflow, core_database):
+    for module in (workflow_service, submission, core_database):
         monkeypatch.setattr(module, "AsyncSessionLocal", factory)
     monkeypatch.setattr("app.core.event_bus.publish", lambda *args: None)
     yield factory
@@ -42,7 +42,7 @@ async def database(monkeypatch):
 
 
 async def new_run(factory, status="queued"):
-    from app.models.db import User, AgentRun
+    from app.models.db import AgentRun, User
 
     async with factory() as db:
         user = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.test")
@@ -135,7 +135,9 @@ async def test_duplicate_start_runs_once_and_approval_continues(database):
                 await env.client.start_workflow(
                     AgentRunWorkflow.run,
                     AgentRunInput(
-                        run_id=str(run.id), user_id=str(run.user_id), start_at_checkpoint=True
+                        run_id=str(run.id),
+                        user_id=str(run.user_id),
+                        start_at_checkpoint=True,
                     ),
                     id=workflow_id,
                     task_queue="it-agent-runs",
@@ -161,7 +163,11 @@ async def test_failed_continuation_is_never_replayed(database, monkeypatch):
 
     from app.models.db import AgentRun
     from app.workflows import job_activities
-    from app.workflows.agent_run import AgentRunInput, AgentRunWorkflow, agent_run_workflow_id
+    from app.workflows.agent_run import (
+        AgentRunInput,
+        AgentRunWorkflow,
+        agent_run_workflow_id,
+    )
 
     _, run = await new_run(database)
     action = AsyncMock(side_effect=RuntimeError("connection reset during send"))
@@ -195,7 +201,8 @@ async def test_failed_continuation_is_never_replayed(database, monkeypatch):
             saved.started_at = datetime.now(UTC) - timedelta(hours=1)
             await db.commit()
         monkeypatch.setattr(
-            "app.core.temporal_client.get_temporal_client", AsyncMock(return_value=env.client)
+            "app.core.temporal_client.get_temporal_client",
+            AsyncMock(return_value=env.client),
         )
         assert (await job_activities.maintenance_activity({}))["reconciled"] >= 1
 
@@ -205,10 +212,16 @@ async def test_failed_continuation_is_never_replayed(database, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_extension_task_lifecycle_on_real_database(database):
+@pytest.mark.parametrize("authorized", [False, True])
+async def test_extension_task_lifecycle_on_real_database(database, authorized):
     """Create/reuse the browser task, then record a submission on the task,
     attempt, application and run in one place."""
-    from app.models.db import AgentRun, ApplicationAttempt, ExtensionTask, JobApplication
+    from app.models.db import (
+        AgentRun,
+        ApplicationAttempt,
+        ExtensionTask,
+        JobApplication,
+    )
     from app.workflows.extension_activities import (
         create_extension_task_activity,
         finish_extension_task_activity,
@@ -262,6 +275,16 @@ async def test_extension_task_lifecycle_on_real_database(database):
         assert len(tasks) == 1 and tasks[0].status == "pending"
         assert tasks[0].payload["platform"] == "lever"
         assert (await db.get(AgentRun, run.id)).status == "queued"
+        if authorized:
+            task = tasks[0]
+            task.approved_at = datetime.now(UTC)
+            task.submission_reported_at = datetime.now(UTC)
+            task.review_hash = "a" * 64
+            task.status = "submitted"
+            saved_attempt = await db.get(ApplicationAttempt, attempt.id)
+            saved_attempt.state = "submitting"
+            saved_attempt.approved_snapshot_hash = task.review_hash
+            await db.commit()
 
     finished = await finish_extension_task_activity(
         {
@@ -274,86 +297,22 @@ async def test_extension_task_lifecycle_on_real_database(database):
             "details": {"confirmation_text": "Thank you for applying"},
         }
     )
-    assert finished["applied_at"]
+    expected = "submitted" if authorized else "outcome_unknown"
+    assert bool(finished["applied_at"]) is authorized
 
     async with database() as db:
-        assert (await db.get(ExtensionTask, uuid.UUID(first["task_id"]))).status == "submitted"
-        assert (await db.get(ApplicationAttempt, attempt.id)).state == "verified"
+        assert (await db.get(ExtensionTask, uuid.UUID(first["task_id"]))).status == expected
+        assert (await db.get(ApplicationAttempt, attempt.id)).state == (
+            "verified" if authorized else "outcome_unknown"
+        )
         saved_app = await db.get(JobApplication, application.id)
-        assert saved_app.status == "applied" and saved_app.followup_day5 is not None
+        assert (
+            saved_app.status == ("applied" if authorized else "saved")
+            and (saved_app.followup_day5 is not None) is authorized
+        )
         saved_run = await db.get(AgentRun, run.id)
-        assert saved_run.status == "completed"
-        assert saved_run.output["outcome"] == "submitted"
-
-
-@pytest.mark.asyncio
-async def test_live_browser_form_snapshot_and_single_submit(database, monkeypatch):
-    from playwright.async_api import async_playwright
-    from app.models.db import BrowserSession, UserDocument
-    from app.services import application_workflow as workflow
-    from app.services.sandbox_service import OpenSandboxProvider
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.example.test")
-    monkeypatch.setattr(
-        OpenSandboxProvider, "endpoint", AsyncMock(return_value=("http://127.0.0.1:59222", {}))
-    )
-    _, run = await new_run(database)
-    session = BrowserSession(
-        id=uuid.uuid4(),
-        run_id=run.id,
-        user_id=run.user_id,
-        sandbox_id="test-browser",
-        status="ready",
-        expires_at=datetime.now(UTC) + timedelta(minutes=5),
-    )
-    document_id = uuid.uuid4()
-    async with database() as db:
-        db.add(session)
-        db.add(
-            UserDocument(
-                id=document_id,
-                user_id=run.user_id,
-                doc_type="resume",
-                filename="resume.pdf",
-                storage_path=f"{run.user_id}/resume.pdf",
-            )
-        )
-        await db.commit()
-    monkeypatch.setattr(workflow, "acquire_session", AsyncMock(return_value=session))
-    monkeypatch.setattr(workflow, "fill_known_fields", AsyncMock())
-    monkeypatch.setattr(workflow, "load_resume", AsyncMock(return_value=(b"%PDF-test", "hash")))
-    monkeypatch.setattr(workflow, "save_account_state", AsyncMock())
-    async with async_playwright() as p:
-        ws, headers = await OpenSandboxProvider().cdp("test-browser")
-        browser = await p.chromium.connect_over_cdp(ws)
-        page = browser.contexts[0].pages[-1]
-        html = (
-            '<label>Email<input name=email required value="me@example.test"></label>'
-            '<input type=file required><button onclick="window.submits=(window.submits||0)+1;'
-            "document.body.innerHTML='Thank you for applying'\">Submit application</button>"
-        )
-        await page.route(
-            "https://jobs.example.test/**",
-            lambda route: route.fulfill(body=html, content_type="text/html"),
-        )
-        pending = {
-            "type": "browser_prepare",
-            "job_url": "https://jobs.example.test/apply",
-            "pdf_document_id": str(document_id),
-        }
-        prepared = await workflow.run_application_stage(run, pending)
-        assert prepared["pending_action"]["type"] == "browser_review"
-        assert await page.evaluate("window.submits || 0") == 0
-        # A changed form invalidates approval, and must not click submit.
-        await page.locator("input[name=email]").fill("changed@example.test")
-        changed = await workflow.run_application_stage(run, prepared["pending_action"])
-        assert changed["pending_action"]["type"] == "browser_input"
-        assert await page.evaluate("window.submits || 0") == 0
-        reviewed = await workflow.run_application_stage(run, changed["pending_action"])
-        submitted = await workflow.run_application_stage(run, reviewed["pending_action"])
-        assert submitted["result"]["outcome"] == "submitted"
-        assert await page.evaluate("window.submits") == 1
+        assert saved_run.status == ("completed" if authorized else "failed")
+        assert saved_run.output["outcome"] == expected
 
 
 # --- Task 2: idempotent external actions (application submission + email) ---
@@ -387,14 +346,14 @@ async def new_application_attempt(factory, state="awaiting_approval"):
 async def test_two_simultaneous_application_approvals_cause_one_submit(database, monkeypatch):
     """Required test #1: real Postgres row lock, not a mock — two concurrent
     claims for the same attempt must not both win the compare-and-swap."""
-    from app.services import application_workflow
+    from app.applications import submission
 
-    monkeypatch.setattr(application_workflow, "AsyncSessionLocal", database)
+    monkeypatch.setattr(submission, "AsyncSessionLocal", database)
 
     _, _, attempt = await new_application_attempt(database, state="awaiting_approval")
     results = await asyncio.gather(
-        application_workflow.claim_attempt_for_submit(str(attempt.id), "hash-1"),
-        application_workflow.claim_attempt_for_submit(str(attempt.id), "hash-1"),
+        submission.claim_attempt_for_submit(str(attempt.id), "hash-1"),
+        submission.claim_attempt_for_submit(str(attempt.id), "hash-1"),
     )
     winners = [r for r in results if r is not None]
     assert len(winners) == 1
@@ -435,6 +394,7 @@ async def test_same_user_cannot_start_second_attempt_for_same_job(database):
     """Required test #6: the unique constraint is the backstop even if
     application-level checks are ever bypassed."""
     from sqlalchemy.exc import IntegrityError
+
     from app.models.db import ApplicationAttempt
 
     _, app_row, _ = await new_application_attempt(database)
@@ -496,85 +456,179 @@ async def test_different_users_can_apply_to_same_job_independently(database):
         await db.commit()  # no IntegrityError — different users, independent rows
 
 
-@pytest.mark.asyncio
-async def test_browser_ownership_is_enforced(database):
-    from app.api.v1.browser import owned_session
-    from fastapi import HTTPException
-
-    user, run = await new_run(database, "awaiting_approval")
-    stranger, _ = await new_run(database)
-    async with database() as db:
-        with pytest.raises(HTTPException) as exc:
-            await owned_session(db, stranger, run.id)
-        assert exc.value.status_code == 404
-
-
 # --- Task 3 slice 3b: the one controlled ATS adapter end-to-end test ---
 
 
 @pytest.mark.asyncio
-async def test_ashby_adapter_fills_and_submits_real_fixture_form(monkeypatch):
-    """Required by the Task 3 spec: 'Greenhouse, Lever, and Ashby forms work
-    through fixtures and one controlled end-to-end test.' Drives the real
-    AshbyAdapter (not the generic inline path) against a served fixture over
-    a real Chromium instance via CDP — no network, no real ashbyhq.com URL,
-    no real submission. application_workflow.py does not yet dispatch to
-    adapters (see adapters/__init__.py's registration and the parallel
-    agent's report), so this calls the adapter's own methods directly, the
-    same sequence dispatch would eventually use.
-    """
+async def test_public_sources_cache_pagination_failure_and_removal(database, monkeypatch):
     from pathlib import Path
 
-    from playwright.async_api import async_playwright
+    import httpx
+    from sqlalchemy import text
 
-    from app.applications.adapters.ashby import ashby_adapter
-    from app.applications.models import ResolvedAnswer
-    from app.core.config import settings
-    from app.services.sandbox_service import OpenSandboxProvider
+    from app.services import job_catalog, jobs_database
+    from app.services.job_connectors import Page, Source, normalize
 
-    monkeypatch.setattr(settings, "SANDBOX_ALLOWED_DOMAINS", "jobs.ashbyhq.com")
-    monkeypatch.setattr(
-        OpenSandboxProvider, "endpoint", AsyncMock(return_value=("http://127.0.0.1:59222", {}))
+    async with database() as db:
+        for role in ("anon", "authenticated", "service_role"):
+            exists = (
+                await db.execute(text("SELECT 1 FROM pg_roles WHERE rolname=:role"), {"role": role})
+            ).scalar()
+            if not exists:
+                await db.execute(text("CREATE ROLE " + role))
+        exists = (await db.execute(text("SELECT to_regclass('public.job_catalog')"))).scalar()
+        if not exists:
+            path = (
+                Path(__file__).resolve().parents[3]
+                / "supabase/migrations/20261001091000_b_job_catalog.sql"
+            )
+            for statement in path.read_text().split(";"):
+                # ORM metadata already includes application source/date columns.
+                if statement.strip() and not statement.strip().startswith(
+                    "ALTER TABLE public.job_applications"
+                ):
+                    await db.execute(text(statement))
+        await db.commit()
+    monkeypatch.setattr(jobs_database, "AsyncSessionLocal", database)
+    monkeypatch.setattr(job_catalog, "AsyncSessionLocal", database)
+    source = Source("recorded:" + str(uuid.uuid4()), "greenhouse", "fixture")
+    broken = Source("recorded:" + str(uuid.uuid4()), "lever", "broken")
+    job = normalize(
+        {
+            "id": "1",
+            "title": "Python Engineer",
+            "company": "Fixture",
+            "url": "https://jobs.example/" + str(uuid.uuid4()),
+            "posted_at": datetime.now(UTC).isoformat(),
+        },
+        source,
     )
+    calls = []
 
-    html = (Path(__file__).parent.parent / "fixtures" / "ats" / "ashby_apply.html").read_text()
-    job_url = "https://jobs.ashbyhq.com/acme/apply"
-    async with async_playwright() as p:
-        ws, headers = await OpenSandboxProvider().cdp("test-browser")
-        browser = await p.chromium.connect_over_cdp(ws)
-        page = browser.contexts[0].pages[-1]
-        await page.route(job_url, lambda route: route.fulfill(body=html, content_type="text/html"))
+    async def fetch(src, query="", cursor=None):
+        calls.append((src.id, cursor))
+        if src.id == broken.id:
+            response = httpx.Response(
+                429,
+                headers={"Retry-After": "7200"},
+                request=httpx.Request("GET", "https://public.example/jobs"),
+            )
+            raise httpx.HTTPStatusError("rate limit", request=response.request, response=response)
+        return Page([job], "page2" if cursor is None else None)
 
-        assert await ashby_adapter.detect(job_url, page) is True
+    monkeypatch.setattr(job_catalog, "fetch_page", fetch)
+    first, warning = await job_catalog.refresh_source(source)
+    assert len(first) == 2 and warning is None
+    before = len(calls)
+    cached, warning = await job_catalog.refresh_source(source)
+    assert cached == first and len(calls) == before
+    monkeypatch.setattr(job_catalog, "sources", lambda: [source, broken])
+    report = await job_catalog.refresh_catalog()
+    assert report["sources"] == 2
+    async with database() as db:
+        health = (
+            await db.execute(
+                text(
+                    "SELECT status,next_allowed_at FROM job_source_health WHERE source_id=:source"
+                ),
+                {"source": broken.id},
+            )
+        ).one()
+        assert health.status == "degraded" and health.next_allowed_at > datetime.now(
+            UTC
+        ) + timedelta(hours=1)
+        assert (
+            await db.execute(
+                text("SELECT count(*) FROM job_source_occurrences WHERE source_id=:source"),
+                {"source": source.id},
+            )
+        ).scalar() == 1
+        await db.execute(
+            text("UPDATE job_source_health SET next_allowed_at=NULL WHERE source_id=:source"),
+            {"source": source.id},
+        )
+        await db.commit()
 
-        await ashby_adapter.open_application(page, job_url)
-        fields = await ashby_adapter.extract_fields(page)
-        field_ids = {f.field_id for f in fields}
-        assert {"full_name", "email", "source", "work_authorized"} <= field_ids
+    async def empty(*args, **kwargs):
+        return Page([])
 
-        answers = [
-            ResolvedAnswer(
-                field_id="full_name", value="Ada Lovelace", source="profile", confidence=0.99
-            ),
-            ResolvedAnswer(
-                field_id="email", value="ada@example.test", source="profile", confidence=0.99
-            ),
-            ResolvedAnswer(field_id="source", value="LinkedIn", source="user", confidence=1.0),
-            ResolvedAnswer(field_id="work_authorized", value="No", source="user", confidence=1.0),
-        ]
-        await ashby_adapter.fill_fields(page, fields, answers)
-        await ashby_adapter.upload_documents(page, b"%PDF-test-resume")
+    monkeypatch.setattr(job_catalog, "fetch_page", empty)
+    await job_catalog.refresh_source(source)
+    async with database() as db:
+        assert (
+            await db.execute(
+                text("SELECT count(*) FROM job_source_occurrences WHERE source_id=:source"),
+                {"source": source.id},
+            )
+        ).scalar() == 0
 
-        refreshed = await ashby_adapter.extract_fields(page)
-        issues = await ashby_adapter.validate(page, refreshed)
-        assert issues == []
 
-        submit = await ashby_adapter.locate_submit(page)
-        assert submit is not None
-        assert await page.evaluate("window.submits || 0") == 0
-        await submit.click()
+@pytest.mark.asyncio
+async def test_github_fallback_cache_private_exclusion_and_delete_race(database, monkeypatch):
+    import base64
+    from pathlib import Path
 
-        confirmed, text, _url = await ashby_adapter.verify_confirmation(page)
-        assert confirmed is True
-        assert "thank you" in text.lower()
-        assert await page.evaluate("window.submits") == 1
+    from sqlalchemy import text
+
+    from app.services import github_profile
+
+    async with database() as db:
+        if not (await db.execute(text("SELECT to_regclass('public.github_profiles')"))).scalar():
+            path = (
+                Path(__file__).resolve().parents[3]
+                / "supabase/migrations/20261001092000_b_github_profiles.sql"
+            )
+            for statement in path.read_text().split(";"):
+                if statement.strip():
+                    await db.execute(text(statement))
+            await db.commit()
+    monkeypatch.setattr(github_profile, "AsyncSessionLocal", database)
+    user, _ = await new_run(database, "running")
+    calls = []
+    race = False
+
+    async def public(path):
+        calls.append(path)
+        if "/repos?" in path:
+            return [
+                {
+                    "name": "public",
+                    "html_url": "https://github.com/fixture/public",
+                    "owner": {"login": "fixture"},
+                    "language": "Python",
+                    "pushed_at": datetime.now(UTC).isoformat(),
+                },
+                {
+                    "name": "private",
+                    "html_url": "https://github.com/fixture/private",
+                    "owner": {"login": "fixture"},
+                    "private": True,
+                },
+            ]
+        if "/events/" in path:
+            return []
+        if path.endswith("/languages"):
+            return {"Python": 100}
+        if path.endswith("/readme"):
+            if race:
+                await github_profile.delete_profile(user.id)
+            return {"encoding": "base64", "content": base64.b64encode(b"FastAPI project").decode()}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(github_profile, "_public", public)
+    assert await github_profile.get_profile(user.id) is None
+    profile = await github_profile.refresh_profile(user.id, "https://github.com/fixture")
+    assert set(profile) == {"skills", "top_repos", "suggested_projects"}
+    assert profile["suggested_projects"][0]["name"] == "public"
+    assert not any("/private/" in path for path in calls)
+    count = len(calls)
+    assert await github_profile.refresh_profile(user.id, "https://github.com/fixture") == profile
+    assert len(calls) == count
+    await github_profile.delete_profile(user.id)
+    assert await github_profile.get_profile(user.id) is None
+    with pytest.raises(LookupError):
+        await github_profile.refresh_profile(user.id)
+    race = True
+    with pytest.raises(LookupError):
+        await github_profile.refresh_profile(user.id, "https://github.com/fixture")
+    assert await github_profile.get_profile(user.id) is None

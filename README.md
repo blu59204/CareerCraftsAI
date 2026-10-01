@@ -81,8 +81,8 @@ CareerCraft AI deploys a harness of specialized AI agents that collaborate to au
 │  Resume · LinkedIn    │  │  AgentRunWorkflow · JobSearch    │
 │  Email · FollowUp     │  │  AutoApply · Followup            │
 │  Cover Letter         │  │  Schedules: daily search,        │
-│  Interview Coach      │  │  maintenance (+ status check     │
-│  Company Research     │  │  in server_browser mode)         │
+│  Interview Coach      │  │  maintenance                     │
+│  Company Research     │  │                                 │
 │  Salary · NL Search   │  └─────────┬────────────────────────┘
 │  Auto-Apply Pipeline  │            │
 │  Email Monitor        │  ┌─────────▼────────────────────────┐
@@ -114,14 +114,13 @@ CareerCraft AI deploys a harness of specialized AI agents that collaborate to au
 
 ### Applying via the browser extension
 
-By default (`APPLY_EXECUTION_MODE=extension`) job applications are filled and
+Job applications are filled and
 submitted in **your own browser**, not on the server. Install the extension
 from `extension/`, connect it under **Settings → Integrations → Browser
 extension**, and when you press Apply the `AutoApplyWorkflow` queues an
 extension task that your browser claims, fills (LinkedIn Easy Apply, Naukri,
 Greenhouse/Lever/Ashby/Workday-style forms), and shows you in a review panel
-— nothing is submitted until you press **Submit**. `server_browser` is the
-legacy mode that drives an isolated sandbox browser on the server instead.
+— nothing is submitted until you explicitly approve **Submit**.
 Ambiguous in-page decisions (which option matches, did this confirm
 submission) are answered by a small "System One" decision engine — TypeSafe
 **Jev** or a self-hosted **Laya** (`deploy/laya/`) — falling back to
@@ -421,9 +420,9 @@ CareerCraftsAI/
 │   │   │   ├── starters.py               # API-side start/signal helpers (503 if Temporal is down)
 │   │   │   ├── agent_run.py              # AgentRunWorkflow (agent-run/{run_id})
 │   │   │   ├── job_search.py             # JobSearchWorkflow (job-search/{run_id})
-│   │   │   ├── auto_apply.py             # AutoApplyWorkflow (extension + server_browser modes)
+│   │   │   ├── auto_apply.py             # AutoApplyWorkflow (user browser extension)
 │   │   │   ├── followup.py               # FollowupWorkflow (followup/{application_id}, day 5/12)
-│   │   │   └── scheduled.py              # Temporal Schedules: daily search, maintenance, status check
+│   │   │   └── scheduled.py              # Temporal Schedules: daily search, maintenance
 │   │   └── temporal_worker.py            # Run with `python -m app.temporal_worker`
 │   └── tests/
 │       ├── unit/                         # mocked, fast CI
@@ -601,7 +600,7 @@ docker compose ps
 curl https://yourdomain.com/health  # → {"status":"ok"}
 ```
 
-For a single small VM, `deploy/oracle-vm/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway, and the OpenSandbox server (`server_browser` apply mode only). The Temporal server itself is a separate stack, `deploy/oracle-vm/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
+For a single small VM, `deploy/oracle-vm/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway. The Temporal server itself is a separate stack, `deploy/oracle-vm/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.
 
 ### 3. Run migrations
 

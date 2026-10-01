@@ -5,9 +5,10 @@ Operates on ApplicationField after answer resolution has populated
 `.value` — checkbox/radio/select values are already normalized (True/False,
 selected label, or None), not the raw DOM attribute, so this checks the
 real semantic state. Browser-native checkValidity() and visible ATS error
-scanning still happen in application_workflow.py against the live page;
+scanning happen in the ATS adapters against the live page;
 this module only owns the parts that don't need a browser.
 """
+
 from __future__ import annotations
 
 import re
@@ -24,9 +25,12 @@ def validate_fields(fields: list[ApplicationField]) -> list[ValidationIssue]:
         if not field.visible or field.disabled:
             continue
         if field.required and is_empty(field):
-            issues.append(ValidationIssue(
-                field_id=field.field_id, message=_missing_message(field),
-            ))
+            issues.append(
+                ValidationIssue(
+                    field_id=field.field_id,
+                    message=_missing_message(field),
+                )
+            )
             continue
         is_email_field = field.normalized_key == "personal.email" and isinstance(field.value, str)
         if field.value and is_email_field and not EMAIL_RE.match(field.value):
@@ -35,13 +39,17 @@ def validate_fields(fields: list[ApplicationField]) -> list[ValidationIssue]:
         if field.value and is_phone_field and not PHONE_RE.match(field.value):
             issues.append(ValidationIssue(field_id=field.field_id, message="Invalid phone format"))
         invalid_select = (
-            field.input_type == "select" and field.value is not None
+            field.input_type == "select"
+            and field.value is not None
             and field.value not in field.options
         )
         if invalid_select:
-            issues.append(ValidationIssue(
-                field_id=field.field_id, message="Selected option is not valid",
-            ))
+            issues.append(
+                ValidationIssue(
+                    field_id=field.field_id,
+                    message="Selected option is not valid",
+                )
+            )
     return issues
 
 

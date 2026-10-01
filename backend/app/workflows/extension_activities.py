@@ -16,7 +16,15 @@ from temporalio import activity
 
 logger = logging.getLogger(__name__)
 
-OPEN_TASK_STATUSES = ("pending", "claimed", "filling", "needs_input", "review", "login_required")
+OPEN_TASK_STATUSES = (
+    "pending",
+    "claimed",
+    "filling",
+    "needs_input",
+    "review",
+    "login_required",
+    "submitting",
+)
 
 WAITING_MESSAGE = (
     "Waiting for your browser. Keep Chrome open with the CareerCraft extension "
@@ -117,12 +125,14 @@ _RUN_STATUS = {
     "failed": "failed",
     "cancelled": "cancelled",
     "expired": "expired",
+    "outcome_unknown": "failed",
 }
 _ATTEMPT_STATE = {
     "submitted": "submitted",
     "failed": "failed",
     "cancelled": "cancelled",
     "expired": "cancelled",
+    "outcome_unknown": "outcome_unknown",
 }
 _MESSAGES = {
     "submitted": "Application submitted from your browser",
@@ -130,6 +140,7 @@ _MESSAGES = {
     "cancelled": "Application cancelled",
     "expired": "No browser picked up this application in time — "
     "check that the extension is connected, then apply again",
+    "outcome_unknown": "Submission could not be verified. Check the job site before any retry.",
 }
 
 
@@ -143,10 +154,18 @@ async def finish_extension_task_activity(params: dict) -> dict:
     outcome = params["outcome"]
     details = params.get("details") or {}
     now = datetime.now(UTC)
-    confirmed = bool(details.get("confirmation_text") or details.get("confirmation_url"))
+    confirmed = bool(details.get("confirmation_text"))
 
     async with AsyncSessionLocal() as db:
         task = await db.get(ExtensionTask, uuid.UUID(params["task_id"]), with_for_update=True)
+        if task is None or task.user_id != uuid.UUID(params["user_id"]):
+            raise ValueError("Application task is unavailable")
+        # Signals alone never confer submit authority. Unknown outcomes stay locked.
+        authorized = bool(task.approved_at and task.submission_reported_at and task.review_hash)
+        if (outcome == "submitted" and (not authorized or not confirmed)) or (
+            task.approved_at and outcome != "submitted"
+        ):
+            outcome = "outcome_unknown"
         if task is not None and task.status in OPEN_TASK_STATUSES:
             task.status = outcome
             task.result = {
@@ -168,6 +187,18 @@ async def finish_extension_task_activity(params: dict) -> dict:
                 with_for_update=True,
             )
             if attempt is not None:
+                if (
+                    attempt.user_id != task.user_id
+                    or attempt.run_id != task.run_id
+                    or attempt.job_application_id != task.job_application_id
+                ):
+                    raise ValueError("Application attempt ownership mismatch")
+                if outcome == "submitted" and (
+                    attempt.state not in {"submitting", "verified"}
+                    or attempt.approved_snapshot_hash != task.review_hash
+                ):
+                    outcome = "outcome_unknown"
+                    task.status = outcome
                 attempt.state = (
                     "verified" if outcome == "submitted" and confirmed else _ATTEMPT_STATE[outcome]
                 )

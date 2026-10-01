@@ -1,6 +1,7 @@
 """reserve_application_attempt must be safe under Temporal's at-least-once
 activity execution: retrying the same call (same run_id) must never create
 a second AgentRun row. See app/workflows/activities.py's docstring."""
+
 import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
@@ -12,6 +13,7 @@ def _fake_session_cm(yielded):
     @asynccontextmanager
     async def _cm():
         yield yielded
+
     return _cm()
 
 
@@ -42,6 +44,7 @@ class _ReserveFakeDB:
 
     def add(self, obj):
         from app.models.db import AgentRun
+
         if isinstance(obj, AgentRun):
             self.agent_runs[obj.id] = obj
         self.added.append(obj)
@@ -62,19 +65,26 @@ async def test_reserve_activity_retry_with_same_run_id_creates_one_agent_run(mon
     job_application_id = uuid.uuid4()
     run_id = str(uuid.uuid4())
     app_row = JobApplication(
-        id=job_application_id, user_id=user_id, company="Acme", role="Backend Engineer",
-        job_url="https://jobs.example.test/apply", status="saved", resume_id=uuid.uuid4(),
+        id=job_application_id,
+        user_id=user_id,
+        company="Acme",
+        role="Backend Engineer",
+        job_url="https://jobs.example.test/apply",
+        status="saved",
+        resume_id=uuid.uuid4(),
     )
     fake = _ReserveFakeDB(app_row)
     monkeypatch.setattr("app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(fake))
     monkeypatch.setattr(
-        "app.services.application_workflow.load_resume",
+        "app.applications.submission.load_resume",
         AsyncMock(return_value=(b"%PDF-test", "deadbeef")),
     )
 
     params = {
-        "user_id": str(user_id), "job_application_id": str(job_application_id),
-        "workflow_id": f"auto-apply/{user_id}/{job_application_id}", "run_id": run_id,
+        "user_id": str(user_id),
+        "job_application_id": str(job_application_id),
+        "workflow_id": f"auto-apply/{user_id}/{job_application_id}",
+        "run_id": run_id,
     }
 
     first = await activities.reserve_application_attempt(params)
@@ -87,26 +97,43 @@ async def test_reserve_activity_retry_with_same_run_id_creates_one_agent_run(mon
 
 
 @pytest.mark.asyncio
-async def test_reserve_activity_rejects_different_workflow_when_already_submitting(monkeypatch):
+@pytest.mark.parametrize("same_workflow", [False, True])
+@pytest.mark.parametrize("state", ["submitting", "submitted", "verified", "outcome_unknown"])
+async def test_reserve_activity_preserves_terminal_and_uncertain_attempts(
+    monkeypatch, same_workflow, state
+):
     from app.models.db import ApplicationAttempt, JobApplication
     from app.workflows import activities
 
     user_id = uuid.uuid4()
     job_application_id = uuid.uuid4()
     app_row = JobApplication(
-        id=job_application_id, user_id=user_id, company="Acme", role="Backend Engineer",
-        job_url="https://jobs.example.test/apply", status="saved", resume_id=uuid.uuid4(),
+        id=job_application_id,
+        user_id=user_id,
+        company="Acme",
+        role="Backend Engineer",
+        job_url="https://jobs.example.test/apply",
+        status="saved",
+        resume_id=uuid.uuid4(),
     )
+    workflow_id = f"auto-apply/{user_id}/{job_application_id}"
     other_workflow_attempt = ApplicationAttempt(
-        id=uuid.uuid4(), user_id=user_id, job_application_id=job_application_id,
-        workflow_id="auto-apply/other/other", state="submitting",
+        id=uuid.uuid4(),
+        user_id=user_id,
+        job_application_id=job_application_id,
+        workflow_id=workflow_id if same_workflow else "auto-apply/other/other",
+        state=state,
     )
     fake = _ReserveFakeDB(app_row, existing_attempt=other_workflow_attempt)
     monkeypatch.setattr("app.core.database.AsyncSessionLocal", lambda: _fake_session_cm(fake))
 
     params = {
-        "user_id": str(user_id), "job_application_id": str(job_application_id),
-        "workflow_id": f"auto-apply/{user_id}/{job_application_id}", "run_id": str(uuid.uuid4()),
+        "user_id": str(user_id),
+        "job_application_id": str(job_application_id),
+        "workflow_id": workflow_id,
+        "run_id": str(uuid.uuid4()),
     }
-    with pytest.raises(ValueError, match="already submitting"):
+    with pytest.raises(ValueError, match=f"already {state}"):
         await activities.reserve_application_attempt(params)
+    assert other_workflow_attempt.state == state
+    assert fake.commits == 0

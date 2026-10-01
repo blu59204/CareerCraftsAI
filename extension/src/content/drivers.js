@@ -13,7 +13,7 @@
   const SUBMIT_TEXT_RE = /submit( your)? application|send application|submit|apply/i;
   const LINKEDIN_LOGIN_URL_RE = /login|authwall|checkpoint|uas/i;
   const LINKEDIN_SUBMIT_RE = /submit application/i;
-  const LINKEDIN_NEXT_RE = /continue to next step|next|review your application|review/i;
+  const LINKEDIN_NEXT_RE = /^(continue to next step|next|review your application|review)$/i;
   const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|applied/i;
   const NAUKRI_LOGIN_RE = /\/nlogin/i;
   const NAUKRI_SUCCESS_RE = /successfully applied|applied to|application sent/i;
@@ -320,7 +320,7 @@
       if (!submitEl) throw new Error("Could not find the submit control for this application");
 
       await ctx.delay();
-      await ctx.api.markSubmitting();
+      await ctx.api.markSubmitting(form, submitEl);
       dom.clickLike(submitEl);
 
       const result = await waitForConfirmation(ctx, GENERIC_SUCCESS_RE, 15000);
@@ -433,7 +433,7 @@
         let primary = findModalPrimaryButton(m);
         if (!primary.el) {
           const chosen = await decideAdvanceButton(ctx, primary.buttons || []);
-          if (chosen) primary = { el: chosen, kind: LINKEDIN_SUBMIT_RE.test(dom.textOf(chosen)) ? "submit" : "next" };
+          if (chosen && LINKEDIN_SUBMIT_RE.test(dom.textOf(chosen))) primary = { el: chosen, kind: "submit" };
         }
         if (!primary.el) throw new Error("Could not find a button to advance the Easy Apply modal");
 
@@ -453,7 +453,7 @@
           if (decision.remember) await rememberAnswers(ctx, merged.fields, decision.typed);
 
           await ctx.delay();
-          await ctx.api.markSubmitting();
+          await ctx.api.markSubmitting(m, primary.el);
           dom.clickLike(primary.el);
           const result = await waitForConfirmation(ctx, LINKEDIN_CONFIRM_RE, 20000);
           await reportConfirmationResult(ctx, result, "LinkedIn did not show a submission confirmation.");
@@ -508,67 +508,6 @@
     return all.find((el) => /chatbot|drawer/i.test(el.className || "") && dom.isVisible(el));
   }
 
-  function findDrawerAdvanceButton(drawer) {
-    const buttons = Array.from(drawer.querySelectorAll("button")).filter((b) => dom.isVisible(b) && !b.disabled);
-    return buttons.find((b) => /save|submit|next|send/i.test(dom.textOf(b))) || buttons[buttons.length - 1];
-  }
-
-  async function handleChatbotDrawer(ctx) {
-    for (let step = 0; step < 10; step++) {
-      if (NAUKRI_SUCCESS_RE.test(dom.visibleText(document, 3000))) return;
-      const drawer = findChatbotDrawer();
-      if (!drawer) return;
-      if (await guardCaptcha(ctx, drawer)) return "cancelled";
-
-      const snap = dom.snapshot(drawer);
-      if (snap.fields.length === 0) {
-        const questionText = dom.textOf(drawer).slice(0, 300) || "Answer the chatbot question in the page, then press Continue.";
-        await ctx.api.event("needs_input", { message: "Answer the Naukri chatbot question, then press Continue." });
-        const res = await ctx.panel.showNeedsInput({
-          company: ctx.task.company,
-          role: ctx.task.role,
-          message: questionText,
-          fields: [],
-          optionsByFieldId: {},
-        });
-        if (res.action !== "continue") {
-          await ctx.api.event("cancelled", { message: "Cancelled at the chatbot" });
-          return "cancelled";
-        }
-        await dom.delay(400, 600);
-        continue;
-      }
-
-      const plan = await ctx.api.plan(location.href, snap.fields);
-      if (!plan) throw new Error("Could not reach CareerCraft to plan the chatbot question");
-      await applyPlan(ctx, snap, plan.fields);
-
-      if (plan.unresolved_required.length) {
-        const merged = mergeFields(snap.fields, plan);
-        await ctx.api.event("needs_input", { message: "A question needs your answer." });
-        const res = await ctx.panel.showNeedsInput({
-          company: ctx.task.company,
-          role: ctx.task.role,
-          fields: merged.fields,
-          optionsByFieldId: merged.optionsByFieldId,
-        });
-        if (res.action !== "continue") {
-          await ctx.api.event("cancelled", { message: "Cancelled at the chatbot" });
-          return "cancelled";
-        }
-        await applyPlan(ctx, snap, plan.fields, res.typed);
-        if (res.remember) await rememberAnswers(ctx, merged.fields, res.typed);
-      }
-
-      const advance = findDrawerAdvanceButton(drawer);
-      if (advance) {
-        await ctx.delay();
-        dom.clickLike(advance);
-      }
-      await dom.delay(600, 800);
-    }
-  }
-
   const naukriDriver = {
     async run(ctx) {
       for (let attempt = 0; attempt < 5 && naukriLooksSignedOut(); attempt++) {
@@ -614,12 +553,14 @@
       }
 
       await ctx.delay();
-      await ctx.api.markSubmitting();
+      await ctx.api.markSubmitting(document, applyBtn);
       dom.clickLike(applyBtn);
 
       await dom.delay(900, 1200);
       if (await guardCaptcha(ctx)) return;
-      if ((await handleChatbotDrawer(ctx)) === "cancelled") return;
+      if (findChatbotDrawer()) {
+        throw new Error("Naukri opened additional questions after Apply. Complete them manually and verify the outcome; CareerCraft will not click a second submit.");
+      }
 
       const result = await waitForConfirmation(ctx, NAUKRI_SUCCESS_RE, 15000);
       await reportConfirmationResult(ctx, result, "Naukri did not show a submission confirmation.");

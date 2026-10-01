@@ -16,6 +16,10 @@ import {
   getActiveTask,
   setActiveTask,
   clearActiveTask,
+  appOrigin,
+  jobUrl,
+  taskSenderAllowed,
+  snapshotKey,
 } from "./common.js";
 
 const POLL_ALARM = "poll";
@@ -43,9 +47,10 @@ async function apiFetch(pairing, path, { method = "GET", json } = {}) {
         }
       }
     }
-    return { ok: res.ok, status: res.status, data };
+    const error = res.ok ? undefined : (typeof data?.detail === "string" ? data.detail : `CareerCraft returned HTTP ${res.status}. Check the app URL and connection.`);
+    return { ok: res.ok, status: res.status, data, error };
   } catch (e) {
-    return { ok: false, status: 0, error: "network", data: null };
+    return { ok: false, status: 0, error: "Could not reach CareerCraft. Check your network and app URL.", data: null };
   }
 }
 
@@ -117,6 +122,7 @@ async function syncBridgeRegistration(appOrigin) {
 // ── Poll / claim / open ─────────────────────────────────────────────────
 
 let polling = false;
+const submitClaims = new Set();
 
 async function pollOnce() {
   if (polling) return;
@@ -127,6 +133,13 @@ async function pollOnce() {
 
     const active = await getActiveTask();
     if (active && !TERMINAL_STAGES.has(active.stage)) {
+      if (active.stage === "permission_required") {
+        if (!(await hasHostPermission(active.task.job_url))) return;
+        await chrome.storage.session.remove(SESSION_KEYS.HOST_PERMISSION_NEEDED);
+        const tab = await chrome.tabs.create({ url: active.task.job_url, active: true });
+        await setActiveTask({ ...active, tabId: tab.id, stage: "claimed" });
+        return;
+      }
       try {
         await chrome.tabs.get(active.tabId);
         return; // one task at a time — still working this one.
@@ -142,9 +155,14 @@ async function pollOnce() {
       await clearActiveTask();
       return;
     }
-    if (res.status === 204 || !res.ok || !res.data || !res.data.job_url) return;
+    if (!res.ok && res.status !== 204) {
+      await chrome.storage.session.set({ lastError: res.error });
+      return;
+    }
+    if (res.status === 204 || !res.data || !res.data.job_url) return;
 
     const task = res.data;
+    jobUrl(task.job_url);
     const permitted = await hasHostPermission(task.job_url);
     if (!permitted) {
       let host = task.job_url;
@@ -154,16 +172,14 @@ async function pollOnce() {
         /* keep raw url */
       }
       await chrome.storage.session.set({ [SESSION_KEYS.HOST_PERMISSION_NEEDED]: host });
-      await apiFetch(pairing, `/extension/device/tasks/${task.id}/events`, {
-        method: "POST",
-        json: { stage: "failed", error: `Allow the extension on ${host} from its popup` },
-      });
+      await setActiveTask({ taskId: task.id, tabId: null, stage: "permission_required", task });
       return;
     }
 
     const tab = await chrome.tabs.create({ url: task.job_url, active: true });
     await setActiveTask({ taskId: task.id, tabId: tab.id, stage: task.status || "claimed", task });
   } catch (e) {
+    await chrome.storage.session.set({ lastError: e.message || "Could not open this application." });
     console.warn("CareerCraft: poll failed", e && e.message);
   } finally {
     polling = false;
@@ -184,6 +200,7 @@ async function injectAndRun(tabId, task, submitting) {
     // Common and harmless: chrome:// pages, PDF viewer tabs, or a tab that
     // navigated away again before the script could run.
     console.warn("CareerCraft: injection skipped for tab", tabId, e && e.message);
+    await chrome.storage.session.set({ lastError: `Could not run the application assistant: ${e.message}. Grant site access from the popup.` });
   }
 }
 
@@ -217,9 +234,19 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // ── Messages ─────────────────────────────────────────────────────────────
 
 async function handleMessage(msg, sender) {
+  const popup = sender.id === chrome.runtime.id && !sender.tab && sender.url === chrome.runtime.getURL("popup.html");
+  const contentMessages = new Set(["CC_PLAN", "CC_EVENT", "CC_REVIEW", "CC_SUBMIT_STATUS", "CC_ANSWER", "CC_DECIDE", "CC_RESUME"]);
+  if (contentMessages.has(msg?.type) && !taskSenderAllowed(sender, await getActiveTask(), msg, chrome.runtime.id)) {
+    return { error: "This page does not own the active application." };
+  }
+  if (["CC_GET_STATUS", "CC_VALIDATE_AND_PAIR", "CC_DISCONNECT", "CC_CHECK_NOW", "CC_APPROVE_SUBMIT"].includes(msg?.type) && !popup) return { error: "Open the CareerCraft extension popup to perform this action." };
   switch (msg && msg.type) {
     case "WAKE":
     case "CC_CHECK_NOW": {
+      if (!popup) {
+        const pairing = await getPairing();
+        if (!pairing || new URL(sender.url || "https://invalid.invalid").origin !== pairing.appOrigin) return { error: "Invalid app origin" };
+      }
       pollBurst();
       return { ok: true };
     }
@@ -246,6 +273,7 @@ async function handleMessage(msg, sender) {
           confirmation_text: msg.confirmation_text,
           confirmation_url: msg.confirmation_url,
           error: msg.error,
+          submission_token: (await getActiveTask())?.submitPermit?.token,
         },
       });
       if (!res.ok) return { error: res.error || `http_${res.status}`, status: res.status, active: false };
@@ -260,9 +288,38 @@ async function handleMessage(msg, sender) {
       return { data: res.data };
     }
 
-    case "CC_MARK_SUBMITTING": {
+    case "CC_REVIEW": {
+      const pairing = await getPairing();
+      if (!pairing) return { error: "Reconnect the extension." };
       const active = await getActiveTask();
-      if (active && active.taskId === msg.taskId) await setActiveTask({ ...active, submitting: true });
+      const res = await apiFetch(pairing, `/extension/device/tasks/${msg.taskId}/review`, { method: "POST", json: msg.snapshot });
+      if (!res.ok) return { error: res.error };
+      await setActiveTask({ ...active, review: { ...res.data, snapshot: msg.snapshot }, submitPermit: null });
+      return { data: res.data };
+    }
+
+    case "CC_APPROVE_SUBMIT": {
+      const active = await getActiveTask();
+      const pairing = await getPairing();
+      if (!active?.review || !pairing || active.taskId !== msg.taskId || active.review.review_hash !== msg.reviewHash) return { error: "Review changed; reopen the popup." };
+      if (active.submitPermit || active.submitting) return { error: "Already approved; do not submit again." };
+      const res = await apiFetch(pairing, `/extension/device/tasks/${active.taskId}/approve-submit`, { method: "POST", json: { review_hash: active.review.review_hash, user_confirmed: true } });
+      if (!res.ok) return { error: res.error };
+      await setActiveTask({ ...active, submitPermit: { token: res.data.submission_token, expiresAt: res.data.expires_at } });
+      return { ok: true };
+    }
+
+    case "CC_SUBMIT_STATUS": {
+      const active = await getActiveTask();
+      if (active.submitting) return { error: "Submission was already claimed. Verify its outcome on the job site." };
+      if (!active.review || Date.parse(active.review.expires_at) <= Date.now()) return { error: "Review expired. Request a fresh review." };
+      if (!active.submitPermit) return { waiting: true };
+      if (Date.parse(active.submitPermit.expiresAt) <= Date.now()) return { error: "Approval expired. Verify the application before retrying." };
+      if (!msg.consume) return { approved: true };
+      if (snapshotKey(msg.snapshot) !== snapshotKey(active.review.snapshot)) return { error: "The form changed after review. Nothing was clicked; verify before retrying." };
+      if (submitClaims.has(active.taskId)) return { error: "Submission was already claimed." };
+      submitClaims.add(active.taskId);
+      await setActiveTask({ ...active, submitting: true, stage: "submitting" });
       return { ok: true };
     }
 
@@ -315,11 +372,12 @@ async function handleMessage(msg, sender) {
         device: me.ok ? me.data : null,
         activeTask: active,
         hostPermissionNeeded: hostPermissionNeeded || null,
+        error: (await chrome.storage.session.get("lastError")).lastError,
       };
     }
 
     case "CC_VALIDATE_AND_PAIR": {
-      const pairing = { appOrigin: msg.appOrigin.replace(/\/+$/, ""), token: msg.token };
+      const pairing = { appOrigin: appOrigin(msg.appOrigin), token: msg.token };
       const me = await apiFetch(pairing, "/extension/device/me");
       if (!me.ok || !me.data) {
         return { ok: false, error: me.status === 401 ? "Invalid or expired connection code" : "Could not reach CareerCraft AI at that URL" };
@@ -333,22 +391,25 @@ async function handleMessage(msg, sender) {
     }
 
     case "CC_PAIR_FROM_BRIDGE": {
-      const appOrigin = String(msg.appOrigin || "").replace(/\/+$/, "");
+      const origin = appOrigin(msg.appOrigin);
       // A page can only (re)pair the extension to its own origin, and never
       // take over a pairing to a different CareerCraft deployment — that
       // needs the popup.
       const current = await getPairing();
-      if (current && current.appOrigin !== appOrigin) return { ok: false, reason: "paired_elsewhere" };
-      if (!isStaticOrigin(appOrigin)) {
-        const granted = await chrome.permissions.contains({ origins: [appOrigin + "/*"] });
+      const appUrl = new URL(origin);
+      const knownApp = ["localhost", "127.0.0.1", "careercraftsai.me", "www.careercraftsai.me"].includes(appUrl.hostname);
+      if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || new URL(sender.url).origin !== origin || (!knownApp && current?.appOrigin !== origin)) return { error: "Invalid app origin" };
+      if (current && current.appOrigin !== origin) return { ok: false, reason: "paired_elsewhere" };
+      if (!isStaticOrigin(origin)) {
+        const granted = await chrome.permissions.contains({ origins: [origin + "/*"] });
         if (!granted) return { ok: false, reason: "permission_required" };
       }
-      const pairing = { appOrigin, token: msg.token };
+      const pairing = { appOrigin: origin, token: msg.token };
       const me = await apiFetch(pairing, "/extension/device/me");
       if (!me.ok || !me.data) return { ok: false, reason: "invalid_token" };
       if (current && current.token !== msg.token) await revokeCurrentPairing();
       await setPairing(pairing);
-      await syncBridgeRegistration(appOrigin);
+      await syncBridgeRegistration(origin);
       pollOnce();
       return { ok: true };
     }
@@ -367,13 +428,15 @@ async function handleMessage(msg, sender) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  handleMessage(msg, sender).then(sendResponse);
+  handleMessage(msg, sender).then(sendResponse).catch((error) => sendResponse({ error: error.message || "Extension operation failed." }));
   return true; // keep the channel open for the async response
 });
 
 // ── Startup ───────────────────────────────────────────────────────────────
 
 async function init() {
+  await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+  await chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
   try {
     chrome.alarms.create(POLL_ALARM, { periodInMinutes: 0.5 });
   } catch (e) {

@@ -13,6 +13,7 @@ class ProviderDefinition:
 # `provider_config_key` is different: it is an environment-specific Nango
 # integration unique key and must be configured by the deployer.
 SUPPORTED_PROVIDERS: dict[str, ProviderDefinition] = {
+    "github": ProviderDefinition("github", "github"),
     "gmail": ProviderDefinition("gmail", "google-mail"),
     "google_drive": ProviderDefinition("google_drive", "google-drive"),
     "google_calendar": ProviderDefinition("google_calendar", "google-calendar"),

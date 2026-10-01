@@ -2,7 +2,7 @@
 
 This process executes every durable job — agent runs, job searches,
 applications, follow-ups — and registers the recurring Schedules (daily job
-search, maintenance, and in server-browser mode the status check). Nothing
+search and maintenance). Nothing
 the API starts makes progress unless at least one of these is running.
 """
 

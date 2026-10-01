@@ -4,14 +4,13 @@ Pure and browser-independent: takes the plain dicts a page.evaluate() call
 produces, so it is unit-testable without Playwright. Radio buttons sharing
 a `name` become one field; checkboxes are never treated as text fields.
 """
+
 from __future__ import annotations
 
 from app.applications.models import ApplicationField
 
-# Richer than application_workflow.FORM_SNAPSHOT — adds `options` (for
-# <select>) and explicit `visible`/`disabled`, which the answer resolver and
-# validator both need. application_workflow.py's own FORM_SNAPSHOT stays
-# unchanged; it only needs the fingerprint, not a full field schema.
+# Include select options and explicit visibility/disabled state for the
+# answer resolver and validator. Passwords and hidden inputs are excluded.
 FIELD_SNAPSHOT_JS = """() => Array.from(document.querySelectorAll('input,select,textarea'))
  .filter(e => e.type !== 'password' && e.type !== 'hidden')
  .map((e) => ({
@@ -70,27 +69,50 @@ def extract_fields(raw_fields: list[dict]) -> list[ApplicationField]:
         group_label = group[0].get("group_label") or group[0].get("label", name)
         if kind == "radio":
             selected = next((g.get("label", "") for g in group if g.get("checked")), None)
-            fields.append(ApplicationField(
-                field_id=name, label=group_label, normalized_key=None,
-                input_type="radio", required=required, options=options, value=selected,
-                visible=visible, disabled=disabled,
-            ))
+            fields.append(
+                ApplicationField(
+                    field_id=name,
+                    label=group_label,
+                    normalized_key=None,
+                    input_type="radio",
+                    required=required,
+                    options=options,
+                    value=selected,
+                    visible=visible,
+                    disabled=disabled,
+                )
+            )
         elif len(group) == 1:
             # A checkbox "group" of one is just a single checkbox — most
             # HTML checkboxes have a unique `name`, so this is the common
             # case, not the exception. Keep it a plain boolean field.
-            fields.append(ApplicationField(
-                field_id=name, label=group[0].get("label", name), normalized_key=None,
-                input_type="checkbox", required=required, value=bool(group[0].get("checked")),
-                visible=visible, disabled=disabled,
-            ))
+            fields.append(
+                ApplicationField(
+                    field_id=name,
+                    label=group[0].get("label", name),
+                    normalized_key=None,
+                    input_type="checkbox",
+                    required=required,
+                    value=bool(group[0].get("checked")),
+                    visible=visible,
+                    disabled=disabled,
+                )
+            )
         else:  # a real checkbox group (2+ checkboxes sharing a name)
             checked_labels = [g.get("label", "") for g in group if g.get("checked")]
-            fields.append(ApplicationField(
-                field_id=name, label=group_label, normalized_key=None,
-                input_type="checkbox", required=required, options=options,
-                value=checked_labels or None, visible=visible, disabled=disabled,
-            ))
+            fields.append(
+                ApplicationField(
+                    field_id=name,
+                    label=group_label,
+                    normalized_key=None,
+                    input_type="checkbox",
+                    required=required,
+                    options=options,
+                    value=checked_labels or None,
+                    visible=visible,
+                    disabled=disabled,
+                )
+            )
         index += 1
 
     for item in singles:
@@ -110,12 +132,19 @@ def extract_fields(raw_fields: list[dict]) -> list[ApplicationField]:
         else:
             value = item.get("value") or None
 
-        fields.append(ApplicationField(
-            field_id=_field_id(item, index), label=item.get("label", ""), normalized_key=None,
-            input_type=input_type, required=bool(item.get("required")),
-            options=item.get("options", []) or [], value=value,
-            visible=item.get("visible", True), disabled=item.get("disabled", False),
-        ))
+        fields.append(
+            ApplicationField(
+                field_id=_field_id(item, index),
+                label=item.get("label", ""),
+                normalized_key=None,
+                input_type=input_type,
+                required=bool(item.get("required")),
+                options=item.get("options", []) or [],
+                value=value,
+                visible=item.get("visible", True),
+                disabled=item.get("disabled", False),
+            )
+        )
         index += 1
 
     return fields

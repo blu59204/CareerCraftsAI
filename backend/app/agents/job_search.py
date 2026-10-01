@@ -1267,6 +1267,7 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
     from app.core.sync_db import _get_sync_factory, _to_uuid
     from app.models.db import JobApplication
     from sqlalchemy import select
+    from app.services.job_connectors import posted
 
     candidates = [j for j in scored if (j.get("match_score") or 0) >= SAVE_MIN_SCORE and j.get("url")]
     if not candidates:
@@ -1293,6 +1294,8 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
                 jd_text=(job.get("description") or "")[:4000],
                 match_score=job.get("match_score"),
                 status="saved",
+                source=job.get("platform"),
+                posted_at=posted(job.get("posted_at")),
                 notes=("; ".join(red_flags[:3])) if red_flags else None,
             ))
             saved += 1
@@ -1301,114 +1304,34 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
 
 
 def job_search_agent_node(state: AgentState) -> AgentState:
-    """Standard-shape LangGraph node: fan out search, LLM-score, persist.
-
-    REQUIRED_CTX: ["titles"] (legacy "search_query" accepted as fallback;
-    "locations"/"platforms"/"remote"/"max_results" optional).
-    Search I/O lives in services/job_search_service.search_all_platforms
-    (mocked in unit tests); the LLM only scores via prompts/job_search_prompt
-    in batches of SCORE_BATCH_SIZE. Matches with score >= SAVE_MIN_SCORE are
-    persisted as saved JobApplications, idempotent on (user_id, url).
-    """
-    from app.agents.prompts.job_search_prompt import OUTPUT_SCHEMA as JobSearchOutput
-    from app.agents.prompts.job_search_prompt import SYSTEM_PROMPT as JOB_SCORE_SYSTEM
-    from app.agents.prompts.job_search_prompt import build_user_prompt as build_score_prompt
-
-    run_id = state["run_id"]
-    user_id = state["user_id"]
-    ctx = state.get("context", {}) or {}
-    titles = ctx.get("titles") or ([ctx.get("search_query")] if ctx.get("search_query") else [])
-    locations = ctx.get("locations") or ([ctx.get("location")] if ctx.get("location") else [])
-    platforms = ctx.get("platforms")
-    remote = ctx.get("remote", ctx.get("work_mode", "any"))
-    max_results = min(int(ctx.get("max_results", 10)), 25)
-
-    if not titles:
-        return {**state, "status": "failed", "error": "missing: titles (or search_query)"}
-
+    """Public discovery and selected-resume matching, logged by the existing harness."""
+    from app.services.job_matching import rank_jobs
+    ctx = state.get("context", {})
+    if not ctx.get("titles") and not ctx.get("search_query"):
+        return {**state,"status":"failed","error":"missing: titles (or search_query)"}
+    user_id, run_id = state["user_id"], state["run_id"]
+    query = {
+        **ctx,
+        "titles": ctx.get("titles") or [ctx.get("search_query", "software engineer")],
+        "locations": ctx.get("locations") or [ctx.get("location", "Remote")],
+        "max_results": min(int(ctx.get("max_results", 10)), 25),
+    }
     try:
-        emit(run_id, "thinking", {"step": "start", "message": "Searching job platforms..."})
-        model_settings = state.get("model_settings") or fetch_model_settings(user_id)
-        if not model_settings:
-            return {**state, "status": "failed", "error": "missing: active model settings"}
-
-        try:
-            profile = fetch_user_profile_text(user_id) or ""
-        except Exception:
-            profile = ""
-        llm = _build_llm(model_settings)
-
-        query = {
-            "titles": titles,
-            "locations": locations,
-            "remote": remote,
-            "max_results": max_results,
-        }
-        emit(run_id, "tool_call", {"tool": "search_all_platforms", "input": {"titles": titles, "platforms": platforms or "default"}})
-        jobs, warnings = run_coro_sync(search_all_platforms(query, _normalize_platforms(platforms)))
-        emit(run_id, "tool_result", {"tool": "search_all_platforms", "output": {"count": len(jobs), "warnings": warnings}})
-
-        if not jobs:
-            result = {"matches": [], "top_pick_id": None, "total_found": 0, "warnings": warnings or ["no results from any platform"]}
-            emit(run_id, "complete", {"result": result})
-            return {**state, "status": "completed", "result": result,
-                    "messages": state.get("messages", []) + [AIMessage(content="No jobs found.")]}
-
-        # ── LLM scoring in bounded batches ──
-        # Score every deduped candidate from every source, THEN rank, THEN
-        # truncate to max_results. Truncating first (jobs[:max_results])
-        # would silently drop every job from sources queried after the
-        # first max_results slots were already filled — a great match
-        # further down the source list could never even be considered.
-        to_score = jobs
-        by_id = {j["job_id"]: j for j in to_score}
-        scored: dict[str, dict] = {}
-        batches = [to_score[i:i + SCORE_BATCH_SIZE] for i in range(0, len(to_score), SCORE_BATCH_SIZE)]
-        for n, batch in enumerate(batches, 1):
-            emit(run_id, "thinking", {"step": f"score-{n}/{len(batches)}", "message": f"Scoring batch {n}/{len(batches)}..."})
-            parsed = call_llm_json(
-                llm,
-                JOB_SCORE_SYSTEM,
-                build_score_prompt(
-                    {"candidate_profile": profile, "preferences": {"titles": titles, "locations": locations, "remote": remote},
-                     "jobs": [{"job_id": j["job_id"], "title": j["title"], "company": j["company"],
-                               "location": j["location"], "description": (j.get("description") or "")[:1500]} for j in batch]},
-                    None,
-                ),
-                JobSearchOutput,
-            )
-            for m in parsed.matches:
-                if m.job_id in by_id and m.job_id not in scored:
-                    scored[m.job_id] = m.model_dump()
-
-        matches: list[dict] = []
-        for job in to_score:
-            s = scored.get(job["job_id"])
-            if s is None:
-                warnings.append(f"unscored job kept at 0: {job['job_id']}")
-                matches.append({**job, "match_score": 0, "reasons": [], "red_flags": [], "missing_skills": []})
-            else:
-                matches.append({**job, "match_score": s.get("score", 0), "reasons": s.get("reasons", []),
-                                "red_flags": s.get("red_flags", []), "missing_skills": s.get("missing_skills", [])})
-        matches.sort(key=lambda j: j["match_score"], reverse=True)
-        # Truncate AFTER ranking so a late-source job can still win a slot.
-        matches = matches[:max_results]
-        top_pick_id = matches[0]["job_id"] if matches else None
-
+        emit(run_id, "thinking", {"step": "search", "message": "Searching public job sources"})
+        jobs, warnings = run_coro_sync(search_all_platforms(query, ctx.get("platforms") or None))
+        matches, ranking_warnings = run_coro_sync(rank_jobs(user_id, query, jobs))
+        warnings.extend(ranking_warnings)
         try:
             saved = _persist_saved_jobs(user_id, matches)
-        except Exception as se:
-            logger.warning("Saving matched jobs failed, continuing with results: %s", se)
-            warnings.append("could not persist saved applications")
+        except Exception as exc:
+            logger.warning("job_persistence_failed: %s",type(exc).__name__)
             saved = 0
-
-        result = {"matches": matches, "top_pick_id": top_pick_id,
+            warnings.append("Matches found, but saved applications are unavailable")
+        result = {"matches": matches, "top_pick_id": matches[0]["job_id"] if matches else None,
                   "total_found": len(jobs), "saved_count": saved, "warnings": warnings}
-        emit(run_id, "complete", {"result": {"top_pick_id": top_pick_id, "total_found": len(jobs), "saved_count": saved}})
-        summary = f"Found {len(jobs)} jobs. Top match scored {(matches[0]['match_score'] if matches else 0)}." if matches else "No jobs found."
+        emit(run_id, "complete", {"result": {"total_found": len(jobs), "saved_count": saved}})
         return {**state, "status": "completed", "result": result,
-                "messages": state.get("messages", []) + [AIMessage(content=summary)]}
+                "messages": state.get("messages", []) + [AIMessage(content=f"Found {len(jobs)} jobs.")]}  # noqa: E501
     except Exception as exc:
-        logger.error("Job search agent failed for user %s: %s", state.get("user_id"), exc)
-        emit(run_id, "error", {"message": "Agent failed"})
-        return {**state, "status": "failed", "error": "Agent failed"}
+        logger.warning("job_search_failed: %s",type(exc).__name__, extra={"run_id": run_id, "error_type": type(exc).__name__})  # noqa: E501
+        return {**state, "status": "failed", "error": "Job search unavailable or selected resume no longer exists"}  # noqa: E501

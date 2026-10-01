@@ -1,0 +1,142 @@
+﻿backend/app/api/v1/agents.py:310:        # browser_review (final submit) and browser_input (resume
+backend/app/api/v1/browser.py:15:from app.models.db import AgentRun, BrowserSession, User
+backend/app/api/v1/browser.py:36:    session = (await db.execute(select(BrowserSession).where(
+backend/app/api/v1/browser.py:37:        BrowserSession.run_id == run_id, BrowserSession.user_id == user.id,
+backend/app/api/v1/browser.py:47:    if control and (run.output or {}).get("type") != "browser_input":
+backend/app/api/v1/browser.py:59:                "interactive": (run.output or {}).get("type") == "browser_input"}
+backend/app/api/v1/browser.py:63:async def browser_input(run_id: uuid.UUID, payload: BrowserInput,
+backend/app/api/v1/resume.py:289:#   rejecting a ``browser_input`` checkpoint leaves the attempt "preparing"
+backend/app/models/db.py:215:class BrowserSession(Base):
+backend/app/models/db.py:232:class BrowserAccountState(Base):
+backend/app/services/application_workflow.py:20:from app.models.db import AgentRun, BrowserSession, JobApplication, UserDocument
+backend/app/services/application_workflow.py:173:        if kind == "browser_prepare":
+backend/app/services/application_workflow.py:181:        if kind in {"browser_prepare", "browser_input"}:
+backend/app/services/application_workflow.py:239:                next_type = "browser_review"
+backend/app/services/application_workflow.py:243:                next_type = "browser_input"
+backend/app/services/application_workflow.py:247:                saved = await db.get(BrowserSession, session.id)
+backend/app/services/application_workflow.py:284:            return checkpoint(pending, "browser_input", "The form changed. Prepare and review it again.", form=snapshot)
+backend/app/services/application_workflow.py:291:            return checkpoint(pending, "browser_input", "The submit control changed. Review the form again.", form=snapshot)
+backend/app/services/sandbox_service.py:24:from app.models.db import AgentRun, BrowserAccountState, BrowserSession
+backend/app/services/sandbox_service.py:72:    async def create(self, session: BrowserSession) -> str:
+backend/app/services/sandbox_service.py:77:            "entrypoint": ["/opt/browser/start.sh"],
+backend/app/services/sandbox_service.py:120:async def acquire_session(user_id: str, run_id: str) -> BrowserSession:
+backend/app/services/sandbox_service.py:129:        existing = (await db.execute(select(BrowserSession).where(
+backend/app/services/sandbox_service.py:130:            BrowserSession.run_id == run.id,
+backend/app/services/sandbox_service.py:141:        active = select(BrowserSession).where(
+backend/app/services/sandbox_service.py:142:            BrowserSession.status.not_in(["closed", "failed"]), BrowserSession.expires_at > now,
+backend/app/services/sandbox_service.py:145:        user_active = (await db.execute(active.where(BrowserSession.user_id == run.user_id))).scalars().first()
+backend/app/services/sandbox_service.py:148:        session = BrowserSession(id=uuid.uuid4(), run_id=run.id, user_id=run.user_id,
+backend/app/services/sandbox_service.py:158:            saved = await db.get(BrowserSession, session.id)
+backend/app/services/sandbox_service.py:164:                account = await db.get(BrowserAccountState, session.user_id)
+backend/app/services/sandbox_service.py:177:            saved = await db.get(BrowserSession, session.id)
+backend/app/services/sandbox_service.py:184:            saved = await db.get(BrowserSession, session.id)
+backend/app/services/sandbox_service.py:192:async def browser_page(session: BrowserSession):
+backend/app/services/sandbox_service.py:211:async def save_account_state(session: BrowserSession, context) -> None:
+backend/app/services/sandbox_service.py:215:        account = await db.get(BrowserAccountState, session.user_id)
+backend/app/services/sandbox_service.py:219:            db.add(BrowserAccountState(user_id=session.user_id, state_enc=encrypted))
+backend/app/services/sandbox_service.py:227:        rows = (await db.execute(select(BrowserSession).join(AgentRun, AgentRun.id == BrowserSession.run_id).where(
+backend/app/services/sandbox_service.py:228:            BrowserSession.status.not_in(["closed", "failed"]),
+backend/app/services/sandbox_service.py:229:            (BrowserSession.expires_at <= datetime.now(timezone.utc)) |
+backend/app/services/sandbox_service.py:230:            (BrowserSession.status == "closing") |
+backend/app/services/sandbox_service.py:232:        ).limit(10).with_for_update(skip_locked=True, of=BrowserSession))).scalars().all()
+backend/app/services/workflow_service.py:45:    "browser_prepare",
+backend/app/services/workflow_service.py:46:    "browser_input",
+backend/app/services/workflow_service.py:47:    "browser_review",
+backend/app/services/workflow_service.py:285:        resumed["type"] = "browser_input"
+backend/app/services/workflow_service.py:289:    if action in {"browser_prepare", "browser_input", "browser_review"}:
+backend/app/workflows/activities.py:281:    """Drives one browser_prepare/browser_input/browser_review step via
+backend/app/workflows/activities.py:353:    resumed_pending["type"] = "browser_input"
+backend/app/workflows/auto_apply.py:221:            "type": "browser_prepare",
+backend/app/workflows/auto_apply.py:236:            is_submit_attempt = pending["type"] == "browser_review"
+backend/app/workflows/auto_apply.py:250:            # checkpoint (browser_input / browser_review /
+backend/app/workflows/auto_apply.py:282:                next_type = next_action.get("type", "browser_input")
+backend/app/workflows/auto_apply.py:289:            # browser_review (final submit) and browser_input (form still
+backend/app/workflows/auto_apply.py:295:            # auto-retrying browser_input on a timer.
+backend/app/workflows/auto_apply.py:296:            is_review = action_type == "browser_review"
+backend/app/workflows/auto_apply.py:297:            self._state = "awaiting_approval" if is_review else "awaiting_browser_input"
+backend/tests/e2e/test_agent_matrix.py:244:#      checkpoint of its own to review; its two stages are browser_prepare
+backend/tests/e2e/test_agent_matrix.py:245:#      -> browser_input/browser_review (form-filling states in
+backend/tests/e2e/test_agent_matrix.py:248:#   Reaching a genuine browser_review checkpoint for (2) requires, in
+backend/tests/e2e/test_agent_matrix.py:252:#        background "browser_prepare" task
+backend/tests/e2e/test_agent_matrix.py:268:#        environment, and reaching browser_review means real
+backend/tests/integration/test_durable_workflows.py:292:    from app.models.db import BrowserSession, UserDocument
+backend/tests/integration/test_durable_workflows.py:302:    session = BrowserSession(
+backend/tests/integration/test_durable_workflows.py:341:            "type": "browser_prepare",
+backend/tests/integration/test_durable_workflows.py:346:        assert prepared["pending_action"]["type"] == "browser_review"
+backend/tests/integration/test_durable_workflows.py:351:        assert changed["pending_action"]["type"] == "browser_input"
+backend/tests/integration/test_llm_agent_matrix.py:52:IRREVERSIBLE_CHECKPOINTS = {"send_email", "linkedin_outreach", "auto_apply_approval", "browser_review"}
+backend/tests/integration/test_resume_facts_pg.py:233:    # rejected browser_input checkpoint (attempt left "preparing"), and a
+backend/tests/integration/test_resume_facts_pg.py:247:    review = {"type": "browser_review", "pdf_document_id": str(review_doc.id)}
+backend/tests/unit/test_auto_apply_workflow.py:66:        if params["pending"]["type"] == "browser_prepare":
+backend/tests/unit/test_auto_apply_workflow.py:69:                "pending_action": {"type": "browser_review", "form": {}},
+backend/tests/unit/test_auto_apply_workflow.py:110:    assert stage_calls == ["browser_prepare", "browser_review"]
+backend/tests/unit/test_auto_apply_workflow.py:125:            "pending_action": {"type": "browser_review", "form": {}},
+backend/tests/unit/test_auto_apply_workflow.py:179:        if params["pending"]["type"] == "browser_prepare":
+backend/tests/unit/test_auto_apply_workflow.py:182:                "pending_action": {"type": "browser_review", "form": {}},
+backend/tests/unit/test_auto_apply_workflow.py:298:        if params["pending"]["type"] == "browser_prepare":
+backend/tests/unit/test_auto_apply_workflow.py:301:                "pending_action": {"type": "browser_review", "form": {}},
+backend/tests/unit/test_auto_apply_workflow.py:348:async def test_browser_input_waits_for_approval_signal_like_browser_review():
+backend/tests/unit/test_auto_apply_workflow.py:349:    """Regression: browser_input must NOT auto-retry on a timer — the
+backend/tests/unit/test_auto_apply_workflow.py:365:                "pending_action": {"type": "browser_input", "form": {}},
+backend/tests/unit/test_auto_apply_workflow.py:394:                if status.state == "awaiting_browser_input":
+backend/tests/unit/test_auto_apply_workflow.py:398:                raise AssertionError("workflow never reached awaiting_browser_input")
+backend/tests/unit/test_auto_apply_workflow.py:404:                "browser_prepare"
+backend/tests/unit/test_auto_apply_workflow.py:405:            ], "must not retry browser_input without a signal"
+backend/tests/unit/test_auto_apply_workflow.py:410:    assert stage_calls == ["browser_prepare", "browser_input"]
+backend/tests/unit/test_fixes_e2e.py:780:async def test_prepare_application_apply_starts_durable_browser_prepare_task(monkeypatch):
+backend/tests/unit/test_fixes_e2e.py:782:    browser_prepare/browser_input/browser_review path the auto-apply
+backend/tests/unit/test_fixes_e2e.py:819:    assert payload["type"] == "browser_prepare"
+backend/tests/unit/test_temporal_api_integration.py:112:async def test_approve_signals_temporal_workflow_for_browser_review():
+backend/tests/unit/test_temporal_api_integration.py:135:        await agents_module._signal_temporal_approval(run, "browser_review", {})
+backend/tests/unit/test_temporal_api_integration.py:193:        await _signal_temporal_approval(run, "browser_review", {})
+backend/tests/unit/test_temporal_browser_heartbeats.py:21:        stage="browser_prepare",
+backend/tests/unit/test_temporal_browser_heartbeats.py:27:    assert all(heartbeat["stage"] == "browser_prepare" for heartbeat in heartbeats)
+backend/tests/unit/test_temporal_browser_heartbeats.py:46:            stage="browser_review",
+backend/tests/unit/test_workflow_runtime.py:36:        validate_approval({"type": "browser_review"}, {"body": "changed"})
+backend/tests/unit/test_workflow_runtime.py:92:    from app.models.db import BrowserSession
+backend/tests/unit/test_workflow_runtime.py:105:        result = await provider.create(BrowserSession(id=uuid.uuid4()))
+backend/tests/unit/test_workflow_runtime.py:304:    from app.models.db import AgentRun, BrowserSession, User
+backend/tests/unit/test_workflow_runtime.py:313:        output={"type": "browser_input"},
+backend/tests/unit/test_workflow_runtime.py:315:    session = BrowserSession(
+backend/tests/unit/test_workflow_runtime.py:348:    from app.models.db import BrowserSession
+backend/tests/unit/test_workflow_runtime.py:352:    failing = BrowserSession(
+backend/tests/unit/test_workflow_runtime.py:360:    rescued = BrowserSession(
+backend/tests/unit/test_workflow_runtime.py:473:        "type": "browser_review",
+backend/tests/unit/test_workflow_runtime.py:520:    assert result["pending_action"]["type"] == "browser_input"
+backend/tests/unit/test_workflow_runtime.py:845:        "type": "browser_review",
+backend/tests/unit/test_workflow_runtime.py:889:    run_application_stage's browser_review branch is entered twice for the
+backend/tests/unit/test_workflow_runtime.py:1289:    """No saved answers/profile for this user, but supports BrowserSession
+backend/tests/unit/test_workflow_runtime.py:1290:    get/update — matches what the browser_prepare/browser_input branch of
+backend/tests/unit/test_workflow_runtime.py:1304:        from app.models.db import BrowserSession
+backend/tests/unit/test_workflow_runtime.py:1306:        if model is BrowserSession:
+backend/tests/unit/test_workflow_runtime.py:1316:        "type": "browser_input",
+backend/tests/unit/test_workflow_runtime.py:1331:    from app.models.db import AgentRun, BrowserSession
+backend/tests/unit/test_workflow_runtime.py:1366:    browser_session = BrowserSession(
+backend/tests/unit/test_workflow_runtime.py:1410:    from app.models.db import AgentRun, BrowserSession
+backend/tests/unit/test_workflow_runtime.py:1431:    browser_session = BrowserSession(
+backend/tests/unit/test_workflow_runtime.py:1461:    assert result["pending_action"]["type"] == "browser_input"
+backend/tests/unit/test_workflow_runtime.py:1479:        return {"status": "awaiting_approval", "pending_action": {"type": "browser_input"}}
+backend/tests/unit/test_workflow_runtime.py:1514:    assert resumed_calls[0]["type"] == "browser_input"
+backend/tests/unit/test_workflow_runtime.py:1517:    assert result["pending_action"]["type"] == "browser_input"
+docs/ARCHITECTURE.md:589:  └─▶ loop: activity run_application_stage_activity (browser_prepare → browser_input → browser_review)
+docs/ARCHITECTURE.md:591:        ├─ browser_review / browser_input → wait signal `approve` (same signal — see comment in auto_apply.py)
+docs/ARCHITECTURE.md:592:        └─ browser_review approved → activity run_application_stage_activity (max_attempts=1) → submit
+docs/BROWSER_EXTENSION_PROPOSAL.md:146:**File: `frontend/src/app/(app)/settings/browser/page.tsx`**
+docs/BROWSER_SCALING_ARCHITECTURE.md:218:@router.websocket("/ws/browser/{user_id}")
+docs/BROWSER_SCALING_ARCHITECTURE.md:256:  ws = new WebSocket(`wss://api.careercraft.ai/ws/browser/${userId}`);
+frontend/src/components/agents/ApprovalModal.tsx:42:import { BrowserWorkspace } from "./BrowserWorkspace";
+frontend/src/components/agents/ApprovalModal.tsx:76:  "browser_input",
+frontend/src/components/agents/ApprovalModal.tsx:77:  "browser_review",
+frontend/src/components/agents/ApprovalModal.tsx:91:  browser_input: Browser,
+frontend/src/components/agents/ApprovalModal.tsx:92:  browser_review: Browser,
+frontend/src/components/agents/ApprovalModal.tsx:147:  const isBrowser = actionType === "browser_input" || actionType === "browser_review";
+frontend/src/components/agents/ApprovalModal.tsx:187:    : actionType === "browser_input"
+frontend/src/components/agents/ApprovalModal.tsx:189:      : actionType === "browser_review"
+frontend/src/components/agents/ApprovalModal.tsx:564:                      <BrowserWorkspace runId={runId} />
+frontend/src/components/agents/BrowserWorkspace.tsx:63:export function BrowserWorkspace({ runId }: { runId: string }) {
+frontend/src/components/agents/BrowserWorkspace.tsx:75:      const response = await apiClient.get<Frame>(`/browser/${runId}/frame`, { signal });
+frontend/src/components/agents/BrowserWorkspace.tsx:96:      await apiClient.post(`/browser/${runId}/input`, payload);
+sandbox/Dockerfile:6:COPY start.sh /opt/browser/start.sh
+sandbox/Dockerfile:7:RUN chmod 755 /opt/browser/start.sh
+sandbox/Dockerfile:11:CMD ["/opt/browser/start.sh"]
+sandbox/start.sh:8:  --user-data-dir=/home/browser/profile --no-first-run --no-default-browser-check \
