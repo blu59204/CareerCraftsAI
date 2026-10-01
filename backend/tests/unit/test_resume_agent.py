@@ -178,7 +178,7 @@ def _resume_json(markdown: str, warnings: list[str] | None = None) -> str:
     )
 
 
-def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None):
+def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None, unsupported=None):
     """Run the node with every I/O boundary patched; returns (result, mocks)."""
     from app.agents.resume_agent import resume_agent_node
 
@@ -202,6 +202,11 @@ def _run_agent(mock_llm, llm_json, *, facts=({}, {}), ats=None):
             ats or MagicMock(return_value=MagicMock(composite_score=77, missing_keywords=[])),
         ) as score,
         patch("app.core.event_bus.emit"),
+        # The fixtures' one-line source is not meant to ground a whole draft;
+        # grounding itself is covered in test_resume_grounding and below.
+        patch(
+            "app.agents.resume_agent.unsupported_claims", side_effect=unsupported or (lambda *_: [])
+        ),
     ):
         result = resume_agent_node(make_state("Python engineer, Azure"))
     return result, render, persist, score
@@ -339,3 +344,19 @@ def test_resume_agent_keeps_template_render_when_fit_overflows(mock_llm):
     assert persist.call_args.args[5] == b"%PDF-fallback"
     assert persist.call_args.kwargs["page_target"] is None
     assert any("pages" in w for w in persist.call_args.kwargs["warnings"])
+
+
+def test_unsupported_details_are_flagged_and_block_auto_apply(mock_llm):
+    draft = "# Jane Doe\n## EXPERIENCE\n### Engineer | Acme\n- Cut costs 60% with Kubernetes\n"
+    # first draft and the repair attempt both still contain Kubernetes
+    mock_llm.responses = [_resume_json(draft)]
+
+    result, _, _, _ = _run_agent(
+        mock_llm,
+        _resume_json(draft),
+        unsupported=lambda *_: ["60", "Kubernetes"],
+    )
+
+    pending = result["pending_action"]
+    assert pending["grounding"] == {"checked": True, "unsupported": ["60", "Kubernetes"]}
+    assert any("60, Kubernetes" in w for w in pending["warnings"])

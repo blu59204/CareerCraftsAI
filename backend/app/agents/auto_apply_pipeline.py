@@ -306,6 +306,15 @@ async def _apply_to_job(
         )
         result["resume_tailored"] = resume_result["status"] in ("completed", "awaiting_approval")
         resume_draft = resume_result.get("pending_action") or resume_result.get("result") or {}
+        if (resume_draft.get("grounding") or {}).get("unsupported"):
+            # Never apply with a resume that claims something the candidate's
+            # documents do not support; the member sees why instead.
+            result["resume_tailored"] = False
+            result["resume_blocked"] = (
+                "Tailored resume mentions details not in your documents: "
+                + ", ".join(resume_draft["grounding"]["unsupported"][:5])
+            )
+            resume_draft = {}
         result["resume_draft"] = resume_draft
         resume_sha256 = None
         if resume_draft.get("pdf_document_id"):
