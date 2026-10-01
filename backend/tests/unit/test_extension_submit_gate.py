@@ -123,12 +123,15 @@ async def test_site_challenge_stops_without_retry(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "outcome,approved,expected",
+    "outcome,approved,expected,extra",
     [
-        ("submitted", True, "submitted"),
-        ("submitted", False, "outcome_unknown"),
-        ("expired", True, "outcome_unknown"),
-        ("failed", True, "outcome_unknown"),
+        ("submitted", True, "submitted", {}),
+        ("submitted", False, "outcome_unknown", {}),
+        ("expired", True, "outcome_unknown", {}),
+        ("failed", True, "outcome_unknown", {}),
+        ("failed", True, "outcome_unknown", {"submit_attempted": True}),
+        # Permit never consumed: nothing was clicked, so the job stays retryable.
+        ("failed", True, "failed", {"submit_attempted": False}),
     ],
 )
 async def test_worker_requires_persisted_authority_and_preserves_uncertainty(
@@ -136,6 +139,7 @@ async def test_worker_requires_persisted_authority_and_preserves_uncertainty(
     outcome,
     approved,
     expected,
+    extra,
 ):
     from app.core import database, event_bus
     from app.models.db import AgentRun, JobApplication
@@ -188,9 +192,38 @@ async def test_worker_requires_persisted_authority_and_preserves_uncertainty(
             "outcome": outcome,
             "details": (
                 {"confirmation_text": "Application received"} if outcome == "submitted" else {}
-            ),
+            )
+            | extra,
         }
     )
     assert result["outcome"] == expected
     assert attempt.state == ("verified" if expected == "submitted" else expected)
     assert job.status == ("applied" if expected == "submitted" else "saved")
+
+
+@pytest.mark.asyncio
+async def test_failed_signal_lets_extension_retry_the_outcome(gate):
+    from fastapi import HTTPException
+
+    app, task, attempt, signal = gate
+    prefix = f"/extension/device/tasks/{task.id}"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        approved = await client.post(
+            prefix + "/approve-submit", json={"review_hash": "a" * 64, "user_confirmed": True}
+        )
+        event = {
+            "stage": "submitted",
+            "submission_token": approved.json()["submission_token"],
+            "confirmation_text": "Application received",
+        }
+        signal.side_effect = HTTPException(status_code=503, detail="unavailable")
+        failed = await client.post(prefix + "/events", json=event)
+        assert failed.status_code == 503
+        assert task.submission_reported_at is None
+        signal.side_effect = None
+        retried = await client.post(prefix + "/events", json=event)
+        assert retried.status_code == 200
+        assert task.submission_reported_at
+        assert signal.await_args.args[1]["details"]["submit_attempted"] is True

@@ -162,8 +162,11 @@ async def finish_extension_task_activity(params: dict) -> dict:
             raise ValueError("Application task is unavailable")
         # Signals alone never confer submit authority. Unknown outcomes stay locked.
         authorized = bool(task.approved_at and task.submission_reported_at and task.review_hash)
+        # After approval a non-submitted outcome stays unknown unless the
+        # extension reports it never consumed the permit (nothing clicked).
+        clicked = details.get("submit_attempted", True) is not False
         if (outcome == "submitted" and (not authorized or not confirmed)) or (
-            task.approved_at and outcome != "submitted"
+            task.approved_at and outcome != "submitted" and clicked
         ):
             outcome = "outcome_unknown"
         if task is not None and task.status in OPEN_TASK_STATUSES:

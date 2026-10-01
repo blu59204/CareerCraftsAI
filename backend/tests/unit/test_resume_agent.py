@@ -302,3 +302,40 @@ def test_failing_saved_facts_do_not_skip_contact_or_name(mock_llm):
     assert "jane@example.com" in rendered and "+91 98765 43210" in rendered
     assert rendered.startswith("# Jane Doe\n")
     assert result["pending_action"]["resume_markdown"] == rendered
+
+
+def test_resume_agent_keeps_template_render_when_fit_overflows(mock_llm):
+    from app.agents.resume_agent import resume_agent_node
+    from app.services.resume_export import PageOverflow
+
+    mock_llm.responses = [_valid_resume_json()]
+    calls = []
+
+    def render(*args, **kwargs):
+        calls.append(kwargs.get("page_target"))
+        if kwargs.get("page_target"):
+            raise PageOverflow(3, 2)
+        return b"%PDF-fallback"
+
+    persist = MagicMock(return_value="doc-789")
+    with (
+        patch(
+            "app.core.sync_db.fetch_model_settings",
+            return_value=MagicMock(provider="openai"),
+        ),
+        patch("app.agents.resume_agent.retrieve", return_value=[]),
+        patch("app.agents.resume_agent.generate_resume_pdf", render),
+        patch("app.agents.resume_agent._persist_resume_document", persist),
+        patch("app.core.sync_db.fetch_user_full_name", return_value="Test User"),
+        patch("app.core.llm_gateway.build_gateway_llm", return_value=mock_llm),
+        patch("app.services.resume_facts.fetch_resume_facts_sync", return_value=({}, {})),
+        patch("app.core.event_bus.emit"),
+    ):
+        result = resume_agent_node(make_state())
+
+    assert result["status"] == "awaiting_approval"
+    assert result["pending_action"]["pdf_document_id"] == "doc-789"
+    assert calls == [2, None]
+    assert persist.call_args.args[5] == b"%PDF-fallback"
+    assert persist.call_args.kwargs["page_target"] is None
+    assert any("pages" in w for w in persist.call_args.kwargs["warnings"])

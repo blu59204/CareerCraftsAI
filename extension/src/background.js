@@ -223,7 +223,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       if (pairing) {
         await apiFetch(pairing, `/extension/device/tasks/${active.taskId}/events`, {
           method: "POST",
-          json: { stage: "cancelled", message: "Tab closed" },
+          json: { stage: "cancelled", message: "Tab closed", submit_attempted: !!active.submitting },
         });
       }
     }
@@ -265,6 +265,7 @@ async function handleMessage(msg, sender) {
     case "CC_EVENT": {
       const pairing = await getPairing();
       if (!pairing) return { error: "not_paired" };
+      const current = await getActiveTask();
       const res = await apiFetch(pairing, `/extension/device/tasks/${msg.taskId}/events`, {
         method: "POST",
         json: {
@@ -273,7 +274,8 @@ async function handleMessage(msg, sender) {
           confirmation_text: msg.confirmation_text,
           confirmation_url: msg.confirmation_url,
           error: msg.error,
-          submission_token: (await getActiveTask())?.submitPermit?.token,
+          submission_token: current?.submitPermit?.token,
+          submit_attempted: current?.taskId !== msg.taskId || !!current?.submitting,
         },
       });
       if (!res.ok) return { error: res.error || `http_${res.status}`, status: res.status, active: false };

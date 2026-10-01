@@ -297,6 +297,9 @@ class TaskEvent(BaseModel):
     confirmation_url: str | None = Field(default=None, max_length=2000)
     error: str | None = Field(default=None, max_length=1000)
     submission_token: str | None = Field(default=None, max_length=200)
+    # False only when the extension never consumed its submit permit, so no
+    # click can have happened. Older extensions omit it: treated as attempted.
+    submit_attempted: bool = True
 
 
 class ReviewField(BaseModel):
@@ -503,10 +506,21 @@ async def task_event(
             }.items()
             if v
         }
-        if task.status == "submitting":
+        details["submit_attempted"] = event.submit_attempted
+        reporting = task.status == "submitting"
+        if reporting:
+            # Committed before signalling: finish_extension_task_activity only
+            # trusts a "submitted" outcome once this is recorded.
             task.submission_reported_at = datetime.now(UTC)
             await db.commit()
-        await _signal(task.workflow_id, {"stage": event.stage, "details": details})
+        try:
+            await _signal(task.workflow_id, {"stage": event.stage, "details": details})
+        except HTTPException:
+            if reporting:
+                # The workflow never got the outcome; let the extension retry.
+                task.submission_reported_at = None
+                await db.commit()
+            raise
         return {"status": event.stage, "active": False}
 
     await _signal(task.workflow_id, {"stage": event.stage})

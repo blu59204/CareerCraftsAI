@@ -1318,7 +1318,9 @@ def job_search_agent_node(state: AgentState) -> AgentState:
     }
     try:
         emit(run_id, "thinking", {"step": "search", "message": "Searching public job sources"})
-        jobs, warnings = run_coro_sync(search_all_platforms(query, ctx.get("platforms") or None))
+        jobs, warnings = run_coro_sync(
+            search_all_platforms(query, _normalize_platforms(ctx.get("platforms")))
+        )
         matches, ranking_warnings = run_coro_sync(rank_jobs(user_id, query, jobs))
         warnings.extend(ranking_warnings)
         try:

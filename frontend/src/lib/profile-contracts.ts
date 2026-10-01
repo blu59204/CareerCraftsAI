@@ -34,12 +34,14 @@ export const tailoredResumeSchema = z.object({
   review: z.object({ contact: z.object({ email: z.string(), phone: z.string(), location: z.string(), linkedin: z.string(), github: z.string(), portfolio: z.string() }), experience: z.array(entry), education: z.array(entry), has_education_section: z.boolean(), issues: z.array(z.object({ code: z.enum(["missing_email", "missing_phone", "missing_employer", "truncated_employer", "missing_dates", "missing_education"]), message: z.string(), index: z.number().optional() })) }),
 });
 
+// Mirrors backend services/github_profile.analyze(): skills are evidence
+// objects and description may be null.
 const project = z.object({
-  name: z.string().optional(), title: z.string().optional(),
-  reason: z.string().optional(), description: z.string().optional(),
-  url: z.string().optional(),
+  name: z.string().nullish(), title: z.string().nullish(),
+  reason: z.string().nullish(), description: z.string().nullish(),
+  url: z.string().nullish(),
 }).passthrough();
 export const githubProfileSchema = z.object({
-  skills: z.array(z.string()), top_repos: z.array(project),
+  skills: z.array(z.object({ name: z.string() }).passthrough()), top_repos: z.array(project),
   suggested_projects: z.array(z.union([z.string(), project])),
 });

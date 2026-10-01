@@ -12,6 +12,7 @@ from app.agents.state import AgentState
 from app.services.ats_estimator import estimate_resume
 from app.services.ats_service import compute_ats_score
 from app.services.pdf_service import generate_resume_pdf
+from app.services.resume_export import PageOverflow
 from app.services.rag_service import retrieve
 from app.services.resume_structure import (
     apply_fixes,
@@ -34,7 +35,7 @@ def _persist_resume_document(
     jd_text: str,
     pdf_bytes: bytes,
     warnings: list[str] | None = None,
-    page_target: int = 2,
+    page_target: int | None = 2,
 ) -> str:
     """Upload the tailored PDF to storage and record a UserDocument row.
 
@@ -249,12 +250,30 @@ def resume_agent_node(state: AgentState) -> AgentState:
                 "tool_call",
                 {"tool": "pdf_store", "input": {"template": template}},
             )
-            pdf_bytes = generate_resume_pdf(
-                parsed.resume_markdown,
-                full_name=full_name,
-                template=template,
-                page_target=ctx.get("page_target", 2),
-            )
+            page_target = ctx.get("page_target", 2)
+            try:
+                pdf_bytes = generate_resume_pdf(
+                    parsed.resume_markdown,
+                    full_name=full_name,
+                    template=template,
+                    page_target=page_target,
+                )
+            except ValueError as fit_error:
+                # Fitting is strict (readable fonts, every glyph). A resume that
+                # can't meet it still gets the template's own render instead of
+                # failing the run; the editor can re-fit it later.
+                logger.info("Resume fit failed, using template layout: %s", fit_error)
+                pdf_bytes = generate_resume_pdf(
+                    parsed.resume_markdown, full_name=full_name, template=template
+                )
+                page_target = None
+                fit_warning = (
+                    str(fit_error)
+                    if isinstance(fit_error, PageOverflow)
+                    else "Some characters could not be rendered in this template's fonts."
+                )
+                model_warnings = list(model_warnings or []) + [fit_warning]
+                parsed.warnings = list(parsed.warnings or []) + [fit_warning]
             try:
                 pdf_document_id = _persist_resume_document(
                     user_id,
@@ -264,7 +283,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
                     jd_text,
                     pdf_bytes,
                     warnings=model_warnings,
-                    page_target=ctx.get("page_target", 2),
+                    page_target=page_target,
                 )
             except Exception as se:
                 logger.warning("Resume PDF persist failed, continuing without download: %s", se)
