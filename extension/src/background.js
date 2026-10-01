@@ -540,7 +540,7 @@ async function handleMessage(msg, sender) {
       // needs the popup.
       const current = await getPairing();
       const appUrl = new URL(origin);
-      const knownApp = ["localhost", "127.0.0.1", "careercraftsai.me", "www.careercraftsai.me"].includes(appUrl.hostname);
+      const knownApp = ["careercraftsai.me", "www.careercraftsai.me"].includes(appUrl.hostname);
       if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || new URL(sender.url).origin !== origin || (!knownApp && current?.appOrigin !== origin)) return { error: "Invalid app origin" };
       if (current && current.appOrigin !== origin) return { ok: false, reason: "paired_elsewhere" };
       if (!isStaticOrigin(origin)) {

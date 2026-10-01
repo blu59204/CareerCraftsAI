@@ -49,8 +49,8 @@ class UserPreferencesSchema(BaseModel):
     work_mode: str | None = None
     salary_min: int | None = None
     salary_max: int | None = None
-    target_roles: list[str] = []
-    preferred_locations: list[str] = []
+    target_roles: list[str] = Field(default_factory=list, max_length=20)
+    preferred_locations: list[str] = Field(default_factory=list, max_length=20)
     current_title: str | None = Field(None, max_length=200)
     bio: str | None = Field(None, max_length=2000)
     # When True, autonomous job search and apply use a visible Chromium
@@ -282,16 +282,16 @@ class SearchInterpretation(BaseModel):
 
 class PersonaCreate(BaseModel):
     name: str = Field(max_length=100)
-    description: str | None = None
+    description: str | None = Field(None, max_length=2000)
     primary_resume_id: uuid.UUID | None = None
     target_keywords: list[str] = Field(default_factory=list, max_length=50)
 
 
 class PersonaUpdate(BaseModel):
     name: str | None = Field(None, max_length=100)
-    description: str | None = None
+    description: str | None = Field(None, max_length=2000)
     primary_resume_id: uuid.UUID | None = None
-    target_keywords: list[str] | None = None
+    target_keywords: list[str] | None = Field(None, max_length=50)
 
 
 class PersonaResponse(BaseModel):
