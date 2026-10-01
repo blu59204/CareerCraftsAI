@@ -36,6 +36,7 @@ interface OutreachItem {
   sent_at: string | null;
   replied_at: string | null;
   bounced_at: string | null;
+  opened_at?: string | null;
 }
 
 interface OutreachResponse {
@@ -56,7 +57,7 @@ function statusOf(item: OutreachItem): { label: string; tone: StatusTone } {
     case "sending":
       return { label: "Sending", tone: "primary" };
     case "sent":
-      return { label: "Sent", tone: "neutral" };
+      return item.opened_at ? { label: "Opened", tone: "primary" } : { label: "Sent", tone: "neutral" };
     case "failed":
       return { label: "Failed", tone: "danger" };
     default:
@@ -184,6 +185,7 @@ export default function OutreachPage() {
             items={[
               { label: "Need you", value: (stats.held ?? 0) + (stats.draft ?? 0) },
               { label: "Sent", value: stats.sent ?? 0 },
+              ...((stats.opened ?? 0) > 0 ? [{ label: "Opened", value: stats.opened }] : []),
               { label: "Replied", value: stats.replied ?? 0 },
               { label: "Bounced", value: stats.bounced ?? 0 },
             ]}

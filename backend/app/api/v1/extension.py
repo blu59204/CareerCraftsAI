@@ -526,8 +526,15 @@ async def task_event(
 
     await _signal(task.workflow_id, {"stage": event.stage})
     previous_stage = task.status
+    if event.stage in {"needs_input", "login_required"} and not (task.payload or {}).get(
+        "needed_you"
+    ):
+        # Counted by the "no user input" metric.
+        task.payload = {**(task.payload or {}), "needed_you": True}
     await _record_progress(db, task, event.stage, event.message or STAGE_MESSAGES[event.stage])
-    await notify_needs_attention(task.user_id, event.stage, previous_stage, task.payload)
+    await notify_needs_attention(
+        task.user_id, event.stage, previous_stage, task.payload, task_id=task.id
+    )
     return {"status": event.stage, "active": True}
 
 
@@ -548,7 +555,9 @@ async def plan(
     task = await _device_task(db, device, task_id)
     if task.status not in extension_service_open_statuses():
         raise HTTPException(status_code=409, detail="This application is no longer active")
-    return await extension_service.plan_fields(db, task, body.fields)
+    result = await extension_service.plan_fields(db, task, body.fields)
+    await db.commit()
+    return result
 
 
 @router.get("/device/tasks/{task_id}/resume")

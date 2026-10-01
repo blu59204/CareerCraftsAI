@@ -342,6 +342,10 @@ class RecruiterOutreach(Base):
     followup_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set only when the member turned open tracking on: a one-pixel image in
+    # the email reports the first time it is loaded.
+    open_token: Mapped[str | None] = mapped_column(String(40), index=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -684,6 +688,11 @@ class UserPreferences(Base):
         Integer, default=25, nullable=False, server_default="25"
     )
     outreach_auto_send: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+    # Off by default: adds a tracking pixel to recruiter emails (see
+    # RecruiterOutreach.open_token).
+    outreach_track_opens: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -55,6 +56,33 @@ def followup_text(company: str, role: str | None, contact_name: str = "") -> tup
         "would help.\n\nThank you for your time."
     )
     return subject, body
+
+
+def tracked_html(body: str, token: str) -> str:
+    """HTML version of a plain email with the open-tracking pixel. The text
+    part stays the readable original."""
+    from html import escape
+
+    from app.core.config import settings
+
+    pixel = f"{settings.NEXT_PUBLIC_API_URL.rstrip('/')}/api/v1/outreach/open/{token}.gif"
+    text = escape(body).replace("\n", "<br>")
+    return f'<div>{text}</div><img src="{escape(pixel, quote=True)}" width="1" height="1" alt="">'
+
+
+async def record_open(token: str) -> bool:
+    """First load of the tracking pixel marks the email opened. Mail apps
+    that preload images can mark it early, so this is a hint, not proof."""
+    if not token or len(token) > 40:
+        return False
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(RecruiterOutreach)
+            .where(RecruiterOutreach.open_token == token, RecruiterOutreach.opened_at.is_(None))
+            .values(opened_at=datetime.now(UTC))
+        )
+        await db.commit()
+        return result.rowcount > 0
 
 
 def summarize_outreach(rows: list[RecruiterOutreach]) -> dict | None:
@@ -264,17 +292,19 @@ async def outreach_stats(db, user_id: uuid.UUID) -> dict:
             func.count(),
             func.count(RecruiterOutreach.replied_at),
             func.count(RecruiterOutreach.bounced_at),
+            func.count(RecruiterOutreach.opened_at),
         )
         .where(RecruiterOutreach.user_id == user_id)
         .group_by(RecruiterOutreach.state)
     )
     stats = {"held": 0, "draft": 0, "approved": 0, "sent": 0, "failed": 0, "cancelled": 0}
-    replied = bounced = 0
-    for state, count, replies, bounces in rows.all():
+    replied = bounced = opened = 0
+    for state, count, replies, bounces, opens in rows.all():
         stats[state] = stats.get(state, 0) + count
         replied += replies
         bounced += bounces
-    stats["replied"], stats["bounced"] = replied, bounced
+        opened += opens
+    stats["replied"], stats["bounced"], stats["opened"] = replied, bounced, opened
     return stats
 
 
@@ -289,6 +319,7 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
         now = datetime.now(UTC)
         prefs = await _preferences(db, owner)
         cap = prefs.outreach_daily_cap if prefs else DEFAULT_DAILY_CAP
+        track = bool(prefs and prefs.outreach_track_opens)
         room = max(cap - await sent_in_last_day(db, owner, now), 0)
         if room == 0:
             return {"sent": 0, "failed": 0, "cap_reached": True}
@@ -311,9 +342,13 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
             # Recorded before the send so a crash can never send it twice.
             row.state = "sending"
             await db.commit()
+            extra = {}
+            if track:
+                row.open_token = secrets.token_urlsafe(24)
+                extra["html"] = tracked_html(row.body, row.open_token)
             try:
                 response = await asyncio.to_thread(
-                    gmail.send_message, row.to_email, row.subject, row.body
+                    gmail.send_message, row.to_email, row.subject, row.body, **extra
                 )
             except GmailSendError as exc:
                 row.state, row.last_error = "failed", str(exc)[:500]

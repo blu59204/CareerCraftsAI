@@ -54,6 +54,18 @@ import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/store/agentStore";
 
+interface AgentResults {
+  applications: number;
+  hands_off_rate: number | null;
+  verified_email_rate: number | null;
+  bounce_rate: number | null;
+  emails_sent: number;
+}
+
+function percent(value: number | null | undefined): string {
+  return value == null ? "No data yet" : `${Math.round(value * 100)}%`;
+}
+
 function timeGreeting(): string {
   const hour = new Date().getHours();
   if (hour < 12) return "Good morning";
@@ -234,6 +246,11 @@ export default function DashboardPage() {
   const [launching, setLaunching] = useState<string | null>(null);
   const [dismissedKeywordGaps, setDismissedKeywordGaps] = useState<string | null>(null);
 
+  const { data: agentResults } = useQuery<AgentResults>({
+    queryKey: ["agent-results"],
+    queryFn: () => apiClient.get("/metrics/agent").then((r) => r.data as AgentResults),
+    staleTime: 60_000,
+  });
   const { data: stats, isLoading } = useQuery<DashboardStats>({
     queryKey: ["dashboard-stats"],
     queryFn: async () => {
@@ -640,6 +657,34 @@ export default function DashboardPage() {
                     <span className={followupsDue > 0 ? "text-primary" : undefined}>{followupsDue}</span>
                   ),
                   hint: followupsDue > 0 ? "Drafts ready to review" : "Nothing due",
+                },
+              ]}
+            />
+          </Reveal>
+
+          {/* How the agent is doing against its targets, last 30 days */}
+          <Reveal delay={0.12} className="min-w-0 lg:col-span-12">
+            <StatStrip
+              items={[
+                {
+                  label: "Applied without you",
+                  value: percent(agentResults?.hands_off_rate),
+                  hint: `Target 90%, of ${agentResults?.applications ?? 0} submitted in 30 days`,
+                },
+                {
+                  label: "Verified recruiter email",
+                  value: percent(agentResults?.verified_email_rate),
+                  hint: "Target 50% of applications",
+                },
+                {
+                  label: "Email bounce rate",
+                  value: percent(agentResults?.bounce_rate),
+                  hint: "Target under 3%",
+                },
+                {
+                  label: "Recruiter emails sent",
+                  value: agentResults?.emails_sent ?? 0,
+                  hint: "Last 30 days",
                 },
               ]}
             />

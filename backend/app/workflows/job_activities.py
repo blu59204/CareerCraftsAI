@@ -145,10 +145,11 @@ async def list_outreach_users_activity(params: dict) -> dict:
 async def outreach_activity(params: dict) -> dict:
     """One member's turn: note replies and bounces, queue due follow-ups,
     then send what is approved, within their daily cap."""
-    from app.services import outreach_service
+    from app.services import email_answers, outreach_service
 
     user_id = params["user_id"]
     outcome = await outreach_service.record_replies(user_id)
+    outcome.update(await email_answers.collect_answers(user_id))
     followups = await outreach_service.queue_due_followups(user_id)
     outcome.update(await outreach_service.send_approved(user_id))
     outcome["followups_queued"] = followups

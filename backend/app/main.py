@@ -28,6 +28,7 @@ from app.api.v1 import (
     jobs,
     leads,
     linkedin,
+    metrics,
     notifications,
     outreach,
     rag,
@@ -39,7 +40,6 @@ from app.core.clerk_auth import verify_token
 from app.core.config import settings
 from app.core.llm_gateway import router as llm_gw
 from app.core.rate_limit import limiter
-from memory.routes import router as memory_router
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,10 @@ async def _jwt_middleware(request: Request, call_next):
     # The browser extension authenticates with its own device token, checked
     # by the extension router's get_device dependency.
     if path.startswith("/api/v1/extension/device/"):
+        return await call_next(request)
+    # The open-tracking pixel is fetched by the recipient's mail app. Its
+    # token is unguessable and it only ever records "opened".
+    if path.startswith("/api/v1/outreach/open/"):
         return await call_next(request)
     # Internal LLM calls use short-lived Redis sessions, validated by the
     # gateway itself. They are not Clerk browser session JWTs.
@@ -268,6 +272,7 @@ app.include_router(users.router, prefix="/api/v1")
 app.include_router(demo.router, prefix="/api/v1")
 app.include_router(agent_memory.router, prefix="/api/v1")
 app.include_router(outreach.router, prefix="/api/v1")
+app.include_router(metrics.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
 app.include_router(resume.router, prefix="/api/v1")

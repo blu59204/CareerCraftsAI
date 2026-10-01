@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
 import json
@@ -27,8 +28,12 @@ FAMILIES = {
     "remoteok",
     "arbeitnow",
     "himalayas",
+    "workingnomads",
+    "careerjet",
     "jooble",
     "hn_hiring",
+    "getro",
+    "google_cse",
     "rss",
     "jsonld",
 }
@@ -324,6 +329,130 @@ def parse_rss(xml_text: str, source_url: str) -> list[dict]:
     return out
 
 
+_getro_networks: dict[str, str] = {}
+_GETRO_ID = re.compile(
+    r'"network_id"\s*:\s*"?(\d+)|"network"\s*:\s*\{[^{}]{0,200}?"id"\s*:\s*"?(\d+)|collections/(\d+)'
+)
+
+
+def getro_network_id(page_html: str) -> str | None:
+    """The numeric id of a Getro-powered board, from the board's own page."""
+    match = _GETRO_ID.search(page_html or "")
+    return next((g for g in match.groups() if g), None) if match else None
+
+
+def parse_getro(data: dict, board_url: str) -> list[dict]:
+    """Raw jobs from a Getro board search response. Getro hosts the portfolio
+    job boards of many VC firms with one API shape."""
+    results = data.get("results") if isinstance(data.get("results"), dict) else data
+    out = []
+    for job in results.get("jobs") or []:
+        if not isinstance(job, dict):
+            continue
+        org = job.get("organization") if isinstance(job.get("organization"), dict) else {}
+        locations = job.get("locations") or job.get("searchable_locations") or []
+        created = job.get("created_at")
+        out.append(
+            {
+                "id": job.get("id"),
+                "title": job.get("title"),
+                "company": org.get("name") or job.get("company_name"),
+                "url": job.get("url") or job.get("apply_url"),
+                "location": ", ".join(str(x) for x in locations if x),
+                "remote": str(job.get("work_mode") or "").lower() == "remote",
+                "posted_at": (
+                    datetime.fromtimestamp(created, UTC).isoformat()
+                    if isinstance(created, int | float)
+                    else created
+                ),
+            }
+        )
+    return out
+
+
+async def _fetch_getro(source: Source, query: str, page: int) -> tuple[list[dict], str | None]:
+    """One page of a VC portfolio board. The source is a numeric network id
+    (`tenant`) or the board's address (`url`), whose network id is read from
+    the board page once."""
+    network = source.tenant if source.tenant.isdigit() else _getro_networks.get(source.id)
+    board = canonical_url(source.url) if source.url else ""
+    if not network:
+        if not board:
+            raise ValueError("Getro source needs a network id or board url")
+        home = await public_get(board, max_bytes=2_000_000)
+        home.raise_for_status()
+        network = getro_network_id(home.text)
+        if not network:
+            raise ValueError("Could not find the Getro network id on the board page")
+        _getro_networks[source.id] = network
+    response = await public_get(
+        f"https://api.getro.com/api/v2/collections/{network}/search/jobs",
+        json_body={"hitsPerPage": 100, "page": page - 1, "filters": {}, "query": query or ""},
+    )
+    response.raise_for_status()
+    data = response.json()
+    rows = parse_getro(data, board)
+    results = data.get("results") if isinstance(data.get("results"), dict) else data
+    total = int(results.get("total") or 0)
+    return rows, str(page + 1) if page * 100 < total else None
+
+
+_CSE_COMPANY = re.compile(r"^/(?:embed/)?(?P<tenant>[^/?#]+)", re.IGNORECASE)
+
+
+def parse_google_cse(data: dict) -> list[dict]:
+    """Postings found by a Google Programmable Search query such as
+    `site:boards.greenhouse.io India engineer`. Results are links to the
+    employer's own ATS page, the best place to apply."""
+    out = []
+    for item in data.get("items") or []:
+        link = str(item.get("link") or "")
+        parts = urlsplit(link)
+        tenant = _CSE_COMPANY.match(parts.path or "")
+        title = str(item.get("title") or "")
+        role, _, tail = title.partition(" - ")
+        company = ""
+        if parts.hostname and any(h in parts.hostname for h in ("greenhouse", "lever", "ashby")):
+            company = (tenant.group("tenant") if tenant else "").replace("-", " ").title()
+        company = company or tail.split(" - ")[0].replace(" Careers", "").strip()
+        if not role or not company:
+            continue
+        out.append(
+            {
+                "id": link,
+                "title": role,
+                "company": company,
+                "url": link,
+                "description": item.get("snippet"),
+            }
+        )
+    return out
+
+
+async def _fetch_google_cse(source: Source, query: str, page: int) -> tuple[list[dict], str | None]:
+    if not settings.GOOGLE_CSE_API_KEY or not settings.GOOGLE_CSE_ID:
+        raise ValueError("Google Programmable Search is not configured")
+    q = " ".join(part for part in (source.url, query) if part).strip()
+    if not q:
+        raise ValueError("Google search source needs a query")
+    response = await public_get(
+        "https://www.googleapis.com/customsearch/v1?"
+        + urlencode(
+            {
+                "key": settings.GOOGLE_CSE_API_KEY,
+                "cx": settings.GOOGLE_CSE_ID,
+                "q": q,
+                "num": 10,
+                "start": (page - 1) * 10 + 1,
+                "dateRestrict": "w2",
+            }
+        )
+    )
+    response.raise_for_status()
+    # Free quota is 100 queries a day, so one page per refresh.
+    return parse_google_cse(response.json()), None
+
+
 async def _fetch_hn_hiring(page: int) -> tuple[list[dict], str | None]:
     """The latest monthly "Ask HN: Who is hiring?" thread, one page of posts
     at a time, through HN's public Algolia search."""
@@ -384,6 +513,12 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
     if family == "hn_hiring":
         rows, next_cursor = await _fetch_hn_hiring(page)
         return Page([job for raw in rows if (job := normalize(raw, source))], next_cursor)
+    if family == "getro":
+        rows, next_cursor = await _fetch_getro(source, query, page)
+        return Page([job for raw in rows if (job := normalize(raw, source))], next_cursor)
+    if family == "google_cse":
+        rows, next_cursor = await _fetch_google_cse(source, query, page)
+        return Page([job for raw in rows if (job := normalize(raw, source))], next_cursor)
     urls = {
         "greenhouse": f"https://boards-api.greenhouse.io/v1/boards/{tenant}/jobs?content=true",
         "lever": f"https://api.lever.co/v0/postings/{tenant}?mode=json&limit=100&skip={(page-1)*100}",
@@ -395,6 +530,7 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         "remoteok": "https://remoteok.com/api",
         "arbeitnow": f"https://www.arbeitnow.com/api/job-board-api?page={page}",
         "himalayas": f"https://himalayas.app/jobs/api?limit=100&offset={(page-1)*100}",
+        "workingnomads": "https://www.workingnomads.com/api/exposed_jobs/",
     }
     if family == "workable":
         token = settings.WORKABLE_API_TOKENS.get(tenant)
@@ -426,6 +562,22 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
                 raise ValueError("Robots disallows access")
     elif family == "rss":
         url = canonical_url(source.url)
+    elif family == "careerjet":
+        if not settings.CAREERJET_API_KEY:
+            raise ValueError("Careerjet credentials are not configured")
+        url = "https://search.api.careerjet.net/v4/query?" + urlencode(
+            {
+                "locale_code": source.tenant or "en_IN",
+                "keywords": query or "",
+                "page": page,
+                "page_size": 100,
+                "user_ip": settings.CAREERJET_USER_IP,
+                "user_agent": "CareerCraftJobDiscovery",
+            }
+        )
+        headers["Authorization"] = (
+            "Basic " + base64.b64encode(f"{settings.CAREERJET_API_KEY}:".encode()).decode()
+        )
     elif family == "jooble":
         if not settings.JOOBLE_API_KEY:
             raise ValueError("Jooble credentials are not configured")
@@ -609,6 +761,35 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         ]
         total = int(data.get("totalCount") or 0)
         next_cursor = str(page + 1) if page * 100 < total else None
+    elif family == "workingnomads":
+        rows = [
+            {
+                "id": j.get("url"),
+                "title": j.get("title"),
+                "company": j.get("company_name"),
+                "url": j.get("url"),
+                "location": j.get("location") or "Worldwide",
+                "remote": True,
+                "description": j.get("description"),
+                "posted_at": j.get("pub_date"),
+            }
+            for j in (data if isinstance(data, list) else [])
+        ]
+    elif family == "careerjet":
+        rows = [
+            {
+                "id": j.get("url"),
+                "title": j.get("title"),
+                "company": j.get("company"),
+                "url": j.get("url"),
+                "location": j.get("locations"),
+                "description": j.get("description"),
+                "posted_at": j.get("date"),
+                "salary_text": j.get("salary"),
+            }
+            for j in data.get("jobs", [])
+        ]
+        next_cursor = str(page + 1) if page < int(data.get("pages") or 0) else None
     elif family == "rss":
         rows = parse_rss(response.text, url)
     elif family == "jsonld":

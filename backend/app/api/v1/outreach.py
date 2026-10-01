@@ -3,12 +3,13 @@ and see how they are doing."""
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
+from app.core.rate_limit import limiter
 from app.models.db import RecruiterOutreach, User
 from app.services import outreach_service
 
@@ -36,6 +37,7 @@ def _item(row: RecruiterOutreach) -> dict:
         "sent_at": row.sent_at,
         "replied_at": row.replied_at,
         "bounced_at": row.bounced_at,
+        "opened_at": row.opened_at,
         "created_at": row.created_at,
     }
 
@@ -60,6 +62,26 @@ async def list_outreach(
         "items": [_item(row) for row in rows],
         "stats": await outreach_service.outreach_stats(db, current_user.id),
     }
+
+
+# 1x1 transparent GIF
+_PIXEL = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00"
+    b"\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+)
+
+
+@router.get("/open/{token}.gif", include_in_schema=False)
+@limiter.limit("120/minute")
+async def open_pixel(request: Request, token: str):
+    """Tracking pixel for members who turned on open tracking. Public by
+    design: the recipient's mail app loads it."""
+    await outreach_service.record_open(token)
+    return Response(
+        content=_PIXEL,
+        media_type="image/gif",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 def _parse_id(outreach_id: str) -> str:
