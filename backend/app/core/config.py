@@ -164,6 +164,7 @@ class Settings(BaseSettings):
     DAILY_SEARCH_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
     INBOX_STATUS_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
     # How often approved recruiter emails are sent and replies are checked.
+    DAILY_SUMMARY_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168)
     OUTREACH_INTERVAL_MINUTES: int = Field(default=30, ge=5, le=1440)
     MAINTENANCE_INTERVAL_SECONDS: int = Field(default=60, ge=30, le=3600)
 

@@ -107,6 +107,20 @@ async def _notify_status_changes(user_id: str, changes: list[dict]) -> None:
 
 
 @activity.defn
+async def list_summary_users_activity(params: dict) -> dict:
+    from app.services.daily_summary import list_summary_users
+
+    return {"user_ids": await list_summary_users()}
+
+
+@activity.defn
+async def daily_summary_activity(params: dict) -> dict:
+    from app.services.daily_summary import send_summary
+
+    return {"sent": int(await send_summary(params["user_id"]))}
+
+
+@activity.defn
 async def list_outreach_users_activity(params: dict) -> dict:
     from app.services.outreach_service import list_outreach_users
 

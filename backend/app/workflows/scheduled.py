@@ -13,10 +13,12 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from app.workflows.job_activities import (
         daily_search_activity,
+        daily_summary_activity,
         inbox_status_activity,
         list_daily_search_users_activity,
         list_inbox_tracking_users_activity,
         list_outreach_users_activity,
+        list_summary_users_activity,
         maintenance_activity,
         outreach_activity,
         refresh_job_catalog_activity,
@@ -145,6 +147,38 @@ class OutreachWorkflow:
 
 
 @workflow.defn
+class DailySummaryWorkflow:
+    """Start each opted-in member's summary email, five at a time."""
+
+    @workflow.run
+    async def run(self) -> dict:
+        listed = await workflow.execute_activity(
+            list_summary_users_activity,
+            {},
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
+        )
+        user_ids: list[str] = listed.get("user_ids", [])
+        failed = 0
+        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
+            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
+            results = await asyncio.gather(
+                *(
+                    workflow.execute_activity(
+                        daily_summary_activity,
+                        {"user_id": user_id},
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=_RETRY,
+                    )
+                    for user_id in batch
+                ),
+                return_exceptions=True,
+            )
+            failed += sum(isinstance(result, BaseException) for result in results)
+        return {"users": len(user_ids), "failed": failed}
+
+
+@workflow.defn
 class MaintenanceWorkflow:
     @workflow.run
     async def run(self) -> dict:
@@ -183,6 +217,11 @@ def schedule_specs() -> list[tuple[str, type, timedelta]]:
             "inbox-status-check",
             InboxStatusWorkflow,
             timedelta(hours=settings.INBOX_STATUS_INTERVAL_HOURS),
+        ),
+        (
+            "daily-summary",
+            DailySummaryWorkflow,
+            timedelta(hours=settings.DAILY_SUMMARY_INTERVAL_HOURS),
         ),
         (
             "recruiter-outreach",

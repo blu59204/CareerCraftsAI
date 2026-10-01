@@ -192,3 +192,19 @@ async def test_edit_cancel_and_stats(maker):
     async with maker() as db:
         stats = await service.outreach_stats(db, uuid.UUID(user))
     assert stats["cancelled"] == 1 and stats["sent"] == 0
+
+
+async def test_daily_summary_counts_the_last_day_and_respects_the_opt_in(maker, monkeypatch):
+    import app.services.daily_summary as summary
+    from app.services import outreach_service as service
+
+    monkeypatch.setattr(summary, "AsyncSessionLocal", maker)
+    user = await _member(maker)
+    row = await _queue(user, "a@acme.com")
+    await service.approve_outreach(user, str(row.id))
+    await service.send_approved(user, lambda _: FakeGmail(user))
+    await _queue(user, "b@acme.com", "unknown")
+
+    stats = await summary.build_summary(user)
+    assert stats["emails_sent"] == 1 and stats["needs_approval"] == 1
+    assert user not in await summary.list_summary_users()  # opt-in, off by default

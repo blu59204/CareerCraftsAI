@@ -61,6 +61,7 @@ class NotificationWorkflow:
                         "user_id": inp.user_id,
                         "title": inp.title,
                         "body": inp.body,
+                        "link": inp.link,
                     },
                     task_queue=settings.TEMPORAL_NOTIFICATION_EMAIL_TASK_QUEUE,
                     start_to_close_timeout=timedelta(seconds=30),

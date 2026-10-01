@@ -46,6 +46,20 @@ async def create_notification_activity(params: dict) -> dict:
         }
 
 
+def _email_html(title: str, body: str | None, link: str | None) -> str:
+    """Notification text can carry scraped job and company names, so it is
+    escaped before it goes into HTML. Only app-relative links are added."""
+    from html import escape
+
+    from app.core.config import settings
+
+    parts = [f"<p>{escape(body or title).replace(chr(10), '<br>')}</p>"]
+    if link and link.startswith("/"):
+        url = settings.FRONTEND_URL.rstrip("/") + link
+        parts.append(f'<p><a href="{escape(url, quote=True)}">Open CareerCraft</a></p>')
+    return "".join(parts)
+
+
 @activity.defn
 async def send_notification_email_activity(params: dict) -> dict:
     from app.core.database import AsyncSessionLocal
@@ -69,7 +83,7 @@ async def send_notification_email_activity(params: dict) -> dict:
             await db.commit()
             return {"status": "skipped"}
 
-        html = f"<p>{body}</p>" if body else f"<p>{title}</p>"
+        html = _email_html(title, body, params.get("link"))
         try:
             await asyncio.to_thread(
                 send_transactional_email,
