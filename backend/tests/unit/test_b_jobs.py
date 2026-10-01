@@ -62,19 +62,13 @@ from app.services.job_matching import rule_score
         (
             "smartrecruiters",
             {
-                "content": [
-                    {"name": "Engineer", "id": "1", "location": {"city": "Remote"}}
-                ],
+                "content": [{"name": "Engineer", "id": "1", "location": {"city": "Remote"}}],
                 "totalFound": 1,
             },
         ),
         (
             "workable",
-            {
-                "jobs": [
-                    {"title": "Engineer", "url": "https://jobs.example/a", "id": "1"}
-                ]
-            },
+            {"jobs": [{"title": "Engineer", "url": "https://jobs.example/a", "id": "1"}]},
         ),
         (
             "recruitee",
@@ -149,9 +143,7 @@ async def test_recorded_connector(family, payload, monkeypatch):
     monkeypatch.setattr(settings, "ADZUNA_APP_ID", "test-id")
     monkeypatch.setattr(settings, "ADZUNA_APP_KEY", "test-key")
     monkeypatch.setattr(settings, "WORKABLE_API_TOKENS", {"company": "test-token"})
-    result = await connectors.fetch_page(
-        connectors.Source(family, family, "company"), "Engineer"
-    )
+    result = await connectors.fetch_page(connectors.Source(family, family, "company"), "Engineer")
     assert len(result.jobs) == 1
     assert result.jobs[0]["platform"] == family
     assert result.jobs[0]["title"] == "Engineer"
@@ -172,9 +164,7 @@ async def test_jsonld_respects_robots(monkeypatch):
         body = (
             "User-agent: *\nDisallow: /"
             if url.endswith("robots.txt")
-            else '<script type="application/ld+json">'
-            + json.dumps(posting)
-            + "</script>"
+            else '<script type="application/ld+json">' + json.dumps(posting) + "</script>"
         )
         return httpx.Response(200, text=body, request=httpx.Request("GET", url))
 
@@ -185,9 +175,7 @@ async def test_jsonld_respects_robots(monkeypatch):
         )
     assert (
         connectors.jsonld_jobs(
-            '<script type="application/ld+json">'
-            + json.dumps({"@graph": [posting]})
-            + "</script>",
+            '<script type="application/ld+json">' + json.dumps({"@graph": [posting]}) + "</script>",
             "https://jobs.example/a",
         )[0]["title"]
         == "Engineer"
@@ -239,9 +227,7 @@ class BasisDB:
         entity = statement.column_descriptions[0]["entity"]
         rows = self.personas if entity == ResumePersona else self.documents
         ids = [value for key, value in params.items() if key.startswith("id_")]
-        owned = [
-            row for row in rows if row.user_id == uid and (not ids or row.id == ids[0])
-        ]
+        owned = [row for row in rows if row.user_id == uid and (not ids or row.id == ids[0])]
         result = MagicMock()
         result.scalar_one_or_none.return_value = owned[0] if owned else None
         return result
@@ -250,23 +236,15 @@ class BasisDB:
 @pytest.mark.asyncio
 async def test_resume_and_persona_idor_and_deleted_default():
     owner, other = uuid.uuid4(), uuid.uuid4()
-    owned = UserDocument(
-        id=uuid.uuid4(), user_id=owner, doc_type="resume", raw_text="Python"
-    )
-    foreign = UserDocument(
-        id=uuid.uuid4(), user_id=other, doc_type="resume", raw_text="Secret"
-    )
-    persona = ResumePersona(
-        id=uuid.uuid4(), user_id=owner, primary_resume_id=foreign.id
-    )
+    owned = UserDocument(id=uuid.uuid4(), user_id=owner, doc_type="resume", raw_text="Python")
+    foreign = UserDocument(id=uuid.uuid4(), user_id=other, doc_type="resume", raw_text="Secret")
+    persona = ResumePersona(id=uuid.uuid4(), user_id=owner, primary_resume_id=foreign.id)
     db = BasisDB([owned, foreign], [persona])
     for kwargs in ({"resume_id": foreign.id}, {"persona_id": persona.id}):
         with pytest.raises(HTTPException) as error:
             await search_basis.resolve_basis(db, owner, **kwargs)
         assert error.value.status_code == 404
-    db.default = search_basis.SearchDefault(
-        user_id=owner, kind="resume", basis_id=uuid.uuid4()
-    )
+    db.default = search_basis.SearchDefault(user_id=owner, kind="resume", basis_id=uuid.uuid4())
     document, _ = await search_basis.resolve_basis(db, owner)
     assert document.id == owned.id and db.default is None
 
@@ -387,9 +365,7 @@ async def test_public_fetch_pins_dns_and_strips_redirect_secrets(monkeypatch):
     assert all(call[0].host == "8.8.8.8" for call in calls)
     assert calls[0][1]["headers"]["Host"] == "public.example"
     assert calls[0][1]["extensions"]["sni_hostname"] == b"public.example"
-    assert not any(
-        key.lower() in {"authorization", "cookie"} for key in calls[1][1]["headers"]
-    )
+    assert not any(key.lower() in {"authorization", "cookie"} for key in calls[1][1]["headers"])
 
 
 @pytest.mark.asyncio
@@ -398,9 +374,7 @@ async def test_selected_resume_uses_owned_document_rag_filter(monkeypatch, caplo
     from app.services import rag_service
 
     uid, docid = uuid.uuid4(), uuid.uuid4()
-    document = UserDocument(
-        id=docid, user_id=uid, doc_type="resume", raw_text="owned fallback"
-    )
+    document = UserDocument(id=docid, user_id=uid, doc_type="resume", raw_text="owned fallback")
     db = MagicMock()
     db.execute = AsyncMock()
     db.execute.return_value = MagicMock()
@@ -410,17 +384,13 @@ async def test_selected_resume_uses_owned_document_rag_filter(monkeypatch, caplo
     from app.services import jobs_database
 
     monkeypatch.setattr(jobs_database, "AsyncSessionLocal", lambda: session)
-    monkeypatch.setattr(
-        search_basis, "resolve_basis", AsyncMock(return_value=(document, None))
-    )
+    monkeypatch.setattr(search_basis, "resolve_basis", AsyncMock(return_value=(document, None)))
     monkeypatch.setattr(rag_service, "get_embedding_model", lambda settings: object())
     monkeypatch.setattr(
         rag_service, "get_embedding_provider", lambda settings: "configured-provider"
     )
     store = MagicMock()
-    store.similarity_search.return_value = [
-        SimpleNamespace(page_content="selected RAG chunk")
-    ]
+    store.similarity_search.return_value = [SimpleNamespace(page_content="selected RAG chunk")]
     factory = MagicMock(return_value=store)
     monkeypatch.setattr(rag_service, "get_vector_store", factory)
     content, selected = await search_basis.basis_text(
@@ -431,9 +401,7 @@ async def test_selected_resume_uses_owned_document_rag_filter(monkeypatch, caplo
     ]
     assert factory.call_args.args[:2] == (str(uid), "resume")
     assert factory.call_args.kwargs["provider"] == "configured-provider"
-    assert store.similarity_search.call_args.kwargs["filter"] == {
-        "document_id": str(docid)
-    }
+    assert store.similarity_search.call_args.kwargs["filter"] == {"document_id": str(docid)}
 
 
 def test_github_contract_and_auth(monkeypatch):
@@ -452,14 +420,10 @@ def test_github_contract_and_auth(monkeypatch):
         return SimpleNamespace(id=uuid.uuid4())
 
     app.dependency_overrides[get_current_user] = user
-    monkeypatch.setattr(
-        github.github_profile, "get_profile", AsyncMock(return_value=None)
-    )
+    monkeypatch.setattr(github.github_profile, "get_profile", AsyncMock(return_value=None))
     assert client.get("/integrations/github/profile").status_code == 404
     payload = {"skills": [], "top_repos": [], "suggested_projects": []}
-    monkeypatch.setattr(
-        github.github_profile, "get_profile", AsyncMock(return_value=payload)
-    )
+    monkeypatch.setattr(github.github_profile, "get_profile", AsyncMock(return_value=payload))
     assert client.get("/integrations/github/profile").json() == payload
     monkeypatch.setattr(github.github_profile, "delete_profile", AsyncMock())
     assert client.delete("/integrations/github/data").status_code == 204
@@ -485,7 +449,4 @@ def test_github_project_recency_is_not_just_nonempty_timestamp():
         ]
     )
     assert result["suggested_projects"][0]["name"] == "recent"
-    assert (
-        result["suggested_projects"][0]["score"]
-        > result["suggested_projects"][1]["score"]
-    )
+    assert result["suggested_projects"][0]["score"] > result["suggested_projects"][1]["score"]
