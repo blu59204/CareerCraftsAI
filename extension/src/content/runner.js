@@ -66,7 +66,7 @@
           if (!submit?.isConnected || submit.disabled || !dom.isVisible(submit)) throw new Error("The submit control changed. Review the form again.");
           const fields = [];
           for (const field of dom.snapshot(root).fields.filter((field) => field.visible)) {
-            const el = document.getElementById(field.id);
+            const el = dom.elementFor(field.id);
             let digest = null;
             if (field.type === "file" && el?.files?.length) {
               const hashes = [];
@@ -84,7 +84,7 @@
         const reviewed = await snapshot();
         const response = await send({ type: "CC_REVIEW", taskId: task.id, snapshot: reviewed, url: location.href });
         if (response.error) throw new Error(response.error);
-        window.CareerCraftPanel.showStatus("Review the final form and confirm Submit in the CareerCraft extension popup.");
+        window.CareerCraftPanel.showStatus("Last step: click the CareerCraft icon in your browser toolbar and press Submit this application. Nothing is sent until you do.");
         const deadline = Date.now() + 5 * 60 * 1000;
         while (Date.now() < deadline) {
           await dom.delay(800, 1200);
@@ -99,6 +99,11 @@
           return;
         }
         throw new Error("Review expired without submission approval.");
+      },
+      async navigate(to) {
+        const response = await send({ type: "CC_NAVIGATE", taskId: task.id, url: location.href, to });
+        if (response.error) throw new Error(response.error);
+        return response;
       },
       async decide(stateText, questions) {
         const response = await send({ type: "CC_DECIDE", taskId: task.id, state: stateText, questions });
@@ -126,10 +131,16 @@
     try {
       // Let client-rendered job pages (LinkedIn, Naukri) finish rendering.
       await dom.delay(1200, 1800);
+      let outcome;
       if (submitting) {
         await drivers.confirmAfterNavigation(ctx);
       } else {
-        await drivers.select(task).run(ctx);
+        outcome = await drivers.select(task).run(ctx);
+      }
+      if (outcome === drivers.NAVIGATING) {
+        // Heading to the application form; the next page picks it up.
+        panel.showStatus("Opening the application form…", subtitle);
+        return;
       }
       if (!state.finished) {
         await api.event("failed", { error: "The application flow ended without a result" });

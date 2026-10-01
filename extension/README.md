@@ -35,19 +35,29 @@ code is shown once and only its hash is stored on the server.
 1. Press **Apply** on a saved job in CareerCraft. The server starts a
    durable Temporal workflow and queues the application for your browser.
 2. The extension picks it up within seconds (it also checks every 30 s),
-   opens the job page in a new tab and fills what it can:
+   opens the job page in a new tab and finds the application form. When the
+   job page is only a description, it follows the page's **Apply** link or
+   button, or the company's embedded Greenhouse/Lever/Ashby/Workable… form,
+   in the same tab (at most four hops). Then it fills what it can:
    - your saved answers and profile (name, email, phone, links…),
    - your resume PDF on upload fields,
    - a **draft** for free-text questions ("Why do you want to join?"),
      written by your own configured model and marked *Draft — review*.
+   Search boxes, job-alert sign-ups and other non-application forms are
+   never filled or submitted.
 3. A review panel lists every answer with where it came from. Questions it
    must never guess stay empty for you: visa sponsorship, work
    authorization, salary, notice period, and consent checkboxes.
    With **Remember my answers** on, what you type is reused next time.
-4. You press **Submit application** in the panel. The extension clicks the
-   site's submit control, reads the confirmation, and reports back.
-   CareerCraft marks the job *Applied* and schedules day-5 and day-12
-   follow-up drafts (which also wait for your approval).
+4. You press **Submit application** in the panel. Nothing is sent yet: the
+   toolbar icon shows **1** and the popup opens (Chrome 127+) with the final
+   form. Press **Submit this application** there. Only then does the
+   extension click the site's submit control, read the confirmation, and
+   report back. CareerCraft marks the job *Applied* and schedules day-5 and
+   day-12 follow-up drafts (which also wait for your approval).
+5. If the application moves to a site the extension has no access to yet,
+   the icon shows **!** and the popup asks you to allow that site; the same
+   tab continues once you do.
 
 Supported flows: LinkedIn **Easy Apply** (multi-step), **Naukri** (the review
 panel appears *before* Naukri's one-click Apply) and single-page ATS forms
@@ -81,7 +91,11 @@ the extension paces its actions like a person, and it never solves CAPTCHAs.
 - `src/content/*.js` — injected into the job tab: DOM helpers, review panel
   (closed shadow DOM), platform drivers, and the runner.
 - `test/fixtures/` — Greenhouse-, LinkedIn- and Naukri-like pages.
+- `test/e2e_apply.mjs` — the whole apply flow in a real Chromium against
+  local fixture job sites (Greenhouse form, a form behind an in-page Apply button, Lever description → Apply,
+  company page with an embedded Greenhouse form) and a fake API that
+  follows the backend's status rules. Run `node test/e2e_apply.mjs`.
 - `test/e2e_live.py` — end-to-end run against a local stack (see its
   docstring): real API, Temporal worker and this extension in Chromium.
 
-CI syntax-checks every script and the manifest.
+CI syntax-checks every script and the manifest and runs both node tests.

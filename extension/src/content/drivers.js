@@ -17,6 +17,14 @@
   const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|applied/i;
   const NAUKRI_LOGIN_RE = /\/nlogin/i;
   const NAUKRI_SUCCESS_RE = /successfully applied|applied to|application sent/i;
+  // Controls that lead from a job description to its application form.
+  const APPLY_LINK_RE = /^(apply|apply now|apply here|apply for this (job|position|role)|apply to this job|apply online|start (your )?application|i'?m interested)$/i;
+  // Hosted application forms that company career sites embed in an iframe.
+  const ATS_FRAME_RE = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|jobvite\.com|icims\.com|bamboohr\.com|recruitee\.com|myworkdayjobs\.com)$/i;
+
+  // Returned by a driver that sent the tab to another page: the runner stops
+  // quietly and the background re-runs it once that page has loaded.
+  const NAVIGATING = "navigating";
 
   // ── Small shared helpers ────────────────────────────────────────────────
 
@@ -255,25 +263,98 @@
     return candidates.find((c) => dom.isVisible(c) && (SUBMIT_TEXT_RE.test(dom.textOf(c)) || SUBMIT_TEXT_RE.test(c.value || "")));
   }
 
+  // A job page also has search boxes, newsletter sign-ups and cookie forms.
+  // Only a form that asks for a resume, an email, or several personal fields
+  // is an application; anything else must never reach the review panel.
+  function looksLikeApplication(form) {
+    const role = (form.getAttribute("role") || "").toLowerCase();
+    const action = (form.getAttribute("action") || "").toLowerCase();
+    if (role === "search" || /search|newsletter|subscribe|login|signin/.test(action)) return false;
+    const inputs = Array.from(form.querySelectorAll("input,select,textarea")).filter(
+      (e) => !["hidden", "password", "search", "submit", "button"].includes((e.type || "").toLowerCase()) && dom.isVisible(e)
+    );
+    if (inputs.some((e) => e.type === "file")) return true;
+    const hasEmail = inputs.some((e) => e.type === "email" || /e-?mail/i.test(dom.getLabel(e)));
+    return hasEmail && inputs.length >= 3;
+  }
+
   function findApplicationForm() {
-    const forms = Array.from(document.forms);
-    if (!forms.length) return null;
-    const scored = forms.map((f) => ({
-      form: f,
-      submit: findSubmitControl(f),
-      inputs: f.querySelectorAll("input,select,textarea").length,
-    }));
+    const scored = Array.from(document.forms)
+      .filter(looksLikeApplication)
+      .map((f) => ({ form: f, submit: findSubmitControl(f), inputs: f.querySelectorAll("input,select,textarea").length }));
+    if (!scored.length) return null;
     const withSubmit = scored.filter((s) => s.submit);
     const pool = withSubmit.length ? withSubmit : scored;
     pool.sort((a, b) => b.inputs - a.inputs);
-    return pool[0].inputs > 0 ? pool[0] : null;
+    return pool[0];
+  }
+
+  function httpsHref(value) {
+    try {
+      const url = new URL(value, location.href);
+      return url.protocol === "https:" ? url.href : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function findAtsFrame() {
+    return Array.from(document.querySelectorAll("iframe[src]")).find((f) => {
+      const href = httpsHref(f.getAttribute("src"));
+      return href && ATS_FRAME_RE.test(new URL(href).hostname) && dom.isVisible(f);
+    });
+  }
+
+  function findApplyControl() {
+    const controls = Array.from(document.querySelectorAll("a[href], button, [role=button], input[type=button], input[type=submit]"));
+    return controls.find((c) => {
+      if (!dom.isVisible(c) || c.disabled) return false;
+      // A submit control inside some other form (a search filter's "Apply")
+      // is not the way to the application.
+      if (c.type === "submit" && c.closest("form")) return false;
+      const text = dom.textOf(c) || c.value || c.getAttribute("aria-label") || "";
+      return APPLY_LINK_RE.test(text.trim());
+    });
+  }
+
+  // On a job description page, get to the application form: follow an
+  // embedded ATS iframe or an Apply link in this tab, or press an in-page
+  // Apply button that reveals the form. Returns the form, NAVIGATING, or null.
+  async function reachApplicationForm(ctx) {
+    const frame = findAtsFrame();
+    if (frame) {
+      await ctx.api.navigate(httpsHref(frame.getAttribute("src")));
+      return NAVIGATING;
+    }
+    const control = findApplyControl();
+    if (!control) return null;
+    const href = control.tagName === "A" ? httpsHref(control.getAttribute("href")) : null;
+    if (href && href.split("#")[0] !== location.href.split("#")[0]) {
+      // Follow it here rather than clicking: target=_blank would open a tab
+      // the extension is not watching.
+      await ctx.api.navigate(href);
+      return NAVIGATING;
+    }
+    await ctx.api.navigate(null);
+    let leaving = false;
+    window.addEventListener("beforeunload", () => (leaving = true), { once: true });
+    await ctx.delay();
+    dom.clickLike(control);
+    // Either the form appears in place, or the page navigates and the
+    // background re-runs this driver on the new page. Anything else (a
+    // popup window, a dead button) ends as "no form found".
+    return waitFor(() => findApplicationForm() || (leaving ? NAVIGATING : null), 15000);
   }
 
   const genericDriver = {
     async run(ctx) {
       if (await guardCaptcha(ctx)) return;
 
-      const found = findApplicationForm();
+      let found = findApplicationForm();
+      if (!found) {
+        found = await reachApplicationForm(ctx);
+        if (found === NAVIGATING) return NAVIGATING;
+      }
       if (!found) throw new Error("Could not find an application form on this page");
       const { form, submit } = found;
 
@@ -586,5 +667,5 @@
     await reportConfirmationResult(ctx, result, "The page after submitting does not show a confirmation.");
   }
 
-  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver };
+  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, NAVIGATING };
 })();

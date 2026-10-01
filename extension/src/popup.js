@@ -46,7 +46,8 @@ async function render() {
   const active = status.activeTask;
   if (active && active.task) {
     const what = [active.task.company, active.task.role].filter(Boolean).join(" · ") || "Job application";
-    $("task").textContent = `${what} — ${STAGE_LABELS[active.stage] || active.stage}`;
+    const stage = active.review && !active.submitting ? "Ready for your final approval below" : STAGE_LABELS[active.stage] || active.stage;
+    $("task").textContent = `${what} — ${stage}`;
   } else {
     $("task").textContent = "No applications waiting.";
   }

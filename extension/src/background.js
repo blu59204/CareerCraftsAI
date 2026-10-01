@@ -23,6 +23,39 @@ import {
 } from "./common.js";
 
 const POLL_ALARM = "poll";
+// A job page often links to the real application form (Lever's /apply, an
+// "Apply" button, a Greenhouse iframe on a company site). The runner may
+// follow at most this many such hops per application, so a page that keeps
+// linking somewhere else can never loop the tab.
+const MAX_NAVIGATIONS = 4;
+
+// ── Toolbar badge ───────────────────────────────────────────────────────
+// The final approval happens in the popup, so the icon has to say when it is
+// waiting for the user; otherwise the page panel looks stuck.
+
+async function setBadge(text, color) {
+  try {
+    await chrome.action.setBadgeText({ text: text || "" });
+    if (color) await chrome.action.setBadgeBackgroundColor({ color });
+  } catch (e) {
+    /* action API unavailable in some test harnesses */
+  }
+}
+
+async function resetActiveTask() {
+  await clearActiveTask();
+  await setBadge("");
+}
+
+async function openPopupIfPossible() {
+  try {
+    // Chrome 127+: opens the popup on the focused window without a click.
+    // Older versions or an unfocused window reject; the badge still shows.
+    await chrome.action.openPopup();
+  } catch (e) {
+    /* the badge is the fallback */
+  }
+}
 
 // ── HTTP ────────────────────────────────────────────────────────────────
 
@@ -136,15 +169,25 @@ async function pollOnce() {
       if (active.stage === "permission_required") {
         if (!(await hasHostPermission(active.task.job_url))) return;
         await chrome.storage.session.remove(SESSION_KEYS.HOST_PERMISSION_NEEDED);
+        await setBadge("");
         const tab = await chrome.tabs.create({ url: active.task.job_url, active: true });
         await setActiveTask({ ...active, tabId: tab.id, stage: "claimed" });
+        return;
+      }
+      if (active.waitingForHost) {
+        if (!(await hasHostPermission(active.waitingForHost))) return;
+        await chrome.storage.session.remove(SESSION_KEYS.HOST_PERMISSION_NEEDED);
+        const { waitingForHost, ...rest } = active;
+        await setActiveTask(rest);
+        await setBadge("");
+        await injectAndRun(active.tabId, active.task, active.submitting);
         return;
       }
       try {
         await chrome.tabs.get(active.tabId);
         return; // one task at a time — still working this one.
       } catch (e) {
-        await clearActiveTask(); // its tab is gone; onRemoved should have caught this already.
+        await resetActiveTask(); // its tab is gone; onRemoved should have caught this already.
       }
     }
 
@@ -152,7 +195,7 @@ async function pollOnce() {
     if (res.status === 401) {
       await clearPairing();
       await syncBridgeRegistration(null);
-      await clearActiveTask();
+      await resetActiveTask();
       return;
     }
     if (!res.ok && res.status !== 204) {
@@ -173,6 +216,8 @@ async function pollOnce() {
       }
       await chrome.storage.session.set({ [SESSION_KEYS.HOST_PERMISSION_NEEDED]: host });
       await setActiveTask({ taskId: task.id, tabId: null, stage: "permission_required", task });
+      await setBadge("!", "#d97706");
+      await openPopupIfPossible();
       return;
     }
 
@@ -192,6 +237,22 @@ function pollBurst() {
   for (const ms of [0, 1500, 4000, 8000, 15000]) setTimeout(pollOnce, ms);
 }
 
+// The job tab moved to a site the extension may not touch yet (a company
+// career site, an ATS that is not in the manifest). Ask in the popup, then
+// continue in the same tab once the user allows it.
+async function requestTabPermission(active, url) {
+  let host = url;
+  try {
+    host = new URL(url).hostname;
+  } catch (e) {
+    /* keep raw url */
+  }
+  await chrome.storage.session.set({ [SESSION_KEYS.HOST_PERMISSION_NEEDED]: host });
+  await setActiveTask({ ...active, waitingForHost: url });
+  await setBadge("!", "#d97706");
+  await openPopupIfPossible();
+}
+
 async function injectAndRun(tabId, task, submitting) {
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPT_FILES });
@@ -204,14 +265,32 @@ async function injectAndRun(tabId, task, submitting) {
   }
 }
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   (async () => {
     const active = await getActiveTask();
     if (!active || active.tabId !== tabId) return;
     if (TERMINAL_STAGES.has(active.stage)) return;
+    const url = tab?.url || "";
+    if (/^https:/.test(url) && !(await hasHostPermission(url))) {
+      await requestTabPermission(active, url);
+      return;
+    }
+    if (active.waitingForHost) {
+      // The tab moved on to a page the extension can already run on.
+      const { waitingForHost, ...rest } = active;
+      await setActiveTask(rest);
+      await chrome.storage.session.remove(SESSION_KEYS.HOST_PERMISSION_NEEDED);
+      await setBadge("");
+    }
     await injectAndRun(tabId, active.task, active.submitting);
   })();
+});
+
+// The popup's permission prompt usually closes the popup before its own
+// promise settles, so continue from here as soon as Chrome records the grant.
+chrome.permissions.onAdded.addListener(() => {
+  pollOnce();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -227,7 +306,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
         });
       }
     }
-    await clearActiveTask();
+    await resetActiveTask();
   })();
 });
 
@@ -235,7 +314,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 async function handleMessage(msg, sender) {
   const popup = sender.id === chrome.runtime.id && !sender.tab && sender.url === chrome.runtime.getURL("popup.html");
-  const contentMessages = new Set(["CC_PLAN", "CC_EVENT", "CC_REVIEW", "CC_SUBMIT_STATUS", "CC_ANSWER", "CC_DECIDE", "CC_RESUME"]);
+  const contentMessages = new Set(["CC_PLAN", "CC_EVENT", "CC_REVIEW", "CC_SUBMIT_STATUS", "CC_ANSWER", "CC_DECIDE", "CC_RESUME", "CC_NAVIGATE"]);
   if (contentMessages.has(msg?.type) && !taskSenderAllowed(sender, await getActiveTask(), msg, chrome.runtime.id)) {
     return { error: "This page does not own the active application." };
   }
@@ -282,7 +361,7 @@ async function handleMessage(msg, sender) {
       const active = await getActiveTask();
       if (active && active.taskId === msg.taskId) {
         if (TERMINAL_STAGES.has(msg.stage) || res.data.active === false) {
-          await clearActiveTask();
+          await resetActiveTask();
         } else {
           await setActiveTask({ ...active, stage: msg.stage });
         }
@@ -290,13 +369,38 @@ async function handleMessage(msg, sender) {
       return { data: res.data };
     }
 
+    case "CC_NAVIGATE": {
+      // The runner found the way to the application form: follow it in the
+      // same tab (never a new one), within the hop budget. `to` is null for
+      // an in-page Apply button the runner clicks itself; it still counts.
+      const active = await getActiveTask();
+      if (active.submitting || active.review) return { error: "The application is already under review." };
+      const hops = (active.navigations || 0) + 1;
+      if (hops > MAX_NAVIGATIONS) return { error: "Could not find the application form after following the Apply links." };
+      let target = null;
+      if (msg.to) {
+        try {
+          target = jobUrl(msg.to).href;
+        } catch (e) {
+          return { error: e.message };
+        }
+      }
+      await setActiveTask({ ...active, navigations: hops });
+      if (target) await chrome.tabs.update(active.tabId, { url: target });
+      return { ok: true };
+    }
+
     case "CC_REVIEW": {
       const pairing = await getPairing();
       if (!pairing) return { error: "Reconnect the extension." };
-      const active = await getActiveTask();
       const res = await apiFetch(pairing, `/extension/device/tasks/${msg.taskId}/review`, { method: "POST", json: msg.snapshot });
       if (!res.ok) return { error: res.error };
+      const active = await getActiveTask();
+      if (!active || active.taskId !== msg.taskId) return { error: "This application is no longer active." };
       await setActiveTask({ ...active, review: { ...res.data, snapshot: msg.snapshot }, submitPermit: null });
+      // The user approves the final form in the popup: point them at it.
+      await setBadge("1", "#2563eb");
+      await openPopupIfPossible();
       return { data: res.data };
     }
 
@@ -308,11 +412,13 @@ async function handleMessage(msg, sender) {
       const res = await apiFetch(pairing, `/extension/device/tasks/${active.taskId}/approve-submit`, { method: "POST", json: { review_hash: active.review.review_hash, user_confirmed: true } });
       if (!res.ok) return { error: res.error };
       await setActiveTask({ ...active, submitPermit: { token: res.data.submission_token, expiresAt: res.data.expires_at } });
+      await setBadge("");
       return { ok: true };
     }
 
     case "CC_SUBMIT_STATUS": {
       const active = await getActiveTask();
+      if (!active) return { error: "This application is no longer active." };
       if (active.submitting) return { error: "Submission was already claimed. Verify its outcome on the job site." };
       if (!active.review || Date.parse(active.review.expires_at) <= Date.now()) return { error: "Review expired. Request a fresh review." };
       if (!active.submitPermit) return { waiting: true };
@@ -419,7 +525,7 @@ async function handleMessage(msg, sender) {
     case "CC_DISCONNECT": {
       await revokeCurrentPairing();
       await clearPairing();
-      await clearActiveTask();
+      await resetActiveTask();
       await syncBridgeRegistration(null);
       return { ok: true };
     }

@@ -45,6 +45,12 @@
     return existing;
   }
 
+  // The element a snapshot field id points at: its own id, or the marker
+  // ensureId put on an element that had none.
+  function elementFor(id) {
+    return document.getElementById(id) || document.querySelector(`[${FIELD_ATTR}="${CSS.escape(id)}"]`);
+  }
+
   // el.labels?.[0]?.innerText || aria-label || aria-labelledby text ||
   // (structural fallback, useful on LinkedIn's custom markup) || placeholder || name
   function getLabel(el) {
@@ -299,6 +305,7 @@
 
   window.CareerCraftDOM = {
     isVisible,
+    elementFor,
     getLabel,
     getGroupLabel,
     snapshot,
