@@ -85,6 +85,11 @@ class ApplicationResponse(BaseModel):
     notes: str | None = None
     source: str | None = None
     posted_at: datetime | None = None
+    # Which resume went out (file name and a short content id), and how the
+    # recruiter email for this application is doing.
+    resume_label: str | None = None
+    outreach_status: str | None = None
+    outreach_to: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -860,7 +865,50 @@ async def list_applications(
     ]
     # `limit` is applied after the example-URL/location filters so callers get
     # the number of real rows they asked for. Previously it was silently ignored.
-    return apps[:limit] if limit else apps
+    apps = apps[:limit] if limit else apps
+    return await _with_tracking(db, current_user.id, apps)
+
+
+async def _with_tracking(db: AsyncSession, user_id: uuid.UUID, apps: list) -> list:
+    """Applications plus the resume that went out and the recruiter email's
+    status, fetched in two queries rather than one per row."""
+    from app.models.db import RecruiterOutreach
+    from app.services.outreach_service import summarize_outreach
+    from app.services.resume_version import content_version
+
+    resume_ids = {a.resume_id for a in apps if a.resume_id}
+    documents = {}
+    if resume_ids:
+        rows = await db.execute(
+            select(UserDocument.id, UserDocument.filename, UserDocument.raw_text).where(
+                UserDocument.id.in_(resume_ids), UserDocument.user_id == user_id
+            )
+        )
+        documents = {row.id: row for row in rows}
+    outreach: dict = {}
+    if apps:
+        rows = await db.execute(
+            select(RecruiterOutreach).where(
+                RecruiterOutreach.user_id == user_id,
+                RecruiterOutreach.job_application_id.in_([a.id for a in apps]),
+            )
+        )
+        for row in rows.scalars().all():
+            outreach.setdefault(row.job_application_id, []).append(row)
+
+    out = []
+    for app in apps:
+        item = ApplicationResponse.model_validate(app)
+        document = documents.get(app.resume_id)
+        if document is not None:
+            short = content_version(document.raw_text or "")[:8]
+            item.resume_label = f"{document.filename} · {short}"
+        summary = summarize_outreach(outreach.get(app.id, []))
+        if summary:
+            item.outreach_status = summary["status"]
+            item.outreach_to = summary["to_email"]
+        out.append(item)
+    return out
 
 
 @router.patch("/applications/{application_id}/status", response_model=ApplicationResponse)

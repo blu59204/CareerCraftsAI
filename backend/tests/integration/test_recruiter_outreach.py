@@ -208,3 +208,39 @@ async def test_daily_summary_counts_the_last_day_and_respects_the_opt_in(maker, 
     stats = await summary.build_summary(user)
     assert stats["emails_sent"] == 1 and stats["needs_approval"] == 1
     assert user not in await summary.list_summary_users()  # opt-in, off by default
+
+
+async def test_applications_list_carries_resume_and_email_status(maker):
+    from app.api.v1.jobs import _with_tracking
+    from app.models.db import JobApplication, UserDocument
+    from app.services import outreach_service as service
+
+    user = await _member(maker)
+    async with maker() as db:
+        document = UserDocument(
+            user_id=uuid.UUID(user),
+            doc_type="resume",
+            filename="jane-acme.pdf",
+            storage_path="x",
+            raw_text="Jane Doe resume",
+        )
+        db.add(document)
+        await db.flush()
+        tracked = JobApplication(
+            user_id=uuid.UUID(user), company="Acme", role="Eng", resume_id=document.id
+        )
+        bare = JobApplication(user_id=uuid.UUID(user), company="Beta", role="Eng")
+        db.add_all([tracked, bare])
+        await db.commit()
+        tracked_id = str(tracked.id)
+    row = await _queue(user, "a@acme.com", application=tracked_id)
+    await service.approve_outreach(user, str(row.id))
+    await service.send_approved(user, lambda _: FakeGmail(user))
+
+    async with maker() as db:
+        apps = (await db.execute(select(JobApplication))).scalars().all()
+        mine = [a for a in apps if str(a.user_id) == user]
+        result = {a.company: a for a in await _with_tracking(db, uuid.UUID(user), mine)}
+    assert result["Acme"].resume_label.startswith("jane-acme.pdf · ")
+    assert result["Acme"].outreach_status == "sent" and result["Acme"].outreach_to == "a@acme.com"
+    assert result["Beta"].resume_label is None and result["Beta"].outreach_status is None

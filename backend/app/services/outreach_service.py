@@ -57,6 +57,24 @@ def followup_text(company: str, role: str | None, contact_name: str = "") -> tup
     return subject, body
 
 
+def summarize_outreach(rows: list[RecruiterOutreach]) -> dict | None:
+    """One line of status for an application's recruiter emails."""
+    if not rows:
+        return None
+    ordered = sorted(rows, key=lambda r: (r.kind == "followup", r.created_at or datetime.min))
+    to_email = ordered[0].to_email
+    if any(r.replied_at for r in rows):
+        status = "replied"
+    elif any(r.bounced_at for r in rows):
+        status = "bounced"
+    else:
+        latest = ordered[-1]
+        status = (
+            "followed up" if latest.kind == "followup" and latest.state == "sent" else latest.state
+        )
+    return {"status": status, "to_email": to_email}
+
+
 def classify_thread(messages: list[dict], sent_message_id: str | None) -> str | None:
     """'bounced' or 'replied' for a thread we started, else None.
 

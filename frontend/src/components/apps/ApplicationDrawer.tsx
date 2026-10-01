@@ -197,6 +197,16 @@ function DrawerBody({
     app.nextFollowUp
       ? { key: "followup", label: "Next follow-up", icon: <ClockCountdown size={14} weight="light" />, value: app.nextFollowUp }
       : null,
+    app.source ? { key: "source", label: "Found on", icon: <MapPin size={14} weight="light" />, value: app.source } : null,
+    app.resumeLabel ? { key: "resume", label: "Resume sent", icon: <CalendarBlank size={14} weight="light" />, value: app.resumeLabel } : null,
+    app.outreachStatus
+      ? {
+          key: "outreach",
+          label: "Recruiter email",
+          icon: <ClockCountdown size={14} weight="light" />,
+          value: `${app.outreachStatus}${app.outreachTo ? ` · ${app.outreachTo}` : ""}`,
+        }
+      : null,
     match != null
       ? {
           key: "match",

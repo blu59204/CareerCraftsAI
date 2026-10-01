@@ -33,3 +33,30 @@ def test_followup_wording_is_fixed_and_makes_no_claims():
     assert subject == "Following up: Backend Engineer at Acme"
     assert body.startswith("Hi Jane,")
     assert "Backend Engineer role" in body
+
+
+def _row(kind="initial", state="sent", replied=False, bounced=False, minute=0):
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        kind=kind,
+        state=state,
+        to_email="jane@acme.com",
+        replied_at=datetime.now(UTC) if replied else None,
+        bounced_at=datetime.now(UTC) if bounced else None,
+        created_at=datetime(2026, 10, 1, 9, minute, tzinfo=UTC),
+    )
+
+
+def test_application_email_status_summary():
+    from app.services.outreach_service import summarize_outreach
+
+    assert summarize_outreach([]) is None
+    assert summarize_outreach([_row(state="held")])["status"] == "held"
+    assert summarize_outreach([_row()])["status"] == "sent"
+    assert summarize_outreach([_row(), _row("followup", minute=5)])["status"] == "followed up"
+    assert (
+        summarize_outreach([_row(replied=True), _row("followup", "draft")])["status"] == "replied"
+    )
+    assert summarize_outreach([_row(bounced=True)])["status"] == "bounced"
