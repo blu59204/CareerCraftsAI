@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { openNangoConnectWindow } from "@/lib/nango-connect";
@@ -10,6 +10,8 @@ export function GitHubSettings({ onboarding = false }: { onboarding?: boolean })
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const client = useQueryClient();
+  const pollTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (pollTimer.current) window.clearInterval(pollTimer.current); }, []);
   const profile = useQuery<Profile | null>({ queryKey: ["github-profile"], retry: false, queryFn: async () => {
     try { return (await apiClient.get("/integrations/github/profile")).data; }
     catch (e) { if ((e as { response?: { status: number } }).response?.status === 404) return null; throw e; }
@@ -28,7 +30,8 @@ export function GitHubSettings({ onboarding = false }: { onboarding?: boolean })
       const { data } = await apiClient.post("/integrations/connect-session", { provider: "github", return_path: onboarding ? "/onboarding" : "/settings/integrations" });
       if (!data.connect_link) throw new Error("GitHub OAuth is unavailable");
       popup.location.href = data.connect_link;
-      const timer = window.setInterval(() => { if (popup.closed) { window.clearInterval(timer); setBusy(false); void refresh(); } }, 1000);
+      if (pollTimer.current) window.clearInterval(pollTimer.current);
+      pollTimer.current = window.setInterval(() => { if (popup.closed) { if (pollTimer.current) window.clearInterval(pollTimer.current); pollTimer.current = null; setBusy(false); void refresh(); } }, 1000);
     } catch (e) { popup.close(); setBusy(false); setError(getApiErrorMessage(e, "GitHub OAuth unavailable. Use a public profile URL.")); }
   }
   async function remove(disconnect: boolean) {

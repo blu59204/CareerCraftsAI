@@ -1,7 +1,7 @@
 # Disposable integration infrastructure. No production credentials or volumes.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: workflow_test
       POSTGRES_PASSWORD: workflow_test

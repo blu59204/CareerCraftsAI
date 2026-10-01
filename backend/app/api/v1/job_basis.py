@@ -41,7 +41,11 @@ async def bases(db=Depends(get_db), user=Depends(get_current_user)):
         .all()
     )
     personas = (
-        (await db.execute(select(ResumePersona).where(ResumePersona.user_id == user.id)))
+        (
+            await db.execute(
+                select(ResumePersona).where(ResumePersona.user_id == user.id)
+            )
+        )
         .scalars()
         .all()
     )
@@ -77,7 +81,9 @@ async def bases(db=Depends(get_db), user=Depends(get_current_user)):
 
 
 @router.patch("/search/basis-default", include_in_schema=False)
-async def set_default(body: DefaultRequest, db=Depends(get_db), user=Depends(get_current_user)):
+async def set_default(
+    body: DefaultRequest, db=Depends(get_db), user=Depends(get_current_user)
+):
     from app.models.db import User
 
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
@@ -102,7 +108,9 @@ class DefaultPatch(BaseModel):
 
 
 @router.patch("/search-basis")
-async def patch_default(body: DefaultPatch, db=Depends(get_db), user=Depends(get_current_user)):
+async def patch_default(
+    body: DefaultPatch, db=Depends(get_db), user=Depends(get_current_user)
+):
     if body.basis is not None:
         return await set_default(body.basis, db, user)
     row = await db.get(SearchDefault, user.id, with_for_update=True)
@@ -121,7 +129,9 @@ async def source_health(db=Depends(get_db), user=Depends(get_current_user)):
     records = (
         (
             await db.execute(
-                text("SELECT source_id,status,checked_at,failures FROM job_source_health")
+                text(
+                    "SELECT source_id,status,checked_at,failures FROM job_source_health"
+                )
             )
         )
         .mappings()
@@ -202,6 +212,8 @@ async def catalog(
         "next_cursor": next_cursor,
         "warnings": warnings + ranking_warnings,
         "ranking_mode": (
-            "semantic+rules" if any(j["ranking_mode"] != "rules" for j in ranked) else "rules"
+            "semantic+rules"
+            if any(j["ranking_mode"] != "rules" for j in ranked)
+            else "rules"
         ),
     }

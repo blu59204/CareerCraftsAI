@@ -20,7 +20,12 @@ from app.services.public_http import public_get
 
 def public_login(url: str) -> str:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or parsed.netloc != "github.com" or parsed.query or parsed.fragment:
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "github.com"
+        or parsed.query
+        or parsed.fragment
+    ):
         raise ValueError("Use https://github.com/username")
     login = parsed.path.strip("/")
     if parsed.path not in {"/" + login, "/" + login + "/"}:
@@ -68,7 +73,11 @@ def analyze(repos: list[dict]) -> dict:
             evidence = {
                 "url": url,
                 "kind": (
-                    ("language_bytes" if languages.get(name) is not None else "primary_language")
+                    (
+                        "language_bytes"
+                        if languages.get(name) is not None
+                        else "primary_language"
+                    )
                     if category == "language"
                     else "readme_mention"
                 ),
@@ -81,15 +90,26 @@ def analyze(repos: list[dict]) -> dict:
                     "name": name,
                     "category": category,
                     "confidence": (
-                        "repository_evidence" if category == "language" else "self_reported_readme"
+                        "repository_evidence"
+                        if category == "language"
+                        else "self_reported_readme"
                     ),
                     "evidence": [],
                 },
             )["evidence"].append(evidence)
+        try:
+            pushed = datetime.fromisoformat(
+                str(repo.get("pushed_at") or "").replace("Z", "+00:00")
+            )
+            if pushed.tzinfo is None:
+                pushed = pushed.replace(tzinfo=UTC)
+            recent_push = pushed >= datetime.now(UTC) - timedelta(days=90)
+        except ValueError:
+            recent_push = False
         score = (
             min(20, len(names) * 3)
             + min(20, repo.get("stargazers_count", 0))
-            + (10 if repo.get("pushed_at") else 0)
+            + (10 if recent_push else 0)
             + min(10, repo.get("recent_events", 0))
         )
         projects.append(
@@ -106,7 +126,8 @@ def analyze(repos: list[dict]) -> dict:
             }
         )
     projects.sort(
-        key=lambda item: (item["score"], item["updated_at"] or "", item["name"]), reverse=True
+        key=lambda item: (item["score"], item["updated_at"] or "", item["name"]),
+        reverse=True,
     )
     return {
         "skills": sorted(skills.values(), key=lambda item: item["name"]),
@@ -168,10 +189,12 @@ async def refresh_profile(user_id: uuid.UUID, url: str | None = None) -> dict:
             raise LookupError("GitHub is not connected")
         revision = (
             await db.execute(
-                text("""INSERT INTO github_profiles(user_id,mode,login,next_allowed_at,version)
+                text(
+                    """INSERT INTO github_profiles(user_id,mode,login,next_allowed_at,version)
             VALUES(:uid,:mode,:login,:lease,1) ON CONFLICT(user_id) DO UPDATE
             SET next_allowed_at=EXCLUDED.next_allowed_at,
-            version=github_profiles.version+1,deleted_at=NULL RETURNING version"""),
+            version=github_profiles.version+1,deleted_at=NULL RETURNING version"""
+                ),
                 {
                     "uid": user_id,
                     "mode": "nango" if oauth else "public_url",
@@ -248,7 +271,8 @@ async def refresh_profile(user_id: uuid.UUID, url: str | None = None) -> dict:
                     ).decode("utf-8", errors="replace")[:32000]
             except Exception as exc:
                 logging.getLogger(__name__).info(
-                    "github_readme_unavailable", extra={"error_type": type(exc).__name__}
+                    "github_readme_unavailable",
+                    extra={"error_type": type(exc).__name__},
                 )
             enriched.append(
                 {
@@ -307,7 +331,9 @@ async def get_profile(user_id: uuid.UUID) -> dict | None:
         state = (
             (
                 await db.execute(
-                    text("SELECT mode,data,deleted_at FROM github_profiles WHERE user_id=:uid"),
+                    text(
+                        "SELECT mode,data,deleted_at FROM github_profiles WHERE user_id=:uid"
+                    ),
                     {"uid": user_id},
                 )
             )

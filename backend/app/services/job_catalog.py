@@ -102,8 +102,8 @@ async def refresh_source(source: Source, query="", force=False) -> tuple[list[di
         await db.execute(
             text("""UPDATE job_source_health SET checked_at=:now, next_allowed_at=:next,
             cached_jobs=CAST(:jobs AS jsonb), warning=:warning,
-            failures=CASE WHEN :warning IS NULL THEN 0 ELSE failures+1 END,
-            status=CASE WHEN :warning IS NULL THEN 'healthy' ELSE 'degraded' END
+            failures=CASE WHEN CAST(:warning AS text) IS NULL THEN 0 ELSE failures+1 END,
+            status=CASE WHEN CAST(:warning AS text) IS NULL THEN 'healthy' ELSE 'degraded' END
             WHERE source_id=:id"""),
             {
                 "id": source.id,

@@ -104,7 +104,8 @@ async def basis_text(
                 ).scalar_one_or_none()
                 if model_settings:
                     embeddings = rag_service.get_embedding_model(model_settings)
-                    store = rag_service.get_vector_store(
+                    store = await asyncio.to_thread(
+                        rag_service.get_vector_store,
                         user_id,
                         "resume",
                         embeddings,
@@ -122,7 +123,8 @@ async def basis_text(
                 import logging
 
                 logging.getLogger(__name__).info(
-                    "selected_resume_rag_unavailable", extra={"error_type": type(exc).__name__}
+                    "selected_resume_rag_unavailable",
+                    extra={"error_type": type(exc).__name__},
                 )
         if persona:
             text += "\nPersona keywords: " + str(persona.target_keywords or [])[:2000]

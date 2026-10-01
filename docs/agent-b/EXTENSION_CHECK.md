@@ -45,3 +45,6 @@ Temporal worker and matching migrated API; never use a real application):
 The previous `e2e_live.py` assumes HTTP job fixtures and page-panel-only approval.
 It is not evidence for this contract. The steps above replace it until the MV3
 runner is updated. No live external applications were submitted during checks.
+
+
+Controlled MV3 gate automation: `python extension/test/mv3_gate.py` launches unpacked Chromium against a disposable fixture API. It opens the real browser action popup, uses a trusted CDP mouse click, and verifies no content-script approval, unchanged snapshot acceptance despite Chrome storage key order, changed snapshot rejection, and single-consumption replay rejection. This check passed; it sends no external application. The server-side event authorization and final ledger paths are checked separately on real disposable PostgreSQL by the durable integration suite.

@@ -7,7 +7,7 @@ Baseline: `093ef54`. Agent A owns resume generation, ATS, builder and LinkedIn P
 
 Phase 1: complete. Phase 2: in progress, starting with executor retirement and extension security. Phase 3: not started; Phase 2 exit criteria have not been met. Repository instructions in `CLAUDE.md` and `AGENTS.md` were read first. The existing Agent B worktree is reused; the main workspace has unrelated uncommitted changes that must not be copied, reverted or committed here. Existing untracked `docs-sandbox-inventory.tmp` is preserved.
 
-Findings below are from source inspection, not claims of successful live runs. Live provider availability, permissions, Temporal connectivity, migration execution and extension browser reproduction remain Phase 2/3 evidence requirements. In particular, repository documentation's production-ready/test-count claims are not treated as verification.
+Findings below are from source inspection, not claims of successful live runs. Phase 2/3 evidence is recorded below and in REVIEW.md; live OAuth and authenticated external-site checks require operator accounts. In particular, repository documentation's production-ready/test-count claims are not treated as verification.
 
 ## Ownership and invariants
 
