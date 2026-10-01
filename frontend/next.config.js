@@ -61,6 +61,14 @@ const nextConfig = {
   async headers() {
     return [
       {
+        // The app has approve and submit controls: it must not be framed.
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+        ],
+      },
+      {
         source: "/:all*(svg|jpg|png|webp|avif|woff2)",
         headers: [
           { key: "Cache-Control", value: "public, max-age=31536000, immutable" },

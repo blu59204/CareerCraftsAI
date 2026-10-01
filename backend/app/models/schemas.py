@@ -33,7 +33,8 @@ class UserResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
-    email: EmailStr | None = None
+    # No email: it comes from the identity provider's verified address. A
+    # member-set address could squat on someone else's sign-up.
     full_name: str | None = Field(None, max_length=200)
     headline: str | None = Field(None, max_length=300)
     phone: str | None = Field(None, max_length=30)

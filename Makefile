@@ -18,8 +18,8 @@ format:
 	cd frontend && npm run lint -- --fix
 
 build:
-	docker compose build
+	docker compose -f docker-compose.dev.yml build
 
 clean:
-	docker compose down -v
+	docker compose -f docker-compose.dev.yml down -v
 	find . -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

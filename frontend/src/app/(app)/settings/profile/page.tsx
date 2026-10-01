@@ -355,16 +355,17 @@ export default function ProfilePreferencesPage() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = {
-        current_title: form.current_title || undefined,
-        experience_level: form.experience_level || undefined,
-        years_experience: form.years_experience ? parseInt(form.years_experience, 10) : undefined,
-        job_type: form.job_type || undefined,
-        work_mode: form.work_mode || undefined,
-        salary_min: form.salary_min ? parseInt(form.salary_min, 10) : undefined,
-        salary_max: form.salary_max ? parseInt(form.salary_max, 10) : undefined,
+        // null clears a stored value; undefined would be dropped and the old one kept.
+        current_title: form.current_title || null,
+        experience_level: form.experience_level || null,
+        years_experience: form.years_experience !== "" ? parseInt(form.years_experience, 10) : null,
+        job_type: form.job_type || null,
+        work_mode: form.work_mode || null,
+        salary_min: form.salary_min !== "" ? parseInt(form.salary_min, 10) : null,
+        salary_max: form.salary_max !== "" ? parseInt(form.salary_max, 10) : null,
         target_roles: parsedRoles,
         preferred_locations: parsedLocations,
-        bio: form.bio || undefined,
+        bio: form.bio || null,
         prefer_live_browser: form.prefer_live_browser,
         daily_search_enabled: form.daily_search_enabled,
         inbox_tracking_enabled: form.inbox_tracking_enabled,

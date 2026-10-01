@@ -61,7 +61,8 @@ class AutoApplyStatus:
 
 
 _PREP_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
-_RESERVE_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
+# Cap, score and "already applied" refusals are decisions, not glitches.
+_RESERVE_RETRY_POLICY = RetryPolicy(maximum_attempts=3, non_retryable_error_types=["ValueError"])
 
 
 @workflow.defn

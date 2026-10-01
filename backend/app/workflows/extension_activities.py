@@ -91,8 +91,11 @@ async def create_extension_task_activity(params: dict) -> dict:
                 .with_for_update()
             )
         ).scalar_one_or_none()
-        if task is not None and task.workflow_id != params["workflow_id"]:
-            # A task from an earlier, finished attempt: retire it.
+        if task is not None and (
+            task.workflow_id != params["workflow_id"] or task.run_id != run_id
+        ):
+            # A task from an earlier attempt (the workflow id is reused for
+            # every run of an application, so the run id tells them apart).
             task.status = "cancelled"
             task.completed_at = datetime.now(UTC)
             task = None

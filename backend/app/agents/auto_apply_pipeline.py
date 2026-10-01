@@ -179,9 +179,13 @@ async def run_auto_apply_pipeline(
         score = _score_job_quick(llm, job, user_profile)
         scored_jobs.append((job, score))
 
+    results["jobs_scored"] = len(scored_jobs)
+    # Only jobs at or above the member's match threshold move on to applying.
+    from app.services.apply_limits import score_error
+
+    scored_jobs = [(job, score) for job, score in scored_jobs if score_error(score) is None]
     scored_jobs.sort(key=lambda x: x[1], reverse=True)
     top_jobs = scored_jobs[:max_applications]
-    results["jobs_scored"] = len(scored_jobs)
 
     # ── Step 3-6: For each top job, run the full apply sequence ─────
 
@@ -490,7 +494,8 @@ def _score_job_quick(llm: Any, job: JobListing, profile: str) -> int:
         bonus = decision_bonus.get(decision, 0)
         return max(0, min(100, base + bonus))
     except Exception:
-        return 50
+        # A job that could not be scored is not eligible to be applied to.
+        return 0
 
 
 def _generate_cold_email(

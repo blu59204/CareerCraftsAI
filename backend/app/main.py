@@ -302,10 +302,28 @@ async def health_live():
     return {"status": "ok"}
 
 
+_health_cache: dict = {"at": 0.0, "result": None}
+_HEALTH_CACHE_SECONDS = 5.0
+
+
 @app.get("/health")
 async def health():
+    """The deep check opens database, Redis and Temporal connections and is
+    public, so a burst of calls shares one result for a few seconds."""
+    import time
+
     from fastapi.responses import JSONResponse
 
+    now = time.monotonic()
+    cached = _health_cache["result"]
+    if cached is None or now - _health_cache["at"] > _HEALTH_CACHE_SECONDS:
+        cached = await _compute_health()
+        _health_cache.update(at=now, result=cached)
+    status_code, content = cached
+    return JSONResponse(status_code=status_code, content=content)
+
+
+async def _compute_health() -> tuple[int, dict]:
     from app.core.database import check_db_connection
     from app.core.redis_client import check_redis_connection
 
@@ -333,9 +351,9 @@ async def health():
     temporal = await check_temporal_health()
     temporal_ok = temporal.get("connected") and temporal.get("workers") != 0
     status = "error" if not all_ok else ("ok" if temporal_ok else "degraded")
-    return JSONResponse(
-        status_code=200 if all_ok else 503,
-        content={
+    return (
+        200 if all_ok else 503,
+        {
             "status": status,
             "version": app.version,
             "db": "ok" if db_ok else "error",

@@ -145,7 +145,17 @@ function Row({ item }: { item: OutreachItem }) {
             </IslandButton>
           ) : null}
           {open ? (
-            <IslandButton size="sm" tone="quiet" onClick={() => setEditing((v) => !v)}>
+            <IslandButton
+              size="sm"
+              tone="quiet"
+              onClick={() => {
+                // Entering or leaving edit mode starts from what is stored, so
+                // discarded text never comes back and server changes show.
+                setSubject(item.subject);
+                setBody(item.body);
+                setEditing((v) => !v);
+              }}
+            >
               {editing ? "Discard edits" : "Edit"}
             </IslandButton>
           ) : null}

@@ -44,7 +44,11 @@ def format_summary(stats: dict) -> tuple[str, str] | None:
 
 async def build_summary(user_id: str, now: datetime | None = None) -> dict:
     owner = uuid.UUID(user_id)
-    since = (now or datetime.now(UTC)) - timedelta(hours=24)
+    # The window is the schedule's interval, so a summary every 48 hours does
+    # not lose a day and one every 6 hours does not repeat events.
+    from app.core.config import settings
+
+    since = (now or datetime.now(UTC)) - timedelta(hours=settings.DAILY_SUMMARY_INTERVAL_HOURS)
     async with AsyncSessionLocal() as db:
 
         async def count(query) -> int:

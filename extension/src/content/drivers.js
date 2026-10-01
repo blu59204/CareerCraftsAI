@@ -11,12 +11,12 @@
   const GENERIC_SUCCESS_RE =
     /application (has been |was )?(successfully )?submitted|thank you for applying|we have received your application|application received/i;
   const SUBMIT_TEXT_RE = /submit( your)? application|send application|submit|apply/i;
-  const LINKEDIN_LOGIN_URL_RE = /login|authwall|checkpoint|uas/i;
+  const LINKEDIN_LOGIN_URL_RE = /^\/(login|authwall|checkpoint|uas)(\/|$)/i;
   const LINKEDIN_SUBMIT_RE = /submit application/i;
   const LINKEDIN_NEXT_RE = /^(continue to next step|next|review your application|review)$/i;
-  const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|applied/i;
+  const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|you applied|application submitted/i;
   const NAUKRI_LOGIN_RE = /\/nlogin/i;
-  const NAUKRI_SUCCESS_RE = /successfully applied|applied to|application sent/i;
+  const NAUKRI_SUCCESS_RE = /successfully applied|you have applied|application sent/i;
   // Controls that lead from a job description to its application form.
   const APPLY_LINK_RE = /^(apply|apply now|apply here|apply for this (job|position|role)|apply to this job|apply online|start (your )?application|i'?m interested)$/i;
   // Hosted application forms that company career sites embed in an iframe.
@@ -416,7 +416,7 @@
   // ── LinkedIn Easy Apply driver ──────────────────────────────────────────
 
   function linkedinLooksSignedOut() {
-    if (LINKEDIN_LOGIN_URL_RE.test(location.href)) return true;
+    if (LINKEDIN_LOGIN_URL_RE.test(location.pathname)) return true;
     const hasNav = !!document.querySelector(".global-nav, #global-nav");
     const hasLoginForm = !!document.querySelector('form[action*="login"], #login-form, input[name="session_password"], input[name="session_key"]');
     return hasLoginForm && !hasNav;
@@ -824,7 +824,9 @@
           let primary = cfg.findPrimary(m);
           if (!primary.el) {
             const chosen = await decideAdvanceButton(ctx, primary.buttons || []);
-            if (chosen) primary = { el: chosen, kind: SUBMIT_BTN_RE.test(buttonLabel(chosen)) ? "submit" : "next" };
+            // An unrecognised button is treated as the final step unless it is
+            // plainly "Next": a "Finish" or "Apply" click must go through review.
+            if (chosen) primary = { el: chosen, kind: NEXT_BTN_RE.test(buttonLabel(chosen)) ? "next" : "submit" };
           }
           if (!primary.el) throw new Error(`Could not find the Next or Submit button in ${cfg.label}`);
 

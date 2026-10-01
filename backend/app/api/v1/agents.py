@@ -122,6 +122,9 @@ async def stream_agent(
     run = res.scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    # A stream stays open for minutes: give the connection back to the pool
+    # now instead of when the response ends.
+    await db.commit()
 
     return await _redis_to_sse(run_id)
 

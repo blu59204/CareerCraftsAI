@@ -157,6 +157,21 @@ async function syncBridgeRegistration(appOrigin) {
 let polling = false;
 const submitClaims = new Set();
 
+const PERMISSION_WAIT_MS = 10 * 60 * 1000;
+
+// Tell the server this application cannot proceed, so it is not left
+// "claimed" (which blocks queuing it again) until it expires.
+async function failTask(pairing, taskId, message) {
+  try {
+    await apiFetch(pairing, `/extension/device/tasks/${taskId}/events`, {
+      method: "POST",
+      json: { stage: "failed", message },
+    });
+  } catch (e) {
+    console.warn("CareerCraft: could not report failure", e && e.message);
+  }
+}
+
 async function pollOnce() {
   if (polling) return;
   polling = true;
@@ -167,7 +182,15 @@ async function pollOnce() {
     const active = await getActiveTask();
     if (active && !TERMINAL_STAGES.has(active.stage)) {
       if (active.stage === "permission_required") {
-        if (!(await hasHostPermission(active.task.job_url))) return;
+        if (!(await hasHostPermission(active.task.job_url))) {
+          if (active.since && Date.now() - active.since > PERMISSION_WAIT_MS) {
+            await failTask(pairing, active.taskId, "Site access was not granted, so this application was skipped.");
+            await chrome.storage.session.remove(SESSION_KEYS.HOST_PERMISSION_NEEDED);
+            await setBadge("");
+            await resetActiveTask();
+          }
+          return;
+        }
         await chrome.storage.session.remove(SESSION_KEYS.HOST_PERMISSION_NEEDED);
         await setBadge("");
         const tab = await chrome.tabs.create({ url: active.task.job_url, active: true });
@@ -205,7 +228,13 @@ async function pollOnce() {
     if (res.status === 204 || !res.data || !res.data.job_url) return;
 
     const task = res.data;
-    jobUrl(task.job_url);
+    try {
+      jobUrl(task.job_url);
+    } catch (e) {
+      await failTask(pairing, task.id, "This application's address is not a public https page.");
+      await chrome.storage.session.set({ lastError: e.message || "Could not open this application." });
+      return;
+    }
     const permitted = await hasHostPermission(task.job_url);
     if (!permitted) {
       let host = task.job_url;
@@ -215,13 +244,19 @@ async function pollOnce() {
         /* keep raw url */
       }
       await chrome.storage.session.set({ [SESSION_KEYS.HOST_PERMISSION_NEEDED]: host });
-      await setActiveTask({ taskId: task.id, tabId: null, stage: "permission_required", task });
+      await setActiveTask({ taskId: task.id, tabId: null, stage: "permission_required", task, since: Date.now() });
       await setBadge("!", "#d97706");
       await openPopupIfPossible();
       return;
     }
 
-    const tab = await chrome.tabs.create({ url: task.job_url, active: true });
+    let tab;
+    try {
+      tab = await chrome.tabs.create({ url: task.job_url, active: true });
+    } catch (e) {
+      await failTask(pairing, task.id, "The browser could not open this application.");
+      throw e;
+    }
     await setActiveTask({ taskId: task.id, tabId: tab.id, stage: task.status || "claimed", task });
   } catch (e) {
     await chrome.storage.session.set({ lastError: e.message || "Could not open this application." });

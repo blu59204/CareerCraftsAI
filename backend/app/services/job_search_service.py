@@ -31,10 +31,10 @@ def _stable_id(url: str, title: str, company: str, location: str = "") -> str:
 
 
 def _normalize(raw: dict, platform: str) -> dict:
-    title = str(raw.get("title", "")).strip()
-    company = str(raw.get("company", "")).strip()
-    url = str(raw.get("job_url", raw.get("url", ""))).strip()
-    location = str(raw.get("location", "")).strip()
+    title = str(raw.get("title") or "").strip()
+    company = str(raw.get("company") or "").strip()
+    url = str(raw.get("job_url") or raw.get("url") or "").strip()
+    location = str(raw.get("location") or "").strip()
     return {
         "job_id": _stable_id(url, title, company, location),
         "title": title,

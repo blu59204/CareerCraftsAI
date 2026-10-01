@@ -186,8 +186,16 @@ async def upload_document(
         sniffed_type,
     )
     try:
-        raw_text = extract_text(content, safe_filename)
+        # PDF/DOCX parsing is CPU-bound: keep it off the event loop.
+        raw_text = await asyncio.to_thread(extract_text, content, safe_filename)
     except Exception as exc:
+        # Nothing refers to the stored file yet, so do not leave it behind.
+        from app.services.storage_service import delete_file
+
+        try:
+            delete_file(storage_path, str(current_user.id))
+        except Exception:
+            logger.warning("Could not remove the file of a rejected upload", exc_info=True)
         logger.warning(
             "Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc
         )
@@ -210,7 +218,8 @@ async def upload_document(
     embedded_at = None
     if model_settings:
         try:
-            ingest_document(
+            await asyncio.to_thread(
+                ingest_document,
                 str(current_user.id),
                 doc_type,
                 raw_text,

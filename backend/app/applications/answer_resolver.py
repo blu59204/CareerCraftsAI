@@ -15,7 +15,7 @@ from app.applications.models import ApplicationField, ResolvedAnswer
 from app.applications.question_normalizer import normalize_question
 
 SENSITIVE_KEY_PREFIXES = (
-    "authorization.", "compensation.", "experience.notice_period_days",
+    "authorization.", "compensation.", "experience.notice_period_days", "availability.",
 )
 
 # (label, question_key) -> (value, confidence 0-1, evidence) or None.

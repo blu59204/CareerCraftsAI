@@ -330,7 +330,7 @@ async def _has_recruiter_replied(
 
     for query in queries:
         try:
-            threads = gmail.search_threads(query, max_results=5)
+            threads = await asyncio.to_thread(gmail.search_threads, query, 5)
         except Exception as exc:
             logger.debug("Gmail recruiter-reply search failed for query '%s': %s", query, exc)
             continue
@@ -341,7 +341,7 @@ async def _has_recruiter_replied(
             if not thread_id:
                 continue
             try:
-                details = gmail.get_thread(thread_id)
+                details = await asyncio.to_thread(gmail.get_thread, thread_id)
             except Exception as exc:
                 logger.debug("Gmail thread fetch failed for %s: %s", thread_id, exc)
                 continue
@@ -353,7 +353,11 @@ async def _has_recruiter_replied(
                     if h.get("name", "").lower() == "from":
                         from_addr = h.get("value", "").lower()
                         break
-                if from_addr and user_email.lower() not in from_addr:
+                if (
+                    from_addr
+                    and user_email.lower() not in from_addr
+                    and not _automated_sender(from_addr)
+                ):
                     logger.info(
                         "Found recruiter reply in thread %s from %s for user %s",
                         thread_id,
@@ -363,6 +367,31 @@ async def _has_recruiter_replied(
                     return True
 
     return False
+
+
+_AUTOMATED_SENDERS = (
+    "noreply",
+    "no-reply",
+    "donotreply",
+    "do-not-reply",
+    "mailer-daemon",
+    "notifications@",
+    "notification@",
+    "greenhouse-mail.io",
+    "hire.lever.co",
+    "myworkday.com",
+    "smartrecruiters.com",
+    "workablemail.com",
+    "icims.com",
+    "ashbyhq.com",
+    "linkedin.com",
+    "naukri.com",
+)
+
+
+def _automated_sender(from_addr: str) -> bool:
+    """Auto-confirmations from job boards and ATSs are not a recruiter's reply."""
+    return any(token in from_addr for token in _AUTOMATED_SENDERS)
 
 
 class StatusCheckTrigger(BaseModel):
@@ -528,6 +557,9 @@ async def daily_search(payload: StatusCheckTrigger):
                 await db.commit()
             except Exception as exc:
                 logger.warning("Daily search failed for user %s: %s", user.id, exc)
+                # One member's failed write must not poison the session for
+                # everyone after them.
+                await db.rollback()
 
     logger.info(
         "Daily search complete: %d users searched (%d opted into live browser), "

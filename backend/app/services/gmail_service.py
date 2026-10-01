@@ -78,7 +78,7 @@ class GmailMCPClient:
                 user_id=self.user_id,
                 provider="gmail",
                 method="GET",
-                path=f"gmail/v1/users/me/threads/{thread_id}",
+                path=f"gmail/v1/users/me/threads/{quote(thread_id, safe='')}",
             )
         except Exception:
             return {}
@@ -178,7 +178,7 @@ class GmailMCPClient:
                 user_id=self.user_id,
                 provider="gmail",
                 method="GET",
-                path=f"gmail/v1/users/me/messages/{message_id}?{query}",
+                path=f"gmail/v1/users/me/messages/{quote(message_id, safe='')}?{query}",
             )
         except Exception:
             return {}
@@ -200,7 +200,7 @@ class GmailMCPClient:
                 user_id=self.user_id,
                 provider="gmail",
                 method="POST",
-                path=f"gmail/v1/users/me/messages/{message_id}/modify",
+                path=f"gmail/v1/users/me/messages/{quote(message_id, safe='')}/modify",
                 json_data={"removeLabelIds": ["INBOX"]},
             )
         except Exception:

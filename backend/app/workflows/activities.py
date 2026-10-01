@@ -46,7 +46,7 @@ async def reserve_application_attempt(params: dict) -> dict:
     Raises ValueError (ownership/state violations) — non-retryable by the
     workflow's own error-type handling in auto_apply.py.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from app.applications.submission import load_resume
     from app.core.database import AsyncSessionLocal
@@ -60,6 +60,12 @@ async def reserve_application_attempt(params: dict) -> dict:
     run_id = _uuid.UUID(params["run_id"])
 
     async with AsyncSessionLocal() as db:
+        # One reservation per member at a time: otherwise a batch of workflows
+        # all read the same 24h count and pass the daily cap together.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"apply-reserve:{user_id}"},
+        )
         app_row = (
             await db.execute(
                 select(JobApplication)
@@ -141,6 +147,9 @@ async def reserve_application_attempt(params: dict) -> dict:
             attempt.last_error = None
             attempt.submitted_at = None
             attempt.verified_at = None
+            # A retry is a new start: it counts toward the 24h cap and the
+            # pacing gap from now, not from the attempt's first creation.
+            attempt.created_at = now
         else:
             attempt = ApplicationAttempt(
                 user_id=user_id,

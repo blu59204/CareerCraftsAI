@@ -31,6 +31,15 @@ _HEADLINE = re.compile(
 )
 
 
+def with_bonus(score: int) -> int:
+    """The score after the ranking nudge. It never lifts a job over the
+    auto-apply threshold that its own evidence did not reach."""
+    boosted = min(100, score + BONUS)
+    if score < settings.AUTO_APPLY_MIN_SCORE:
+        boosted = min(boosted, settings.AUTO_APPLY_MIN_SCORE - 1)
+    return max(score, boosted)
+
+
 def company_from_headline(title: str) -> str | None:
     match = _HEADLINE.match((title or "").strip())
     if not match:

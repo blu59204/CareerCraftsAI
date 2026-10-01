@@ -190,6 +190,22 @@ async def reap_expired_account_deletions(db: AsyncSession) -> int:
 
     removed = 0
     for user in users:
+        # The list above is a moment old. A member who cancelled since then
+        # (the grace period's last minute) must not lose anything: re-check
+        # under a row lock, which the cancel request takes too.
+        fresh = (
+            await db.execute(
+                select(User)
+                .where(
+                    User.id == user.id,
+                    User.deletion_scheduled_for.is_not(None),
+                    User.deletion_scheduled_for <= datetime.now(UTC),
+                )
+                .with_for_update(skip_locked=True)
+            )
+        ).scalar_one_or_none()
+        if fresh is None:
+            continue
         try:
             await erase_external_data(user)
         except Exception:
