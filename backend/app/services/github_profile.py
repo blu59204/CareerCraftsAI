@@ -12,9 +12,9 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import text
 
-from app.services.jobs_database import AsyncSessionLocal
 from app.integrations.factory import build_integration_gateway
 from app.integrations.repository import get_connection
+from app.services.jobs_database import AsyncSessionLocal
 from app.services.public_http import public_get
 
 

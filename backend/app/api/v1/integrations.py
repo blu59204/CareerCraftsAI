@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.github import router as github_router
 from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.rate_limit import limiter
@@ -37,7 +38,6 @@ from app.integrations.webhooks import verify_nango_webhook, webhook_event_hash
 from app.models.db import IntegrationConnection, User
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
-from app.api.v1.github import router as github_router
 
 router.include_router(github_router)
 

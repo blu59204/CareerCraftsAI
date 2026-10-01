@@ -32,7 +32,8 @@ async def bases(db=Depends(get_db), user=Depends(get_current_user)):
                     UserDocument.doc_type == "resume",
                 )
                 .order_by(
-                    UserDocument.is_primary.desc(), UserDocument.embedded_at.desc().nulls_last()
+                    UserDocument.is_primary.desc(),
+                    UserDocument.embedded_at.desc().nulls_last(),
                 )
             )
         )
@@ -78,7 +79,8 @@ async def bases(db=Depends(get_db), user=Depends(get_current_user)):
 @router.patch("/search/basis-default", include_in_schema=False)
 async def set_default(body: DefaultRequest, db=Depends(get_db), user=Depends(get_current_user)):
     from app.models.db import User
-    await db.execute(select(User.id).where(User.id==user.id).with_for_update())
+
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     await resolve_basis(
         db,
         user.id,

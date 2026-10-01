@@ -11,8 +11,8 @@ from pathlib import Path
 import httpx
 from sqlalchemy import text
 
-from app.services.jobs_database import AsyncSessionLocal
 from app.services.job_connectors import Source, dedupe, fetch_page
+from app.services.jobs_database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 

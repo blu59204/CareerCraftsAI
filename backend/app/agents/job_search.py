@@ -1331,7 +1331,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
                   "total_found": len(jobs), "saved_count": saved, "warnings": warnings}
         emit(run_id, "complete", {"result": {"total_found": len(jobs), "saved_count": saved}})
         return {**state, "status": "completed", "result": result,
-                "messages": state.get("messages", []) + [AIMessage(content=f"Found {len(jobs)} jobs.")]}
+                "messages": state.get("messages", []) + [AIMessage(content=f"Found {len(jobs)} jobs.")]}  # noqa: E501
     except Exception as exc:
-        logger.warning("job_search_failed: %s",type(exc).__name__, extra={"run_id": run_id, "error_type": type(exc).__name__})
-        return {**state, "status": "failed", "error": "Job search unavailable or selected resume no longer exists"}
+        logger.warning("job_search_failed: %s",type(exc).__name__, extra={"run_id": run_id, "error_type": type(exc).__name__})  # noqa: E501
+        return {**state, "status": "failed", "error": "Job search unavailable or selected resume no longer exists"}  # noqa: E501

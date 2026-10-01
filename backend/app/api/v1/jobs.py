@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.v1.job_basis import router as basis_router
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.run_utils import apply_harness_result
 from app.core.rate_limit import limiter
@@ -19,7 +20,6 @@ from app.schemas.jobs import JobSearchQuerySchema
 from app.workflows.starters import WorkflowUnavailable
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
-from app.api.v1.job_basis import router as basis_router
 
 router.include_router(basis_router)
 logger = logging.getLogger(__name__)
@@ -55,7 +55,10 @@ def make_job_search_id(
     import json
 
     digest = hashlib.sha256(
-        f"{user_id}:{search_query}:{location}:{max_results}:{json.dumps(filters or {}, sort_keys=True)}".encode()
+        (
+            f"{user_id}:{search_query}:{location}:{max_results}:"
+            f"{json.dumps(filters or {}, sort_keys=True)}"
+        ).encode()
     ).hexdigest()[:16]
     return f"{user_id}:job_search:{digest}"
 
@@ -900,7 +903,7 @@ async def list_applications(
     if posted_within_days:
         query = query.where(
             JobApplication.posted_at
-            >= datetime.now(timezone.utc) - timedelta(days=posted_within_days)
+            >= datetime.now(timezone.utc) - timedelta(days=posted_within_days)  # noqa: UP017
         )
     result = await db.execute(
         query.order_by(

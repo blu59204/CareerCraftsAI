@@ -10,8 +10,8 @@ import uuid
 
 from sqlalchemy import select, text
 
-from app.services.jobs_database import AsyncSessionLocal
 from app.models.db import UserModelSettings
+from app.services.jobs_database import AsyncSessionLocal
 from app.services.search_basis import basis_text
 
 

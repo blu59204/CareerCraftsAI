@@ -153,8 +153,8 @@ async def search_all_platforms(
     platforms: list[str] | None = None,
     timeout_s: int = 90,
 ) -> tuple[list[dict], list[str]]:
-    from app.services.job_connectors import FAMILIES
     from app.services.job_catalog import search_catalog
+    from app.services.job_connectors import FAMILIES
 
     selected = platforms or DEFAULT_PLATFORMS
     public = [p for p in selected if p in FAMILIES or ":" in p]

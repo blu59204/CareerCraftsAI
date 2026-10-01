@@ -103,6 +103,7 @@ def test_search_returns_empty_complete_with_warnings_and_no_llm_call():
 
 def test_45_postings_all_scored_then_ranked_before_truncation():
     from unittest.mock import AsyncMock
+
     from app.agents import job_search as js
 
     jobs = [_job(i) for i in range(45)]
@@ -131,6 +132,7 @@ def test_missing_titles_returns_failed_shape():
 
 def test_one_platform_failure_still_returns_others():
     import asyncio
+
     from app.services import job_search_service as svc
 
     good = [_job(0)]
@@ -160,6 +162,7 @@ def test_one_platform_failure_still_returns_others():
 def test_search_all_platforms_fans_out_over_every_location():
     """A multi-location request must hit every location, not just the first."""
     import asyncio
+
     from app.services import job_search_service as svc
 
     seen_locations: list[str] = []
@@ -184,6 +187,7 @@ def test_search_all_platforms_applies_remote_filter():
     """query['remote'] must filter out non-matching jobs post-fetch, even
     though no adapter accepts a remote/work-mode parameter."""
     import asyncio
+
     from app.services import job_search_service as svc
 
     def fake_adapter(query, location, max_results):

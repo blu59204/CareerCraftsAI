@@ -5,9 +5,10 @@ import json
 import os
 import tempfile
 import threading
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
 from playwright.async_api import async_playwright
 
 approvals = []
@@ -141,24 +142,51 @@ async def main():
             await worker.evaluate("chrome.action.openPopup()")
             import httpx
             import websockets
-            targets = httpx.get("http://127.0.0.1:9228/json/list").json()
-            popup_target = next(t for t in targets if t.get("url") == f"chrome-extension://{eid}/popup.html")
-            async with websockets.connect(popup_target["webSocketDebuggerUrl"]) as socket:
+
+            targets = (
+                await asyncio.to_thread(httpx.get, "http://127.0.0.1:9228/json/list")
+            ).json()
+            popup_target = next(
+                t
+                for t in targets
+                if t.get("url") == f"chrome-extension://{eid}/popup.html"
+            )
+            async with websockets.connect(
+                popup_target["webSocketDebuggerUrl"]
+            ) as socket:
                 counter = 0
+
                 async def cdp(method, params):
                     nonlocal counter
                     counter += 1
-                    await socket.send(json.dumps({"id":counter,"method":method,"params":params}))
+                    await socket.send(
+                        json.dumps({"id": counter, "method": method, "params": params})
+                    )
                     while True:
-                        result=json.loads(await socket.recv())
-                        if result.get("id")==counter: return result.get("result", {})
+                        result = json.loads(await socket.recv())
+                        if result.get("id") == counter:
+                            return result.get("result", {})
+
                 await asyncio.sleep(1)
-                rect=await cdp("Runtime.evaluate", {"expression":"JSON.stringify(document.querySelector('#approve-submit').getBoundingClientRect().toJSON())", "returnByValue":True})
-                rect=json.loads(rect["result"]["value"])
-                assert rect["width"]>0
-                point={"x":rect["x"]+rect["width"]/2,"y":rect["y"]+rect["height"]/2,"button":"left","clickCount":1}
-                await cdp("Input.dispatchMouseEvent", {"type":"mousePressed",**point})
-                await cdp("Input.dispatchMouseEvent", {"type":"mouseReleased",**point})
+                rect = await cdp(
+                    "Runtime.evaluate",
+                    {
+                        "expression": "JSON.stringify(document.querySelector('#approve-submit').getBoundingClientRect().toJSON())",
+                        "returnByValue": True,
+                    },
+                )
+                rect = json.loads(rect["result"]["value"])
+                assert rect["width"] > 0
+                point = {
+                    "x": rect["x"] + rect["width"] / 2,
+                    "y": rect["y"] + rect["height"] / 2,
+                    "button": "left",
+                    "clickCount": 1,
+                }
+                await cdp("Input.dispatchMouseEvent", {"type": "mousePressed", **point})
+                await cdp(
+                    "Input.dispatchMouseEvent", {"type": "mouseReleased", **point}
+                )
                 await asyncio.sleep(1)
             assert len(approvals) == 1
             assert "error" in await content(

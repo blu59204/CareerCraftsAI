@@ -10,8 +10,9 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.models.db import UserDocument, ResumePersona
-from app.services import job_connectors as connectors, search_basis
+from app.models.db import ResumePersona, UserDocument
+from app.services import job_connectors as connectors
+from app.services import search_basis
 from app.services.github_profile import analyze, public_login
 from app.services.job_matching import rule_score
 
@@ -60,19 +61,13 @@ from app.services.job_matching import rule_score
         (
             "smartrecruiters",
             {
-                "content": [
-                    {"name": "Engineer", "id": "1", "location": {"city": "Remote"}}
-                ],
+                "content": [{"name": "Engineer", "id": "1", "location": {"city": "Remote"}}],
                 "totalFound": 1,
             },
         ),
         (
             "workable",
-            {
-                "jobs": [
-                    {"title": "Engineer", "url": "https://jobs.example/a", "id": "1"}
-                ]
-            },
+            {"jobs": [{"title": "Engineer", "url": "https://jobs.example/a", "id": "1"}]},
         ),
         (
             "recruitee",
@@ -147,9 +142,7 @@ async def test_recorded_connector(family, payload, monkeypatch):
     monkeypatch.setattr(settings, "ADZUNA_APP_ID", "test-id")
     monkeypatch.setattr(settings, "ADZUNA_APP_KEY", "test-key")
     monkeypatch.setattr(settings, "WORKABLE_API_TOKENS", {"company": "test-token"})
-    result = await connectors.fetch_page(
-        connectors.Source(family, family, "company"), "Engineer"
-    )
+    result = await connectors.fetch_page(connectors.Source(family, family, "company"), "Engineer")
     assert len(result.jobs) == 1
     assert result.jobs[0]["platform"] == family
     assert result.jobs[0]["title"] == "Engineer"
@@ -170,9 +163,7 @@ async def test_jsonld_respects_robots(monkeypatch):
         body = (
             "User-agent: *\nDisallow: /"
             if url.endswith("robots.txt")
-            else '<script type="application/ld+json">'
-            + json.dumps(posting)
-            + "</script>"
+            else '<script type="application/ld+json">' + json.dumps(posting) + "</script>"
         )
         return httpx.Response(200, text=body, request=httpx.Request("GET", url))
 
@@ -183,9 +174,7 @@ async def test_jsonld_respects_robots(monkeypatch):
         )
     assert (
         connectors.jsonld_jobs(
-            '<script type="application/ld+json">'
-            + json.dumps({"@graph": [posting]})
-            + "</script>",
+            '<script type="application/ld+json">' + json.dumps({"@graph": [posting]}) + "</script>",
             "https://jobs.example/a",
         )[0]["title"]
         == "Engineer"
@@ -215,7 +204,7 @@ def test_conservative_dedupe_dates_and_tracking():
     result = connectors.dedupe([first, second, old], 30, now)
     assert len(result) == 1 and len(result[0]["occurrences"]) == 2
     assert connectors.posted("2026-10-01T12:00:00-05:00").hour == 17
-    assert connectors.posted("invalid") == None
+    assert connectors.posted("invalid") is None
 
 
 class BasisDB:
@@ -237,9 +226,7 @@ class BasisDB:
         entity = statement.column_descriptions[0]["entity"]
         rows = self.personas if entity == ResumePersona else self.documents
         ids = [value for key, value in params.items() if key.startswith("id_")]
-        owned = [
-            row for row in rows if row.user_id == uid and (not ids or row.id == ids[0])
-        ]
+        owned = [row for row in rows if row.user_id == uid and (not ids or row.id == ids[0])]
         result = MagicMock()
         result.scalar_one_or_none.return_value = owned[0] if owned else None
         return result
@@ -248,23 +235,15 @@ class BasisDB:
 @pytest.mark.asyncio
 async def test_resume_and_persona_idor_and_deleted_default():
     owner, other = uuid.uuid4(), uuid.uuid4()
-    owned = UserDocument(
-        id=uuid.uuid4(), user_id=owner, doc_type="resume", raw_text="Python"
-    )
-    foreign = UserDocument(
-        id=uuid.uuid4(), user_id=other, doc_type="resume", raw_text="Secret"
-    )
-    persona = ResumePersona(
-        id=uuid.uuid4(), user_id=owner, primary_resume_id=foreign.id
-    )
+    owned = UserDocument(id=uuid.uuid4(), user_id=owner, doc_type="resume", raw_text="Python")
+    foreign = UserDocument(id=uuid.uuid4(), user_id=other, doc_type="resume", raw_text="Secret")
+    persona = ResumePersona(id=uuid.uuid4(), user_id=owner, primary_resume_id=foreign.id)
     db = BasisDB([owned, foreign], [persona])
     for kwargs in ({"resume_id": foreign.id}, {"persona_id": persona.id}):
         with pytest.raises(HTTPException) as error:
             await search_basis.resolve_basis(db, owner, **kwargs)
         assert error.value.status_code == 404
-    db.default = search_basis.SearchDefault(
-        user_id=owner, kind="resume", basis_id=uuid.uuid4()
-    )
+    db.default = search_basis.SearchDefault(user_id=owner, kind="resume", basis_id=uuid.uuid4())
     document, _ = await search_basis.resolve_basis(db, owner)
     assert document.id == owned.id and db.default is None
 
@@ -314,6 +293,7 @@ def test_matching_and_github_private_exclusion():
 )
 async def test_public_fetch_rejects_private_dns(monkeypatch, address):
     import asyncio
+
     from app.services.public_http import public_get
 
     monkeypatch.setattr(
@@ -328,6 +308,7 @@ async def test_public_fetch_rejects_private_dns(monkeypatch, address):
 @pytest.mark.asyncio
 async def test_public_fetch_pins_dns_and_strips_redirect_secrets(monkeypatch):
     import asyncio
+
     from app.services import public_http
 
     monkeypatch.setattr(
@@ -383,6 +364,4 @@ async def test_public_fetch_pins_dns_and_strips_redirect_secrets(monkeypatch):
     assert all(call[0].host == "8.8.8.8" for call in calls)
     assert calls[0][1]["headers"]["Host"] == "public.example"
     assert calls[0][1]["extensions"]["sni_hostname"] == b"public.example"
-    assert not any(
-        key.lower() in {"authorization", "cookie"} for key in calls[1][1]["headers"]
-    )
+    assert not any(key.lower() in {"authorization", "cookie"} for key in calls[1][1]["headers"])
