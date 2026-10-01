@@ -59,6 +59,18 @@ code is shown once and only its hash is stored on the server.
    the icon shows **!** and the popup asks you to allow that site; the same
    tab continues once you do.
 
+Dedicated handlers (step-by-step loop: fill the step, ask about what is
+never guessed, press Next, repeat; only the final Submit goes through the
+review and popup approval):
+- **Workday** — job page → Apply → *Apply Manually* (never the resume
+  auto-parse) → your account → My Information… → Review → Submit. If you are
+  signed out the panel waits for you to sign in or create the account;
+  passwords are never read. Dropdown and date-picker questions that the
+  extension cannot fill are flagged for you to complete before it continues.
+- **SmartRecruiters** — *I'm interested* → the application, including forms
+  that live inside open shadow roots.
+- **Workable** — *Apply for this job* → the single-page form.
+
 Supported flows: LinkedIn **Easy Apply** (multi-step), **Naukri** (the review
 panel appears *before* Naukri's one-click Apply) and single-page ATS forms
 (Greenhouse, Lever, Ashby, Workday, most company career pages). Jobs that
@@ -92,8 +104,7 @@ the extension paces its actions like a person, and it never solves CAPTCHAs.
   (closed shadow DOM), platform drivers, and the runner.
 - `test/fixtures/` — Greenhouse-, LinkedIn- and Naukri-like pages.
 - `test/e2e_apply.mjs` — the whole apply flow in a real Chromium against
-  local fixture job sites (Greenhouse form, a form behind an in-page Apply button, Lever description → Apply,
-  company page with an embedded Greenhouse form) and a fake API that
+  local fixture job sites (Greenhouse, Lever, Workday, SmartRecruiters, Workable, a form behind an in-page Apply button, a company page with an embedded Greenhouse form) and a fake API that
   follows the backend's status rules. Run `node test/e2e_apply.mjs`.
 - `test/e2e_live.py` — end-to-end run against a local stack (see its
   docstring): real API, Temporal worker and this extension in Chromium.

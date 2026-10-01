@@ -328,10 +328,17 @@
     }
     const control = findApplyControl();
     if (!control) return null;
+    return clickThrough(ctx, control, findApplicationForm);
+  }
+
+  // Presses a control that leads towards the form, in this tab. A link goes
+  // through the background (target=_blank would open a tab nobody watches);
+  // anything else is clicked, and we wait for `ready()` to turn truthy or
+  // for the page to start leaving (the background then re-runs the driver
+  // there). Anything else, like a popup window or a dead button, ends null.
+  async function clickThrough(ctx, control, ready) {
     const href = control.tagName === "A" ? httpsHref(control.getAttribute("href")) : null;
     if (href && href.split("#")[0] !== location.href.split("#")[0]) {
-      // Follow it here rather than clicking: target=_blank would open a tab
-      // the extension is not watching.
       await ctx.api.navigate(href);
       return NAVIGATING;
     }
@@ -340,10 +347,7 @@
     window.addEventListener("beforeunload", () => (leaving = true), { once: true });
     await ctx.delay();
     dom.clickLike(control);
-    // Either the form appears in place, or the page navigates and the
-    // background re-runs this driver on the new page. Anything else (a
-    // popup window, a dead button) ends as "no form found".
-    return waitFor(() => findApplicationForm() || (leaving ? NAVIGATING : null), 15000);
+    return waitFor(() => ready() || (leaving ? NAVIGATING : null), 15000);
   }
 
   const genericDriver = {
@@ -648,13 +652,255 @@
     },
   };
 
+  // ── Multi-step portals: Workday, SmartRecruiters, Workable ─────────────
+  // One wizard loop, three small configurations. Each pass reads the current
+  // step from the page (so a re-injection after any navigation resumes
+  // correctly), fills it from the plan, asks the user about what CareerCraft
+  // never guesses, then presses Next. Only the final Submit goes through the
+  // review panel and the popup approval; accounts and passwords are never
+  // touched (password inputs are not snapshotted).
+
+  const SUBMIT_BTN_RE = /^(submit( (your )?application)?|send application)$/i;
+  const NEXT_BTN_RE = /^(next|continue|save and continue|save & continue|continue to next step|review)$/i;
+  const ATS_SUCCESS_RE =
+    /application (has been |was )?(successfully )?(submitted|sent|received)|thank(s| you) for applying|we.ve received your application|we have received your application/i;
+
+  function visibleOne(selector, root) {
+    return dom.deepQueryAll(root || document, selector).find((e) => dom.isVisible(e)) || null;
+  }
+
+  function buttonLabel(b) {
+    return (dom.textOf(b) || b.value || b.getAttribute("aria-label") || "").trim();
+  }
+
+  function primaryFrom(buttons) {
+    const enabled = buttons.filter((b) => dom.isVisible(b) && !b.disabled);
+    const submit = enabled.find((b) => SUBMIT_BTN_RE.test(buttonLabel(b)));
+    if (submit) return { el: submit, kind: "submit" };
+    const next = enabled.find((b) => NEXT_BTN_RE.test(buttonLabel(b)));
+    if (next) return { el: next, kind: "next" };
+    return { el: null, kind: null, buttons: enabled };
+  }
+
+  function stepErrors(root) {
+    return dom
+      .deepQueryAll(root, "[aria-invalid='true'], .artdeco-inline-feedback--error, [data-automation-id='errorBanner'], [data-automation-id='errorMessage']")
+      .filter((e) => dom.isVisible(e));
+  }
+
+  const ANY_BUTTON = "button, input[type=submit], input[type=button], [role=button]";
+
+  const workdayAdvance = '[data-automation-id="bottom-navigation-next-button"], [data-automation-id="pageFooterNextButton"]';
+  const workdayCfg = {
+    label: "Workday",
+    success: ATS_SUCCESS_RE,
+    stepDelay: [1200, 1700],
+    loginMessage: "Sign in or create your Workday account in this tab, then press Continue. CareerCraft never sees your password.",
+    signedOut: () =>
+      !!visibleOne('[data-automation-id="signInContent"], [data-automation-id="signInSubmitButton"], [data-automation-id="createAccountSubmitButton"]'),
+    findRoot() {
+      const next = visibleOne(workdayAdvance);
+      return next ? next.closest('[data-automation-id="applyFlowPage"], main, [role="main"]') || document.body : null;
+    },
+    findPrimary(root) {
+      const nav = primaryFrom(dom.deepQueryAll(document, workdayAdvance));
+      return nav.el ? nav : primaryFrom(dom.deepQueryAll(root, ANY_BUTTON));
+    },
+    // Job page → Apply → "Apply Manually" (never the resume auto-parse, so
+    // answers come from CareerCraft's own plan) → account step → form.
+    async enter(ctx) {
+      const manualSel = '[data-automation-id="applyManually"]';
+      const ready = () => visibleOne(manualSel) || workdayCfg.findRoot() || workdayCfg.signedOut();
+      if (!visibleOne(manualSel)) {
+        const apply = visibleOne('[data-automation-id="adventureButton"]') || findApplyControl();
+        if (!apply) return null;
+        if ((await clickThrough(ctx, apply, ready)) === NAVIGATING) return NAVIGATING;
+      }
+      const manual = visibleOne(manualSel);
+      if (!manual) return null;
+      return clickThrough(ctx, manual, () => workdayCfg.findRoot() || workdayCfg.signedOut());
+    },
+  };
+
+  const smartRecruitersCfg = {
+    label: "SmartRecruiters",
+    success: ATS_SUCCESS_RE,
+    stepDelay: [900, 1300],
+    signedOut: () => false,
+    findRoot() {
+      if (!/\/oneclick-ui\//i.test(location.pathname)) return null;
+      const root = document.querySelector("form") || document.body;
+      return dom.deepQueryAll(root, "input,select,textarea").some((e) => e.type !== "hidden" && dom.isVisible(e)) ? root : null;
+    },
+    findPrimary: (root) => primaryFrom(dom.deepQueryAll(root, ANY_BUTTON)),
+    async enter(ctx) {
+      const apply = visibleOne('a[href*="/oneclick-ui/"], [data-test="apply-button"]') || findApplyControl();
+      return apply ? clickThrough(ctx, apply, smartRecruitersCfg.findRoot) : null;
+    },
+  };
+
+  const workableCfg = {
+    label: "Workable",
+    success: ATS_SUCCESS_RE,
+    stepDelay: [900, 1300],
+    signedOut: () => false,
+    findRoot: () => visibleOne('form[data-ui="application-form"]') || Array.from(document.forms).find(looksLikeApplication) || null,
+    findPrimary(root) {
+      const found = primaryFrom(dom.deepQueryAll(root, ANY_BUTTON));
+      return found.el ? found : { ...found, el: visibleOne('button[data-ui="apply-button"], button[type="submit"]', root), kind: "submit" };
+    },
+    async enter(ctx) {
+      const apply = visibleOne('[data-ui="overview-apply"], a[href$="/apply/"], a[href$="/apply"]') || findApplyControl();
+      return apply ? clickThrough(ctx, apply, workableCfg.findRoot) : null;
+    },
+  };
+
+  async function ensureSignedIn(ctx, cfg) {
+    for (let attempt = 0; attempt < 5 && cfg.signedOut(); attempt++) {
+      await ctx.api.event("login_required", { message: cfg.loginMessage });
+      const res = await ctx.panel.showLoginRequired({
+        company: ctx.task.company,
+        role: ctx.task.role,
+        message: attempt === 0 ? cfg.loginMessage : "Still signed out — finish signing in, then press Continue.",
+      });
+      if (res.action !== "continue") {
+        await ctx.api.event("cancelled", { message: "Cancelled while signing in" });
+        return false;
+      }
+      await dom.delay(600, 900);
+    }
+    if (cfg.signedOut()) throw new Error(`Could not detect a signed-in ${cfg.label} session`);
+    return true;
+  }
+
+  function makeAtsDriver(cfg) {
+    return {
+      async run(ctx) {
+        if (!(await ensureSignedIn(ctx, cfg))) return;
+        if (await guardCaptcha(ctx)) return;
+
+        if (!cfg.findRoot()) {
+          if ((await cfg.enter(ctx)) === NAVIGATING) return NAVIGATING;
+          await waitFor(() => cfg.signedOut() || cfg.findRoot(), 15000);
+          if (!(await ensureSignedIn(ctx, cfg))) return;
+          await waitFor(cfg.findRoot, 15000);
+        }
+        if (!cfg.findRoot()) throw new Error(`Could not find the ${cfg.label} application form on this page`);
+
+        await ctx.api.event("filling", { message: `Filling the ${cfg.label} application` });
+        const answered = new Map(); // what earlier steps filled, for the final review
+        for (let step = 0; step < 20; step++) {
+          const m = cfg.findRoot();
+          if (!m) throw new Error(`The ${cfg.label} form closed unexpectedly`);
+          if (await guardCaptcha(ctx, m)) return;
+
+          const snap = dom.snapshot(m);
+          const plan = snap.fields.length ? await ctx.api.plan(location.href, snap.fields) : { fields: [], unresolved_required: [] };
+          if (!plan) throw new Error("Could not reach CareerCraft to plan this step");
+          await applyPlan(ctx, snap, plan.fields);
+          const resumeInfo = await attachResumeIfNeeded(ctx, snap, plan.fields);
+          const merged = mergeFields(snap.fields, plan, { resumeFilename: resumeInfo && resumeInfo.filename });
+
+          if (plan.unresolved_required.length) {
+            await ctx.api.event("needs_input", { message: "A few required questions need your answer." });
+            const res = await ctx.panel.showNeedsInput({
+              company: ctx.task.company,
+              role: ctx.task.role,
+              fields: merged.fields.filter((f) => plan.unresolved_required.includes(f.field_id) || f.requires_review),
+              optionsByFieldId: merged.optionsByFieldId,
+            });
+            if (res.action !== "continue") {
+              await ctx.api.event("cancelled", { message: "Cancelled by user" });
+              return;
+            }
+            await applyPlan(ctx, snap, plan.fields, res.typed);
+            if (res.remember) await rememberAnswers(ctx, merged.fields, res.typed);
+            for (const f of merged.fields) {
+              if (res.typed && Object.prototype.hasOwnProperty.call(res.typed, f.field_id)) f.value = res.typed[f.field_id];
+            }
+          }
+          for (const f of merged.fields) if (!isEmpty(f.value)) answered.set(`${f.label}|${f.field_id}`, f);
+
+          let primary = cfg.findPrimary(m);
+          if (!primary.el) {
+            const chosen = await decideAdvanceButton(ctx, primary.buttons || []);
+            if (chosen) primary = { el: chosen, kind: SUBMIT_BTN_RE.test(buttonLabel(chosen)) ? "submit" : "next" };
+          }
+          if (!primary.el) throw new Error(`Could not find the Next or Submit button in ${cfg.label}`);
+
+          if (primary.kind === "submit") {
+            await ctx.api.event("review", { message: "Ready for your review" });
+            const decision = await ctx.panel.showReview({
+              company: ctx.task.company,
+              role: ctx.task.role,
+              fields: Array.from(answered.values()),
+              optionsByFieldId: merged.optionsByFieldId,
+            });
+            if (decision.action !== "submit") {
+              await ctx.api.event("cancelled", { message: "Cancelled before submitting" });
+              return;
+            }
+            await applyPlan(ctx, snap, plan.fields, decision.typed);
+            if (decision.remember) await rememberAnswers(ctx, merged.fields, decision.typed);
+
+            await ctx.delay();
+            await ctx.api.markSubmitting(m, primary.el);
+            dom.clickLike(primary.el);
+            const result = await waitForConfirmation(ctx, cfg.success, 20000);
+            await reportConfirmationResult(ctx, result, `${cfg.label} did not show a submission confirmation.`);
+            return;
+          }
+
+          await ctx.delay();
+          dom.clickLike(primary.el);
+          await dom.delay(...cfg.stepDelay);
+
+          const after = cfg.findRoot();
+          if (after && stepErrors(after).length) {
+            await ctx.api.event("needs_input", { message: `${cfg.label} flagged some answers — fix them, then press Continue.` });
+            const res = await ctx.panel.showNeedsInput({
+              company: ctx.task.company,
+              role: ctx.task.role,
+              message: `${cfg.label} flagged some answers — fix them in the form (dropdowns and date pickers included), then press Continue.`,
+              fields: [],
+              optionsByFieldId: {},
+            });
+            if (res.action !== "continue") {
+              await ctx.api.event("cancelled", { message: "Cancelled by user" });
+              return;
+            }
+          }
+        }
+        throw new Error(`${cfg.label} had too many steps`);
+      },
+    };
+  }
+
+  const workdayDriver = makeAtsDriver(workdayCfg);
+  const smartRecruitersDriver = makeAtsDriver(smartRecruitersCfg);
+  const workableDriver = makeAtsDriver(workableCfg);
+
   // ── Selection ────────────────────────────────────────────────────────────
+
+  // Hostname first (also covers an ATS opened from a company page), then the
+  // platform the server detected, then page markers for Workday tenants on a
+  // company's own domain.
+  function atsKey(task) {
+    const host = location.hostname;
+    const platform = (task && task.platform) || "";
+    if (/(^|\.)myworkdayjobs\.com$/.test(host) || /(^|\.)myworkdaysite\.com$/.test(host) || platform === "workday" || document.querySelector('[data-automation-id="adventureButton"], [data-automation-id="jobPostingHeader"]')) return "workday";
+    if (/(^|\.)smartrecruiters\.com$/.test(host) || platform === "smartrecruiters") return "smartrecruiters";
+    if (/(^|\.)workable\.com$/.test(host) || platform === "workable") return "workable";
+    return null;
+  }
+
+  const ATS_DRIVERS = { workday: workdayDriver, smartrecruiters: smartRecruitersDriver, workable: workableDriver };
 
   function select(task) {
     const platform = (task && task.platform) || "";
     if (platform === "linkedin" || /(^|\.)linkedin\.com$/.test(location.hostname)) return linkedinDriver;
     if (platform === "naukri" || /naukri\.com$/.test(location.hostname)) return naukriDriver;
-    return genericDriver;
+    return ATS_DRIVERS[atsKey(task)] || genericDriver;
   }
 
   // The submit click navigated to a new page (common on ATS forms): the
@@ -662,10 +908,10 @@
   async function confirmAfterNavigation(ctx) {
     const platform = (ctx.task && ctx.task.platform) || "";
     const regex =
-      platform === "linkedin" ? LINKEDIN_CONFIRM_RE : platform === "naukri" ? NAUKRI_SUCCESS_RE : GENERIC_SUCCESS_RE;
+      platform === "linkedin" ? LINKEDIN_CONFIRM_RE : platform === "naukri" ? NAUKRI_SUCCESS_RE : atsKey(ctx.task) ? ATS_SUCCESS_RE : GENERIC_SUCCESS_RE;
     const result = await waitForConfirmation(ctx, regex, 15000);
     await reportConfirmationResult(ctx, result, "The page after submitting does not show a confirmation.");
   }
 
-  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, NAVIGATING };
+  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, workdayDriver, smartRecruitersDriver, workableDriver, NAVIGATING };
 })();

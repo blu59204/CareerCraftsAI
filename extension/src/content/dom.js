@@ -45,10 +45,34 @@
     return existing;
   }
 
+  // querySelectorAll that also looks inside open shadow roots. Some ATS
+  // front ends (SmartRecruiters' web components) keep their whole form there.
+  function deepQueryAll(root, selector) {
+    const found = Array.from(root.querySelectorAll(selector));
+    if (root.shadowRoot) found.push(...deepQueryAll(root.shadowRoot, selector));
+    for (const el of root.querySelectorAll("*")) {
+      if (el.shadowRoot) found.push(...deepQueryAll(el.shadowRoot, selector));
+    }
+    return found;
+  }
+
+  function shadowTexts(root, out) {
+    for (const el of root.querySelectorAll("*")) {
+      if (!el.shadowRoot) continue;
+      for (const child of el.shadowRoot.children) out.push(textOf(child));
+      shadowTexts(el.shadowRoot, out);
+    }
+    return out;
+  }
+
   // The element a snapshot field id points at: its own id, or the marker
   // ensureId put on an element that had none.
   function elementFor(id) {
-    return document.getElementById(id) || document.querySelector(`[${FIELD_ATTR}="${CSS.escape(id)}"]`);
+    return (
+      document.getElementById(id) ||
+      deepQueryAll(document, `#${CSS.escape(id)}, [${FIELD_ATTR}="${CSS.escape(id)}"]`)[0] ||
+      null
+    );
   }
 
   // el.labels?.[0]?.innerText || aria-label || aria-labelledby text ||
@@ -145,7 +169,7 @@
   // byId/byName let a driver find the live elements again after planning.
   function snapshot(root) {
     root = root || document;
-    const nodes = Array.from(root.querySelectorAll("input,select,textarea")).filter(
+    const nodes = deepQueryAll(root, "input,select,textarea").filter(
       (e) => e.type !== "password" && e.type !== "hidden"
     );
     const fields = [];
@@ -299,13 +323,15 @@
   }
 
   function visibleText(root, limit) {
-    const text = textOf(root && root.body ? root.body : root || document.body);
+    const base = root && root.body ? root.body : root || document.body;
+    const text = [textOf(base), ...shadowTexts(base, [])].join(" ");
     return limit ? text.slice(0, limit) : text;
   }
 
   window.CareerCraftDOM = {
     isVisible,
     elementFor,
+    deepQueryAll,
     getLabel,
     getGroupLabel,
     snapshot,

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Data Engineer — Acme (Workday-like fixture)</title></head>
+<body>
+<!-- A small reconstruction of Workday's candidate flow, using the
+     data-automation-id attributes its pages expose: job page → Apply →
+     "Apply Manually" → account sign-in → My Information → Review → Submit. -->
+<div id="root"></div>
+<script>
+  const root = document.getElementById("root");
+  const isApply = location.pathname.endsWith("/apply");
+  const field = (id, label, extra = "") =>
+    `<label for="${id}">${label}</label><input id="${id}" name="${id}" ${extra}>`;
+
+  function renderJob() {
+    root.innerHTML = `<h1 data-automation-id="jobPostingHeader">Data Engineer</h1><p>Acme · Pune</p>
+      <button type="button" data-automation-id="adventureButton" id="apply">Apply</button><div id="modal"></div>`;
+    document.getElementById("apply").onclick = () => {
+      document.getElementById("modal").innerHTML = `<div role="dialog"><h2>Start Your Application</h2>
+        <a data-automation-id="autofillWithResume" href="#">Autofill with Resume</a>
+        <a data-automation-id="applyManually" href="${location.pathname}/apply">Apply Manually</a></div>`;
+    };
+  }
+
+  function renderSignIn() {
+    root.innerHTML = `<div data-automation-id="signInContent"><h2>Sign In</h2>
+      <input type="email" aria-label="Email Address"><input type="password" aria-label="Password">
+      <button type="button" data-automation-id="signInSubmitButton">Sign In</button></div>`;
+  }
+  window.__signIn = () => { sessionStorage.setItem("wd_signed_in", "1"); renderStep(1); };
+
+  const values = {};
+  function renderStep(n) {
+    if (n === 1) {
+      root.innerHTML = `<div data-automation-id="applyFlowPage"><h2>My Information</h2>
+        ${field("firstName", "First Name *", 'data-automation-id="legalNameSection_firstName" required')}
+        ${field("lastName", "Last Name *", 'data-automation-id="legalNameSection_lastName" required')}
+        ${field("email", "Email *", 'type="email" required')}
+        ${field("phone", "Phone Number", 'type="tel"')}
+        <label for="cv">Resume/CV *</label><input id="cv" type="file" data-automation-id="file-upload-input-ref" required>
+        <fieldset><legend>Will you now or in the future require visa sponsorship? *</legend>
+          <label><input type="radio" name="sponsor" value="yes" required> Yes</label>
+          <label><input type="radio" name="sponsor" value="no"> No</label></fieldset>
+        <div data-automation-id="errorBanner" hidden>Errors found. Fix them to continue.</div>
+        <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button></div>`;
+      document.getElementById("next").onclick = () => {
+        const page = document.querySelector('[data-automation-id="applyFlowPage"]');
+        let bad = false;
+        for (const el of page.querySelectorAll("input[required]:not([type=radio])")) {
+          const empty = el.type === "file" ? !el.files.length : !el.value;
+          el.setAttribute("aria-invalid", empty ? "true" : "false");
+          bad = bad || empty;
+        }
+        if (!page.querySelector("input[name=sponsor]:checked")) bad = true;
+        page.querySelector('[data-automation-id="errorBanner"]').hidden = !bad;
+        if (bad) return;
+        Object.assign(values, {
+          first_name: document.getElementById("firstName").value,
+          last_name: document.getElementById("lastName").value,
+          email: document.getElementById("email").value,
+          phone: document.getElementById("phone").value,
+          resume: document.getElementById("cv").files[0].name,
+          sponsorship: page.querySelector("input[name=sponsor]:checked").value,
+        });
+        setTimeout(() => renderStep(2), 300);
+      };
+    } else {
+      root.innerHTML = `<div data-automation-id="applyFlowPage"><h2>Review</h2>
+        <p>Please review your information before you submit.</p>
+        <button type="button" data-automation-id="bottom-navigation-next-button" id="submit">Submit</button></div>`;
+      document.getElementById("submit").onclick = () => {
+        fetch("/__submitted", { method: "POST", body: JSON.stringify(values) });
+        root.innerHTML = `<h1>Application Submitted</h1><p>Thank you for applying to Acme.</p>`;
+      };
+    }
+  }
+
+  if (!isApply) renderJob();
+  else if (sessionStorage.getItem("wd_signed_in") === "1") renderStep(1);
+  else renderSignIn();
+</script>
+</body>
+</html>

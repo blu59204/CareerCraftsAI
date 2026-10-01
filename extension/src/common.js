@@ -16,6 +16,8 @@ export const STATIC_HOST_ORIGINS = [
   "https://jobs.lever.co",
   "https://jobs.ashbyhq.com",
   "https://*.myworkdayjobs.com",
+  "https://jobs.smartrecruiters.com",
+  "https://apply.workable.com",
   "https://*.indeed.com",
   "https://www.foundit.in",
   "https://www.instahyre.com",

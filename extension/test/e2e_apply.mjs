@@ -10,7 +10,7 @@
 // host-resolver rules, so no request leaves this machine and no real
 // application is sent.
 //
-//   node extension/test/e2e_apply.mjs
+//   node extension/test/e2e_apply.mjs            (ONLY=Workday runs one scenario)
 //
 // Needs the `playwright` package (a global install is fine), a Chromium it
 // can launch (CHROMIUM_PATH overrides it) and openssl.
@@ -37,7 +37,7 @@ const { chromium } = loadPlaywright();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const extensionDir = path.resolve(here, "..");
 const fixture = (name) => fs.readFileSync(path.join(here, "fixtures", name), "utf8");
-const HOSTS = ["boards.greenhouse.io", "jobs.lever.co", "careers.indeed.com"];
+const HOSTS = ["boards.greenhouse.io", "jobs.lever.co", "careers.indeed.com", "acme.wd5.myworkdayjobs.com", "jobs.smartrecruiters.com", "apply.workable.com"];
 
 // ── Fake job sites (HTTPS, self-signed) ─────────────────────────────────
 
@@ -68,7 +68,7 @@ const site = https.createServer(
       res.end(body);
     };
     if (req.method === "POST" && url.pathname === "/__submitted") {
-      submissions.push({ site: "greenhouse", ...JSON.parse(await collect(req, "utf8")) });
+      submissions.push({ site: host, ...JSON.parse(await collect(req, "utf8")) });
       res.writeHead(204);
       return res.end();
     }
@@ -96,6 +96,9 @@ const site = https.createServer(
       }
       return html(page);
     }
+    if (host === "acme.wd5.myworkdayjobs.com") return html(fixture("workday/index.html"));
+    if (host === "jobs.smartrecruiters.com") return html(fixture("smartrecruiters/index.html"));
+    if (host === "apply.workable.com") return html(fixture("workable/index.html"));
     res.writeHead(404);
     res.end();
   }
@@ -229,7 +232,7 @@ function check(ok, message) {
 async function waitUntil(fn, timeoutMs, label) {
   const start = Date.now();
   for (;;) {
-    const value = await fn().catch(() => null);
+    const value = await Promise.resolve().then(fn).catch(() => null);
     if (value) return value;
     if (Date.now() - start > timeoutMs) throw new Error(`Timed out waiting for ${label}`);
     await new Promise((r) => setTimeout(r, 250));
@@ -261,6 +264,28 @@ async function panelClick(page, selector) {
       return model.border;
     }, 20000, `panel control ${selector}`);
     await page.mouse.click((box[0] + box[2]) / 2, (box[1] + box[5]) / 2);
+  } finally {
+    await cdp.detach();
+  }
+}
+
+// For failure output: what the review panel (closed shadow root) shows.
+async function panelHtml(page) {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const { root } = await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
+    const find = (node) => {
+      if (node.attributes && node.attributes.includes("careercraft-panel-host")) return node;
+      for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) {
+        const hit = find(child);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const shadow = find(root)?.shadowRoots?.[0];
+    if (!shadow) return "(no panel)";
+    const { outerHTML } = await cdp.send("DOM.getOuterHTML", { backendNodeId: shadow.backendNodeId });
+    return outerHTML.replace(/<style>[\s\S]*?<\/style>/, "").replace(/\s+/g, " ").slice(0, 1500);
   } finally {
     await cdp.detach();
   }
@@ -316,6 +341,17 @@ async function answerGreenhouse(page) {
   await panelClick(page, `[data-field-id="consent"] input[type=checkbox]`);
 }
 
+// "No" in the panel's dropdown for a radio group CareerCraft never guesses.
+async function pickNo(page, fieldId) {
+  await panelClick(page, `[data-field-id="${fieldId}"] select`);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+}
+
+const profileSubmitted = (s) =>
+  s.first_name === "Ada" && s.last_name === "Lovelace" && s.email === "ada@example.com" && s.resume === "ada-resume.pdf";
+
 const greenhouseSubmitted = (s) => s.first_name === "Ada" && s.sponsorship === "no" && s.consent === "on" && s.resume === "ada-resume.pdf";
 
 const SCENARIOS = [
@@ -338,6 +374,60 @@ const SCENARIOS = [
       await answerGreenhouse(page);
     },
     verify: greenhouseSubmitted,
+  },
+  {
+    name: "Workday: Apply → Apply Manually → sign-in → steps → Review → Submit",
+    url: `https://acme.wd5.myworkdayjobs.com:${sitePort}/acme/job/123`,
+    platform: "workday",
+    formHost: "acme.wd5.myworkdayjobs.com",
+    async answer(page) {
+      await page.waitForURL(/\/apply$/, { timeout: 25000 });
+      // Signed out: CareerCraft stops and waits for the person, and never
+      // touches the sign-in form.
+      await waitUntil(() => log.some((e) => e[3] === "login_required"), 20000, "login_required event");
+      check(await page.evaluate(() => document.querySelector("input[type=password]").value === ""), "stopped at the Workday sign-in without touching it");
+      await page.evaluate(() => window.__signIn());
+      await panelClick(page, `[data-role="primary"]`);
+      await page.waitForFunction(() => document.getElementById("firstName")?.value === "Ada", null, { timeout: 25000 });
+      await page.waitForFunction(() => document.getElementById("cv").files.length === 1, null, { timeout: 15000 });
+      check(true, "filled step 1 (My Information) and attached the resume");
+      await waitUntil(() => log.some((e) => e[3] === "needs_input"), 15000, "needs_input event");
+      await pickNo(page, "sponsor");
+      await panelClick(page, `[data-role="primary"]`);
+      await page.waitForFunction(() => document.querySelector("h2")?.textContent === "Review", null, { timeout: 25000 });
+      check(submissions.length === 0, "advanced Save and Continue to Review without submitting");
+      await waitUntil(() => log.some((e) => e[3] === "review"), 15000, "review event");
+      await new Promise((r) => setTimeout(r, 800));
+    },
+    verify: (s) => profileSubmitted(s) && s.sponsorship === "no",
+  },
+  {
+    name: "SmartRecruiters: I'm interested → form inside a shadow root",
+    url: `https://jobs.smartrecruiters.com:${sitePort}/Acme/123-backend-engineer`,
+    platform: "smartrecruiters",
+    formHost: "jobs.smartrecruiters.com",
+    async answer(page) {
+      await page.waitForURL(/\/oneclick-ui\//, { timeout: 25000 });
+      const filled = () => page.evaluate(() => {
+        const sr = document.querySelector("sr-application").shadowRoot;
+        return sr.getElementById("em").value === "ada@example.com" && sr.getElementById("cv").files.length === 1;
+      });
+      await waitUntil(filled, 25000, "shadow-DOM form filled");
+      check(true, "filled a form that only exists inside a shadow root");
+    },
+    verify: profileSubmitted,
+  },
+  {
+    name: "Workable: Apply for this job → application form",
+    url: `https://apply.workable.com:${sitePort}/acme/j/ABC123/`,
+    platform: "workable",
+    formHost: "apply.workable.com",
+    async answer(page) {
+      await page.waitForURL(/\/apply\/$/, { timeout: 25000 });
+      await page.waitForFunction(() => document.getElementById("email")?.value === "ada@example.com" && document.getElementById("resume").files.length === 1, null, { timeout: 25000 });
+      check(true, "filled the Workable form and attached the resume");
+    },
+    verify: profileSubmitted,
   },
   {
     name: "Lever description page → Apply link → form (submit navigates)",
@@ -380,6 +470,7 @@ try {
   await app.goto(appOrigin + "/");
 
   for (const [index, scenario] of SCENARIOS.entries()) {
+    if (process.env.ONLY && !scenario.name.includes(process.env.ONLY)) continue;
     console.log(`\n# ${scenario.name}`);
     log = [];
     submissions.length = 0;
@@ -410,6 +501,9 @@ try {
     } catch (e) {
       check(false, e.message);
       console.log("API calls:", JSON.stringify(log));
+      for (const pg of context.pages()) {
+        if (pg !== app) console.log("panel on", pg.url(), "=>", await panelHtml(pg).catch((err) => err.message));
+      }
       console.log("session:", JSON.stringify(await worker.evaluate(() => chrome.storage.session.get(null)).catch(() => null)));
       for (const pg of context.pages()) if (pg !== app) await pg.close();
       await worker.evaluate(() => chrome.storage.session.clear()).catch(() => {});
