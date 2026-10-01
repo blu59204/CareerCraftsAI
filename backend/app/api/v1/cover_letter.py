@@ -73,7 +73,10 @@ async def generate_cover_letter(
         input={"tone": payload.tone, "application_id": str(payload.application_id) if payload.application_id else None},
     )
     db.add(agent_run)
-    await db.flush()
+    # Committed, not just flushed: the orchestrator records the run through a
+    # separate sync connection, which would otherwise block on this open
+    # transaction's uncommitted insert and stall the event loop.
+    await db.commit()
 
     harness = await get_harness()
     try:
@@ -94,7 +97,7 @@ async def generate_cover_letter(
     except asyncio.TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
+        await db.commit()
         raise HTTPException(status_code=504, detail="Cover letter generation timed out") from None
 
     apply_harness_result(agent_run, harness_result)

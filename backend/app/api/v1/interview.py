@@ -46,7 +46,10 @@ async def start_session(
         input=body.model_dump(exclude_none=True),
     )
     db.add(agent_run)
-    await db.flush()
+    # Committed, not just flushed: the orchestrator records the run through a
+    # separate sync connection, which would otherwise block on this open
+    # transaction's uncommitted insert and stall the event loop.
+    await db.commit()
 
     harness = await get_harness()
     try:
@@ -63,7 +66,7 @@ async def start_session(
     except asyncio.TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
+        await db.commit()
         raise HTTPException(status_code=504, detail="Interview session start timed out") from None
     output = apply_harness_result(agent_run, harness_result) or {}
     await db.flush()
@@ -114,7 +117,10 @@ async def submit_answer(
         },
     )
     db.add(agent_run)
-    await db.flush()
+    # Committed, not just flushed: the orchestrator records the run through a
+    # separate sync connection, which would otherwise block on this open
+    # transaction's uncommitted insert and stall the event loop.
+    await db.commit()
 
     harness = await get_harness()
     try:
@@ -135,7 +141,7 @@ async def submit_answer(
     except asyncio.TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
+        await db.commit()
         raise HTTPException(status_code=504, detail="Answer evaluation timed out") from None
 
     output = apply_harness_result(agent_run, harness_result) or {}

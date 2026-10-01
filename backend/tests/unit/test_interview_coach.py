@@ -156,6 +156,9 @@ class _FakeInterviewDB:
     async def flush(self):
         return None
 
+    async def commit(self):
+        return None
+
 
 def _fake_session_row(session_id, user_id, questions, scores):
     row = MagicMock()

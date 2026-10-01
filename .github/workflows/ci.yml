@@ -80,7 +80,7 @@ jobs:
 
       - name: Durable workflow integration tests
         working-directory: backend
-        run: python -m pytest tests/integration/test_durable_workflows.py -v --timeout=90
+        run: python -m pytest tests/integration/test_durable_workflows.py tests/integration/test_inline_run_locking.py -v --timeout=90
         env:
           RUN_WORKFLOW_INTEGRATION: "1"
 

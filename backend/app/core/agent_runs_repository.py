@@ -6,6 +6,7 @@ status, output, and error after every agent node execution.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -22,6 +23,21 @@ async def upsert_agent_run(
     tokens_used: int | None = None,
     duration_ms: int | None = None,
     error: str | None = None,
+) -> None:
+    # The sync session blocks; run it off the event loop so a slow or
+    # lock-waiting write can never stall every other in-flight request.
+    await asyncio.to_thread(
+        _upsert_agent_run_sync, run_id, status, output, tokens_used, duration_ms, error
+    )
+
+
+def _upsert_agent_run_sync(
+    run_id: str,
+    status: str,
+    output: dict | None,
+    tokens_used: int | None,
+    duration_ms: int | None,
+    error: str | None,
 ) -> None:
     factory = _get_sync_factory()
     with factory() as db:

@@ -157,7 +157,10 @@ async def identify_contacts(
         input={"company_name": body.company_name, "role_context": body.role_context},
     )
     db.add(agent_run)
-    await db.flush()
+    # Committed, not just flushed: the orchestrator records the run through a
+    # separate sync connection, which would otherwise block on this open
+    # transaction's uncommitted insert and stall the event loop.
+    await db.commit()
 
     harness = await get_harness()
     try:
@@ -177,7 +180,7 @@ async def identify_contacts(
     except TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {HARNESS_TIMEOUT_SECONDS}s"}
-        await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=504, detail="LinkedIn outreach identification timed out"
         ) from None

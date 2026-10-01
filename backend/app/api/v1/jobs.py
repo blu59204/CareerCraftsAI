@@ -714,7 +714,10 @@ async def natural_language_search(
         input={"query": payload.query},
     )
     db.add(agent_run)
-    await db.flush()
+    # Committed, not just flushed: the orchestrator records the run through a
+    # separate sync connection, which would otherwise block on this open
+    # transaction's uncommitted insert and stall the event loop.
+    await db.commit()
 
     harness = await get_harness()
     try:
@@ -731,7 +734,7 @@ async def natural_language_search(
     except asyncio.TimeoutError:
         agent_run.status = "failed"
         agent_run.output = {"error": f"Timed out after {NL_SEARCH_TIMEOUT_SECONDS}s"}
-        await db.flush()
+        await db.commit()
         raise HTTPException(status_code=504, detail="Natural language search timed out") from None
     apply_harness_result(agent_run, harness_result)
     await db.flush()
