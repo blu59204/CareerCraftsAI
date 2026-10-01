@@ -399,3 +399,22 @@ passed 1,054 / 69 skipped; final isolated worker suite passed seven tests.
 Draft calls use the router's provider timeout/retries rather than cancelling a
 billable thread before its final token accounting. Manual browser verification
 remains pending and no real external application has been submitted.
+
+
+## Phase 2 implementation evidence (2026-10-01)
+
+Implemented all five workstreams. Search uses the owned selected resume/persona, persists a default, retrieves only its document_id in the existing provider-specific resume collection, and supports per-search overrides. Public discovery does not require a generative model. Semantic ranking uses the user's configured embedding provider; unavailable embeddings fall back to explicit rules with a warning. GitHub remains optional and its disconnected profile returns 404 with the stable three-key success shape.
+
+Public catalog contains 321 candidate boards, not 321 healthy boards. The read-only live probe verified 82 responding sources and 5,129 normalized jobs. Unavailable tenants remain isolated with negative caching and sanitized health. Workable requires an authorized read token; Adzuna requires licensed credentials; generic JSON-LD requires operator permission and robots compliance. No anti-bot evasion. Each source has a bounded page budget, timeouts/retries, a five-minute database lease, freshness/expiry handling, and cached source health. Adzuna and Remotive cache broad feeds, avoiding query-dependent cache contamination. Successful complete refreshes remove absent source occurrences. Temporal refresh is hourly with overlap SKIP.
+
+GitHub scans up to 100 owned public repositories, enriching languages and README for the first 12 to fit unauthenticated API quotas. Primary-language metadata is distinguished from measured language bytes. Activity uses public events from the last 90 days, limited by GitHub's 100-event response. README framework mentions are self-reported, never promoted to verified language evidence. No private repository content is fetched, prompted, or logged. OAuth is disabled unless the operator asserts a public-only read template. Public URL mode works without OAuth; deletes use version tombstones to defeat in-flight refresh races.
+
+New files: job_basis.py, github.py, search_basis.py, jobs_database.py, public_http.py, job_connectors.py, job_catalog.py, job_matching.py, github_profile.py, job_sources.json; separate JobSearchBasis and GitHubSettings components. Existing shared pages only import/render sections and pass selected basis/filter values. Migrations: 20261001090000_b_job_search_defaults.sql, 20261001091000_b_job_catalog.sql, 20261001092000_b_github_profiles.sql; matching down scripts are in rollback/.
+
+Contracts added: GET /jobs/search-bases; PATCH /jobs/search-basis with {basis:{kind,id}|null}; GET /jobs/sources; GET /jobs/catalog with role/location/sources/posted_within_days/resume_id/persona_id and a query-bound cursor; GET /integrations/github/profile; POST /integrations/github/public-profile {url}; POST /integrations/github/refresh; DELETE /integrations/github/data. Existing DELETE /integrations/github clears derived data and revokes the connection.
+
+Validation: backend unit/security 1,073 passed, 69 skipped before added SSRF cases; focused recorded/ownership/SSRF suite 20 passed. Frontend typecheck, lint and build pass. npm audit reports zero vulnerabilities after the lockfile fix. Disposable PostgreSQL migration/RLS/rollback check passes, including 100,000 catalog rows and 1,000 indexed vectors. The real MV3 controlled browser check passes: content cannot approve, trusted popup approves once, changed form and replay are rejected. Full external-site/OAuth manual steps remain documented in EXTENSION_CHECK.md and require operator accounts; no real application or email was sent.
+
+### Requests to A (additional validation findings)
+
+Shared Python dependencies have audit findings in the installed baseline (including pinned LangChain/LangGraph). Coordinated upgrades need A's regression review and workflow checkpoint compatibility validation; do not silently upgrade shared pins in the jobs branch. Existing resume.py documentation references a retired executor; update it in A's scope. Semantic embedding token metering uses the existing RAG provider behavior; the shared embedding factory should expose usage if provider-level accounting is required.
