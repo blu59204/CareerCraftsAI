@@ -60,6 +60,9 @@ interface UserPreferences {
   daily_search_enabled: boolean;
   // Opt-in: scan the connected Gmail for replies and move applications forward.
   inbox_tracking_enabled: boolean;
+  // Recruiter emails per rolling 24 hours, and whether approved-before senders go out unattended.
+  outreach_daily_cap: number;
+  outreach_auto_send: boolean;
 }
 
 interface FormState {
@@ -76,6 +79,8 @@ interface FormState {
   prefer_live_browser: boolean;
   daily_search_enabled: boolean;
   inbox_tracking_enabled: boolean;
+  outreach_daily_cap: string;
+  outreach_auto_send: boolean;
 }
 
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
@@ -119,6 +124,8 @@ const DEFAULT_FORM: FormState = {
   prefer_live_browser: false,
   daily_search_enabled: false,
   inbox_tracking_enabled: false,
+  outreach_daily_cap: "25",
+  outreach_auto_send: false,
 };
 
 function prefsToForm(prefs: UserPreferences): FormState {
@@ -136,6 +143,8 @@ function prefsToForm(prefs: UserPreferences): FormState {
     prefer_live_browser: Boolean(prefs.prefer_live_browser),
     daily_search_enabled: Boolean(prefs.daily_search_enabled),
     inbox_tracking_enabled: Boolean(prefs.inbox_tracking_enabled),
+    outreach_daily_cap: String(prefs.outreach_daily_cap ?? 25),
+    outreach_auto_send: Boolean(prefs.outreach_auto_send),
   };
 }
 
@@ -350,6 +359,8 @@ export default function ProfilePreferencesPage() {
         prefer_live_browser: form.prefer_live_browser,
         daily_search_enabled: form.daily_search_enabled,
         inbox_tracking_enabled: form.inbox_tracking_enabled,
+        outreach_daily_cap: Math.min(100, Math.max(1, parseInt(form.outreach_daily_cap, 10) || 25)),
+        outreach_auto_send: form.outreach_auto_send,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -793,6 +804,51 @@ export default function ProfilePreferencesPage() {
                 </div>
                 <StatusPill tone={form.inbox_tracking_enabled ? "primary" : "neutral"}>
                   {form.inbox_tracking_enabled ? "Checking daily" : "Off (default)"}
+                </StatusPill>
+              </PrefCard>
+
+              {/* J — recruiter emails */}
+              <PrefCard
+                className="lg:col-span-12"
+                delay={0.16}
+                tone={form.outreach_auto_send ? "primary" : "muted"}
+                icon={<EnvelopeSimple size={16} weight="light" />}
+                title="Recruiter emails"
+                meta={
+                  <Toggle
+                    checked={form.outreach_auto_send}
+                    onChange={(next) => set("outreach_auto_send", next)}
+                    label="Send verified emails without asking each time"
+                  />
+                }
+              >
+                <div>
+                  <p className="text-sm font-medium tracking-[-0.01em] text-foreground">
+                    Send verified emails without asking each time
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Every recruiter email waits for your approval on the Outreach page. After you have approved three,
+                    turning this on lets emails to verified addresses go out on their own. Unverified addresses are
+                    always held for you. One follow-up is drafted after six days, and nothing more is sent once the
+                    company replies.
+                  </p>
+                  <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                    Emails per day, at most
+                    <Input
+                      name="outreach_daily_cap"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={100}
+                      className="tabular-nums"
+                      trayClassName="w-24"
+                      value={form.outreach_daily_cap}
+                      onChange={(e) => set("outreach_daily_cap", e.target.value)}
+                    />
+                  </label>
+                </div>
+                <StatusPill tone={form.outreach_auto_send ? "primary" : "neutral"}>
+                  {form.outreach_auto_send ? "Auto-send after 3 approvals" : "Approve each (default)"}
                 </StatusPill>
               </PrefCard>
             </div>
