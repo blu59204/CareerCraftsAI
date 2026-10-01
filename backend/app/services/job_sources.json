@@ -2566,5 +2566,52 @@
     "permitted": true,
     "provenance": "official licensed API; inactive without credentials",
     "policy": "operator API contract required"
+  },
+  {
+    "id": "himalayas",
+    "family": "himalayas",
+    "tenant": "",
+    "permitted": true,
+    "refresh_hours": 3,
+    "provenance": "official public job API",
+    "policy": "attribution and outbound original link; respect terms and cache policy"
+  },
+  {
+    "id": "hn-whos-hiring",
+    "family": "hn_hiring",
+    "tenant": "",
+    "permitted": true,
+    "refresh_hours": 6,
+    "provenance": "Hacker News monthly hiring thread via public Algolia search",
+    "policy": "attribution and outbound original link; respect terms and cache policy"
+  },
+  {
+    "id": "rss:weworkremotely",
+    "family": "rss",
+    "tenant": "",
+    "permitted": true,
+    "refresh_hours": 3,
+    "provenance": "published RSS feed",
+    "policy": "attribution and outbound original link; respect terms and cache policy",
+    "url": "https://weworkremotely.com/remote-jobs.rss"
+  },
+  {
+    "id": "rss:weworkremotely-programming",
+    "family": "rss",
+    "tenant": "",
+    "permitted": true,
+    "refresh_hours": 3,
+    "provenance": "published RSS feed",
+    "policy": "attribution and outbound original link; respect terms and cache policy",
+    "url": "https://weworkremotely.com/categories/remote-programming-jobs.rss"
+  },
+  {
+    "id": "adzuna:in",
+    "family": "adzuna",
+    "tenant": "in",
+    "permitted": true,
+    "refresh_hours": 3,
+    "provenance": "official licensed API; inactive without credentials",
+    "policy": "operator API contract required"
   }
 ]

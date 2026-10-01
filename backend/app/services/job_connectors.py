@@ -26,6 +26,9 @@ FAMILIES = {
     "remotive",
     "remoteok",
     "arbeitnow",
+    "himalayas",
+    "hn_hiring",
+    "rss",
     "jsonld",
 }
 
@@ -37,6 +40,9 @@ class Source:
     tenant: str = ""
     url: str = ""
     permitted: bool = True
+    # How often the catalog re-reads this source: busy boards every few
+    # hours, quiet ones daily.
+    refresh_hours: int = 1
 
 
 @dataclass
@@ -114,27 +120,80 @@ def normalize(raw: dict, source: Source) -> dict | None:
     }
 
 
+# Hosts of applicant tracking systems. A posting on one of these is the
+# original; the same role on an aggregator or board is a pointer to it.
+_ATS_HOSTS = (
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "workable.com",
+    "smartrecruiters.com",
+    "recruitee.com",
+    "myworkdayjobs.com",
+    "icims.com",
+    "jobvite.com",
+    "bamboohr.com",
+)
+_COMPANY_SUFFIX = re.compile(
+    r"\b(inc|llc|ltd|limited|pvt|private|corp|corporation|co|gmbh|technologies|technology|"
+    r"solutions|labs|india)\b",
+    re.IGNORECASE,
+)
+
+
+def _squash(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def role_key(job: dict) -> str:
+    """The same role listed on different boards, whatever its URL: company
+    (without legal suffixes), exact title, and where (remote collapses)."""
+    company = _squash(_COMPANY_SUFFIX.sub(" ", str(job.get("company") or "")))
+    location = str(job.get("location") or "")
+    remote = job.get("remote") == "remote" or "remote" in location.lower()
+    title = _squash(str(job.get("title") or ""))
+    return f"{company}|{title}|{'remote' if remote else _squash(location)}"
+
+
+def _is_original(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _ATS_HOSTS)
+
+
+def _merge(old: dict, new: dict) -> dict:
+    """One role seen twice: keep the ATS posting as the main entry, remember
+    every place it was listed, and keep the earliest date and fullest text."""
+    primary, other = (
+        (new, old) if _is_original(new["url"]) and not _is_original(old["url"]) else (old, new)
+    )
+    merged = dict(primary)
+    merged["occurrences"] = list(
+        {item["source_id"]: item for item in old["occurrences"] + new["occurrences"]}.values()
+    )
+    dates = [d for d in (old.get("posted_at"), new.get("posted_at")) if d]
+    merged["posted_at"] = min(dates) if dates else None
+    if len(other.get("description") or "") > len(merged.get("description") or ""):
+        merged["description"] = other["description"]
+    return merged
+
+
 def dedupe(jobs: list[dict], days=30, now=None) -> list[dict]:
+    """Drop expired and old jobs, then merge duplicates: first by URL, then by
+    role across boards (see `role_key`)."""
     now = now or datetime.now(UTC)
     cutoff = now - timedelta(days=days)
-    out = {}
+    by_url: dict[str, dict] = {}
     for job in jobs:
         date, expiry = posted(job.get("posted_at")), posted(job.get("expires_at"))
         if (date and date < cutoff) or (expiry and expiry <= now):
             continue
         key = canonical_url(job["url"])
-        if key in out:
-            old = out[key]
-            old["occurrences"] = list(
-                {
-                    item["source_id"]: item for item in old["occurrences"] + job["occurrences"]
-                }.values()
-            )
-            if not old.get("posted_at"):
-                old["posted_at"] = job.get("posted_at")
-        else:
-            out[key] = dict(job)
-    return list(out.values())
+        by_url[key] = _merge(by_url[key], job) if key in by_url else dict(job)
+    by_role: dict[str, dict] = {}
+    for job in by_url.values():
+        key = role_key(job)
+        by_role[key] = _merge(by_role[key], job) if key in by_role else job
+    return list(by_role.values())
 
 
 class JobPostingParser(HTMLParser):
@@ -204,6 +263,112 @@ def jsonld_jobs(text: str, url: str) -> list[dict]:
     return out[:200]
 
 
+# ── community and feed sources ────────────────────────────────────────────
+
+
+def parse_hn_post(comment_html: str) -> dict | None:
+    """A "Who is hiring?" post: the first line is `Company | Role | Location | ...`.
+
+    Posts that do not follow that convention are skipped rather than guessed at.
+    """
+    first = re.split(r"<p>|\n", comment_html or "", maxsplit=1)[0]
+    parts = [plain(part) for part in first.split("|")]
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        return None
+    rest = parts[2:]
+    return {
+        "company": parts[0],
+        "title": parts[1],
+        "location": next((p for p in rest if p and "remote" not in p.lower()), ""),
+        "remote": any("remote" in p.lower() for p in parts),
+        "description": plain(comment_html),
+    }
+
+
+def parse_rss(xml_text: str, source_url: str) -> list[dict]:
+    """Items of an RSS feed as raw jobs. Titles of the form `Company: Role`
+    (We Work Remotely and similar) are split; otherwise the company is the
+    feed's host."""
+    from defusedxml import ElementTree
+
+    try:
+        root = ElementTree.fromstring(xml_text)
+    except ElementTree.ParseError:
+        return []
+    out = []
+    for item in root.iter("item"):
+        title = (item.findtext("title") or "").strip()
+        company, _, role = title.partition(": ")
+        if not role:
+            company, role = urlsplit(source_url).hostname or "", title
+        pub = item.findtext("pubDate")
+        try:
+            from email.utils import parsedate_to_datetime
+
+            posted_at = parsedate_to_datetime(pub).isoformat() if pub else None
+        except (TypeError, ValueError):
+            posted_at = None
+        out.append(
+            {
+                "id": item.findtext("guid") or item.findtext("link"),
+                "title": role,
+                "company": company,
+                "url": (item.findtext("link") or "").strip(),
+                "location": item.findtext("region") or "",
+                "remote": True,
+                "description": item.findtext("description"),
+                "posted_at": posted_at,
+            }
+        )
+    return out
+
+
+async def _fetch_hn_hiring(page: int) -> tuple[list[dict], str | None]:
+    """The latest monthly "Ask HN: Who is hiring?" thread, one page of posts
+    at a time, through HN's public Algolia search."""
+    found = await public_get(
+        "https://hn.algolia.com/api/v1/search_by_date?"
+        + urlencode({"tags": "story,author_whoishiring", "query": "who is hiring"})
+        + "&hitsPerPage=5"
+    )
+    found.raise_for_status()
+    thread = next(
+        (
+            hit
+            for hit in found.json().get("hits", [])
+            if str(hit.get("title", "")).lower().startswith("ask hn: who is hiring")
+        ),
+        None,
+    )
+    if not thread:
+        return [], None
+    story = thread["objectID"]
+    if not re.fullmatch(r"\d{1,12}", str(story)):
+        return [], None
+    response = await public_get(
+        "https://hn.algolia.com/api/v1/search_by_date?"
+        + urlencode({"tags": f"comment,story_{story}", "hitsPerPage": 100, "page": page - 1})
+    )
+    response.raise_for_status()
+    data = response.json()
+    rows = []
+    for hit in data.get("hits", []):
+        if str(hit.get("parent_id")) != str(story):
+            continue  # a reply, not a posting
+        job = parse_hn_post(hit.get("comment_text") or "")
+        if job:
+            job.update(
+                {
+                    "id": hit["objectID"],
+                    "url": f"https://news.ycombinator.com/item?id={hit['objectID']}",
+                    "posted_at": hit.get("created_at"),
+                }
+            )
+            rows.append(job)
+    more = page < int(data.get("nbPages", 0))
+    return rows, str(page + 1) if more else None
+
+
 async def fetch_page(source: Source, query: str = "", cursor: str | None = None) -> Page:
     if source.family not in FAMILIES or not source.permitted:
         raise ValueError("Source is not permitted")
@@ -215,6 +380,9 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
     if page < 1 or page > 10:
         raise ValueError("Pagination limit exceeded")
     headers = {}
+    if family == "hn_hiring":
+        rows, next_cursor = await _fetch_hn_hiring(page)
+        return Page([job for raw in rows if (job := normalize(raw, source))], next_cursor)
     urls = {
         "greenhouse": f"https://boards-api.greenhouse.io/v1/boards/{tenant}/jobs?content=true",
         "lever": f"https://api.lever.co/v0/postings/{tenant}?mode=json&limit=100&skip={(page-1)*100}",
@@ -225,6 +393,7 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         "remotive": "https://remotive.com/api/remote-jobs",
         "remoteok": "https://remoteok.com/api",
         "arbeitnow": f"https://www.arbeitnow.com/api/job-board-api?page={page}",
+        "himalayas": f"https://himalayas.app/jobs/api?limit=100&offset={(page-1)*100}",
     }
     if family == "workable":
         token = settings.WORKABLE_API_TOKENS.get(tenant)
@@ -254,11 +423,13 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
             policy.parse(robots.text.splitlines())
             if not policy.can_fetch("CareerCraftJobDiscovery", url):
                 raise ValueError("Robots disallows access")
+    elif family == "rss":
+        url = canonical_url(source.url)
     else:
         url = urls[family]
     response = await public_get(url, headers=headers)
     response.raise_for_status()
-    data = response.json() if family != "jsonld" else None
+    data = response.json() if family not in {"jsonld", "rss"} else None
     rows, next_cursor = [], None
     if family == "greenhouse":
         rows = [
@@ -393,6 +564,30 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
             for j in data.get("data", [])
         ]
         next_cursor = str(page + 1) if (data.get("links") or {}).get("next") else None
+    elif family == "himalayas":
+        rows = [
+            {
+                "id": j.get("guid") or j.get("applicationLink"),
+                "title": j.get("title"),
+                "company": j.get("companyName"),
+                "url": j.get("applicationLink") or j.get("guid"),
+                "location": ", ".join(j.get("locationRestrictions") or []) or "Worldwide",
+                "remote": True,
+                "description": j.get("description") or j.get("excerpt"),
+                "posted_at": j.get("pubDate"),
+                "expires_at": j.get("expiryDate"),
+                "salary_text": (
+                    f"{j.get('minSalary')}–{j.get('maxSalary')} {j.get('currency') or ''}".strip()
+                    if j.get("minSalary")
+                    else ""
+                ),
+            }
+            for j in data.get("jobs", [])
+        ]
+        total = int(data.get("totalCount") or 0)
+        next_cursor = str(page + 1) if page * 100 < total else None
+    elif family == "rss":
+        rows = parse_rss(response.text, url)
     elif family == "jsonld":
         rows = jsonld_jobs(response.text, url)
     return Page([job for raw in rows[:1000] if (job := normalize(raw, source))], next_cursor)
