@@ -122,7 +122,7 @@ def normalize(raw: dict, source: Source) -> dict | None:
 
 # Hosts of applicant tracking systems. A posting on one of these is the
 # original; the same role on an aggregator or board is a pointer to it.
-_ATS_HOSTS = (
+ATS_HOSTS = (
     "greenhouse.io",
     "lever.co",
     "ashbyhq.com",
@@ -155,16 +155,16 @@ def role_key(job: dict) -> str:
     return f"{company}|{title}|{'remote' if remote else _squash(location)}"
 
 
-def _is_original(url: str) -> bool:
+def is_ats_url(url: str) -> bool:
     host = (urlsplit(url).hostname or "").lower()
-    return any(host == h or host.endswith("." + h) for h in _ATS_HOSTS)
+    return any(host == h or host.endswith("." + h) for h in ATS_HOSTS)
 
 
 def _merge(old: dict, new: dict) -> dict:
     """One role seen twice: keep the ATS posting as the main entry, remember
     every place it was listed, and keep the earliest date and fullest text."""
     primary, other = (
-        (new, old) if _is_original(new["url"]) and not _is_original(old["url"]) else (old, new)
+        (new, old) if is_ats_url(new["url"]) and not is_ats_url(old["url"]) else (old, new)
     )
     merged = dict(primary)
     merged["occurrences"] = list(
