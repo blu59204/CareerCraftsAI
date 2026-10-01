@@ -21,7 +21,7 @@ from app.agents.state import AgentState
 from app.core.event_bus import emit
 from app.core.model_router import build_agent_llm
 from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
-from app.services.email_finder_service import find_recruiter_email as find_email_for_company
+from app.services.recruiter_email import find_recruiter_contact
 from app.services.job_platforms_service import JobListing, scrape_jobs
 
 logger = logging.getLogger(__name__)
@@ -280,14 +280,10 @@ async def _apply_to_job(
                     "url": job.job_url,
                 },
             )
-        # ── Find recruiter email (self-hosted, no API key) ──────────
-        recruiter = await find_email_for_company(job.company)
-        recruiter_email = recruiter["email"] if recruiter else None
-        recruiter_name = (
-            f"{recruiter.get('first_name', '')} {recruiter.get('last_name', '')}".strip()
-            if recruiter
-            else "Hiring Manager"
-        )
+        # ── Find and verify the recruiter's email ───────────────────
+        contact = (await find_recruiter_contact(job.company, posting_text=job.description)).best
+        recruiter_email = contact.email if contact else None
+        recruiter_name = (contact.name if contact else "") or "Hiring Manager"
 
         # ── Tailor resume ───────────────────────────────────────────
         state = AgentState(
@@ -337,6 +333,26 @@ async def _apply_to_job(
                 user_profile,
             )
 
+        if email_content and contact:
+            from app.services.outreach_service import queue_outreach
+
+            queued = await queue_outreach(
+                user_id,
+                company=job.company,
+                role=job.title,
+                to_email=contact.email,
+                verdict=contact.verdict,
+                email_source=contact.source,
+                verified_by=contact.verified_by,
+                subject=email_content["subject"],
+                body=email_content["body"],
+                job_application_id=(
+                    await _get_or_create_job_application(user_id, job) if job.job_url else None
+                ),
+                resume_version=(resume_sha256 or "")[:16] or None,
+            )
+            result["outreach_state"] = queued.state if queued else "not_queued"
+
         # ── AUTO MODE: Queue for approval (HITL gate preserved) ────
         # NOTE: Even in "auto" mode, we preserve the human-in-the-loop gate
         # as required by CLAUDE.md. The user must explicitly approve each
@@ -375,14 +391,7 @@ async def _apply_to_job(
                     result["apply_browser_queued"] = True
 
                 if email_content and recruiter_email:
-                    checkpoint_data["actions_pending"].append(
-                        {
-                            "action": "send_email",
-                            "to": recruiter_email,
-                            "subject": email_content["subject"],
-                            "body": email_content["body"],
-                        }
-                    )
+                    # Sending is approved in the outreach queue, not here.
                     result["email_draft"] = email_content
                     result["recruiter_email"] = recruiter_email
 

@@ -172,3 +172,23 @@ async def test_a_reply_cancels_everything_waiting_for_that_company(maker):
     states = {r.to_email: r.state for r in await _rows(maker, user)}
     assert states["other@acme.com"] == "cancelled"
     assert waiting.state == "held"  # the object we hold is stale; the row is what changed
+
+
+async def test_edit_cancel_and_stats(maker):
+    from app.services import outreach_service as service
+
+    user = await _member(maker)
+    row = await _queue(user, "a@acme.com")
+    assert await service.edit_outreach(user, str(row.id), "New subject", None)
+    assert await service.approve_outreach(user, str(row.id))
+    # wording is locked once approved
+    assert not await service.edit_outreach(user, str(row.id), "Sneaky", None)
+    assert await service.cancel_outreach(user, str(row.id))
+    assert not await service.cancel_outreach(user, str(row.id))
+    other = await _member(maker)
+    held = await _queue(other, "b@acme.com", "unknown")
+    assert not await service.cancel_outreach(user, str(held.id))  # not theirs
+
+    async with maker() as db:
+        stats = await service.outreach_stats(db, uuid.UUID(user))
+    assert stats["cancelled"] == 1 and stats["sent"] == 0

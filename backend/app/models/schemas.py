@@ -65,6 +65,8 @@ class UserPreferencesSchema(BaseModel):
     notify_weekly_digest: bool | None = None
     daily_search_enabled: bool | None = None
     inbox_tracking_enabled: bool | None = None
+    outreach_daily_cap: int | None = Field(default=None, ge=1, le=100)
+    outreach_auto_send: bool | None = None
 
 
 class UserPreferencesResponse(UserPreferencesSchema):

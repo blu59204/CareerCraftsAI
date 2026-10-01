@@ -24,7 +24,9 @@ from app.workflows.job_activities import (
     inbox_status_activity,
     list_daily_search_users_activity,
     list_inbox_tracking_users_activity,
+    list_outreach_users_activity,
     maintenance_activity,
+    outreach_activity,
     refresh_job_catalog_activity,
     run_job_search_activity,
 )
@@ -35,6 +37,7 @@ from app.workflows.scheduled import (
     InboxStatusWorkflow,
     JobCatalogRefreshWorkflow,
     MaintenanceWorkflow,
+    OutreachWorkflow,
 )
 
 WORKFLOWS = [
@@ -46,6 +49,7 @@ WORKFLOWS = [
     DailySearchWorkflow,
     DailyUserSearchWorkflow,
     InboxStatusWorkflow,
+    OutreachWorkflow,
     MaintenanceWorkflow,
 ]
 
@@ -65,5 +69,7 @@ ACTIVITIES = [
     list_daily_search_users_activity,
     list_inbox_tracking_users_activity,
     inbox_status_activity,
+    list_outreach_users_activity,
+    outreach_activity,
     maintenance_activity,
 ]

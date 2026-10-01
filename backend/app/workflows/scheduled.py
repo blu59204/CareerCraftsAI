@@ -16,7 +16,9 @@ with workflow.unsafe.imports_passed_through():
         inbox_status_activity,
         list_daily_search_users_activity,
         list_inbox_tracking_users_activity,
+        list_outreach_users_activity,
         maintenance_activity,
+        outreach_activity,
         refresh_job_catalog_activity,
     )
 
@@ -110,6 +112,39 @@ class InboxStatusWorkflow:
 
 
 @workflow.defn
+class OutreachWorkflow:
+    """Send approved recruiter emails and follow replies, per member, five at
+    a time. A member's failure never holds up the others."""
+
+    @workflow.run
+    async def run(self) -> dict:
+        listed = await workflow.execute_activity(
+            list_outreach_users_activity,
+            {},
+            start_to_close_timeout=timedelta(minutes=2),
+            retry_policy=_RETRY,
+        )
+        user_ids: list[str] = listed.get("user_ids", [])
+        failed = 0
+        for start in range(0, len(user_ids), _DAILY_SEARCH_BATCH):
+            batch = user_ids[start : start + _DAILY_SEARCH_BATCH]
+            results = await asyncio.gather(
+                *(
+                    workflow.execute_activity(
+                        outreach_activity,
+                        {"user_id": user_id},
+                        start_to_close_timeout=timedelta(minutes=10),
+                        retry_policy=_RETRY,
+                    )
+                    for user_id in batch
+                ),
+                return_exceptions=True,
+            )
+            failed += sum(isinstance(result, BaseException) for result in results)
+        return {"users": len(user_ids), "failed": failed}
+
+
+@workflow.defn
 class MaintenanceWorkflow:
     @workflow.run
     async def run(self) -> dict:
@@ -148,6 +183,11 @@ def schedule_specs() -> list[tuple[str, type, timedelta]]:
             "inbox-status-check",
             InboxStatusWorkflow,
             timedelta(hours=settings.INBOX_STATUS_INTERVAL_HOURS),
+        ),
+        (
+            "recruiter-outreach",
+            OutreachWorkflow,
+            timedelta(minutes=settings.OUTREACH_INTERVAL_MINUTES),
         ),
         (
             "maintenance",

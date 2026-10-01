@@ -490,6 +490,7 @@ async def test_ensure_schedules_registers_recurring_jobs(monkeypatch):
         "inbox-status-check",
         "maintenance",
         "public-job-catalog-refresh",
+        "recruiter-outreach",
     }
     handles["maintenance"].update.assert_awaited_once()  # existing one is updated
     handles["application-status-check"].delete.assert_awaited_once()
@@ -531,6 +532,8 @@ def test_every_started_workflow_is_registered_with_the_worker():
         "list_daily_search_users_activity",
         "list_inbox_tracking_users_activity",
         "inbox_status_activity",
+        "list_outreach_users_activity",
+        "outreach_activity",
         "maintenance_activity",
         "reserve_application_attempt",
     } <= names
@@ -603,3 +606,35 @@ async def test_inbox_status_scans_each_opted_in_member_and_survives_a_failure():
 
     assert result == {"users": 3, "failed": 1}
     assert sorted(scanned) == ["a", "c"]
+
+
+@pytest.mark.asyncio
+async def test_outreach_runs_each_member_and_survives_a_failure():
+    from app.workflows.scheduled import OutreachWorkflow
+
+    handled = []
+
+    @activity.defn(name="list_outreach_users_activity")
+    async def list_users(params: dict) -> dict:
+        return {"user_ids": ["a", "b"]}
+
+    @activity.defn(name="outreach_activity")
+    async def run_member(params: dict) -> dict:
+        if params["user_id"] == "a":
+            raise RuntimeError("Gmail unavailable")
+        handled.append(params["user_id"])
+        return {"sent": 1}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=QUEUE,
+            workflows=[OutreachWorkflow],
+            activities=[list_users, run_member],
+        ):
+            result = await env.client.execute_workflow(
+                OutreachWorkflow.run, id="outreach", task_queue=QUEUE
+            )
+
+    assert result == {"users": 2, "failed": 1}
+    assert handled == ["b"]

@@ -29,6 +29,7 @@ from app.api.v1 import (
     leads,
     linkedin,
     notifications,
+    outreach,
     rag,
     resume,
     salary,
@@ -266,6 +267,7 @@ app.add_middleware(
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(demo.router, prefix="/api/v1")
 app.include_router(agent_memory.router, prefix="/api/v1")
+app.include_router(outreach.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
 app.include_router(resume.router, prefix="/api/v1")

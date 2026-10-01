@@ -119,6 +119,25 @@ async def sent_in_last_day(db, user_id: uuid.UUID, now: datetime) -> int:
     ).scalar_one()
 
 
+async def list_outreach_users() -> list[str]:
+    """Members with something to send or a sent email still awaiting an answer."""
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            select(RecruiterOutreach.user_id)
+            .where(
+                or_(
+                    RecruiterOutreach.state == "approved",
+                    (RecruiterOutreach.state == "sent")
+                    & RecruiterOutreach.replied_at.is_(None)
+                    & RecruiterOutreach.bounced_at.is_(None)
+                    & (RecruiterOutreach.sent_at > datetime.now(UTC) - timedelta(days=30)),
+                )
+            )
+            .distinct()
+        )
+        return [str(user_id) for user_id in rows.scalars().all()]
+
+
 async def queue_outreach(
     user_id: str,
     *,
@@ -181,6 +200,64 @@ async def approve_outreach(user_id: str, outreach_id: str) -> bool:
         )
         await db.commit()
         return result.rowcount == 1
+
+
+async def cancel_outreach(user_id: str, outreach_id: str) -> bool:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(RecruiterOutreach)
+            .where(
+                RecruiterOutreach.id == uuid.UUID(outreach_id),
+                RecruiterOutreach.user_id == uuid.UUID(user_id),
+                RecruiterOutreach.state.in_(_PENDING),
+            )
+            .values(state="cancelled")
+        )
+        await db.commit()
+        return result.rowcount == 1
+
+
+async def edit_outreach(
+    user_id: str, outreach_id: str, subject: str | None, body: str | None
+) -> bool:
+    """Change the wording of an email that has not been approved yet."""
+    values = {k: v for k, v in (("subject", subject), ("body", body)) if v is not None}
+    if not values:
+        return False
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(RecruiterOutreach)
+            .where(
+                RecruiterOutreach.id == uuid.UUID(outreach_id),
+                RecruiterOutreach.user_id == uuid.UUID(user_id),
+                RecruiterOutreach.state.in_(("held", "draft")),
+            )
+            .values(**values)
+        )
+        await db.commit()
+        return result.rowcount == 1
+
+
+async def outreach_stats(db, user_id: uuid.UUID) -> dict:
+    """Counts for the dashboard: how many emails are in each stage."""
+    rows = await db.execute(
+        select(
+            RecruiterOutreach.state,
+            func.count(),
+            func.count(RecruiterOutreach.replied_at),
+            func.count(RecruiterOutreach.bounced_at),
+        )
+        .where(RecruiterOutreach.user_id == user_id)
+        .group_by(RecruiterOutreach.state)
+    )
+    stats = {"held": 0, "draft": 0, "approved": 0, "sent": 0, "failed": 0, "cancelled": 0}
+    replied = bounced = 0
+    for state, count, replies, bounces in rows.all():
+        stats[state] = stats.get(state, 0) + count
+        replied += replies
+        bounced += bounces
+    stats["replied"], stats["bounced"] = replied, bounced
+    return stats
 
 
 async def send_approved(user_id: str, gmail_factory=None) -> dict:
