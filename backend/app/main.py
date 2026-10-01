@@ -14,6 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import (
+    agent_memory,
     agents,
     candidate_profile,
     company,
@@ -264,6 +265,7 @@ app.add_middleware(
 # Routers
 app.include_router(users.router, prefix="/api/v1")
 app.include_router(demo.router, prefix="/api/v1")
+app.include_router(agent_memory.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
 app.include_router(rag.router, prefix="/api/v1")
 app.include_router(resume.router, prefix="/api/v1")
@@ -280,7 +282,7 @@ app.include_router(linkedin.router, prefix="/api/v1")
 app.include_router(candidate_profile.router, prefix="/api/v1")
 app.include_router(integrations.router, prefix="/api/v1")
 app.include_router(extension.router, prefix="/api/v1")
-app.include_router(memory_router)
+app.include_router(agent_memory.router)
 
 app.include_router(llm_gw)
 
