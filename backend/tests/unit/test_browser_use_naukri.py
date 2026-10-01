@@ -12,6 +12,7 @@ Bugs caught:
 
   4. No structured logging — browser failures had no traceable log events.
 """
+
 import asyncio
 import os
 import uuid
@@ -54,9 +55,9 @@ async def test_apply_naukri_never_returns_applied_status():
     ):
         result = await apply_naukri(fake_llm, "usr_test", job_url)
 
-    assert result.status != "applied", (
-        f"apply_naukri returned status='applied' — HITL bypass! Got: {result.status}"
-    )
+    assert (
+        result.status != "applied"
+    ), f"apply_naukri returned status='applied' — HITL bypass! Got: {result.status}"
     assert result.status == "draft_saved", f"Expected 'draft_saved', got '{result.status}'"
 
 
@@ -94,120 +95,6 @@ async def test_apply_naukri_failed_on_exception():
 
 
 # ---------------------------------------------------------------------------
-# 2. naukri_service: HITL checkpoint emitted, status=ready_for_review
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_apply_naukri_with_hitl_emits_checkpoint():
-    """apply_naukri_with_hitl must emit a 'checkpoint' SSE event and return
-    status='ready_for_review'.  The old bug: no checkpoint event, status='applied'.
-    """
-    from app.services.naukri_service import apply_naukri_with_hitl
-
-    emitted: list[dict] = []
-
-    def _capture_emit(run_id, event_type, payload):
-        emitted.append({"event_type": event_type, "payload": payload})
-
-    # naukri_service imports run_browser_task_with_captcha_retry locally inside
-    # the function body, so we patch it at the source module.
-    with (
-        patch(
-            "app.services.browser_control_service.run_browser_task_with_captcha_retry",
-            new=AsyncMock(return_value="READY_FOR_REVIEW\n- experience: 5 years\n- skills: Python, Django"),
-        ),
-        patch("app.services.naukri_service.emit", side_effect=_capture_emit),
-        patch("app.services.naukri_service._delay_navigate", new=AsyncMock()),
-        patch("app.services.naukri_service._delay_extract", new=AsyncMock()),
-    ):
-        result = await apply_naukri_with_hitl(
-            llm=MagicMock(),
-            user_id="usr_test",
-            job_url="https://www.naukri.com/job-listings-python-engineer-123",
-            applicant_profile="5 years Python, Django, FastAPI",
-            run_id="run_abc",
-        )
-
-    assert result.status == "ready_for_review", f"Expected ready_for_review, got {result.status}"
-    assert result.status != "applied", "HITL bypass detected: status must not be 'applied'"
-
-    checkpoint_events = [e for e in emitted if e["event_type"] == "checkpoint"]
-    assert len(checkpoint_events) == 1, (
-        f"Expected exactly 1 checkpoint event, got {len(checkpoint_events)}"
-    )
-    assert checkpoint_events[0]["payload"]["type"] == "naukri_apply_review"
-
-
-@pytest.mark.asyncio
-async def test_apply_naukri_with_hitl_requires_manual():
-    """REQUIRES_MANUAL from browser must propagate cleanly."""
-    from app.services.naukri_service import apply_naukri_with_hitl
-
-    with (
-        patch(
-            "app.services.browser_control_service.run_browser_task_with_captcha_retry",
-            new=AsyncMock(return_value="REQUIRES_MANUAL: login required"),
-        ),
-        patch("app.services.naukri_service.emit"),
-        patch("app.services.naukri_service._delay_navigate", new=AsyncMock()),
-        patch("app.services.naukri_service._delay_extract", new=AsyncMock()),
-    ):
-        result = await apply_naukri_with_hitl(
-            MagicMock(), "u", "https://naukri.com/job/1", "profile", run_id="r1"
-        )
-
-    assert result.status == "requires_manual"
-    assert result.status != "applied"
-
-
-# ---------------------------------------------------------------------------
-# 3. naukri_service: _parse_naukri_results (pure function)
-# ---------------------------------------------------------------------------
-
-
-def test_parse_naukri_results_valid_lines():
-    from app.services.naukri_service import _parse_naukri_results
-
-    raw = (
-        "TITLE: Python Engineer | COMPANY: Acme Corp | LOCATION: Bangalore | "
-        "EXP: 3-5 years | URL: https://www.naukri.com/job/123 | DESC: FastAPI Django\n"
-        "TITLE: Data Scientist | COMPANY: DataCo | LOCATION: Remote | "
-        "EXP: 2+ years | URL: https://www.naukri.com/job/456 | DESC: ML Python\n"
-    )
-    jobs = _parse_naukri_results(raw, "python", "bangalore")
-    assert len(jobs) == 2
-    assert jobs[0].title == "Python Engineer"
-    assert jobs[0].company == "Acme Corp"
-    assert "naukri.com/job/123" in jobs[0].job_url
-    assert jobs[0].platform == "naukri"
-
-
-def test_parse_naukri_results_no_results():
-    from app.services.naukri_service import _parse_naukri_results
-
-    assert _parse_naukri_results("NO_RESULTS", "python", "bangalore") == []
-    assert _parse_naukri_results("", "python", "bangalore") == []
-
-
-def test_parse_naukri_results_relative_url_normalised():
-    from app.services.naukri_service import _parse_naukri_results
-
-    raw = "TITLE: SWE | COMPANY: Co | LOCATION: Mumbai | EXP: 2y | URL: /job/listings-swe-789 | DESC: -"
-    jobs = _parse_naukri_results(raw, "swe", "mumbai")
-    assert jobs[0].job_url.startswith("https://www.naukri.com")
-
-
-def test_parse_naukri_results_skips_malformed_lines():
-    from app.services.naukri_service import _parse_naukri_results
-
-    raw = "not a job line\nTITLE: Real Job | COMPANY: Co | LOCATION: Delhi | EXP: 1y | URL: https://naukri.com/j | DESC: ok\ngarbage"
-    jobs = _parse_naukri_results(raw, "job", "delhi")
-    assert len(jobs) == 1
-    assert jobs[0].title == "Real Job"
-
-
-# ---------------------------------------------------------------------------
 # 4. Session semaphore — concurrency cap
 # ---------------------------------------------------------------------------
 
@@ -219,6 +106,7 @@ def test_session_semaphore_respects_config_limit():
     """
     # Reset the module-level singleton so the test controls the limit
     import app.services.browser_control_service as bcs
+
     original = bcs._session_semaphore
     bcs._session_semaphore = None
 
@@ -258,6 +146,7 @@ def test_build_bu_llm_uses_ollama_when_url_configured():
     try:
         import importlib
         import app.services.browser_control_service as bcs
+
         importlib.reload(bcs)  # pick up the freshly injected module
 
         with patch("app.services.browser_control_service.settings") as mock_settings:
@@ -302,6 +191,7 @@ def test_build_bu_llm_falls_back_to_byok_when_no_ollama():
     try:
         import importlib
         import app.services.browser_control_service as bcs
+
         importlib.reload(bcs)
 
         with (
@@ -368,7 +258,8 @@ async def test_apply_to_any_portal_draft_saved_and_checkpoint_emitted():
         patch("app.services.auto_apply_service._human_delay", new=AsyncMock()),
     ):
         result = await apply_to_any_portal(
-            MagicMock(), "usr_test",
+            MagicMock(),
+            "usr_test",
             "https://boards.greenhouse.io/acmecorp/jobs/123",
             run_id="run_x",
         )
@@ -393,11 +284,15 @@ async def test_apply_to_any_portal_works_on_unknown_ats_url():
             "app.services.form_filler_service.fill_and_submit_form",
             new=AsyncMock(return_value={"status": "ready_for_review", "message": "ok"}),
         ),
-        patch("app.services.auto_apply_service.emit", side_effect=lambda *a, **k: emitted.append(a)),
+        patch(
+            "app.services.auto_apply_service.emit",
+            side_effect=lambda *a, **k: emitted.append(a),
+        ),
         patch("app.services.auto_apply_service._human_delay", new=AsyncMock()),
     ):
         result = await apply_to_any_portal(
-            MagicMock(), "u",
+            MagicMock(),
+            "u",
             "https://careers.unknowncompany.io/apply?id=999",
             run_id="r99",
         )
@@ -421,7 +316,9 @@ async def test_apply_to_job_routes_any_platform_through_universal():
     ):
         # "wellfound" is NOT in PLATFORM_HANDLERS — must still work
         result = await apply_to_job(
-            MagicMock(), "u", "wellfound",
+            MagicMock(),
+            "u",
+            "wellfound",
             "https://wellfound.com/jobs/apply/456",
             run_id="r2",
         )

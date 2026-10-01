@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-COPY requirements.txt constraints.txt provider-tools.txt ./
+COPY requirements.lock provider-tools.txt ./
 
 # Install system dependencies for Playwright
 RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
@@ -32,9 +32,10 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-# Resolve audited dependencies first, then tools with obsolete upstream pins.
+# Exact versions from requirements.lock (compiled from requirements.txt +
+# constraints.txt), then tools with obsolete upstream pins.
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt -c constraints.txt && \
+    pip install --no-cache-dir -r requirements.lock && \
     pip install --no-cache-dir --no-deps -r provider-tools.txt && \
     playwright install chromium
 

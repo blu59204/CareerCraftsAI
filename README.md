@@ -238,15 +238,15 @@ NANGO_SECRET_KEY=<Nango secret — enables Gmail/Drive integrations>
 
 ### 2. Run database migrations
 
-The SQL files in `supabase/migrations/` are plain PostgreSQL (the directory name is historical). Apply `deploy/oracle-vm/postgres-bootstrap.sql` once first — it creates the roles and `auth.*` helper functions the migrations reference — then every migration in filename order:
+The SQL files in `supabase/migrations/` are plain PostgreSQL (the directory name is historical). `scripts/migrate.py` applies `deploy/oracle-vm/postgres-bootstrap.sql` (with `--bootstrap`, once, for the roles and `auth.*` helpers the migrations reference) and then every migration not yet recorded in its `schema_migrations` ledger:
 
 ```bash
-PGURL=postgresql://user:password@host:5432/dbname   # libpq form, not +asyncpg
-psql "$PGURL" -f deploy/oracle-vm/postgres-bootstrap.sql
-for f in supabase/migrations/*.sql; do psql "$PGURL" -v ON_ERROR_STOP=1 -f "$f"; done
+export DATABASE_URL=postgresql://user:password@host:5432/dbname
+python scripts/migrate.py --bootstrap   # first time
+python scripts/migrate.py               # afterwards: applies only new files
 ```
 
-One error is expected: the last statement of `0009_clerk_to_supabase.sql` creates a signup trigger on Supabase's `auth.users` table, which doesn't exist on plain PostgreSQL. It is safe to ignore, because the API provisions users on their first authenticated request.
+A database migrated by hand before the runner existed needs `--baseline` once; see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#2-apply-pending-database-migrations).
 
 ### 3. Start the stack
 
@@ -405,7 +405,6 @@ CareerCraftsAI/
 │   │       ├── browser_control_service.py # Playwright browser control
 │   │       ├── job_platforms_service.py  # Multi-platform job search
 │   │       ├── gmail_service.py          # Gmail MCP integration
-│   │       ├── hunter_service.py         # Hunter.io integration
 │   │       ├── proxycurl_service.py      # ProxyCurl LinkedIn data
 │   │       ├── exa_service.py            # Exa web search
 │   │       ├── token_budget_service.py   # LLM token budget tracking
@@ -604,17 +603,11 @@ For a single small VM, `deploy/oracle-vm/compose.yml` runs the whole stack with 
 
 ### 3. Run migrations
 
-Apply `deploy/oracle-vm/postgres-bootstrap.sql` and then `supabase/migrations/*.sql` in order, as in [Quick Start step 2](#2-run-database-migrations). The Oracle Compose stack runs the bootstrap automatically on first start.
+Run `scripts/migrate.py`, as in [Quick Start step 2](#2-run-database-migrations). The Oracle Compose stack runs the bootstrap automatically on first start.
 
-### 4. Configure GitHub Actions secrets
+### 4. Deploy updates
 
-| Secret | Value |
-|---|---|
-| `VPS_HOST` | Your server IP or hostname |
-| `VPS_USER` | SSH user (e.g. `ubuntu`) |
-| `VPS_SSH_KEY` | Private SSH key content |
-
-Pushes to `main` auto-deploy via `.github/workflows/cd.yml`.
+Deploys are manual: pull `master` on the VM and rebuild the Oracle Compose stack, as described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). There is no auto-deploy workflow.
 
 > See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete production deployment guide.
 
