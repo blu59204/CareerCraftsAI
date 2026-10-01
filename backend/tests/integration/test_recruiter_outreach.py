@@ -298,3 +298,82 @@ async def test_auto_apply_queue_tailors_attaches_and_starts_only_safe_jobs(maker
         hi = await db.get(JobApplication, ids["hi"])
         mid = await db.get(JobApplication, ids["mid"])
     assert str(hi.resume_id) == doc_ids[0] and mid.resume_id is None
+
+
+async def test_replying_to_the_needs_you_email_saves_the_answers(maker, monkeypatch):
+    import base64
+
+    import app.services.email_answers as answers
+    from app.models.db import CandidateAnswer, ExtensionTask
+
+    monkeypatch.setattr(answers, "AsyncSessionLocal", maker)
+    sent = []
+
+    async def fake_start(*args, **kwargs):
+        sent.append(kwargs)
+
+    monkeypatch.setattr("app.workflows.starters.start_notification", fake_start)
+    user = await _member(maker)
+    task_id = uuid.uuid4()
+    async with maker() as db:
+        db.add(
+            ExtensionTask(
+                id=task_id,
+                user_id=uuid.UUID(user),
+                workflow_id=f"w-{task_id}",
+                status="needs_input",
+                payload={
+                    "company": "Acme",
+                    "open_questions": [
+                        {"key": "notice_period", "label": "Notice period"},
+                        {"key": "salary", "label": "Expected salary"},
+                    ],
+                },
+            )
+        )
+        await db.commit()
+
+    def body(text):
+        return base64.urlsafe_b64encode(text.encode()).decode()
+
+    class Gmail:
+        def __init__(self, user_id):
+            pass
+
+        def search_threads(self, query, max_results=5):
+            assert answers.ref_for(task_id) in query
+            return [{"id": "m1", "threadId": "t1"}]
+
+        def get_thread(self, thread_id):
+            return {
+                "messages": [
+                    {
+                        "id": "m1",
+                        "internalDate": "1",
+                        "payload": {"headers": [{"name": "From", "value": "noreply@jobagent.ai"}]},
+                    },
+                    {
+                        "id": "m2",
+                        "internalDate": "2",
+                        "payload": {
+                            "headers": [{"name": "From", "value": f"Me <{user}@example.test>"}],
+                            "mimeType": "text/plain",
+                            "body": {"data": body("1: 30 days\n\n> 2: ignore me")},
+                        },
+                    },
+                ]
+            }
+
+    result = await answers.collect_answers(user, gmail_factory=Gmail)
+    assert result == {"answers_saved": 1, "tasks_answered": 1}
+    async with maker() as db:
+        rows = (await db.execute(select(CandidateAnswer))).scalars().all()
+        mine = [r for r in rows if str(r.user_id) == user]
+        assert [(r.question_key, r.answer["value"], r.approved_by_user) for r in mine] == [
+            ("notice_period", "30 days", True)
+        ]
+        task = await db.get(ExtensionTask, task_id)
+        assert [q["key"] for q in task.payload["open_questions"]] == ["salary"]
+    assert "1 question is still open" in sent[0]["body"]
+    # the same reply is not applied twice
+    assert (await answers.collect_answers(user, gmail_factory=Gmail))["answers_saved"] == 0

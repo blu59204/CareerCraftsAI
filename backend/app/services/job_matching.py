@@ -152,9 +152,16 @@ async def rank_jobs(user_id: str, context: dict, jobs: list[dict]):
     except Exception:
         # Optional evidence must never prevent a search.
         skills = []
+    from app.services.funding_signals import BONUS, funded_among
+    from app.services.job_connectors import _squash
+
+    funded = await funded_among([job.get("company", "") for job in jobs])
     matches = []
     for job in jobs:
         score, reasons = rule_score(job, basis, query, context.get("location", ""), skills)
+        if _squash(job.get("company", "")) in funded:
+            score = min(100, score + BONUS)
+            reasons.append("Company raised funding recently")
         matches.append(
             {
                 **job,

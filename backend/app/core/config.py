@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     SEARXNG_URL: str | None = None
     RAPIDAPI_KEY: str | None = None
     JOOBLE_API_KEY: str | None = None
+    GOOGLE_CSE_API_KEY: str | None = None
+    GOOGLE_CSE_ID: str | None = None
+    # Startup-news RSS feeds read for "X raises ..." headlines; empty disables.
+    FUNDING_FEEDS: list[str] = [
+        "https://inc42.com/feed/",
+        "https://yourstory.com/feed",
+    ]
     ADZUNA_APP_ID: str | None = None
     ADZUNA_APP_KEY: str | None = None
     WORKABLE_API_TOKENS: dict[str, str] = {}

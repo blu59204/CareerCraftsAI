@@ -2622,5 +2622,113 @@
     "refresh_hours": 3,
     "provenance": "official partner API; inactive without a key",
     "policy": "operator API key required; outbound original link; respect terms"
+  },
+  {
+    "id": "getro:peakxv",
+    "family": "getro",
+    "url": "https://jobs.peakxv.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Peak XV portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:accel",
+    "family": "getro",
+    "url": "https://jobs.accel.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Accel portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:lightspeed",
+    "family": "getro",
+    "url": "https://jobs.lightspeedvp.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Lightspeed portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:elevation",
+    "family": "getro",
+    "url": "https://jobs.elevationcapital.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Elevation portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:blume",
+    "family": "getro",
+    "url": "https://jobs.blume.vc",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Blume portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:nexus",
+    "family": "getro",
+    "url": "https://jobs.nexusvp.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Nexus portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:z47",
+    "family": "getro",
+    "url": "https://jobs.z47.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Z47 portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "getro:kalaari",
+    "family": "getro",
+    "url": "https://jobs.kalaari.com",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Kalaari portfolio job board (Getro); board address not verified, a wrong one only fails that source",
+    "policy": "public board search API used by the board's own site; stop on denial"
+  },
+  {
+    "id": "google:greenhouse",
+    "family": "google_cse",
+    "url": "site:boards.greenhouse.io India",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Google Programmable Search; needs GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID, inert without them",
+    "policy": "official search API; one page per day; links go to the employer's ATS"
+  },
+  {
+    "id": "google:lever",
+    "family": "google_cse",
+    "url": "site:jobs.lever.co India",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Google Programmable Search; needs GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID, inert without them",
+    "policy": "official search API; one page per day; links go to the employer's ATS"
+  },
+  {
+    "id": "google:ashby",
+    "family": "google_cse",
+    "url": "site:jobs.ashbyhq.com India",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Google Programmable Search; needs GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID, inert without them",
+    "policy": "official search API; one page per day; links go to the employer's ATS"
+  },
+  {
+    "id": "google:workday",
+    "family": "google_cse",
+    "url": "site:myworkdayjobs.com India",
+    "permitted": true,
+    "refresh_hours": 24,
+    "provenance": "Google Programmable Search; needs GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID, inert without them",
+    "policy": "official search API; one page per day; links go to the employer's ATS"
   }
 ]

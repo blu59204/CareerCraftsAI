@@ -375,7 +375,25 @@ async def plan_fields(db: AsyncSession, task: ExtensionTask, raw_fields: list[di
     unresolved_required = [
         p["field_id"] for p in plan if p["required"] and p["value"] in (None, "")
     ]
+    _remember_open_questions(task, plan)
     return {"fields": plan, "unresolved_required": unresolved_required}
+
+
+def _remember_open_questions(task: ExtensionTask, plan: list[dict]) -> None:
+    """Keep the unanswered questions on the task so the member can answer
+    them from the "waiting for you" email."""
+    open_questions = []
+    for entry in plan:
+        label = (entry["label"] or "").strip()
+        if (
+            entry["required"]
+            and entry["value"] in (None, "")
+            and entry["input_type"] not in {"file", "checkbox"}
+            and label
+        ):
+            open_questions.append({"key": answer_key(label), "label": label[:200]})
+    if open_questions:
+        task.payload = {**(task.payload or {}), "open_questions": open_questions[:10]}
 
 
 # ── Download package ───────────────────────────────────────────────────
