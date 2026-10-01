@@ -10,40 +10,38 @@ from app.models.db import User
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
-# kind -> (table, columns shown). Fixed strings: nothing from the request is
-# ever interpolated into SQL.
-_KINDS = {
-    "learnings": (
-        "agent_memory_learnings",
-        "id, agent_type, learning AS text, success_rate, sample_count, created_at",
-    ),
-    "preferences": (
-        "agent_memory_preferences",
-        "id, preference_key AS label, preference_value AS text, created_at",
-    ),
-    "procedures": (
-        "agent_memory_procedures",
-        "id, agent_type, trigger_desc AS text, success_count, last_used_at, created_at",
-    ),
-    "episodes": (
-        "agent_memory_episodes",
-        "id, agent_type, task_type, strategy, success, context_summary, "
-        "output_summary AS text, created_at",
-    ),
-}
+# kind -> fixed statements. Nothing from the request is ever interpolated
+# into SQL; the request only picks a key of these dicts.
 _LIST = {
-    kind: text(
-        f"SELECT {cols} FROM {table} WHERE user_id = :uid ORDER BY created_at DESC LIMIT 100"  # noqa: S608
-    )
-    for kind, (table, cols) in _KINDS.items()
+    "learnings": text(
+        "SELECT id, agent_type, learning AS text, success_rate, sample_count, created_at "
+        "FROM agent_memory_learnings WHERE user_id = :uid ORDER BY created_at DESC LIMIT 100"
+    ),
+    "preferences": text(
+        "SELECT id, preference_key AS label, preference_value AS text, created_at "
+        "FROM agent_memory_preferences WHERE user_id = :uid ORDER BY created_at DESC LIMIT 100"
+    ),
+    "procedures": text(
+        "SELECT id, agent_type, trigger_desc AS text, success_count, last_used_at, created_at "
+        "FROM agent_memory_procedures WHERE user_id = :uid ORDER BY created_at DESC LIMIT 100"
+    ),
+    "episodes": text(
+        "SELECT id, agent_type, task_type, strategy, success, context_summary, "
+        "output_summary AS text, created_at "
+        "FROM agent_memory_episodes WHERE user_id = :uid ORDER BY created_at DESC LIMIT 100"
+    ),
 }
 _DELETE_ONE = {
-    kind: text(f"DELETE FROM {table} WHERE user_id = :uid AND id = :id")  # noqa: S608
-    for kind, (table, _) in _KINDS.items()
+    "learnings": text("DELETE FROM agent_memory_learnings WHERE user_id = :uid AND id = :id"),
+    "preferences": text("DELETE FROM agent_memory_preferences WHERE user_id = :uid AND id = :id"),
+    "procedures": text("DELETE FROM agent_memory_procedures WHERE user_id = :uid AND id = :id"),
+    "episodes": text("DELETE FROM agent_memory_episodes WHERE user_id = :uid AND id = :id"),
 }
 _DELETE_ALL = {
-    kind: text(f"DELETE FROM {table} WHERE user_id = :uid")  # noqa: S608
-    for kind, (table, _) in _KINDS.items()
+    "learnings": text("DELETE FROM agent_memory_learnings WHERE user_id = :uid"),
+    "preferences": text("DELETE FROM agent_memory_preferences WHERE user_id = :uid"),
+    "procedures": text("DELETE FROM agent_memory_procedures WHERE user_id = :uid"),
+    "episodes": text("DELETE FROM agent_memory_episodes WHERE user_id = :uid"),
 }
 
 
