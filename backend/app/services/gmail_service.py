@@ -84,6 +84,43 @@ class GmailMCPClient:
             return {}
         return result.data if isinstance(result.data, dict) else {}
 
+    def get_thread_headers(self, thread_id: str) -> list[dict]:
+        """Sender, subject and date of every message in a thread (no bodies)."""
+        query = urlencode(
+            [
+                ("format", "metadata"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "Date"),
+            ]
+        )
+        try:
+            result = proxy_request(
+                user_id=self.user_id,
+                provider="gmail",
+                method="GET",
+                path=f"gmail/v1/users/me/threads/{quote(thread_id, safe='')}?{query}",
+            )
+        except Exception:
+            return []
+        data = result.data if isinstance(result.data, dict) else {}
+        messages = []
+        for message in data.get("messages", []):
+            headers = {
+                str(h.get("name", "")).lower(): str(h.get("value", ""))
+                for h in (message.get("payload") or {}).get("headers", [])
+                if isinstance(h, dict)
+            }
+            messages.append(
+                {
+                    "id": message.get("id", ""),
+                    "from": headers.get("from", ""),
+                    "subject": headers.get("subject", ""),
+                    "date": headers.get("date", ""),
+                }
+            )
+        return messages
+
     def send_message(self, to: str, subject: str, body: str) -> dict:
         message = EmailMessage()
         message["To"] = to
