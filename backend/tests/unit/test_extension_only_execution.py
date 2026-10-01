@@ -50,6 +50,8 @@ def test_retired_browser_routes_and_tables_are_not_in_the_application():
     from app.core.database import Base
     from app.main import app
 
-    assert not any(route.path.startswith("/api/v1/browser") for route in app.routes)
+    # OpenAPI paths are flattened on every FastAPI version; newer releases nest
+    # included routers in app.routes as objects without a .path.
+    assert not any(path.startswith("/api/v1/browser") for path in app.openapi()["paths"])
     assert "browser_sessions" not in Base.metadata.tables
     assert "browser_account_states" not in Base.metadata.tables

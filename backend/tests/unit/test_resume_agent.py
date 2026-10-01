@@ -53,7 +53,7 @@ def test_general_generation_persists_estimate_without_job(monkeypatch):
     parsed = _score_parsed_resume(OUTPUT_SCHEMA.model_validate_json(_valid_resume_json()), "")
     session = MagicMock()
     monkeypatch.setattr("app.core.sync_db._get_sync_factory", lambda: lambda: session)
-    monkeypatch.setattr("app.services.storage_service.upload_file", lambda *args: "test/resume.pdf")
+    monkeypatch.setattr("app.agents.resume_agent.upload_file", lambda *args: "test/resume.pdf")
     _persist_resume_document(str(uuid.uuid4()), None, "modern", parsed, "", b"%PDF-test")
     document = session.__enter__.return_value.add.call_args.args[0]
     assert document.ats_data["estimate"]["mode"] == "general"
