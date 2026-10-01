@@ -69,3 +69,11 @@ button:disabled { opacity: 0.6; cursor: default; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); flex: none; }
 .hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
 .error { color: var(--danger); margin: 12px 0 0; overflow-wrap: anywhere; }
+
+/* A long form review must not push the approval button out of the popup. */
+#approve-submit {
+  position: sticky;
+  bottom: 8px;
+  width: 100%;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}

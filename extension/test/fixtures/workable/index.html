@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Support Engineer — Acme (Workable-like fixture)</title></head>
+<body>
+<div id="root"></div>
+<script>
+  const root = document.getElementById("root");
+  if (!location.pathname.replace(/\/$/, "").endsWith("/apply")) {
+    root.innerHTML = `<h1>Support Engineer</h1><p>Acme · Remote</p>
+      <a data-ui="overview-apply" href="${location.pathname.replace(/\/$/, "")}/apply/">Apply for this job</a>`;
+  } else {
+    root.innerHTML = `<form data-ui="application-form" id="f" onsubmit="return false">
+      <h2>Submit your application</h2>
+      <label for="firstname">First name</label><input id="firstname" name="firstname" required>
+      <label for="lastname">Last name</label><input id="lastname" name="lastname" required>
+      <label for="email">Email</label><input id="email" name="email" type="email" required>
+      <label for="phone">Phone</label><input id="phone" name="phone" type="tel">
+      <label for="resume">Resume</label><input id="resume" name="resume" type="file" required>
+      <button type="submit" data-ui="apply-button" id="go">Submit application</button></form>`;
+    document.getElementById("f").addEventListener("submit", (e) => {
+      const f = e.target;
+      const data = { first_name: f.firstname.value, last_name: f.lastname.value, email: f.email.value, phone: f.phone.value, resume: f.resume.files[0]?.name };
+      fetch("/__submitted", { method: "POST", body: JSON.stringify(data) });
+      root.innerHTML = "<h2>Thank you for applying</h2><p>Your application has been submitted.</p>";
+    });
+  }
+</script>
+</body>
+</html>

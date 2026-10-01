@@ -1425,7 +1425,7 @@ export default function JobsPage() {
       if (res.data?.mode === "extension") {
         // Nudge the extension so the job opens now instead of on its next check.
         wakeExtension();
-        toast.success("Opening the job in your browser — review it there and press Submit in the CareerCraft panel");
+        toast.success("Opening the job in your browser. Review the form there, then approve the final Submit from the CareerCraft toolbar icon.");
       } else {
         toast.success("Live apply prep started — review before submitting");
       }

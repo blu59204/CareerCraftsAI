@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Platform Engineer (Lever-like fixture)</title></head>
+<body>
+  <h1>Submit your application</h1>
+  <form id="application-form" method="post" action="/acme/1/apply" enctype="multipart/form-data">
+    <label for="resume-upload-input">Resume/CV *</label><input id="resume-upload-input" name="resume" type="file" required>
+    <label>Full name *<input name="name" type="text" required></label>
+    <label>Email *<input name="email" type="email" required></label>
+    <label>Phone<input name="phone" type="tel"></label>
+    <button type="submit" id="btn-submit">Submit application</button>
+  </form>
+</body>
+</html>

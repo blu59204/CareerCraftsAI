@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Backend Engineer — Acme (SmartRecruiters-like fixture)</title></head>
+<body>
+<!-- A job page with an "I'm interested" link, then an application whose whole
+     form lives inside an open shadow root (as SmartRecruiters' web
+     components do), so nothing is reachable by a plain querySelector. -->
+<div id="root"></div>
+<script>
+  const root = document.getElementById("root");
+  if (!location.pathname.startsWith("/oneclick-ui/")) {
+    root.innerHTML = `<h1>Backend Engineer</h1><p>Acme · Remote</p>
+      <a data-test="apply-button" href="/oneclick-ui/company/Acme/publication/123">I'm interested</a>`;
+  } else {
+    class Application extends HTMLElement {
+      connectedCallback() {
+        const shadow = this.attachShadow({ mode: "open" });
+        shadow.innerHTML = `<style>label{display:block;margin-top:8px}</style>
+          <div id="view"><h2>Apply to Acme</h2>
+            <label for="fn">First name</label><input id="fn" name="firstName" required>
+            <label for="ln">Last name</label><input id="ln" name="lastName" required>
+            <label for="em">Email</label><input id="em" name="email" type="email" required>
+            <label for="ph">Phone</label><input id="ph" name="phone" type="tel">
+            <label for="cv">Resume</label><input id="cv" name="resume" type="file">
+            <button type="button" id="go">Submit</button></div>`;
+        shadow.getElementById("go").onclick = () => {
+          const v = (id) => shadow.getElementById(id).value;
+          const data = { first_name: v("fn"), last_name: v("ln"), email: v("em"), phone: v("ph"), resume: shadow.getElementById("cv").files[0]?.name };
+          fetch("/__submitted", { method: "POST", body: JSON.stringify(data) });
+          shadow.getElementById("view").innerHTML = "<h2>Thank you for applying!</h2><p>We have received your application.</p>";
+        };
+      }
+    }
+    customElements.define("sr-application", Application);
+    root.innerHTML = "<sr-application></sr-application>";
+  }
+</script>
+</body>
+</html>
