@@ -4,17 +4,25 @@ import re
 import urllib.parse
 import uuid
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.job_basis import router as basis_router
 from app.core.rate_limit import limiter
-from app.models.db import AgentRun, JobApplication, User, UserDocument, UserPreferences
+from app.models.db import (
+    ActionLog,
+    AgentRun,
+    JobApplication,
+    User,
+    UserDocument,
+    UserPreferences,
+)
 from app.schemas.jobs import JobSearchQuerySchema
 from app.workflows.starters import WorkflowUnavailable
 
@@ -90,8 +98,25 @@ class ApplicationResponse(BaseModel):
     resume_label: str | None = None
     outreach_status: str | None = None
     outreach_to: str | None = None
+    found_at: datetime | None = None
+    apply_state: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ApplicationIdsBody(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
+class ApplyStateBody(BaseModel):
+    state: Literal["opened", "applied", "failed"]
+
+
+class JobDescriptionResponse(BaseModel):
+    jd_text: str
+    role: str
+    company: str
+    source: Literal["application", "catalog"]
 
 
 class JobSearchProfileResponse(BaseModel):
@@ -828,16 +853,33 @@ async def search_jobs(
     return JobSearchResponse(run_id=run_id, queue_job_id=stable_job_id, queued=True)
 
 
+_SORTS = {
+    "found_desc": (JobApplication.found_at.desc(),),
+    "found_asc": (JobApplication.found_at.asc(),),
+    "match_desc": (JobApplication.match_score.desc().nulls_last(), JobApplication.found_at.desc()),
+    "match_asc": (JobApplication.match_score.asc().nulls_last(), JobApplication.found_at.desc()),
+}
+
+
 @router.get("/applications", response_model=list[ApplicationResponse])
 async def list_applications(
+    response: Response,
     status: str | None = None,
     location: str | None = None,
     source: str | None = Query(None, max_length=100),
     posted_within_days: int | None = Query(None, ge=1, le=90),
-    limit: int | None = Query(None, ge=1, le=200),
+    min_match: int | None = Query(None, ge=0, le=100),
+    found_after: datetime | None = None,
+    found_before: datetime | None = None,
+    sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    offset: int = Query(0, ge=0),
+    limit: int | None = Query(None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Filtered, sorted, paginated list. The total row count (before
+    offset/limit) is returned in the ``X-Total-Count`` header so the body
+    stays a plain list for existing callers."""
     if status and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of: {VALID_STATUSES}")
 
@@ -851,22 +893,133 @@ async def list_applications(
             JobApplication.posted_at
             >= datetime.now(timezone.utc) - timedelta(days=posted_within_days)  # noqa: UP017
         )
-    result = await db.execute(
-        query.order_by(
-            JobApplication.match_score.desc().nulls_last()
-            if status == "saved"
-            else JobApplication.applied_at.desc().nulls_last()
-        )
-    )
+    if min_match is not None:
+        query = query.where(JobApplication.match_score >= min_match)
+    if found_after:
+        query = query.where(JobApplication.found_at >= found_after)
+    if found_before:
+        query = query.where(JobApplication.found_at <= found_before)
+    if sort:
+        order = _SORTS[sort]
+    elif status == "saved":
+        order = (JobApplication.match_score.desc().nulls_last(),)
+    else:
+        order = (JobApplication.applied_at.desc().nulls_last(), JobApplication.found_at.desc())
+    result = await db.execute(query.order_by(*order))
+    # ponytail: example-URL/location filters run in Python over the member's own
+    # rows (hundreds, not millions); move them into SQL if that ever changes.
     apps = [
         app
         for app in result.scalars().all()
         if not is_example_job_url(app.job_url) and _matches_location_filter(app, location)
     ]
-    # `limit` is applied after the example-URL/location filters so callers get
-    # the number of real rows they asked for. Previously it was silently ignored.
-    apps = apps[:limit] if limit else apps
+    response.headers["X-Total-Count"] = str(len(apps))
+    apps = apps[offset : offset + limit] if limit else apps[offset:]
     return await _with_tracking(db, current_user.id, apps)
+
+
+async def _owned_applications(
+    db: AsyncSession, user_id: uuid.UUID, ids: list[uuid.UUID], *, include_deleted: bool = False
+) -> list[JobApplication]:
+    rows = await db.execute(
+        select(JobApplication)
+        .where(JobApplication.user_id == user_id, JobApplication.id.in_(ids))
+        .execution_options(include_deleted=include_deleted)
+    )
+    return list(rows.scalars().all())
+
+
+@router.post("/applications/delete")
+async def delete_applications(
+    body: ApplicationIdsBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft delete (undoable via /applications/restore)."""
+    apps = await _owned_applications(db, current_user.id, body.ids)
+    now = datetime.now(UTC)
+    for app in apps:
+        app.deleted_at = now
+        db.add(ActionLog(user_id=current_user.id, job_application_id=app.id, action="delete"))
+    await db.commit()
+    return {"deleted": [str(a.id) for a in apps]}
+
+
+@router.post("/applications/restore")
+async def restore_applications(
+    body: ApplicationIdsBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    apps = await _owned_applications(db, current_user.id, body.ids, include_deleted=True)
+    for app in apps:
+        app.deleted_at = None
+        db.add(ActionLog(user_id=current_user.id, job_application_id=app.id, action="restore"))
+    await db.commit()
+    return {"restored": [str(a.id) for a in apps]}
+
+
+@router.get("/applications/{application_id}/jd", response_model=JobDescriptionResponse)
+async def get_application_jd(
+    application_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The job description to tailor a resume against. Saved rows hold a
+    copy capped at 4000 chars (and some sources save none), so the shared
+    job catalog's full description wins when it is longer."""
+    apps = await _owned_applications(db, current_user.id, [application_id])
+    if not apps:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app = apps[0]
+    saved = (app.jd_text or "").strip()
+    catalog = ""
+    if app.job_url:
+        catalog = (
+            (
+                await db.execute(
+                    text("SELECT data->>'description' FROM job_catalog WHERE url = :url"),
+                    {"url": app.job_url},
+                )
+            ).scalar_one_or_none()
+            or ""
+        ).strip()
+    if not saved and not catalog:
+        raise HTTPException(status_code=404, detail="No job description saved for this role")
+    use_catalog = len(catalog) > len(saved)
+    return JobDescriptionResponse(
+        jd_text=catalog if use_catalog else saved,
+        role=app.role,
+        company=app.company,
+        source="catalog" if use_catalog else "application",
+    )
+
+
+@router.post("/applications/{application_id}/apply-state", response_model=ApplicationResponse)
+async def set_apply_state(
+    application_id: uuid.UUID,
+    body: ApplyStateBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Assisted apply in the member's own browser: the client opens the job
+    page (``opened``), then the member confirms ``applied`` or ``failed``.
+    ``applied`` also moves a saved row to status=applied (follow-ups start)."""
+    apps = await _owned_applications(db, current_user.id, [application_id])
+    if not apps:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app = apps[0]
+    app.apply_state = body.state
+    db.add(
+        ActionLog(user_id=current_user.id, job_application_id=app.id, action=f"apply_{body.state}")
+    )
+    await db.commit()
+    if body.state == "applied" and app.status == "saved":
+        await update_application_status(
+            application_id, StatusUpdateBody(status="applied"), db, current_user
+        )
+    await db.refresh(app)
+    return (await _with_tracking(db, current_user.id, [app]))[0]
 
 
 async def _with_tracking(db: AsyncSession, user_id: uuid.UUID, apps: list) -> list:

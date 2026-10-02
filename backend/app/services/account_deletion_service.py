@@ -66,7 +66,13 @@ async def _terminate_workflows(user_id: uuid.UUID) -> int:
             .all()
         )
         application_ids = (
-            (await db.execute(select(JobApplication.id).where(JobApplication.user_id == user_id)))
+            (
+                await db.execute(
+                    select(JobApplication.id)
+                    .where(JobApplication.user_id == user_id)
+                    .execution_options(include_deleted=True)
+                )
+            )
             .scalars()
             .all()
         )

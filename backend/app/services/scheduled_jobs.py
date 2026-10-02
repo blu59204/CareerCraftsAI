@@ -560,7 +560,7 @@ async def daily_search(payload: StatusCheckTrigger):
                         select(JobApplication).where(
                             JobApplication.user_id == user.id,
                             JobApplication.job_url == job.job_url,
-                        )
+                        ).execution_options(include_deleted=True)
                     )
                     if existing.scalar_one_or_none():
                         continue  # Skip duplicates

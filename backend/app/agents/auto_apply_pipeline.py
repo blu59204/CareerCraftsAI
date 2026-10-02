@@ -46,10 +46,14 @@ async def _get_or_create_job_application(user_id: str, job: JobListing) -> str:
                 _select(JobApplication).where(
                     JobApplication.user_id == uuid.UUID(user_id),
                     JobApplication.job_url == job.job_url,
-                )
+                ).execution_options(include_deleted=True)
             )
         ).scalar_one_or_none()
         if existing:
+            if existing.deleted_at is not None:
+                # The member deleted it, but is now explicitly applying again.
+                existing.deleted_at = None
+                await db.commit()
             return str(existing.id)
         row = JobApplication(
             user_id=uuid.UUID(user_id),

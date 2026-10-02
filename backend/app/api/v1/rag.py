@@ -5,11 +5,11 @@ import os
 import re
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
@@ -143,7 +143,7 @@ async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> 
             doc = res.scalar_one_or_none()
             if doc:
                 doc.ats_score = score
-                doc.ats_data = ats_data
+                doc.ats_data = {**(doc.ats_data or {}), **ats_data}
                 await db.commit()
     except Exception as exc:
         logger.warning("Background ATS scoring failed for doc %s: %s", doc_id, exc)
@@ -230,7 +230,7 @@ async def upload_document(
                 },
                 model_settings,
             )
-            embedded_at = datetime.now(timezone.utc)
+            embedded_at = datetime.now(UTC)
         except Exception as exc:
             logger.warning(
                 "Embedding failed for doc_type=%s user=%s: %s",
@@ -250,6 +250,8 @@ async def upload_document(
             ) + f"Document saved but not indexed for AI search: {reason}"
             embedded_at = None
 
+    if is_primary and doc_type == "resume":
+        await _clear_primary_resume(db, current_user.id)
     doc = UserDocument(
         user_id=current_user.id,
         doc_type=doc_type,
@@ -341,6 +343,51 @@ async def _refresh_stale_resume_scores(db: AsyncSession, user_id, docs) -> None:
             if not has_saved_jobs:
                 continue
         spawn_background(_score_resume_background(str(doc.id), str(user_id), doc.raw_text))
+
+
+async def _clear_primary_resume(db: AsyncSession, user_id) -> None:
+    await db.execute(
+        update(UserDocument)
+        .where(
+            UserDocument.user_id == user_id,
+            UserDocument.doc_type == "resume",
+            UserDocument.is_primary.is_(True),
+        )
+        .values(is_primary=False)
+    )
+
+
+@router.post("/documents/{document_id}/activate", response_model=DocumentResponse)
+async def activate_resume(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Make this resume the member's one active resume, then re-score it so
+    the dashboard and resume page (both read ``ats_score``) follow it."""
+    from app.core.background import spawn_background
+
+    doc = (
+        await db.execute(
+            select(UserDocument).where(
+                UserDocument.id == document_id,
+                UserDocument.user_id == current_user.id,
+                UserDocument.doc_type == "resume",
+            )
+        )
+    ).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    if not doc.is_primary:
+        await _clear_primary_resume(db, current_user.id)
+        doc.is_primary = True
+        await db.commit()
+        await db.refresh(doc)
+        if doc.raw_text:
+            spawn_background(
+                _score_resume_background(str(doc.id), str(current_user.id), doc.raw_text)
+            )
+    return doc
 
 
 @router.get("/documents/{document_id}/ats", response_model=dict)

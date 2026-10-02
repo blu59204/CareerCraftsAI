@@ -1733,7 +1733,7 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
                 select(JobApplication.id).where(
                     JobApplication.user_id == _to_uuid(user_id),
                     JobApplication.job_url == job["url"],
-                )
+                ).execution_options(include_deleted=True)
             ).scalar_one_or_none()
             if exists is not None:
                 continue
