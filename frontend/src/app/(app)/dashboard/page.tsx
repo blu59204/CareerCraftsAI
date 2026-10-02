@@ -508,10 +508,11 @@ export default function DashboardPage() {
 
       {/* ---- Command bento ------------------------------------------------ */}
       <Section aria-label="Command center">
-        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
-          {/* Next actions — the anchor panel */}
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:items-stretch">
+          {/* Next actions — the anchor panel. On lg it stretches to the right column's
+              height and pins the launchers to the bottom, so no blank strip is left under it. */}
           <Reveal className="min-w-0 lg:col-span-8">
-            <Bezel size="lg" tone="primary" coreClassName="flex flex-col p-4 sm:p-6">
+            <Bezel size="lg" tone="primary" className="h-full" coreClassName="flex flex-col p-4 sm:p-6">
               <PanelTitle
                 title="Next actions"
                 icon={<Lightning size={16} weight="light" />}
@@ -526,7 +527,7 @@ export default function DashboardPage() {
                 }
               />
 
-              <div className="mt-4" aria-live="polite">
+              <div className="mt-4 lg:flex-1" aria-live="polite">
                 {isLoading ? (
                   <RowSkeleton rows={3} />
                 ) : visibleActions.length > 0 ? (
