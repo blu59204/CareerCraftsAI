@@ -388,6 +388,8 @@ async def _fetch_getro(source: Source, query: str, page: int) -> tuple[list[dict
         _getro_networks[source.id] = network
     response = await public_get(
         f"https://api.getro.com/api/v2/collections/{network}/search/jobs",
+        # Getro answers 406 to the default `Accept: */*`.
+        headers={"Accept": "application/json"},
         json_body={"hitsPerPage": 100, "page": page - 1, "filters": {}, "query": query or ""},
     )
     response.raise_for_status()
@@ -580,6 +582,8 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
         headers["Authorization"] = (
             "Basic " + base64.b64encode(f"{settings.CAREERJET_API_KEY}:".encode()).decode()
         )
+        # Careerjet rejects requests without a Referer (403 "Undeclared referrer").
+        headers["Referer"] = settings.FRONTEND_URL.rstrip("/") + "/"
     elif family == "jooble":
         if not settings.JOOBLE_API_KEY:
             raise ValueError("Jooble credentials are not configured")

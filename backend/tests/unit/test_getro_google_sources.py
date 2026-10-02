@@ -38,6 +38,8 @@ async def test_getro_board_resolves_its_id_then_pages_through_jobs(monkeypatch):
     async def get(url, **kwargs):
         calls.append((url, kwargs.get("json_body")))
         if "api.getro.com" in url:
+            # Getro answers 406 without it.
+            assert kwargs["headers"]["Accept"] == "application/json"
             return httpx.Response(200, json=SEARCH, request=httpx.Request("POST", url))
         return httpx.Response(200, text=BOARD, request=httpx.Request("GET", url))
 
@@ -159,3 +161,5 @@ async def test_careerjet_is_inert_without_a_key_and_pages_with_one(monkeypatch):
     assert "locale_code=en_IN" in seen["url"] and seen["headers"]["Authorization"].startswith(
         "Basic "
     )
+    # Careerjet answers 403 "Undeclared referrer" without it.
+    assert seen["headers"]["Referer"]
