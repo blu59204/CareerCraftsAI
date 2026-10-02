@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { setPendingJd } from "@/lib/job-handoff";
+import { fetchApplicationJd } from "@/lib/applications-api";
 import {
   Bezel,
   EASE_VANGUARD,
@@ -41,7 +42,7 @@ import {
   listStagger,
   type StatusTone,
 } from "@/components/vanguard";
-import { APP_STAGES, STAGE_LABELS, STAGE_TONE, type ApplicationItem, type AppStage } from "./ApplicationKanban";
+import { APP_STAGES, STAGE_LABELS, STAGE_TONE, type ApplicationItem, type AppStage } from "./ApplicationList";
 
 type AgentRun = {
   id: string;
@@ -115,19 +116,25 @@ export function ApplicationDrawer({ application, open, onClose, onStageChange, a
 
   const visible = open && app !== null;
 
-  function customizeResume() {
+  const [customizing, setCustomizing] = useState(false);
+
+  // The row's jd_text is truncated/often empty, so ask the API (falls back to the shared job catalog).
+  async function customizeResume() {
     const current = app;
-    if (!current?.jobDescription?.trim()) {
-      toast.error("This saved role has no description to tailor against.");
-      return;
+    if (!current || customizing) return;
+    setCustomizing(true);
+    try {
+      const jd = await fetchApplicationJd(current.id);
+      if (!jd.jd_text?.trim()) throw Object.assign(new Error("empty"), { response: { status: 404 } });
+      setPendingJd({ jdText: jd.jd_text, role: current.role, company: current.company });
+      onClose();
+      router.push("/resume");
+    } catch (err) {
+      const notFound = (err as { response?: { status?: number } }).response?.status === 404;
+      toast.error(notFound ? "This saved role has no description to tailor against." : "Could not load the job description. Try again.");
+    } finally {
+      setCustomizing(false);
     }
-    setPendingJd({
-      jdText: current.jobDescription,
-      role: current.role,
-      company: current.company,
-    });
-    onClose();
-    router.push("/resume");
   }
 
   const panelMotion = reduce
@@ -159,6 +166,7 @@ export function ApplicationDrawer({ application, open, onClose, onStageChange, a
                   onClose={onClose}
                   onStageChange={onStageChange}
                   onCustomize={customizeResume}
+                  customizing={customizing}
                   activityRuns={activityRuns}
                 />
               </motion.div>
@@ -176,6 +184,7 @@ function DrawerBody({
   onClose,
   onStageChange,
   onCustomize,
+  customizing,
   activityRuns,
 }: {
   app: ApplicationItem;
@@ -183,6 +192,7 @@ function DrawerBody({
   onClose: () => void;
   onStageChange: (stage: AppStage) => void;
   onCustomize: () => void;
+  customizing: boolean;
   activityRuns: AgentRun[];
 }) {
   const source = safeSource(app.jobUrl);
@@ -308,20 +318,19 @@ function DrawerBody({
                 <div className="min-w-0 flex-1">
                   <h3 className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">Make this resume fit the role</h3>
                   <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
-                    {app.jobDescription
-                      ? "Use this job description to tailor your resume and check its match."
-                      : "Add the job description to this role before tailoring a resume."}
+                    Use this job description to tailor your resume and check its match.
                   </p>
                   <IslandButton
                     type="button"
                     tone="primary"
                     size="sm"
                     className="mt-4"
-                    disabled={!hasDescription}
+                    disabled={customizing}
+                    aria-busy={customizing}
                     onClick={onCustomize}
                     trailing
                   >
-                    Customize resume for this job
+                    {customizing ? "Loading description…" : "Customize resume for this job"}
                   </IslandButton>
                 </div>
               </div>
