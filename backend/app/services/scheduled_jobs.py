@@ -469,8 +469,8 @@ async def daily_search(payload: StatusCheckTrigger):
     from app.agents.memory.manager import MemoryManager
     from app.core.database import AsyncSessionLocal
     from app.core.model_router import get_llm
-    from app.models.db import JobApplication, UserPreferences
     from app.models.db import User as UserModel
+    from app.models.db import UserPreferences
     from app.services.indian_platforms_service import search_google_jobs
     from app.services.job_platforms_service import scrape_all_platforms
 
@@ -554,11 +554,15 @@ async def daily_search(payload: StatusCheckTrigger):
                 all_jobs.extend(google_jobs)
                 jobs_found += len(all_jobs)
 
-                # Share everything found with other users' searches (never fails the run).
+                # Normalize once: shared with other users' searches via the
+                # catalog (never fails the run) and scored for this member.
+                from app.agents.job_search import _persist_saved_jobs
                 from app.services.job_catalog import write_through
+                from app.services.job_matching import rank_jobs
+                from app.services.job_search_service import _normalize
 
-                await write_through(
-                    [
+                found = [
+                    _normalize(
                         {
                             "url": j.job_url,
                             "title": j.title,
@@ -567,38 +571,22 @@ async def daily_search(payload: StatusCheckTrigger):
                             "description": j.description,
                             "posted_at": j.date_posted,
                             "salary_text": j.salary or "",
-                        }
-                        for j in all_jobs
-                        if j.job_url
-                    ],
-                    "scheduled",
+                        },
+                        "scheduled",
+                    )
+                    for j in all_jobs
+                    if j.job_url
+                ]
+                await write_through(found, "scheduled")
+
+                # Same scoring and save rule as an interactive search: every
+                # match >= SAVE_MIN_SCORE becomes a saved application.
+                matches, _ = await rank_jobs(
+                    user_id, {"titles": [search_term], "location": location}, found
                 )
-
-                # Daily results are unscored, so only the top few become saved
-                # applications; everything above is still shared via the catalog.
-                for job in all_jobs[:10]:
-                    existing = await db.execute(
-                        select(JobApplication).where(
-                            JobApplication.user_id == user.id,
-                            JobApplication.job_url == job.job_url,
-                        ).execution_options(include_deleted=True)
-                    )
-                    if existing.scalar_one_or_none():
-                        continue  # Skip duplicates
-
-                    app = JobApplication(
-                        user_id=user.id,
-                        company=job.company,
-                        role=job.title,
-                        location=job.location,
-                        job_url=job.job_url,
-                        jd_text=job.description,
-                        status="saved",
-                    )
-                    db.add(app)
-                    applications_queued += 1
-
-                await db.commit()
+                applications_queued += await asyncio.to_thread(
+                    _persist_saved_jobs, user_id, matches
+                )
             except Exception as exc:
                 logger.warning("Daily search failed for user %s: %s", user.id, exc)
                 # One member's failed write must not poison the session for

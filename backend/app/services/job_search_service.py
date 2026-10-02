@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,9 @@ PLATFORM_TIMEOUT_SEC = 25
 # LinkedIn via JobSpy takes ~40s for one location; under the 25s default its
 # results were always discarded.
 _ADAPTER_TIMEOUT_SEC = {"jobspy": 75}
+
+# Catalog jobs this recent can stand in for a live scrape of a default source.
+LIVE_SKIP_FRESHNESS = timedelta(days=1)
 
 # Per-adapter upstream fetch size. This bounds one live request, never the result set.
 LIVE_FETCH_LIMIT = 50
@@ -220,16 +224,27 @@ async def search_all_platforms(
         or ([str(query["location"])] if query.get("location") else [])
         or ["Remote"]
     )
-    # A city search is only covered by jobs actually in that city; remote roles
-    # from the catalog don't make a live LinkedIn/Indeed search for it redundant.
+    # The catalog replaces a live search only when (a) the member didn't pick the
+    # source themselves, and (b) it holds enough jobs seen in the last day that
+    # are in the requested city (remote roles don't cover a city search).
     from app.services.job_catalog import _cities, in_city
 
-    covering = (
-        [j for j in catalog_jobs if in_city(j, locations)]
-        if _cities(locations)
-        else catalog_jobs
-    )
-    if not valid_names or (len(cacheable) == len(valid_names) and len(covering) >= need):
+    fresh_after = datetime.now(UTC) - LIVE_SKIP_FRESHNESS
+
+    def seen_recently(job: dict) -> bool:
+        try:
+            return datetime.fromisoformat(str(job["last_seen_at"])) >= fresh_after
+        except (KeyError, ValueError):
+            return False
+
+    covering = [
+        j
+        for j in catalog_jobs
+        if seen_recently(j) and (in_city(j, locations) or not _cities(locations))
+    ]
+    if not valid_names or (
+        platforms is None and len(cacheable) == len(valid_names) and len(covering) >= need
+    ):
         return catalog_jobs, warnings
 
     # 2. Shortfall: live adapters fill the gap.

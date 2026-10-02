@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ArrowSquareOut,
@@ -63,6 +63,7 @@ const FOUND_CHIPS = [{ label: "Any", value: "any" }, { label: "Today", value: "t
 type FoundRange = (typeof FOUND_CHIPS)[number]["value"];
 const SORTS: ApplicationSort[] = ["found_desc", "found_asc", "match_desc", "match_asc"];
 const DAY_MS = 86_400_000;
+const PAGE_SIZE = 50;
 
 export default function ApplicationsPage() {
   // useSearchParams needs a Suspense boundary under the App Router.
@@ -81,6 +82,11 @@ function ApplicationsView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
   const [matchDraft, setMatchDraft] = useState<number | null>(null);
@@ -116,16 +122,20 @@ function ApplicationsView() {
       if (from) f.foundAfter = new Date(`${from}T00:00:00`).toISOString();
       if (to) f.foundBefore = new Date(`${to}T23:59:59.999`).toISOString();
     }
+    if (query) f.q = query;
     return f;
-  }, [sort, minMatch, found, from, to]);
+  }, [sort, minMatch, found, from, to, query]);
   const filtersActive = minMatch > 0 || found !== "any";
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ["applications", filters],
-    queryFn: async () => {
-      const page = await fetchApplications(filters);
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const page = await fetchApplications(filters, { offset: pageParam, limit: PAGE_SIZE });
       return {
         total: page.total,
+        stageCounts: page.stageCounts,
+        next: pageParam + page.items.length,
         items: page.items.map((application: ApplicationRecord): ApplicationItem => ({
           id: String(application.id),
           company: application.company,
@@ -147,10 +157,13 @@ function ApplicationsView() {
         })),
       };
     },
+    getNextPageParam: (last) => (last.next < last.total && last.items.length > 0 ? last.next : undefined),
     placeholderData: (previous) => previous,
   });
-  const items = useMemo(() => data?.items ?? [], [data]);
-  const total = data?.total ?? 0;
+  const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+  const total = data?.pages[0]?.total ?? 0;
+  // Whole-list stage counts from the server, so stats stay right while paging.
+  const stageCounts = data?.pages[0]?.stageCounts ?? {};
 
   const { data: activityRuns = [] } = useQuery<AgentRun[]>({
     queryKey: ["agent-runs", selectedId],
@@ -195,13 +208,11 @@ function ApplicationsView() {
   });
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
-  const filteredItems = items.filter((item) =>
-    `${item.company} ${item.role} ${item.location ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
-  );
+  const filteredItems = items;
   const checkedIds = filteredItems.filter((item) => checked.has(item.id)).map((item) => item.id);
-  const activeCount = items.filter((item) => ["applied", "viewed", "interview"].includes(item.stage)).length;
-  const interviewCount = items.filter((item) => item.stage === "interview").length;
-  const offerCount = items.filter((item) => item.stage === "offer").length;
+  const activeCount = (stageCounts.applied ?? 0) + (stageCounts.viewed ?? 0) + (stageCounts.interview ?? 0);
+  const interviewCount = stageCounts.interview ?? 0;
+  const offerCount = stageCounts.offer ?? 0;
 
   const onCheckedChange = (ids: string[], on: boolean) =>
     setChecked((prev) => {
@@ -213,12 +224,24 @@ function ApplicationsView() {
       return next;
     });
 
-  const exportToCSV = () => {
-    const csvCell = (value: string | number | null | undefined) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const headers = ["Company", "Role", "Location", "Source", "Match %", "Stage", "Found", "Next follow-up"];
-    const rows = items.map((item) => [
-      item.company, item.role, item.location, item.jobUrl, item.matchPercent, item.stage, item.foundAt, item.nextFollowUp,
+  // Exports the whole filtered list, not just the pages loaded so far.
+  const exportToCSV = async () => {
+    setShowExportMenu(false);
+    let all: ApplicationRecord[];
+    try {
+      all = (await fetchApplications(filters)).items;
+    } catch {
+      toast.error("Could not export your applications.");
+      return;
+    }
+    // Cells starting with = + - @ would run as formulas in Excel / Sheets.
+    const csvCell = (value: string | number | null | undefined) => {
+      const text = String(value ?? "");
+      return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
+    };
+    const headers = ["Company", "Role", "Location", "Job URL", "Match %", "Stage", "Found", "Next follow-up"];
+    const rows = all.map((app) => [
+      app.company, app.role, app.location, app.job_url, app.match_score, app.status, app.found_at, nextFollowUp(app),
     ]);
     const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -227,7 +250,6 @@ function ApplicationsView() {
     anchor.download = "applications.csv";
     anchor.click();
     URL.revokeObjectURL(url);
-    setShowExportMenu(false);
   };
 
   // One-click export of the current (filtered) list into a new Google Sheet. The tab must be
@@ -241,6 +263,7 @@ function ApplicationsView() {
     if (filters.minMatch != null) params.min_match = filters.minMatch;
     if (filters.foundAfter) params.found_after = filters.foundAfter;
     if (filters.foundBefore) params.found_before = filters.foundBefore;
+    if (filters.q) params.q = filters.q;
     const create = () =>
       apiClient.post<{ url: string }>("/jobs/applications/export-sheet", null, { params }).then((r) => r.data.url);
     const notConnected = (err: unknown) => (err as { response?: { status?: number } }).response?.status === 409;
@@ -284,9 +307,7 @@ function ApplicationsView() {
     ? "Loading your roles…"
     : isError
       ? "Roles unavailable"
-      : search
-        ? `${filteredItems.length} matching ${filteredItems.length === 1 ? "job" : "jobs"}`
-        : `${total} ${total === 1 ? "job" : "jobs"}`;
+      : `${total} ${query ? "matching " : ""}${total === 1 ? "job" : "jobs"}`;
 
   const clearFilters = () => setParams({ min: null, found: null, from: null, to: null });
   const commitMatch = () => {
@@ -315,7 +336,7 @@ function ApplicationsView() {
 
       <StatStrip
         items={[
-          { label: "All roles", value: items.length },
+          { label: "All roles", value: total },
           { label: "In progress", value: activeCount },
           { label: "Interviews", value: interviewCount },
           { label: "Offers", value: offerCount },
@@ -430,6 +451,22 @@ function ApplicationsView() {
             onSortChange={(next) => setParams({ sort: next === "found_desc" ? null : next })}
           />
         )}
+        {hasNextPage ? (
+          <div className="flex items-center justify-center gap-3">
+            <span className="text-xs tabular-nums text-muted-foreground">
+              Showing {items.length} of {total}
+            </span>
+            <IslandButton
+              tone="ghost"
+              size="sm"
+              disabled={isFetchingNextPage}
+              icon={isFetchingNextPage ? <CircleNotch size={14} className="animate-spin" /> : undefined}
+              onClick={() => fetchNextPage()}
+            >
+              Load more
+            </IslandButton>
+          </div>
+        ) : null}
       </Section>
 
       <ApplicationDrawer

@@ -43,15 +43,32 @@ async def _search(platforms, catalog, adapter, wt, **q):
 
 
 @pytest.mark.asyncio
-async def test_catalog_hit_with_enough_jobs_skips_live_fetch():
+async def test_catalog_hit_with_enough_fresh_jobs_skips_live_fetch():
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC).isoformat()
     adapter, wt = MagicMock(return_value=[]), AsyncMock()
-    catalog = AsyncMock(return_value=([_job(i) for i in range(12)], []))
-    jobs, _ = await _search(["jobspy"], catalog, adapter, wt)
+    catalog = AsyncMock(return_value=([_job(i, last_seen_at=now) for i in range(12)], []))
+    jobs, _ = await _search(None, catalog, adapter, wt)  # default sources
     assert len(jobs) == 12
     adapter.assert_not_called()
     wt.assert_not_called()
     # live:<platform> rows other users stored are read from the catalog
-    assert catalog.await_args.kwargs["live_platforms"] == ["jobspy"]
+    assert "jobspy" in catalog.await_args.kwargs["live_platforms"]
+
+
+@pytest.mark.asyncio
+async def test_stale_catalog_or_explicit_pick_still_runs_live():
+    from datetime import UTC, datetime, timedelta
+
+    old = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+    now = datetime.now(UTC).isoformat()
+    for platforms, seen in ((None, old), (["jobspy"], now)):
+        adapter, wt = MagicMock(return_value=[_raw(500)]), AsyncMock()
+        catalog = AsyncMock(return_value=([_job(i, last_seen_at=seen) for i in range(12)], []))
+        jobs, _ = await _search(platforms, catalog, adapter, wt)
+        adapter.assert_called()
+        assert len(jobs) == 13
 
 
 @pytest.mark.asyncio

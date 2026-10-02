@@ -43,7 +43,7 @@ async def _list(db, user, response=None, **kw):
 
     params = {
         "status": None, "location": None, "source": None, "posted_within_days": None,
-        "min_match": None, "found_after": None, "found_before": None, "sort": None,
+        "min_match": None, "found_after": None, "found_before": None, "sort": None, "q": None,
         "offset": 0, "limit": None,
     }
     params.update(kw)
@@ -227,3 +227,21 @@ async def test_live_write_through_is_shared_and_keeps_fuller_description(ctx, mo
         ).scalars().all()
     assert stored.strip() == full.strip()
     assert sources == ["live:jobspy"]
+
+
+async def test_search_and_stage_counts_cover_the_whole_filtered_list(ctx):
+    """Paged UI: search runs server-side and stats come from X-Stage-Counts,
+    not from the loaded page."""
+    maker, user = ctx
+    await _app(maker, user, company="Acme_Labs", role="Backend Engineer", status="applied")
+    await _app(maker, user, company="Globex", role="Data 100% Engineer", status="interview")
+    await _app(maker, user, company="Initech", role="Designer", status="saved")
+    async with maker() as db:
+        resp = Response()
+        rows = await _list(db, user, resp, q="engineer", limit=1)
+        assert len(rows) == 1 and resp.headers["X-Total-Count"] == "2"
+        assert json.loads(resp.headers["X-Stage-Counts"]) == {"applied": 1, "interview": 1}
+        # LIKE wildcards in the search are literal.
+        assert [r.company for r in await _list(db, user, q="100%")] == ["Globex"]
+        assert [r.company for r in await _list(db, user, q="glo_ex")] == []
+        assert [r.company for r in await _list(db, user, q="acme_")] == ["Acme_Labs"]

@@ -1,15 +1,17 @@
 import asyncio
+import json
 import logging
 import re
 import urllib.parse
 import uuid
+from collections import Counter
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
@@ -869,6 +871,7 @@ async def _filtered_applications(
     found_after: datetime | None = None,
     found_before: datetime | None = None,
     sort: str | None = None,
+    q: str | None = None,
 ) -> list[JobApplication]:
     """Shared by the list view and the Sheets export so both see the same rows."""
     if status and status not in VALID_STATUSES:
@@ -890,6 +893,15 @@ async def _filtered_applications(
         query = query.where(JobApplication.found_at >= found_after)
     if found_before:
         query = query.where(JobApplication.found_at <= found_before)
+    if q and q.strip():
+        term = q.strip()
+        query = query.where(
+            or_(
+                JobApplication.company.icontains(term, autoescape=True),
+                JobApplication.role.icontains(term, autoescape=True),
+                JobApplication.location.icontains(term, autoescape=True),
+            )
+        )
     if sort:
         order = _SORTS[sort]
     elif status == "saved":
@@ -917,14 +929,16 @@ async def list_applications(
     found_after: datetime | None = None,
     found_before: datetime | None = None,
     sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    q: str | None = Query(None, max_length=200),
     offset: int = Query(0, ge=0),
     limit: int | None = Query(None, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Filtered, sorted, paginated list. The total row count (before
-    offset/limit) is returned in the ``X-Total-Count`` header so the body
-    stays a plain list for existing callers."""
+    offset/limit) is returned in the ``X-Total-Count`` header and per-stage
+    counts in ``X-Stage-Counts`` (JSON), so the body stays a plain list for
+    existing callers and a paged view can still show whole-list stats."""
     apps = await _filtered_applications(
         db,
         current_user.id,
@@ -936,8 +950,10 @@ async def list_applications(
         found_after=found_after,
         found_before=found_before,
         sort=sort,
+        q=q,
     )
     response.headers["X-Total-Count"] = str(len(apps))
+    response.headers["X-Stage-Counts"] = json.dumps(Counter(a.status for a in apps))
     apps = apps[offset : offset + limit] if limit else apps[offset:]
     return await _with_tracking(db, current_user.id, apps)
 
@@ -960,6 +976,7 @@ async def export_applications_sheet(
     found_after: datetime | None = None,
     found_before: datetime | None = None,
     sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    q: str | None = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -978,6 +995,7 @@ async def export_applications_sheet(
         found_after=found_after,
         found_before=found_before,
         sort=sort,
+        q=q,
     )
     rows = [["Company", "Role", "Location", "Match", "Status", "Found", "URL", "Source"]]
     rows += [

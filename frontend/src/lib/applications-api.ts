@@ -38,9 +38,15 @@ export type ApplicationFilters = {
   location?: string;
   source?: string;
   postedWithinDays?: number; // 1-90, filters on the employer's posting date
+  q?: string; // company / role / location contains
 };
 
-export type ApplicationPage = { items: ApplicationRecord[]; total: number };
+/** total and stageCounts cover the whole filtered list, not just this page. */
+export type ApplicationPage = {
+  items: ApplicationRecord[];
+  total: number;
+  stageCounts: Partial<Record<AppStage, number>>;
+};
 
 export async function fetchApplications(
   filters: ApplicationFilters = {},
@@ -55,11 +61,18 @@ export async function fetchApplications(
   if (filters.location) params.location = filters.location;
   if (filters.source) params.source = filters.source;
   if (filters.postedWithinDays) params.posted_within_days = filters.postedWithinDays;
+  if (filters.q?.trim()) params.q = filters.q.trim();
   if (page.offset) params.offset = page.offset;
   if (page.limit) params.limit = page.limit;
   const res = await apiClient.get<ApplicationRecord[]>("/jobs/applications", { params });
   const total = Number(res.headers["x-total-count"] ?? res.data.length);
-  return { items: res.data, total };
+  let stageCounts: ApplicationPage["stageCounts"] = {};
+  try {
+    stageCounts = JSON.parse(res.headers["x-stage-counts"] ?? "{}");
+  } catch {
+    // Older backend: callers fall back to counting the loaded rows.
+  }
+  return { items: res.data, total, stageCounts };
 }
 
 /** Soft delete; undo with restoreApplications(ids). */

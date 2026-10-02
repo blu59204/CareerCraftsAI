@@ -346,7 +346,8 @@ async def search_catalog(query: dict, selected_sources=None, live_platforms=()):
                     # ponytail: LIMIT 2000 is a safety ceiling on rows read per search, not a
                     # product cap; page by posted_at if a query ever saturates it.
                     text("""SELECT c.data || jsonb_build_object('occurrences',
-            jsonb_agg(jsonb_build_object('source_id',o.source_id,'url',c.url))) FROM job_catalog c
+            jsonb_agg(jsonb_build_object('source_id',o.source_id,'url',c.url)),
+            'last_seen_at',c.last_seen_at) FROM job_catalog c
             JOIN job_source_occurrences o ON o.job_id=c.job_id
             WHERE o.source_id=ANY(:sources) AND c.last_seen_at > :fresh
             AND (c.posted_at IS NULL OR c.posted_at >= :cutoff)
