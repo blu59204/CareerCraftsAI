@@ -143,6 +143,7 @@ function ApplicationsView() {
           resumeLabel: application.resume_label,
           outreachStatus: application.outreach_status,
           outreachTo: application.outreach_to,
+          applyState: application.apply_state,
         })),
       };
     },
@@ -229,9 +230,53 @@ function ApplicationsView() {
     setShowExportMenu(false);
   };
 
-  const openSheets = () => {
-    window.open("https://sheets.new", "_blank", "noopener,noreferrer");
+  // One-click export of the current (filtered) list into a new Google Sheet. The tab must be
+  // opened synchronously from the click or popup blockers drop it. Each export makes a NEW sheet
+  // (appending to an existing one isn't supported).
+  const exportToSheets = async () => {
     setShowExportMenu(false);
+    const tab = window.open("about:blank", "_blank");
+    const params: Record<string, string | number> = { sort };
+    if (filters.minMatch != null) params.min_match = filters.minMatch;
+    if (filters.foundAfter) params.found_after = filters.foundAfter;
+    if (filters.foundBefore) params.found_before = filters.foundBefore;
+    const create = () =>
+      apiClient.post<{ url: string }>("/jobs/applications/export-sheet", null, { params }).then((r) => r.data.url);
+    const notConnected = (err: unknown) => (err as { response?: { status?: number } }).response?.status === 409;
+    const showSheet = (url: string, viaTab: boolean) => {
+      if (viaTab && tab) tab.location.href = url;
+      else toast.success("Sheet created", { action: { label: "Open", onClick: () => window.open(url, "_blank", "noopener,noreferrer") } });
+    };
+    try {
+      showSheet(await create(), true);
+    } catch (err) {
+      if (!notConnected(err) || !tab) {
+        tab?.close();
+        toast.error(notConnected(err) ? "Connect Google Drive in Settings, then try again." : "Could not export to Google Sheets.");
+        return;
+      }
+      // Drive isn't connected: run the Nango connect flow in the tab we already hold (a new popup
+      // opened after an await would be blocked), then retry once when the member closes it.
+      try {
+        const { data } = await apiClient.post<{ connect_link?: string }>("/integrations/connect-session", { provider: "google_drive", return_path: "/applications" });
+        if (!data.connect_link) throw new Error("no connect link");
+        tab.location.href = data.connect_link;
+        toast.message("Connect Google Drive in the new tab, then close it to finish the export.");
+        await new Promise<void>((resolve, reject) => {
+          let ticks = 0;
+          const timer = window.setInterval(() => {
+            if (tab.closed) resolve();
+            else if (++ticks > 1200) reject(new Error("timeout"));
+            else return;
+            window.clearInterval(timer);
+          }, 500);
+        });
+        showSheet(await create(), false);
+      } catch {
+        tab.close();
+        toast.error("Could not connect Google Drive. Try Settings, Integrations.");
+      }
+    }
   };
 
   const boardStatus = isLoading
@@ -281,7 +326,7 @@ function ApplicationsView() {
 
         <Bezel size="md" coreClassName="flex min-w-0 flex-wrap items-center gap-3 p-3">
           <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search company or role" aria-label="Search applications" trayClassName="w-full sm:flex-1 sm:min-w-[12rem]" leading={<MagnifyingGlass size={16} weight="light" />} trailing={search ? <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}><X size={13} weight="light" /></IconButton> : undefined} />
-          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onOpenSheets={openSheets} />
+          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onExportSheets={exportToSheets} />
         </Bezel>
 
         <Bezel size="md" coreClassName="space-y-3 p-3">
@@ -417,12 +462,12 @@ function ExportMenu({
   open,
   onOpenChange,
   onDownloadCsv,
-  onOpenSheets,
+  onExportSheets,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDownloadCsv: () => void;
-  onOpenSheets: () => void;
+  onExportSheets: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -446,7 +491,7 @@ function ExportMenu({
 
   const options = [
     { key: "csv", label: "Download CSV", hint: "Every role on the board as a file", icon: <FileCsv size={17} weight="light" />, onClick: onDownloadCsv, trailing: null },
-    { key: "sheets", label: "Open Sheets", hint: "Start a blank Google Sheet", icon: <Table size={17} weight="light" />, onClick: onOpenSheets, trailing: <ArrowSquareOut size={13} weight="light" /> },
+    { key: "sheets", label: "Export to Google Sheets", hint: "New sheet in your Drive from the current filters", icon: <Table size={17} weight="light" />, onClick: onExportSheets, trailing: <ArrowSquareOut size={13} weight="light" /> },
   ];
 
   return (
