@@ -60,7 +60,13 @@ async def upsert_jobs(db, jobs: list[dict], source_id: str) -> None:
             text("""INSERT INTO job_catalog(job_id,url,title,company,posted_at,data)
             VALUES(:id,:url,:title,:company,:posted,CAST(:data AS jsonb))
             ON CONFLICT(job_id) DO UPDATE SET data=EXCLUDED.data ||
-            jsonb_build_object('first_seen_at',job_catalog.first_seen_at),title=EXCLUDED.title,
+            jsonb_build_object('first_seen_at',job_catalog.first_seen_at,
+            -- A thinner sighting (e.g. a live scrape snippet) never replaces a fuller description.
+            'description',CASE WHEN length(coalesce(job_catalog.data->>'description',''))
+                > length(coalesce(EXCLUDED.data->>'description',''))
+              THEN job_catalog.data->'description'
+              ELSE coalesce(EXCLUDED.data->'description',to_jsonb(''::text)) END),
+            title=EXCLUDED.title,
             company=EXCLUDED.company,posted_at=EXCLUDED.posted_at,last_seen_at=now()"""),
             {
                 "id": job["job_id"],

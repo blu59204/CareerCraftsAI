@@ -196,3 +196,33 @@ async def test_activate_resume_keeps_exactly_one_primary(ctx, monkeypatch):
         ).scalars().all()
         assert primaries == [b.id]
     assert len(rescored) == 1
+
+
+async def test_live_write_through_is_shared_and_keeps_fuller_description(ctx, monkeypatch):
+    """A2/A3: a job one member's live search found lands in the shared catalog
+    for everyone; a later thinner sighting never erases the full description."""
+    import app.services.job_catalog as catalog
+
+    maker, _ = ctx
+    monkeypatch.setattr(catalog, "AsyncSessionLocal", maker)
+    url = f"https://jobs.test/{uuid.uuid4()}"
+    full = "Own the payments platform end to end. " * 50
+    base = {"url": url, "title": "Backend Engineer", "company": "Acme", "location": "Remote"}
+
+    assert await catalog.write_through([{**base, "description": full}], "jobspy") == 1
+    assert await catalog.write_through([{**base, "description": "Short snippet"}], "jobspy") == 1
+    async with maker() as db:
+        stored = await db.scalar(
+            text("SELECT data->>'description' FROM job_catalog WHERE url = :u"), {"u": url}
+        )
+        sources = (
+            await db.execute(
+                text(
+                    "SELECT o.source_id FROM job_source_occurrences o "
+                    "JOIN job_catalog c USING (job_id) WHERE c.url = :u"
+                ),
+                {"u": url},
+            )
+        ).scalars().all()
+    assert stored.strip() == full.strip()
+    assert sources == ["live:jobspy"]

@@ -574,8 +574,9 @@ async def daily_search(payload: StatusCheckTrigger):
                     "scheduled",
                 )
 
-                # Save every result as an application (no top-N cap)
-                for job in all_jobs:
+                # Daily results are unscored, so only the top few become saved
+                # applications; everything above is still shared via the catalog.
+                for job in all_jobs[:10]:
                     existing = await db.execute(
                         select(JobApplication).where(
                             JobApplication.user_id == user.id,
