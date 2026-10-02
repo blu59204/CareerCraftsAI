@@ -32,6 +32,7 @@ import {
 import { toast } from "sonner";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
+import { AutoApplyPanel } from "@/components/agents/AutoApplyPanel";
 import {
   Bezel,
   EmptyPanel,
@@ -458,6 +459,8 @@ export default function AgentsPage() {
                   </p>
                 </div>
               </div>
+
+              {active === "auto_apply" ? <AutoApplyPanel /> : null}
 
               <div className="mt-7 space-y-2">
                 <div className="flex items-center justify-between gap-3 pl-1">

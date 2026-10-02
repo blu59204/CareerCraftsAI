@@ -24,6 +24,7 @@ import {
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { SettingsNav } from "@/components/settings/SettingsNav";
+import { ResumePreferencesCard } from "@/components/settings/ResumePreferences";
 import {
   Bezel,
   Chip,
@@ -955,6 +956,7 @@ export default function ProfilePreferencesPage() {
             </div>
           </div>
         )}
+        <ResumePreferencesCard />
       </div>
     </Screen>
   );
