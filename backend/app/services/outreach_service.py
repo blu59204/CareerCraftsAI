@@ -73,18 +73,33 @@ def domain_of(address: str) -> str:
     return address.rsplit("@", 1)[-1].strip().lower()
 
 
-def _to_domain():
-    return func.lower(func.split_part(RecruiterOutreach.to_email, "@", 2))
+def company_key(address: str) -> str:
+    """What identifies a company in an address: its domain, or the whole
+    address for free-mail providers, where the domain says nothing about who
+    works there."""
+    from app.services.recruiter_email import _FREE_MAIL, registrable_domain
+
+    domain = domain_of(address)
+    if registrable_domain(domain) in _FREE_MAIL:
+        return address.strip().lower()
+    return domain
+
+
+def _same_company(address: str):
+    key = company_key(address)
+    if key == domain_of(address):
+        return func.lower(func.split_part(RecruiterOutreach.to_email, "@", 2)) == key
+    return func.lower(RecruiterOutreach.to_email) == key
 
 
 async def replied_domains(db, user_id: uuid.UUID) -> set[str]:
-    """Companies (by email domain) where anyone has answered the member."""
+    """Companies where anyone has answered the member (see company_key)."""
     rows = await db.execute(
-        select(_to_domain()).where(
+        select(RecruiterOutreach.to_email).where(
             RecruiterOutreach.user_id == user_id, RecruiterOutreach.replied_at.is_not(None)
         )
     )
-    return set(rows.scalars().all())
+    return {company_key(address) for address in rows.scalars().all()}
 
 
 def pixel_base() -> str | None:
@@ -385,7 +400,10 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
             .where(
                 RecruiterOutreach.user_id == owner,
                 RecruiterOutreach.state == "sending",
-                RecruiterOutreach.sending_at < now - STUCK_SENDING_AFTER,
+                or_(
+                    RecruiterOutreach.sending_at.is_(None),
+                    RecruiterOutreach.sending_at < now - STUCK_SENDING_AFTER,
+                ),
             )
             .values(
                 state="failed",
@@ -413,7 +431,7 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
             .all()
         )
         for row in rows:
-            if domain_of(row.to_email) in answered:
+            if company_key(row.to_email) in answered:
                 # Someone at this company already replied: nothing more goes out.
                 row.state = "cancelled"
                 await db.commit()
@@ -485,7 +503,7 @@ async def queue_due_followups(user_id: str, now: datetime | None = None) -> int:
             .all()
         )
         for original in due:
-            if domain_of(original.to_email) in answered:
+            if company_key(original.to_email) in answered:
                 original.followup_due_at = None
                 continue
             subject, body = followup_text(original.company, original.role)
@@ -566,7 +584,7 @@ async def record_replies(user_id: str, gmail_factory=None) -> dict:
                         RecruiterOutreach.id != row.id,
                         RecruiterOutreach.state.in_(_PENDING),
                         or_(
-                            _to_domain() == domain_of(row.to_email),
+                            _same_company(row.to_email),
                             RecruiterOutreach.job_application_id == row.job_application_id,
                         ),
                     )

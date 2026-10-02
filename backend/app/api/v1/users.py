@@ -434,7 +434,6 @@ async def delete_model(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    import uuid as _uuid
 
     result = await db.execute(
         select(UserModelSettings).where(
@@ -455,7 +454,6 @@ async def test_model(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    import uuid as _uuid
 
     from langchain_core.messages import HumanMessage
 

@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.service import RPCError, RPCStatusCode
 
 from app.api.v1.deps import get_current_user, get_db
-from app.core.config import settings
 from app.core.event_bus import publish, stream_events
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, ApplicationAttempt, User

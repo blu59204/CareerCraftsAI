@@ -112,3 +112,11 @@ def test_detect_platform_recognises_more_portals():
     assert detect_platform("https://career5.successfactors.eu/x") == "successfactors"
     assert detect_platform("https://acme.darwinbox.in/ms/candidate") == "darwinbox"
     assert detect_platform("https://acme.keka.com/careers/jobdetails/1") == "keka"
+
+
+def test_company_key_keeps_free_mail_recruiters_apart():
+    from app.services.outreach_service import company_key
+
+    assert company_key("a@acme.com") == "acme.com"
+    assert company_key("A@Gmail.com") == "a@gmail.com"
+    assert company_key("b@gmail.com") != company_key("a@gmail.com")
