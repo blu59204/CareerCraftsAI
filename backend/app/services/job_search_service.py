@@ -9,6 +9,9 @@ logger = logging.getLogger(__name__)
 
 # Per-platform budget: no single source may stall a run.
 PLATFORM_TIMEOUT_SEC = 25
+# LinkedIn via JobSpy takes ~40s for one location; under the 25s default its
+# results were always discarded.
+_ADAPTER_TIMEOUT_SEC = {"jobspy": 75}
 
 # Per-adapter upstream fetch size. This bounds one live request, never the result set.
 LIVE_FETCH_LIMIT = 50
@@ -99,7 +102,9 @@ def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
         scrape_jobs(
             search_term=query,
             location=location,
-            results_wanted=max_results,
+            # LinkedIn fetches each posting's page: 25 takes ~40s, 50 overruns
+            # _ADAPTER_TIMEOUT_SEC and loses everything.
+            results_wanted=min(max_results, 25),
             hours_old=72,
             platforms=["linkedin", "indeed"],
         )
@@ -151,6 +156,10 @@ DEFAULT_PLATFORMS = [
     "remotive",
     "remoteok",
     "arbeitnow",
+    # The employer catalog is mostly US/EU boards; LinkedIn + Indeed (scoped to
+    # the member's location) fill the gap, and catalog-first search only calls
+    # them when the shared catalog is short. Results are written through.
+    "jobspy",
 ]
 
 
@@ -206,16 +215,25 @@ async def search_all_platforms(
                 raise
             logger.warning("Catalog read failed: %s", type(exc).__name__)
             warnings.append(f"catalog unavailable: {type(exc).__name__}")
-    if not valid_names or (len(cacheable) == len(valid_names) and len(catalog_jobs) >= need):
-        return catalog_jobs, warnings
-
-    # 2. Shortfall: live adapters fill the gap.
-    titles = query.get("titles") or []
     locations = (
         query.get("locations")
         or ([str(query["location"])] if query.get("location") else [])
         or ["Remote"]
     )
+    # A city search is only covered by jobs actually in that city; remote roles
+    # from the catalog don't make a live LinkedIn/Indeed search for it redundant.
+    from app.services.job_catalog import _cities, in_city
+
+    covering = (
+        [j for j in catalog_jobs if in_city(j, locations)]
+        if _cities(locations)
+        else catalog_jobs
+    )
+    if not valid_names or (len(cacheable) == len(valid_names) and len(covering) >= need):
+        return catalog_jobs, warnings
+
+    # 2. Shortfall: live adapters fill the gap.
+    titles = query.get("titles") or []
     remote = str(query.get("remote") or "").strip().lower()
     q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
     fetch_n = max(need, LIVE_FETCH_LIMIT)
@@ -225,7 +243,7 @@ async def search_all_platforms(
         try:
             raw = await asyncio.wait_for(
                 asyncio.to_thread(adapter, q, location, fetch_n),
-                timeout=PLATFORM_TIMEOUT_SEC,
+                timeout=_ADAPTER_TIMEOUT_SEC.get(name, PLATFORM_TIMEOUT_SEC),
             )
             return [_normalize(job, name) for job in (raw or [])]
         except Exception as exc:
@@ -233,8 +251,8 @@ async def search_all_platforms(
             warnings.append(f"{name} failed: {type(exc).__name__}")
             return []
 
-    # No outer timeout: each platform is individually capped at
-    # PLATFORM_TIMEOUT_SEC and run_one never raises, so gather always
+    # No outer timeout: each platform is individually capped (see
+    # _ADAPTER_TIMEOUT_SEC) and run_one never raises, so gather always
     # resolves with partial results. (An outer wait_for would cancel
     # completed sources and discard their jobs.)
     # Fan out over every requested location, not just the first — a

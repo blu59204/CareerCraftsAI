@@ -182,3 +182,81 @@ async def test_rank_jobs_returns_all_matches_with_semantic_on_top_100_only():
         )
     assert len(matches) == 120
     assert len(semantic.await_args.args[2]) == 100
+
+
+# --- relevance + location (job search returned unrelated / foreign roles) ---
+
+
+def test_location_ok_city_search_keeps_local_and_unrestricted_remote_only():
+    from app.services.job_catalog import _location_ok
+
+    want = ["Bengaluru"]
+    assert _location_ok({"location": "Bengaluru, Karnataka, India"}, want)
+    assert _location_ok({"location": "Bangalore"}, want)  # alias
+    assert _location_ok({"location": "Remote", "remote": "remote"}, want)
+    assert _location_ok({"location": "Remote - India", "remote": "remote"}, want)
+    assert not _location_ok({"location": "Remote, United States", "remote": "remote"}, want)
+    assert not _location_ok({"location": "Dublin"}, want)
+    assert not _location_ok({"location": "Seattle, San Francisco"}, want)
+    # Remote / anywhere searches accept every location.
+    assert _location_ok({"location": "Dublin"}, ["Remote"])
+    assert _location_ok({"location": "Dublin"}, [])
+
+
+async def test_catalog_requires_every_query_word_in_title_and_the_location(monkeypatch):
+    import app.services.job_catalog as catalog
+
+    def job(title, location, desc="Work with software engineers on our platform."):
+        return {"title": title, "location": location, "description": desc}
+
+    rows = [
+        job("Software Engineer", "Bengaluru, India"),
+        job("Senior Software Engineer, Payments", "Remote"),
+        job("Abuse Investigator", "Bengaluru"),  # 'software engineer' only in description
+        job("Account Executive", "Dublin"),
+        job("Software Engineer, Stripe Tax", "Barcelona"),  # wrong city
+        job("Research Engineer", "Bengaluru"),  # 'software' missing from title
+    ]
+    monkeypatch.setattr(catalog, "dedupe", lambda r, days: r)
+    monkeypatch.setattr(catalog, "sources", lambda: [])
+
+    class Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return rows
+
+    class DB:
+        async def execute(self, *a, **k):
+            return Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(catalog, "AsyncSessionLocal", DB)
+    jobs, _ = await catalog.search_catalog(
+        {"titles": ["software engineer"], "locations": ["Bengaluru"], "max_results": 1},
+        None,
+        live_platforms=["jobspy"],
+    )
+    assert [j["title"] for j in jobs] == ["Software Engineer", "Senior Software Engineer, Payments"]
+
+
+def test_jobspy_is_a_default_source_with_a_budget_linkedin_fits_in():
+    from app.services import job_search_service as svc
+
+    assert "jobspy" in svc.DEFAULT_PLATFORMS
+    assert svc._ADAPTER_TIMEOUT_SEC["jobspy"] >= 60
+
+
+def test_dotted_country_and_city_coverage():
+    from app.services.job_catalog import _location_ok, in_city
+
+    assert not _location_ok({"location": "Remote U.S.", "remote": "remote"}, ["Bengaluru"])
+    assert in_city({"location": "Bangalore, India"}, ["Bengaluru"])
+    assert not in_city({"location": "Remote"}, ["Bengaluru"])
+    assert not in_city({"location": "Bengaluru"}, ["Remote"])

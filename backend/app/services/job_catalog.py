@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -246,18 +247,54 @@ async def refresh_catalog() -> dict:
     }
 
 
-def _live_only(job: dict) -> bool:
-    occ = job.get("occurrences") or []
-    return bool(occ) and all(str(o.get("source_id", "")).startswith("live:") for o in occ)
+_STOPWORDS = {"and", "the", "for", "with", "role", "job", "jobs"}
+_ANYWHERE = {"", "remote", "anywhere", "worldwide", "any"}
+_CITY_ALIASES = {"bangalore": "bengaluru", "gurgaon": "gurugram", "bombay": "mumbai"}
+
+
+def _country_of(text: str) -> str | None:
+    from app.services.job_platforms_service import _COUNTRY_MAP
+
+    for key in sorted(_COUNTRY_MAP, key=len, reverse=True):
+        if re.search(r"\b" + re.escape(key) + r"\b", text):
+            return _COUNTRY_MAP[key]
+    return None
+
+
+def _cities(locations: list[str]) -> list[str] | None:
+    """Requested cities (aliases folded), or None for a remote/anywhere search."""
+    wanted = [loc.split(",")[0].strip().lower() for loc in locations]
+    if not wanted or any(w in _ANYWHERE for w in wanted):
+        return None
+    return [_CITY_ALIASES.get(w, w) for w in wanted]
+
+
+def in_city(job: dict, locations: list[str]) -> bool:
+    """The job is located in one of the requested cities (False for remote searches)."""
+    where = str(job.get("location") or "").lower()
+    for city in _cities(locations) or []:
+        if city in where or any(a in where for a, c in _CITY_ALIASES.items() if c == city):
+            return True
+    return False
 
 
 def _location_ok(job: dict, locations: list[str]) -> bool:
-    hay = f"{job.get('location', '')} {job.get('remote', '')}".lower()
-    return (
-        not locations
-        or "remote" in hay
-        or any(loc.split(",")[0].strip().lower() in hay for loc in locations if loc.strip())
-    )
+    """A job fits a city search when it is in that city, or remote and not
+    restricted to another country ("Remote, United States" is not a fit for
+    Bengaluru). Remote/anywhere searches accept every location."""
+    wanted = _cities(locations)
+    if wanted is None:
+        return True
+    if in_city(job, locations):
+        return True
+    where = str(job.get("location") or "").lower().replace(".", "")
+    hay = f"{where} {str(job.get('remote') or '').lower()}"
+    for city in wanted:
+        if "remote" in hay or job.get("remote") is True:
+            job_country = _country_of(where)
+            if job_country is None or job_country == _country_of(city):
+                return True
+    return False
 
 
 async def search_catalog(query: dict, selected_sources=None, live_platforms=()):
@@ -284,12 +321,15 @@ async def search_catalog(query: dict, selected_sources=None, live_platforms=()):
     locations = [str(x) for x in (query.get("locations") or [query.get("location") or ""]) if x]
     remote = query.get("remote", "any")
 
+    keywords = [w for w in terms if len(w) > 2 and w not in _STOPWORDS]
+
     def relevant_of(rows):
+        # Every query word must be in the title: "engineer" appears in nearly every
+        # posting's description, so matching descriptions returned unrelated roles.
         out = [
             j
             for j in dedupe(rows, days)
-            if any(w in (j["title"] + " " + j["description"]).lower() for w in terms if len(w) > 2)
-            and (not _live_only(j) or _location_ok(j, locations))
+            if all(w in j["title"].lower() for w in keywords) and _location_ok(j, locations)
         ]
         if remote in {"remote", "hybrid", "onsite"}:
             out = [
