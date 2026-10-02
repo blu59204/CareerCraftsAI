@@ -31,7 +31,6 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 router.include_router(basis_router)
 logger = logging.getLogger(__name__)
 
-NL_SEARCH_TIMEOUT_SECONDS = 120
 VALID_STATUSES = {"saved", "applied", "viewed", "interview", "offer", "rejected"}
 
 

@@ -836,40 +836,6 @@ class TestFollowUpAgent:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TEST 14: Natural Language Search Agent
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.e2e
-class TestNLSearchAgent:
-    def test_nl_search_parses_and_executes(self, api_client: httpx.Client, wait_for_run):
-        run_id = _start_run(
-            api_client,
-            "nl_job_search",
-            {"query": "senior backend engineer remote India paying above 20 lakhs"},
-        )
-        run = wait_for_run(api_client, run_id, 180)
-        # Step 1: the parsed interpretation is gated for confirmation.
-        assert run["status"] == "awaiting_approval", run
-        pending = run["output"]
-        assert pending["type"] == "search_confirmation"
-        parsed = pending["interpretation"]
-        assert parsed["role_title"], parsed
-        assert "location" in parsed
-        # Step 2: confirming only runs a read-only job search (no send/submit).
-        r = api_client.post(f"/agents/{run_id}/approve", json={"approved": True})
-        assert r.status_code == 200, r.text
-        final = wait_for_run(api_client, run_id, 180)
-        assert final["status"] == "completed", final
-        result = final["output"]
-        assert "matches" in result
-        print(
-            f"NL SEARCH: '{parsed['role_title']}' in {parsed.get('location') or '?'}, "
-            f"{len(result['matches'])} jobs"
-        )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 # TEST 15: AutoApply Pipeline — THE FULL FLOW
 # ══════════════════════════════════════════════════════════════════════════════
 

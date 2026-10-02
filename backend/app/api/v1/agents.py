@@ -35,7 +35,6 @@ VALID_TASKS = {
     "interview_prep",
     "company_research",
     "salary_intelligence",
-    "nl_job_search",
     "email_monitor",
     "auto_apply",
 }

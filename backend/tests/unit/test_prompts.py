@@ -17,7 +17,6 @@ PROMPT_MODULES = [
     "interview_prep_prompt",
     "company_research_prompt",
     "salary_prompt",
-    "nl_search_prompt",
     "auto_apply_prompt",
     "orchestrator_prompt",
     "harness_reflect_prompt",

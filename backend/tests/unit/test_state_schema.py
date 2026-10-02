@@ -146,7 +146,6 @@ def make_state(task_type: str, status: str = "running") -> AgentState:
     ("cover_letter", "cover_letter"),
     ("interview_prep", "interview_prep"),
     ("salary_intelligence", "salary"),
-    ("nl_job_search", "nl_search"),
     ("auto_apply", "auto_apply"),
 ])
 def test_orchestrator_routing_with_new_schema(task_type, expected_node):
