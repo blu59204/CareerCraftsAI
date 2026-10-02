@@ -588,7 +588,11 @@ async def fetch_page(source: Source, query: str = "", cursor: str | None = None)
     else:
         url = urls[family]
     response = await public_get(
-        url, headers=headers, json_body=jooble_body if family == "jooble" else None
+        url,
+        headers=headers,
+        json_body=jooble_body if family == "jooble" else None,
+        # Greenhouse sends every description in one unpaginated page (~10 MB for large boards).
+        max_bytes=20_000_000 if family == "greenhouse" else 4_000_000,
     )
     response.raise_for_status()
     data = response.json() if family not in {"jsonld", "rss"} else None

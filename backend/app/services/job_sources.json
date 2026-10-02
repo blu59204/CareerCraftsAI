@@ -48,38 +48,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:grammarly",
-    "family": "greenhouse",
-    "tenant": "grammarly",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:notion",
-    "family": "greenhouse",
-    "tenant": "notion",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:ramp",
-    "family": "greenhouse",
-    "tenant": "ramp",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:rippling",
-    "family": "greenhouse",
-    "tenant": "rippling",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:robinhood",
     "family": "greenhouse",
     "tenant": "robinhood",
@@ -104,57 +72,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:openai",
-    "family": "greenhouse",
-    "tenant": "openai",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:vercel",
     "family": "greenhouse",
     "tenant": "vercel",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:supabase",
-    "family": "greenhouse",
-    "tenant": "supabase",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:linear",
-    "family": "greenhouse",
-    "tenant": "linear",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:retool",
-    "family": "greenhouse",
-    "tenant": "retool",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:segment",
-    "family": "greenhouse",
-    "tenant": "segment",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:mux",
-    "family": "greenhouse",
-    "tenant": "mux",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -171,30 +91,6 @@
     "id": "greenhouse:fastly",
     "family": "greenhouse",
     "tenant": "fastly",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:hashicorp",
-    "family": "greenhouse",
-    "tenant": "hashicorp",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:snowflake",
-    "family": "greenhouse",
-    "tenant": "snowflake",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:cockroachdb",
-    "family": "greenhouse",
-    "tenant": "cockroachdb",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -224,118 +120,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:confluent",
-    "family": "greenhouse",
-    "tenant": "confluent",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:materialize",
-    "family": "greenhouse",
-    "tenant": "materialize",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:timescale",
-    "family": "greenhouse",
-    "tenant": "timescale",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:neon",
-    "family": "greenhouse",
-    "tenant": "neon",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:turso",
-    "family": "greenhouse",
-    "tenant": "turso",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:railway",
-    "family": "greenhouse",
-    "tenant": "railway",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:fly",
-    "family": "greenhouse",
-    "tenant": "fly",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:render",
-    "family": "greenhouse",
-    "tenant": "render",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:deno",
-    "family": "greenhouse",
-    "tenant": "deno",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:convex",
-    "family": "greenhouse",
-    "tenant": "convex",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:inngest",
-    "family": "greenhouse",
-    "tenant": "inngest",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:trigger",
-    "family": "greenhouse",
-    "tenant": "trigger",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:temporal",
-    "family": "greenhouse",
-    "tenant": "temporal",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:sentry",
-    "family": "greenhouse",
-    "tenant": "sentry",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:datadog",
     "family": "greenhouse",
     "tenant": "datadog",
@@ -347,14 +131,6 @@
     "id": "greenhouse:newrelic",
     "family": "greenhouse",
     "tenant": "newrelic",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:grafana",
-    "family": "greenhouse",
-    "tenant": "grafana",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -376,41 +152,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:statsig",
-    "family": "greenhouse",
-    "tenant": "statsig",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:split",
-    "family": "greenhouse",
-    "tenant": "split",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:optimizely",
-    "family": "greenhouse",
-    "tenant": "optimizely",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:pendo",
     "family": "greenhouse",
     "tenant": "pendo",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:appcues",
-    "family": "greenhouse",
-    "tenant": "appcues",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -440,14 +184,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:kraken",
-    "family": "greenhouse",
-    "tenant": "kraken",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:mercury",
     "family": "greenhouse",
     "tenant": "mercury",
@@ -472,25 +208,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:klarna",
-    "family": "greenhouse",
-    "tenant": "klarna",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:wise",
     "family": "greenhouse",
     "tenant": "wise",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:revolut",
-    "family": "greenhouse",
-    "tenant": "revolut",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -504,65 +224,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:doordash",
-    "family": "greenhouse",
-    "tenant": "doordash",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:ubereats",
-    "family": "greenhouse",
-    "tenant": "ubereats",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:grubhub",
-    "family": "greenhouse",
-    "tenant": "grubhub",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:wayfair",
-    "family": "greenhouse",
-    "tenant": "wayfair",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:etsy",
-    "family": "greenhouse",
-    "tenant": "etsy",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:pinterest",
     "family": "greenhouse",
     "tenant": "pinterest",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:snap",
-    "family": "greenhouse",
-    "tenant": "snap",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:bytedance",
-    "family": "greenhouse",
-    "tenant": "bytedance",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -592,49 +256,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:plaid",
-    "family": "greenhouse",
-    "tenant": "plaid",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:moderntreasury",
-    "family": "greenhouse",
-    "tenant": "moderntreasury",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:wisedragon",
-    "family": "greenhouse",
-    "tenant": "wisedragon",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:checkr",
     "family": "greenhouse",
     "tenant": "checkr",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:personio",
-    "family": "greenhouse",
-    "tenant": "personio",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:deel",
-    "family": "greenhouse",
-    "tenant": "deel",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -672,70 +296,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:lever",
-    "family": "greenhouse",
-    "tenant": "lever",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:ashbyhq",
-    "family": "greenhouse",
-    "tenant": "ashbyhq",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:workable",
-    "family": "greenhouse",
-    "tenant": "workable",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:bamboohr",
-    "family": "greenhouse",
-    "tenant": "bamboohr",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:github",
-    "family": "greenhouse",
-    "tenant": "github",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:bitbucket",
-    "family": "greenhouse",
-    "tenant": "bitbucket",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:snyk",
-    "family": "greenhouse",
-    "tenant": "snyk",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:sonatype",
-    "family": "greenhouse",
-    "tenant": "sonatype",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:jfrog",
     "family": "greenhouse",
     "tenant": "jfrog",
@@ -760,46 +320,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:githubactions",
-    "family": "greenhouse",
-    "tenant": "githubactions",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:semaphore",
-    "family": "greenhouse",
-    "tenant": "semaphore",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:drone",
-    "family": "greenhouse",
-    "tenant": "drone",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:ro",
-    "family": "greenhouse",
-    "tenant": "ro",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:hims",
-    "family": "greenhouse",
-    "tenant": "hims",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:modernhealth",
     "family": "greenhouse",
     "tenant": "modernhealth",
@@ -808,33 +328,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:springhealth",
-    "family": "greenhouse",
-    "tenant": "springhealth",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:headway",
-    "family": "greenhouse",
-    "tenant": "headway",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:talkspace",
     "family": "greenhouse",
     "tenant": "talkspace",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:uber",
-    "family": "greenhouse",
-    "tenant": "uber",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -856,25 +352,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:cruise",
-    "family": "greenhouse",
-    "tenant": "cruise",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:nuro",
     "family": "greenhouse",
     "tenant": "nuro",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:zoox",
-    "family": "greenhouse",
-    "tenant": "zoox",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -896,33 +376,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:lime",
-    "family": "greenhouse",
-    "tenant": "lime",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:spin",
     "family": "greenhouse",
     "tenant": "spin",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:helbiz",
-    "family": "greenhouse",
-    "tenant": "helbiz",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:salesforce",
-    "family": "greenhouse",
-    "tenant": "salesforce",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -936,41 +392,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:zendesk",
-    "family": "greenhouse",
-    "tenant": "zendesk",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:intercom",
     "family": "greenhouse",
     "tenant": "intercom",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:freshworks",
-    "family": "greenhouse",
-    "tenant": "freshworks",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:atlassian",
-    "family": "greenhouse",
-    "tenant": "atlassian",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:slack",
-    "family": "greenhouse",
-    "tenant": "slack",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -984,33 +408,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:box",
-    "family": "greenhouse",
-    "tenant": "box",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:docusign",
-    "family": "greenhouse",
-    "tenant": "docusign",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:okta",
     "family": "greenhouse",
     "tenant": "okta",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:auth0",
-    "family": "greenhouse",
-    "tenant": "auth0",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -1024,145 +424,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:sendgrid",
-    "family": "greenhouse",
-    "tenant": "sendgrid",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:mailgun",
-    "family": "greenhouse",
-    "tenant": "mailgun",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:postmark",
-    "family": "greenhouse",
-    "tenant": "postmark",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:klaviyo",
     "family": "greenhouse",
     "tenant": "klaviyo",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:cohere",
-    "family": "greenhouse",
-    "tenant": "cohere",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:huggingface",
-    "family": "greenhouse",
-    "tenant": "huggingface",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:replicate",
-    "family": "greenhouse",
-    "tenant": "replicate",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:stability",
-    "family": "greenhouse",
-    "tenant": "stability",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:midjourney",
-    "family": "greenhouse",
-    "tenant": "midjourney",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:runway",
-    "family": "greenhouse",
-    "tenant": "runway",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:jasper",
-    "family": "greenhouse",
-    "tenant": "jasper",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:character",
-    "family": "greenhouse",
-    "tenant": "character",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:perplexity",
-    "family": "greenhouse",
-    "tenant": "perplexity",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:mistral",
-    "family": "greenhouse",
-    "tenant": "mistral",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:anyscale",
-    "family": "greenhouse",
-    "tenant": "anyscale",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:together",
-    "family": "greenhouse",
-    "tenant": "together",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:fireworks",
-    "family": "greenhouse",
-    "tenant": "fireworks",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:weightsandbiases",
-    "family": "greenhouse",
-    "tenant": "weightsandbiases",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -1176,177 +440,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:scale",
-    "family": "greenhouse",
-    "tenant": "scale",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:surge",
-    "family": "greenhouse",
-    "tenant": "surge",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:defined",
-    "family": "greenhouse",
-    "tenant": "defined",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:razorpay",
-    "family": "greenhouse",
-    "tenant": "razorpay",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:phonepe",
-    "family": "greenhouse",
-    "tenant": "phonepe",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:cred",
-    "family": "greenhouse",
-    "tenant": "cred",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:zerodha",
-    "family": "greenhouse",
-    "tenant": "zerodha",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "greenhouse:groww",
     "family": "greenhouse",
     "tenant": "groww",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:meesho",
-    "family": "greenhouse",
-    "tenant": "meesho",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:swiggy",
-    "family": "greenhouse",
-    "tenant": "swiggy",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:zomato",
-    "family": "greenhouse",
-    "tenant": "zomato",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:flipkart",
-    "family": "greenhouse",
-    "tenant": "flipkart",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:paytm",
-    "family": "greenhouse",
-    "tenant": "paytm",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:ola",
-    "family": "greenhouse",
-    "tenant": "ola",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:rapido",
-    "family": "greenhouse",
-    "tenant": "rapido",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:byjus",
-    "family": "greenhouse",
-    "tenant": "byjus",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:unacademy",
-    "family": "greenhouse",
-    "tenant": "unacademy",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:vedantu",
-    "family": "greenhouse",
-    "tenant": "vedantu",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:upgrad",
-    "family": "greenhouse",
-    "tenant": "upgrad",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:simplilearn",
-    "family": "greenhouse",
-    "tenant": "simplilearn",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:zoho",
-    "family": "greenhouse",
-    "tenant": "zoho",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:infosys",
-    "family": "greenhouse",
-    "tenant": "infosys",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -1360,401 +456,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "greenhouse:wipro",
-    "family": "greenhouse",
-    "tenant": "wipro",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "greenhouse:hcl",
-    "family": "greenhouse",
-    "tenant": "hcl",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:ashby",
-    "family": "lever",
-    "tenant": "ashby",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:benchling",
-    "family": "lever",
-    "tenant": "benchling",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:chime",
-    "family": "lever",
-    "tenant": "chime",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:coursera",
-    "family": "lever",
-    "tenant": "coursera",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:netflix",
-    "family": "lever",
-    "tenant": "netflix",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:reddit",
-    "family": "lever",
-    "tenant": "reddit",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:shopify",
-    "family": "lever",
-    "tenant": "shopify",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:zapier",
-    "family": "lever",
-    "tenant": "zapier",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:atlassian",
-    "family": "lever",
-    "tenant": "atlassian",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:canva",
-    "family": "lever",
-    "tenant": "canva",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:doximity",
-    "family": "lever",
-    "tenant": "doximity",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:duolingo",
-    "family": "lever",
-    "tenant": "duolingo",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:eventbrite",
-    "family": "lever",
-    "tenant": "eventbrite",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:faire",
-    "family": "lever",
-    "tenant": "faire",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:flexport",
-    "family": "lever",
-    "tenant": "flexport",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:gusto",
-    "family": "lever",
-    "tenant": "gusto",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:handshake",
-    "family": "lever",
-    "tenant": "handshake",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:hopin",
-    "family": "lever",
-    "tenant": "hopin",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:kwai",
-    "family": "lever",
-    "tenant": "kwai",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:lattice",
-    "family": "lever",
-    "tenant": "lattice",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:loom",
-    "family": "lever",
-    "tenant": "loom",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:maven",
-    "family": "lever",
-    "tenant": "maven",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:miro",
-    "family": "lever",
-    "tenant": "miro",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:mongodb",
-    "family": "lever",
-    "tenant": "mongodb",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:mural",
-    "family": "lever",
-    "tenant": "mural",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:nextdoor",
-    "family": "lever",
-    "tenant": "nextdoor",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:olacabs",
-    "family": "lever",
-    "tenant": "olacabs",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:olx",
-    "family": "lever",
-    "tenant": "olx",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:opendoor",
-    "family": "lever",
-    "tenant": "opendoor",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:outschool",
-    "family": "lever",
-    "tenant": "outschool",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:pagerduty",
-    "family": "lever",
-    "tenant": "pagerduty",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:peloton",
-    "family": "lever",
-    "tenant": "peloton",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:plaid",
-    "family": "lever",
-    "tenant": "plaid",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:postman",
-    "family": "lever",
-    "tenant": "postman",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:quora",
-    "family": "lever",
-    "tenant": "quora",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:retool",
-    "family": "lever",
-    "tenant": "retool",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:riverside",
-    "family": "lever",
-    "tenant": "riverside",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:segment",
-    "family": "lever",
-    "tenant": "segment",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:sentry",
-    "family": "lever",
-    "tenant": "sentry",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:tiktok",
-    "family": "lever",
-    "tenant": "tiktok",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:triplebyte",
-    "family": "lever",
-    "tenant": "triplebyte",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:truecaller",
-    "family": "lever",
-    "tenant": "truecaller",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:udemy",
-    "family": "lever",
-    "tenant": "udemy",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:vimeo",
-    "family": "lever",
-    "tenant": "vimeo",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "lever:wealthfront",
     "family": "lever",
     "tenant": "wealthfront",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:yelp",
-    "family": "lever",
-    "tenant": "yelp",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:zola",
-    "family": "lever",
-    "tenant": "zola",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "lever:zylo",
-    "family": "lever",
-    "tenant": "zylo",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -1784,14 +488,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "ashby:retool",
-    "family": "ashby",
-    "tenant": "retool",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "ashby:vanta",
     "family": "ashby",
     "tenant": "vanta",
@@ -1816,73 +512,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "ashby:brex",
-    "family": "ashby",
-    "tenant": "brex",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:gusto",
-    "family": "ashby",
-    "tenant": "gusto",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:rippling",
-    "family": "ashby",
-    "tenant": "rippling",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:checkr",
-    "family": "ashby",
-    "tenant": "checkr",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "ashby:deel",
     "family": "ashby",
     "tenant": "deel",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:remote",
-    "family": "ashby",
-    "tenant": "remote",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:personio",
-    "family": "ashby",
-    "tenant": "personio",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:kandji",
-    "family": "ashby",
-    "tenant": "kandji",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:jumpcloud",
-    "family": "ashby",
-    "tenant": "jumpcloud",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -1896,97 +528,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "ashby:bitwarden",
-    "family": "ashby",
-    "tenant": "bitwarden",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:okta",
-    "family": "ashby",
-    "tenant": "okta",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:auth0",
-    "family": "ashby",
-    "tenant": "auth0",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "ashby:snyk",
     "family": "ashby",
     "tenant": "snyk",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:sonatype",
-    "family": "ashby",
-    "tenant": "sonatype",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:hashicorp",
-    "family": "ashby",
-    "tenant": "hashicorp",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:spacelift",
-    "family": "ashby",
-    "tenant": "spacelift",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:env0",
-    "family": "ashby",
-    "tenant": "env0",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:atlantis",
-    "family": "ashby",
-    "tenant": "atlantis",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:firefly",
-    "family": "ashby",
-    "tenant": "firefly",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:anaconda",
-    "family": "ashby",
-    "tenant": "anaconda",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:weightsandbiases",
-    "family": "ashby",
-    "tenant": "weightsandbiases",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -2000,57 +544,9 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "ashby:arize",
-    "family": "ashby",
-    "tenant": "arize",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:why labs",
-    "family": "ashby",
-    "tenant": "why labs",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:quivr",
-    "family": "ashby",
-    "tenant": "quivr",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "ashby:dust",
     "family": "ashby",
     "tenant": "dust",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:glean",
-    "family": "ashby",
-    "tenant": "glean",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:chrono24",
-    "family": "ashby",
-    "tenant": "chrono24",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:tessian",
-    "family": "ashby",
-    "tenant": "tessian",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -2088,30 +584,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "ashby:codeium",
-    "family": "ashby",
-    "tenant": "codeium",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:continue",
-    "family": "ashby",
-    "tenant": "continue",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:aider",
-    "family": "ashby",
-    "tenant": "aider",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "ashby:sweep",
     "family": "ashby",
     "tenant": "sweep",
@@ -2136,22 +608,6 @@
     "policy": "official public board API; stop on denial; no browser fallback"
   },
   {
-    "id": "ashby:postmark",
-    "family": "ashby",
-    "tenant": "postmark",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:mailgun",
-    "family": "ashby",
-    "tenant": "mailgun",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
     "id": "ashby:frontapp",
     "family": "ashby",
     "tenant": "frontapp",
@@ -2163,46 +619,6 @@
     "id": "ashby:helpscout",
     "family": "ashby",
     "tenant": "helpscout",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:tars",
-    "family": "ashby",
-    "tenant": "tars",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:voiceflow",
-    "family": "ashby",
-    "tenant": "voiceflow",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:typeform",
-    "family": "ashby",
-    "tenant": "typeform",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:fillout",
-    "family": "ashby",
-    "tenant": "fillout",
-    "permitted": true,
-    "provenance": "existing repository employer catalog; validated health required",
-    "policy": "official public board API; stop on denial; no browser fallback"
-  },
-  {
-    "id": "ashby:tally",
-    "family": "ashby",
-    "tenant": "tally",
     "permitted": true,
     "provenance": "existing repository employer catalog; validated health required",
     "policy": "official public board API; stop on denial; no browser fallback"
@@ -2624,75 +1040,12 @@
     "policy": "operator API key required; outbound original link; respect terms"
   },
   {
-    "id": "getro:peakxv",
-    "family": "getro",
-    "url": "https://jobs.peakxv.com",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Peak XV portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
     "id": "getro:accel",
     "family": "getro",
     "url": "https://jobs.accel.com",
     "permitted": true,
     "refresh_hours": 24,
     "provenance": "Accel portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
-    "id": "getro:lightspeed",
-    "family": "getro",
-    "url": "https://jobs.lightspeedvp.com",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Lightspeed portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
-    "id": "getro:elevation",
-    "family": "getro",
-    "url": "https://jobs.elevationcapital.com",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Elevation portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
-    "id": "getro:blume",
-    "family": "getro",
-    "url": "https://jobs.blume.vc",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Blume portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
-    "id": "getro:nexus",
-    "family": "getro",
-    "url": "https://jobs.nexusvp.com",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Nexus portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
-    "id": "getro:z47",
-    "family": "getro",
-    "url": "https://jobs.z47.com",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Z47 portfolio job board (Getro); board address not verified, a wrong one only fails that source",
-    "policy": "public board search API used by the board's own site; stop on denial"
-  },
-  {
-    "id": "getro:kalaari",
-    "family": "getro",
-    "url": "https://jobs.kalaari.com",
-    "permitted": true,
-    "refresh_hours": 24,
-    "provenance": "Kalaari portfolio job board (Getro); board address not verified, a wrong one only fails that source",
     "policy": "public board search API used by the board's own site; stop on denial"
   },
   {
