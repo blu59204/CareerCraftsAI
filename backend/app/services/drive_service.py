@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 
-from app.integrations.exceptions import IntegrationActionError
+from app.integrations.exceptions import (
+    ConnectionNotFoundError,
+    ConnectionOwnershipError,
+    IntegrationActionError,
+)
 from app.services.integration_proxy_service import proxy_request
 
 
 class DriveError(RuntimeError):
     """Raised when a Nango-managed Drive upload cannot complete."""
+
+    def __init__(self, message: str, *, not_connected: bool = False):
+        super().__init__(message)
+        self.not_connected = not_connected
 
 
 def upload_to_drive(
@@ -44,8 +52,10 @@ def upload_to_drive(
         )
     except IntegrationActionError as exc:
         raise DriveError("Google Drive rejected the upload") from exc
+    except (ConnectionNotFoundError, ConnectionOwnershipError) as exc:
+        raise DriveError("Google Drive is not connected", not_connected=True) from exc
     except Exception as exc:
-        raise DriveError("Google Drive is not connected through Nango") from exc
+        raise DriveError("Google Drive is unavailable right now") from exc
     if not isinstance(result.data, dict):
         raise DriveError("Google Drive returned an invalid response")
     return result.data

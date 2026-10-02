@@ -730,6 +730,8 @@ class UserPreferences(Base):
     auto_rule_action: Mapped[str] = mapped_column(
         String, default="apply", nullable=False, server_default="apply"
     )
+    # When auto_apply_enabled last went on; the rule only acts on jobs found after it.
+    auto_rule_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Resume preferences, asked once on first auto-apply (resume_prefs_set_at
     # NULL = not asked yet) and editable in Settings.
     resume_template: Mapped[str | None] = mapped_column(String)

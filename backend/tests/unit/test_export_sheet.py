@@ -54,8 +54,16 @@ async def test_export_uploads_csv_as_sheet_and_logs(monkeypatch):
 @pytest.mark.asyncio
 async def test_export_drive_not_connected_is_409(monkeypatch):
     with pytest.raises(HTTPException) as exc:
-        await _call(monkeypatch, MagicMock(side_effect=DriveError("nope")))
+        await _call(monkeypatch, MagicMock(side_effect=DriveError("nope", not_connected=True)))
     assert exc.value.status_code == 409 and exc.value.detail == "google_drive_not_connected"
+
+
+@pytest.mark.asyncio
+async def test_export_rejected_upload_is_not_a_reconnect(monkeypatch):
+    """A connected Drive that rejects the upload must not restart the connect flow."""
+    with pytest.raises(HTTPException) as exc:
+        await _call(monkeypatch, MagicMock(side_effect=DriveError("Google Drive rejected the upload")))
+    assert exc.value.status_code == 502
 
 
 def test_upload_to_drive_convert_to_in_metadata(monkeypatch):

@@ -245,3 +245,25 @@ async def test_search_and_stage_counts_cover_the_whole_filtered_list(ctx):
         assert [r.company for r in await _list(db, user, q="100%")] == ["Globex"]
         assert [r.company for r in await _list(db, user, q="glo_ex")] == []
         assert [r.company for r in await _list(db, user, q="acme_")] == ["Acme_Labs"]
+
+
+async def test_scoring_failure_is_recorded_so_the_ui_stops_waiting(ctx, monkeypatch):
+    """Image-only PDFs / failed scoring: ats_score stays null and ats_data.score_error
+    says why, instead of the resume page polling "Scoring..." forever."""
+    import app.core.database as database
+    import app.services.ats_service as ats
+    from app.api.v1.rag import _score_resume_background
+    from app.models.db import UserDocument
+
+    maker, user = ctx
+    monkeypatch.setattr(database, "AsyncSessionLocal", maker)
+    monkeypatch.setattr(ats, "score_resume_baseline", lambda *a: 1 / 0)
+    doc = UserDocument(user_id=user.id, doc_type="resume", filename="r.pdf", storage_path="r",
+                       raw_text="Some text", is_primary=True)
+    async with maker() as db:
+        db.add(doc)
+        await db.commit()
+    await _score_resume_background(str(doc.id), str(user.id), "Some text")
+    async with maker() as db:
+        stored = await db.get(UserDocument, doc.id)
+    assert stored.ats_score is None and stored.ats_data["score_error"] == "scoring_failed"

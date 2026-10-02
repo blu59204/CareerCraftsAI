@@ -39,7 +39,7 @@ VALID_STATUSES = {"saved", "applied", "viewed", "interview", "offer", "rejected"
 class JobSearchRequest(JobSearchQuerySchema):
     search_query: str = Field(default="", max_length=200)
     location: str = "Remote"
-    max_results: int = 10
+    max_results: int = Field(10, ge=1, le=25)
     # Default to False: the free keyless job-board APIs (Remotive / Arbeitnow
     # / Jobicy) and JobSpy are fast and return real apply links. live_browser
     # opens a visible Chromium for the demo, but it triggers CAPTCHAs and
@@ -1015,7 +1015,9 @@ async def export_applications_sheet(
             "application/vnd.google-apps.spreadsheet",
         )
     except DriveError as exc:
-        raise HTTPException(status_code=409, detail="google_drive_not_connected") from exc
+        if exc.not_connected:  # the UI starts the Drive connect flow only for this
+            raise HTTPException(status_code=409, detail="google_drive_not_connected") from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     db.add(
         ActionLog(
             user_id=current_user.id,

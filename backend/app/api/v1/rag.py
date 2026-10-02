@@ -143,10 +143,34 @@ async def _score_resume_background(doc_id: str, user_id: str, raw_text: str) -> 
             doc = res.scalar_one_or_none()
             if doc:
                 doc.ats_score = score
-                doc.ats_data = {**(doc.ats_data or {}), **ats_data}
+                previous = {k: v for k, v in (doc.ats_data or {}).items() if k != "score_error"}
+                doc.ats_data = {**previous, **ats_data}
                 await db.commit()
     except Exception as exc:
         logger.warning("Background ATS scoring failed for doc %s: %s", doc_id, exc)
+        await _mark_score_failed(doc_id, user_id, "scoring_failed")
+
+
+async def _mark_score_failed(doc_id: str, user_id: str, reason: str) -> None:
+    """ats_score stays null; ats_data.score_error tells the UI to stop waiting."""
+    from app.core.database import AsyncSessionLocal
+    from app.models.db import UserDocument
+
+    try:
+        async with AsyncSessionLocal() as db:
+            doc = (
+                await db.execute(
+                    select(UserDocument).where(
+                        UserDocument.id == uuid.UUID(doc_id),
+                        UserDocument.user_id == uuid.UUID(str(user_id)),
+                    )
+                )
+            ).scalar_one_or_none()
+            if doc and doc.ats_score is None:
+                doc.ats_data = {**(doc.ats_data or {}), "score_error": reason}
+                await db.commit()
+    except Exception:
+        logger.warning("Could not record the scoring failure for doc %s", doc_id)
 
 
 router = APIRouter(prefix="/rag", tags=["rag"])
@@ -260,6 +284,8 @@ async def upload_document(
         raw_text=raw_text,
         embedded_at=embedded_at,
         is_primary=is_primary,
+        # Image-only PDFs extract no text, so there is nothing to score.
+        ats_data=None if raw_text.strip() or doc_type != "resume" else {"score_error": "no_text"},
     )
     db.add(doc)
     await db.flush()

@@ -96,6 +96,8 @@ async def load_rule(user_id: uuid.UUID) -> dict | None:
         "page_target": prefs.resume_page_target,
         "tailor": prefs.resume_tailor_per_job,
         "tone": prefs.resume_tone,
+        # "New" jobs: found after the rule was last switched on, never the backlog.
+        "since": prefs.auto_rule_enabled_at,
     }
 
 
@@ -144,6 +146,7 @@ async def _candidates(
                         JobApplication.user_id == user_id,
                         JobApplication.status == "saved",
                         JobApplication.match_score >= rule["min_match"],
+                        JobApplication.found_at >= (rule["since"] or now),
                     )
                 )
             )
@@ -310,17 +313,18 @@ async def draft_outreach(user_id: str, application: JobApplication) -> str | Non
 
 
 async def _notify(owner: uuid.UUID, jobs: list[JobApplication], minimum: int) -> None:
-    from app.services.notification_service import create_notification
+    from app.workflows.starters import start_notification
 
-    async with AsyncSessionLocal() as db:
-        await create_notification(
-            db,
-            owner,
-            "job_matches",
-            f"{len(jobs)} new matches ≥ {minimum}%",
-            "Saved jobs that meet your auto-apply rule.",
-            f"/applications?min={minimum}&sort=match_desc",
-        )
+    # Same path as every other notification: the workflow persists it and emails.
+    # The dedupe key makes a retried tick a no-op instead of a second notice.
+    await start_notification(
+        owner,
+        "job_matches",
+        f"{len(jobs)} new matches ≥ {minimum}%",
+        "Saved jobs that meet your auto-apply rule.",
+        f"/applications?min={minimum}&sort=match_desc",
+        dedupe_key=f"rule-notify:{owner}:{min(str(j.id) for j in jobs)}:{len(jobs)}",
+    )
 
 
 async def queue_for_member(user_id: str) -> dict:

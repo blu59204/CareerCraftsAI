@@ -1,5 +1,6 @@
 import io
 import logging
+import re
 
 from langchain_core.documents import Document
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -105,6 +106,22 @@ def extract_text(content: bytes, filename: str) -> str:
 def chunk_text(text: str) -> list[str]:
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     return splitter.split_text(text)
+
+
+def _relevant_chunks(chunks: list[str], query: str, k: int) -> list[str]:
+    """The k chunks sharing the most words with the query, kept in resume order.
+
+    Taking the first k cut a two-page resume off after ~4K characters, so later
+    roles, education and skills never reached the prompt."""
+    if len(chunks) <= k:
+        return chunks
+    words = {w for w in re.findall(r"[a-z0-9+#]+", query.lower()) if len(w) > 2}
+
+    def overlap(chunk: str) -> int:
+        return len(words & set(re.findall(r"[a-z0-9+#]+", chunk.lower())))
+
+    best = sorted(range(len(chunks)), key=lambda i: overlap(chunks[i]), reverse=True)[:k]
+    return [chunks[i] for i in sorted(best)]
 
 
 def get_embedding_model(model_settings):
@@ -245,8 +262,10 @@ def retrieve(
 
         chosen = fetch_chosen_resume(user_id)
         if chosen is not None and chosen.raw_text:
-            return [Document(page_content=c, metadata={"doc_type": "resume"})
-                    for c in chunk_text(chosen.raw_text)[:k]]
+            return [
+                Document(page_content=c, metadata={"doc_type": "resume"})
+                for c in _relevant_chunks(chunk_text(chosen.raw_text), query, k)
+            ]
     try:
         embeddings = get_embedding_model(model_settings)
         store = get_vector_store(

@@ -86,6 +86,8 @@ import {
 
 interface AtsData {
   content_version?: string;
+  /** Set when there is nothing to score (image-only PDF) or scoring failed. */
+  score_error?: "no_text" | "scoring_failed";
   matched_keywords: string[];
   missing_keywords: string[];
   suggestions: string[];
@@ -751,7 +753,7 @@ export default function ResumePage() {
     refetchInterval: (query) => {
       const docs = query.state.data;
       const primary = docs?.find((d) => d.is_primary);
-      return primary && primary.ats_score === null ? 3000 : false;
+      return primary && primary.ats_score === null && !primary.ats_data?.score_error ? 3000 : false;
     },
   });
 
@@ -1170,7 +1172,7 @@ export default function ResumePage() {
   const panelVariants = reduceMotion
     ? { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } }, exit: { opacity: 0, transition: { duration: 0.15 } } }
     : panelSwap;
-  const scoreComputing = tailoredPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !activeJobAts && !savedSnapshot);
+  const scoreComputing = tailoredPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !primaryDoc.ats_data?.score_error && !activeJobAts && !savedSnapshot);
   const canShowTemplateBar = !!(lastDocId && resumePreviewText && !editingText);
 
   const heroActions = (
@@ -1303,7 +1305,7 @@ export default function ResumePage() {
                 <h2 id="primary-resume-heading" className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                   Current resume
                 </h2>
-                {primaryDoc && !docsLoading && primaryDoc.ats_score === null ? (
+                {primaryDoc && !docsLoading && primaryDoc.ats_score === null && !primaryDoc.ats_data?.score_error ? (
                   <StatusPill tone="primary" live>Scoring</StatusPill>
                 ) : null}
               </div>
@@ -1324,6 +1326,14 @@ export default function ResumePage() {
                     <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
                       {primaryDoc && primaryDoc.ats_score != null ? (
                         <AtsScoreRing score={primaryDoc.ats_score} size={136} />
+                      ) : primaryDoc?.ats_data?.score_error ? (
+                        <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
+                          <span role="status" className="px-3 text-center text-[11px] leading-4 text-muted-foreground">
+                            {primaryDoc.ats_data.score_error === "no_text"
+                              ? "No text found. Upload a text-based PDF or DOCX."
+                              : "Score unavailable. Re-upload to try again."}
+                          </span>
+                        </div>
                       ) : (
                         <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
                           <span className="flex flex-col items-center gap-2 text-center text-[11px] text-muted-foreground">
