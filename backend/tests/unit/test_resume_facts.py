@@ -273,6 +273,13 @@ def test_prompt_has_no_facts_block_without_facts():
     assert "BEGIN_CANDIDATE_FACTS" not in build_user_prompt({"jd_text": "x"}, ["resume"])
 
 
+def test_prompt_enforces_the_chosen_page_limit():
+    one = build_user_prompt({"jd_text": "x", "page_target": 1}, ["resume"])
+    two = build_user_prompt({"jd_text": "x", "page_target": 2}, ["resume"])
+    assert "PAGE_LIMIT: 1" in one and "ONE page" in one
+    assert "PAGE_LIMIT: 2" in two and "ONE page" not in two
+
+
 def test_system_prompt_requires_positional_heading_slots():
     from app.agents.prompts.resume_prompt import SYSTEM_PROMPT
 
