@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -102,15 +103,15 @@ interface PendingApproval {
   output: { type?: string; subject?: string; body?: string } | null;
 }
 
-/** Agent launchers. "Search Jobs" is the hero's primary action; the rest live in the Next actions panel. */
+/** Quick-action cards: primary Search Jobs triggers agent; others navigate to dedicated pages. */
 const quickActions = [
   { label: "Search Jobs", icon: MagnifyingGlass, taskType: "job_search", ctx: { query: "", location: "Remote" }, description: "Scan the boards and score every match." },
-  { label: "Optimize Resume", icon: FileText, taskType: "resume_optimize", ctx: {}, description: "Tailor to a role and rescore it for ATS." },
-  { label: "Mock Interview", icon: Microphone, taskType: "interview_coach", ctx: { role: "Software Engineer" }, description: "Practice answers with scored feedback." },
-  { label: "Research Company", icon: Buildings, taskType: "company_research", ctx: {}, description: "Culture, news and interview patterns." },
+  { label: "Optimize Resume", icon: FileText, taskType: "resume_optimize", ctx: {}, description: "Tailor to a role and rescore it for ATS.", href: "/resume" },
+  { label: "Mock Interview", icon: Microphone, taskType: "interview_coach", ctx: { role: "Software Engineer" }, description: "Practice answers with scored feedback.", href: "/interview" },
+  { label: "Research Company", icon: Buildings, taskType: "company_research", ctx: {}, description: "Culture, news and interview patterns.", href: "/company" },
 ] as const;
 
-const [primaryAction, ...panelActions] = quickActions;
+const [primaryAction] = quickActions;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -166,6 +167,7 @@ function LaunchTile({
   label,
   description,
   icon,
+  href,
   busy,
   disabled,
   onClick,
@@ -173,42 +175,55 @@ function LaunchTile({
   label: string;
   description: string;
   icon: ReactNode;
-  busy: boolean;
-  disabled: boolean;
-  onClick: () => void;
+  href?: string;
+  busy?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
 }) {
   const descId = `launch-${label.toLowerCase().replace(/\s+/g, "-")}-desc`;
+  const tileClassName = cn(
+    bezelShell("md"),
+    "group block h-full w-full text-left transition-[transform,opacity] duration-500 ease-vanguard hover:-translate-y-0.5 active:scale-[0.98]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60",
+  );
+
+  const content = (
+    <span className={cn(bezelCore("md"), "flex h-full flex-col p-4")}>
+      <span className="flex items-start justify-between gap-3">
+        <Medallion>{icon}</Medallion>
+        <span
+          aria-hidden
+          className="grid h-8 w-8 place-items-center rounded-full bg-foreground/[0.05] text-muted-foreground transition-[transform,color,background-color] duration-500 ease-vanguard group-hover:-translate-y-[1px] group-hover:translate-x-1 group-hover:scale-105 group-hover:bg-primary/10 group-hover:text-primary dark:bg-white/10"
+        >
+          <ArrowUpRight size={14} weight="light" />
+        </span>
+      </span>
+      <span className="mt-6 block text-sm font-medium tracking-[-0.01em] text-foreground">{label}</span>
+      <span id={descId} className="mt-1 block text-xs leading-5 text-muted-foreground">
+        {busy ? "Starting agent…" : description}
+      </span>
+    </span>
+  );
+
   return (
     <motion.li variants={listItem} className="min-w-0">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-busy={busy}
-        aria-label={label}
-        aria-describedby={descId}
-        className={cn(
-          bezelShell("md"),
-          "group block h-full w-full text-left transition-[transform,opacity] duration-500 ease-vanguard hover:-translate-y-0.5 active:scale-[0.98]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60",
-        )}
-      >
-        <span className={cn(bezelCore("md"), "flex h-full flex-col p-4")}>
-          <span className="flex items-start justify-between gap-3">
-            <Medallion>{icon}</Medallion>
-            <span
-              aria-hidden
-              className="grid h-8 w-8 place-items-center rounded-full bg-foreground/[0.05] text-muted-foreground transition-[transform,color,background-color] duration-500 ease-vanguard group-hover:-translate-y-[1px] group-hover:translate-x-1 group-hover:scale-105 group-hover:bg-primary/10 group-hover:text-primary dark:bg-white/10"
-            >
-              <ArrowUpRight size={14} weight="light" />
-            </span>
-          </span>
-          <span className="mt-6 block text-sm font-medium tracking-[-0.01em] text-foreground">{label}</span>
-          <span id={descId} className="mt-1 block text-xs leading-5 text-muted-foreground">
-            {busy ? "Starting agent…" : description}
-          </span>
-        </span>
-      </button>
+      {href ? (
+        <Link href={href} className={tileClassName} aria-label={label} aria-describedby={descId}>
+          {content}
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          aria-busy={busy}
+          aria-label={label}
+          aria-describedby={descId}
+          className={tileClassName}
+        >
+          {content}
+        </button>
+      )}
     </motion.li>
   );
 }
@@ -540,21 +555,22 @@ export default function DashboardPage() {
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Launch an agent</p>
                 <motion.ul
-                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
+                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
                   initial="hidden"
                   whileInView="show"
                   viewport={{ once: true, amount: 0.2 }}
                   variants={listStagger}
                 >
-                  {panelActions.map((action) => (
+                  {quickActions.map((action) => (
                     <LaunchTile
                       key={action.taskType}
                       label={action.label}
                       description={action.description}
                       icon={<action.icon size={18} weight="light" />}
+                      href={"href" in action ? action.href : undefined}
                       busy={launching === action.taskType}
                       disabled={launching !== null}
-                      onClick={() => triggerAgent(action.taskType, { ...action.ctx })}
+                      onClick={!("href" in action) ? () => triggerAgent(action.taskType, { ...action.ctx }) : undefined}
                     />
                   ))}
                 </motion.ul>
