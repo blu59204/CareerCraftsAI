@@ -1327,3 +1327,39 @@ async def prepare_application_apply(
     # Release the row lock before the workflow's reserve activity locks it.
     await db.commit()
     return await _start_temporal_auto_apply(current_user.id, application_id)
+
+
+class OutreachBody(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
+
+
+@router.post("/applications/outreach")
+@limiter.limit("10/hour")
+async def queue_applications_outreach(
+    body: OutreachBody,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Draft recruiter emails for the member's own saved jobs. Drafts land in
+    the review queue (/outreach); they only go out unreviewed if the member
+    turned on auto-send."""
+    from app.services.auto_apply_queue import draft_outreach
+
+    apps = await _owned_applications(db, current_user.id, body.ids)
+    queued: list[str] = []
+    skipped: list[str] = []
+    for app in apps:
+        state = await draft_outreach(str(current_user.id), app)
+        (queued if state else skipped).append(str(app.id))
+        db.add(
+            ActionLog(
+                user_id=current_user.id,
+                job_application_id=app.id,
+                action="outreach_queued",
+                source="user",
+                detail={"state": state or "no_contact"},
+            )
+        )
+    await db.commit()
+    return {"queued": queued, "skipped": skipped}
