@@ -669,7 +669,7 @@ export default function ResumePage() {
       setJdText(pending.jdText);
       setJdPanelOpen(true);
       setTab("builder");
-      toast.info(`Job description loaded from ${pending.role} at ${pending.company}`);
+      toast.info(`Job description loaded from ${pending.role} at ${pending.company}`, { id: "pending-jd" });
     }
   }, []);
 
