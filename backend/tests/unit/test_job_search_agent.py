@@ -311,9 +311,9 @@ def test_job_search_agent_respects_max_results_cap():
         patch("app.agents.job_search._search_public_ats_jobs", return_value=many_jobs),
         patch("app.agents.job_search._search_remoteok_jobs", return_value=[]),
     ):
-        # max_results capped at 25 per spec
+        # No result cap: max_results is only the gap-fill target.
         state = make_state()
         state["context"]["max_results"] = 50
         result = job_search_agent_node(state)
 
-    assert len(result["result"]["matches"]) <= 25
+    assert len(result["result"]["matches"]) <= 30

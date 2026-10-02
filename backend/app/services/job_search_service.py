@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 # Per-platform budget: no single source may stall a run.
 PLATFORM_TIMEOUT_SEC = 25
 
+# Per-adapter upstream fetch size. This bounds one live request, never the result set.
+LIVE_FETCH_LIMIT = 50
+
+# Public demo adapter: never reads/writes the shared catalog (unauthenticated callers).
+NO_CATALOG = {"open_apis_keyless"}
+
 # Canonical normalized job keys returned to agents.
 JOB_KEYS = (
     "job_id",
@@ -153,55 +159,72 @@ async def search_all_platforms(
     platforms: list[str] | None = None,
     timeout_s: int = 90,
 ) -> tuple[list[dict], list[str]]:
-    from app.services.job_catalog import search_catalog
-    from app.services.job_connectors import FAMILIES
-
-    selected = platforms or DEFAULT_PLATFORMS
-    public = [p for p in selected if p in FAMILIES or ":" in p]
-    public_jobs, public_warnings = [], []
-    if public:
-        public_jobs, public_warnings = await search_catalog(query, public)
-        if len(public) == len(selected):
-            return public_jobs, public_warnings
-    platforms = [p for p in selected if p not in public]
-    """Fan out across job platforms (and locations) concurrently.
+    """Catalog-first job search with live gap fill, write-through and no result caps.
 
     Args:
         query: {titles: list[str], locations: list[str], remote: str,
             max_results: int}. ``titles`` is required; locations optional.
-        platforms: subset of _ADAPTERS keys. Unknown names are skipped with
-            a warning. Defaults to DEFAULT_PLATFORMS.
-        timeout_s: overall budget; each platform additionally capped at
+            ``max_results`` is the target relevant-job count that triggers
+            gap fill, not a cap on what is returned.
+        platforms: public families/source ids (served from the shared catalog)
+            and/or _ADAPTERS keys (live). Unknown names are skipped with a
+            warning. Defaults to DEFAULT_PLATFORMS.
+        timeout_s: unused; each platform is individually capped at
             PLATFORM_TIMEOUT_SEC.
 
     Returns:
         (normalized deduped jobs, warnings). Platform failures become
         warnings — this function never raises for source errors.
     """
+    from app.services.job_catalog import search_catalog, write_through
+    from app.services.job_connectors import FAMILIES
+
+    selected = platforms or DEFAULT_PLATFORMS
+    public = [p for p in selected if p in FAMILIES or ":" in p]
+    warnings: list[str] = []
+    valid_names = []
+    for name in selected:
+        if name in public:
+            continue
+        if name in _ADAPTERS:
+            valid_names.append(name)
+        else:
+            warnings.append(f"unknown platform skipped: {name}")
+
+    need = int(query.get("max_results", 10))
+    # 1. Shared catalog first (public sources + jobs other users' live searches stored).
+    catalog_jobs: list[dict] = []
+    cacheable = [n for n in valid_names if n not in NO_CATALOG]
+    if public or cacheable:
+        try:
+            catalog_jobs, catalog_warnings = await search_catalog(
+                query, public, live_platforms=cacheable
+            )
+            warnings.extend(catalog_warnings)
+        except Exception as exc:
+            if not valid_names:
+                raise
+            logger.warning("Catalog read failed: %s", type(exc).__name__)
+            warnings.append(f"catalog unavailable: {type(exc).__name__}")
+    if not valid_names or (len(cacheable) == len(valid_names) and len(catalog_jobs) >= need):
+        return catalog_jobs, warnings
+
+    # 2. Shortfall: live adapters fill the gap.
     titles = query.get("titles") or []
     locations = (
         query.get("locations")
         or ([str(query["location"])] if query.get("location") else [])
         or ["Remote"]
     )
-    max_results = int(query.get("max_results", 10))
     remote = str(query.get("remote") or "").strip().lower()
     q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
-
-    names = platforms or DEFAULT_PLATFORMS
-    warnings: list[str] = public_warnings
-    valid_names = []
-    for name in names:
-        if name in _ADAPTERS:
-            valid_names.append(name)
-        else:
-            warnings.append(f"unknown platform skipped: {name}")
+    fetch_n = max(need, LIVE_FETCH_LIMIT)
 
     async def run_one(name: str, location: str) -> list[dict]:
         adapter = _ADAPTERS[name]
         try:
             raw = await asyncio.wait_for(
-                asyncio.to_thread(adapter, q, location, max_results),
+                asyncio.to_thread(adapter, q, location, fetch_n),
                 timeout=PLATFORM_TIMEOUT_SEC,
             )
             return [_normalize(job, name) for job in (raw or [])]
@@ -216,11 +239,19 @@ async def search_all_platforms(
     # completed sources and discard their jobs.)
     # Fan out over every requested location, not just the first — a
     # multi-location search previously silently dropped all but one city.
-    per_source = await asyncio.gather(
-        *(run_one(name, location) for name in valid_names for location in locations)
+    pairs = [(name, location) for name in valid_names for location in locations]
+    per_source = await asyncio.gather(*(run_one(n, loc) for n, loc in pairs))
+
+    # 3. Write-through so the next user's search finds these in the catalog.
+    # write_through never raises; a failed catalog write must not fail the search.
+    by_name: dict[str, list[dict]] = {}
+    for (name, _), group in zip(pairs, per_source, strict=True):
+        by_name.setdefault(name, []).extend(group)
+    await asyncio.gather(
+        *(write_through(g, n) for n, g in by_name.items() if g and n not in NO_CATALOG)
     )
 
-    jobs = _dedupe(public_jobs + [job for group in per_source for job in group])
+    jobs = _dedupe(catalog_jobs + [job for group in per_source for job in group])
     if remote in ("remote", "hybrid", "onsite"):
         # Post-fetch predicate: none of the adapters accept a remote/work-mode
         # parameter, so filter on each job's normalized location + remote
@@ -236,5 +267,4 @@ async def search_all_platforms(
             return not is_remote and not is_hybrid  # onsite
 
         jobs = [j for j in jobs if _mode_matches(j)]
-    cap = max_results * max(len(valid_names), 1) * len(locations)
-    return jobs[:cap], warnings
+    return jobs, warnings

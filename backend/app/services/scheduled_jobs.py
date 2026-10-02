@@ -554,8 +554,28 @@ async def daily_search(payload: StatusCheckTrigger):
                 all_jobs.extend(google_jobs)
                 jobs_found += len(all_jobs)
 
-                # Save top results as applications
-                for job in all_jobs[:10]:
+                # Share everything found with other users' searches (never fails the run).
+                from app.services.job_catalog import write_through
+
+                await write_through(
+                    [
+                        {
+                            "url": j.job_url,
+                            "title": j.title,
+                            "company": j.company,
+                            "location": j.location,
+                            "description": j.description,
+                            "posted_at": j.date_posted,
+                            "salary_text": j.salary or "",
+                        }
+                        for j in all_jobs
+                        if j.job_url
+                    ],
+                    "scheduled",
+                )
+
+                # Save every result as an application (no top-N cap)
+                for job in all_jobs:
                     existing = await db.execute(
                         select(JobApplication).where(
                             JobApplication.user_id == user.id,
