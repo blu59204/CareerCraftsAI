@@ -860,29 +860,24 @@ _SORTS = {
 }
 
 
-@router.get("/applications", response_model=list[ApplicationResponse])
-async def list_applications(
-    response: Response,
+async def _filtered_applications(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
     status: str | None = None,
     location: str | None = None,
-    source: str | None = Query(None, max_length=100),
-    posted_within_days: int | None = Query(None, ge=1, le=90),
-    min_match: int | None = Query(None, ge=0, le=100),
+    source: str | None = None,
+    posted_within_days: int | None = None,
+    min_match: int | None = None,
     found_after: datetime | None = None,
     found_before: datetime | None = None,
-    sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
-    offset: int = Query(0, ge=0),
-    limit: int | None = Query(None, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Filtered, sorted, paginated list. The total row count (before
-    offset/limit) is returned in the ``X-Total-Count`` header so the body
-    stays a plain list for existing callers."""
+    sort: str | None = None,
+) -> list[JobApplication]:
+    """Shared by the list view and the Sheets export so both see the same rows."""
     if status and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of: {VALID_STATUSES}")
 
-    query = select(JobApplication).where(JobApplication.user_id == current_user.id)
+    query = select(JobApplication).where(JobApplication.user_id == user_id)
     if status:
         query = query.where(JobApplication.status == status)
     if source:
@@ -907,14 +902,114 @@ async def list_applications(
     result = await db.execute(query.order_by(*order))
     # ponytail: example-URL/location filters run in Python over the member's own
     # rows (hundreds, not millions); move them into SQL if that ever changes.
-    apps = [
+    return [
         app
         for app in result.scalars().all()
         if not is_example_job_url(app.job_url) and _matches_location_filter(app, location)
     ]
+
+
+@router.get("/applications", response_model=list[ApplicationResponse])
+async def list_applications(
+    response: Response,
+    status: str | None = None,
+    location: str | None = None,
+    source: str | None = Query(None, max_length=100),
+    posted_within_days: int | None = Query(None, ge=1, le=90),
+    min_match: int | None = Query(None, ge=0, le=100),
+    found_after: datetime | None = None,
+    found_before: datetime | None = None,
+    sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    offset: int = Query(0, ge=0),
+    limit: int | None = Query(None, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Filtered, sorted, paginated list. The total row count (before
+    offset/limit) is returned in the ``X-Total-Count`` header so the body
+    stays a plain list for existing callers."""
+    apps = await _filtered_applications(
+        db,
+        current_user.id,
+        status=status,
+        location=location,
+        source=source,
+        posted_within_days=posted_within_days,
+        min_match=min_match,
+        found_after=found_after,
+        found_before=found_before,
+        sort=sort,
+    )
     response.headers["X-Total-Count"] = str(len(apps))
     apps = apps[offset : offset + limit] if limit else apps[offset:]
     return await _with_tracking(db, current_user.id, apps)
+
+
+def _csv_cell(value: object) -> str:
+    """CSV-escape; a leading = + - @ gets a ' prefix so Sheets never runs
+    scraped job text as a formula."""
+    text_value = "" if value is None else str(value)
+    if text_value[:1] in ("=", "+", "-", "@"):
+        text_value = "'" + text_value
+    return '"' + text_value.replace('"', '""') + '"'
+
+
+@router.post("/applications/export-sheet")
+async def export_applications_sheet(
+    status: str | None = None,
+    location: str | None = None,
+    source: str | None = Query(None, max_length=100),
+    min_match: int | None = Query(None, ge=0, le=100),
+    found_after: datetime | None = None,
+    found_before: datetime | None = None,
+    sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export the filtered list to a new Google Sheet in the member's Drive
+    (Drive converts the CSV upload; drive.file scope only). Each call makes a
+    new sheet: appending to an existing one isn't supported."""
+    from app.services.drive_service import DriveError, upload_to_drive
+
+    apps = await _filtered_applications(
+        db,
+        current_user.id,
+        status=status,
+        location=location,
+        source=source,
+        min_match=min_match,
+        found_after=found_after,
+        found_before=found_before,
+        sort=sort,
+    )
+    rows = [["Company", "Role", "Location", "Match", "Status", "Found", "URL", "Source"]]
+    rows += [
+        [a.company, a.role, a.location, a.match_score, a.status, a.found_at, a.job_url, a.source]
+        for a in apps
+    ]
+    csv = "\r\n".join(",".join(_csv_cell(c) for c in row) for row in rows)
+    name = f"CareerCraft jobs {datetime.now(UTC).date().isoformat()}"
+    try:
+        # upload_to_drive is a blocking HTTP call; keep it off the event loop.
+        result = await asyncio.to_thread(
+            upload_to_drive,
+            str(current_user.id),
+            name,
+            csv.encode("utf-8"),
+            "text/csv",
+            "application/vnd.google-apps.spreadsheet",
+        )
+    except DriveError as exc:
+        raise HTTPException(status_code=409, detail="google_drive_not_connected") from exc
+    db.add(
+        ActionLog(
+            user_id=current_user.id,
+            action="export_sheet",
+            detail={"rows": len(apps), "file_id": result.get("id")},
+        )
+    )
+    await db.commit()
+    return {"url": result.get("webViewLink"), "rows": len(apps)}
 
 
 async def _owned_applications(

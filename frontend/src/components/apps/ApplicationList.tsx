@@ -1,9 +1,13 @@
 "use client";
 
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Trash } from "@phosphor-icons/react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Bezel, IconButton, Select, StatusPill, type StatusTone } from "@/components/vanguard";
-import type { AppStage, ApplicationSort } from "@/lib/applications-api";
+import { Bezel, IconButton, IslandButton, Select, StatusPill, type StatusTone } from "@/components/vanguard";
+import { setApplyState, type AppStage, type ApplicationSort, type ApplyState } from "@/lib/applications-api";
+import { startAssistedApply } from "@/lib/assisted-apply";
 
 export type { AppStage };
 
@@ -24,6 +28,7 @@ export type ApplicationItem = {
   resumeLabel?: string | null;
   outreachStatus?: string | null;
   outreachTo?: string | null;
+  applyState?: ApplyState | null;
 };
 
 export const APP_STAGES: AppStage[] = ["saved", "applied", "viewed", "interview", "offer", "rejected"];
@@ -46,6 +51,41 @@ export const STAGE_TONE: Record<AppStage, StatusTone> = {
   offer: "success",
   rejected: "danger",
 };
+
+const APPLY_LABEL: Record<ApplyState, string> = { opened: "Opened", applied: "Applied", failed: "Failed" };
+const APPLY_TONE: Record<ApplyState, StatusTone> = { opened: "primary", applied: "success", failed: "danger" };
+
+/** Assisted apply in the member's own browser: open the job, then the member confirms the outcome. */
+export function ApplyControls({ id, jobUrl, state }: { id: string; jobUrl?: string | null; state?: ApplyState | null }) {
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["applications"] });
+  const start = () => {
+    // startAssistedApply opens its tab synchronously, so call it straight from the click.
+    setBusy(true);
+    void startAssistedApply({ id, job_url: jobUrl ?? null }).finally(() => {
+      setBusy(false);
+      void refresh();
+    });
+  };
+  const finish = (next: ApplyState) =>
+    setApplyState(id, next).then(refresh).catch(() => toast.error("Could not save the result. Try again."));
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {state ? <StatusPill tone={APPLY_TONE[state]}>{APPLY_LABEL[state]}</StatusPill> : null}
+      {state === "opened" ? (
+        <>
+          <IslandButton tone="ghost" size="sm" onClick={() => finish("applied")}>Applied</IslandButton>
+          <IslandButton tone="ghost" size="sm" onClick={() => finish("failed")}>Couldn&apos;t apply</IslandButton>
+        </>
+      ) : state !== "applied" ? (
+        <IslandButton tone="ghost" size="sm" disabled={!jobUrl || busy} aria-busy={busy} title={jobUrl ? undefined : "No job link saved"} onClick={start}>
+          {state === "failed" ? "Retry" : "Auto apply"}
+        </IslandButton>
+      ) : null}
+    </div>
+  );
+}
 
 /** "3h ago" / "2d ago"; falls back to a short date after 30 days. */
 export function relativeTime(iso: string | null | undefined): string {
@@ -81,21 +121,22 @@ export function ApplicationList({ items, onSelect, onStageChange, checked, onChe
         <caption className="sr-only">Applications and their next steps</caption>
         <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th scope="col" className="w-[40%] px-4 py-3 font-medium">
+            <th scope="col" className="w-[32%] px-4 py-3 font-medium">
               <label className="flex items-center gap-3">
                 <input type="checkbox" aria-label="Select all applications on this page" checked={allChecked} onChange={(event) => onCheckedChange(items.map((item) => item.id), event.target.checked)} className="h-4 w-4 accent-primary" />
                 Role / company
               </label>
             </th>
-            <th scope="col" className="w-[18%] px-4 py-3 font-medium">Stage</th>
-            <th scope="col" className="w-[10%] px-4 py-3 font-medium">Match</th>
-            <th scope="col" aria-sort={foundDir} className="w-[14%] px-4 py-3 font-medium">
+            <th scope="col" className="w-[16%] px-4 py-3 font-medium">Stage</th>
+            <th scope="col" className="w-[8%] px-4 py-3 font-medium">Match</th>
+            <th scope="col" aria-sort={foundDir} className="w-[11%] px-4 py-3 font-medium">
               <button type="button" onClick={() => onSortChange(sort === "found_desc" ? "found_asc" : "found_desc")} className="inline-flex items-center gap-1 rounded uppercase tracking-wider hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 Found
                 {sort === "found_desc" ? <ArrowDown size={11} weight="bold" aria-hidden /> : sort === "found_asc" ? <ArrowUp size={11} weight="bold" aria-hidden /> : null}
               </button>
             </th>
-            <th scope="col" className="w-[18%] px-4 py-3 font-medium">Follow-up</th>
+            <th scope="col" className="w-[11%] px-4 py-3 font-medium">Follow-up</th>
+            <th scope="col" className="w-[22%] px-4 py-3 font-medium">Apply</th>
           </tr>
         </thead>
         <tbody role="rowgroup" className="divide-y divide-border">
@@ -123,6 +164,7 @@ export function ApplicationList({ items, onSelect, onStageChange, checked, onChe
                 <span title={item.foundAt ? new Date(item.foundAt).toLocaleString() : undefined}>{relativeTime(item.foundAt)}</span>
               </td>
               <td role="cell" data-label="Follow-up" className="px-4 py-3 align-middle text-xs text-muted-foreground">{item.nextFollowUp ?? "Not scheduled"}</td>
+              <td role="cell" data-label="Apply" className="px-4 py-3 align-middle"><ApplyControls id={item.id} jobUrl={item.jobUrl} state={item.applyState} /></td>
             </tr>
           ))}
         </tbody>

@@ -17,10 +17,14 @@ def upload_to_drive(
     filename: str,
     content: bytes,
     mime_type: str = "application/octet-stream",
+    convert_to: str | None = None,
 ) -> dict:
-    """Upload a document without retrieving a Google OAuth token."""
+    """Upload a document without retrieving a Google OAuth token.
+
+    ``convert_to`` is a Google-native mimeType (e.g. a spreadsheet); Drive
+    converts the uploaded content (e.g. text/csv) on the way in."""
     boundary = "careercraft-drive-boundary"
-    metadata = json.dumps({"name": filename})
+    metadata = json.dumps({"name": filename, **({"mimeType": convert_to} if convert_to else {})})
     body = (
         (
             f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n"

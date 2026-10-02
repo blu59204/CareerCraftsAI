@@ -42,7 +42,7 @@ import {
   listStagger,
   type StatusTone,
 } from "@/components/vanguard";
-import { APP_STAGES, STAGE_LABELS, STAGE_TONE, type ApplicationItem, type AppStage } from "./ApplicationList";
+import { APP_STAGES, ApplyControls, STAGE_LABELS, STAGE_TONE, type ApplicationItem, type AppStage } from "./ApplicationList";
 
 type AgentRun = {
   id: string;
@@ -336,6 +336,12 @@ function DrawerBody({
               </div>
             </Bezel>
           </motion.div>
+
+          <motion.section {...item} className="space-y-3">
+            <PanelTitle title="Apply in your browser" icon={<Lightning size={15} weight="light" />} />
+            <p className="text-sm leading-6 text-muted-foreground">Opens the job in your own browser. You review and click Submit yourself.</p>
+            <ApplyControls id={app.id} jobUrl={app.jobUrl} state={app.applyState} />
+          </motion.section>
 
           <motion.section {...item} className="space-y-3">
             <PanelTitle title="Original source" icon={<Globe size={15} weight="light" />} />
