@@ -521,6 +521,8 @@ def test_every_started_workflow_is_registered_with_the_worker():
     ):
         assert workflow_cls in WORKFLOWS
     names = {a.__temporal_activity_definition.name for a in ACTIVITIES}
+    # Worker() refuses to start on a duplicate activity name.
+    assert len(names) == len(ACTIVITIES)
     assert {
         "execute_agent_run_activity",
         "continue_agent_run_activity",

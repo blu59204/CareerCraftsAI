@@ -83,6 +83,5 @@ ACTIVITIES = [
     auto_apply_queue_activity,
     list_auto_apply_users_activity,
     daily_summary_activity,
-    list_summary_users_activity,
     maintenance_activity,
 ]

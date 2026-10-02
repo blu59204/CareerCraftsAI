@@ -64,6 +64,8 @@ services:
       TEMPORAL_ADDRESS: 127.0.0.1:7233
       TEMPORAL_UI_PORT: "19280"
       TEMPORAL_UI_PUBLIC_PATH: ""
+      # Public via host nginx (basic auth + TLS) at temporal.careercraftsai.me.
+      TEMPORAL_CORS_ORIGINS: https://temporal.careercraftsai.me
     volumes:
       # Adds `host: 127.0.0.1`; the stock image binds every interface and has
       # no env var to change that. See the header of the file.
