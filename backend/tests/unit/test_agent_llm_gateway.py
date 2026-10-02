@@ -16,7 +16,7 @@ def test_agents_never_build_a_keyed_llm():
     offenders = [
         path.name
         for path in AGENTS.rglob("*.py")
-        if re.search(r"\b_build_llm\b|\b_make_llm\b", path.read_text())
+        if re.search(r"\b_build_llm\b|\b_make_llm\b", path.read_text(encoding="utf-8"))
     ]
     assert offenders == []
 
