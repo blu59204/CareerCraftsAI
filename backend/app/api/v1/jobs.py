@@ -738,9 +738,6 @@ async def search_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if payload.max_results > 25:
-        raise HTTPException(status_code=400, detail="max_results cannot exceed 25")
-
     search_query, location, work_mode, search_source = await _resolve_search_context(
         db, current_user, payload
     )

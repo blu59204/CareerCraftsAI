@@ -1770,7 +1770,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
         **ctx,
         "titles": ctx.get("titles") or [ctx.get("search_query", "software engineer")],
         "locations": ctx.get("locations") or [ctx.get("location", "Remote")],
-        "max_results": min(int(ctx.get("max_results", 10)), 25),
+        "max_results": int(ctx.get("max_results", 10)),
     }
     try:
         emit(run_id, "thinking", {"step": "search", "message": "Searching public job sources"})
