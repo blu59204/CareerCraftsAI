@@ -257,6 +257,7 @@ def resume_agent_node(state: AgentState) -> AgentState:
                     "tone": tone,
                     "template": template,
                     "verified_facts": saved_facts,
+                    "page_target": ctx.get("page_target", 2),
                 },
                 chunk_texts,
             ),
