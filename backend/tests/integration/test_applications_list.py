@@ -147,11 +147,12 @@ async def test_job_description_falls_back_to_catalog(ctx):
 
     truncated = await _app(maker, user, job_url=url, jd_text=full[:4000])
     empty = await _app(maker, user, job_url=url, jd_text=None)
+    tracked = await _app(maker, user, job_url=url + "/?utm_source=x&trackingId=abc", jd_text="")
     own = await _app(maker, user, jd_text="Our own JD")
     missing = await _app(maker, user, jd_text="")
 
     async with maker() as db:
-        for row in (truncated, empty):
+        for row in (truncated, empty, tracked):
             jd = await get_application_jd(row.id, db, user)
             assert jd.jd_text == full.strip() and jd.source == "catalog"
         jd = await get_application_jd(own.id, db, user)

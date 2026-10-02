@@ -1066,11 +1066,20 @@ async def get_application_jd(
     saved = (app.jd_text or "").strip()
     catalog = ""
     if app.job_url:
+        from app.services.job_connectors import canonical_url
+
+        try:  # the catalog keys jobs by canonical URL; saved rows keep the raw one
+            urls = list({app.job_url, canonical_url(app.job_url)})
+        except ValueError:
+            urls = [app.job_url]
         catalog = (
             (
                 await db.execute(
-                    text("SELECT data->>'description' FROM job_catalog WHERE url = :url"),
-                    {"url": app.job_url},
+                    text(
+                        "SELECT data->>'description' FROM job_catalog WHERE url = ANY(:urls) "
+                        "ORDER BY length(data->>'description') DESC NULLS LAST LIMIT 1"
+                    ),
+                    {"urls": urls},
                 )
             ).scalar_one_or_none()
             or ""
