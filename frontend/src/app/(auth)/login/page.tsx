@@ -35,6 +35,22 @@ function safeDestination(raw: string | null): string {
   }
 }
 
+// Set when the member ticks Terms on the sign-up form and then picks
+// Google/LinkedIn/GitHub, so the account can be finished on return without a
+// second consent page. Only that affirmative click writes it.
+const OAUTH_TERMS_KEY = "careercraft:oauth_terms_accepted_at";
+const OAUTH_TERMS_TTL_MS = 30 * 60 * 1000;
+
+function takeOAuthTermsAccepted(): boolean {
+  try {
+    const at = Number(sessionStorage.getItem(OAUTH_TERMS_KEY));
+    sessionStorage.removeItem(OAUTH_TERMS_KEY);
+    return at > 0 && Date.now() - at < OAUTH_TERMS_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
 function describeError(err: unknown): string {
   const clerkErrors = (err as { errors?: { longMessage?: string; message?: string }[] })?.errors;
   const first = clerkErrors?.[0];
@@ -110,24 +126,8 @@ export default function LoginPage() {
   const [oauthConsentPending, setOauthConsentPending] = useState(false);
   const [oauthConsentChecked, setOauthConsentChecked] = useState(false);
 
-  useEffect(() => {
-    if (mode !== "sign-up") return;
-    if (!signInLoaded || !signUpLoaded || !signIn || !signUp) return;
-    if (transferDetectedRef.current) return;
-
-    const isTransferable = signIn.firstFactorVerification?.status === "transferable";
-    const needsLegalConsent =
-      signUp.status === "missing_requirements" &&
-      (signUp.missingFields ?? []).includes("legal_accepted");
-    if (!isTransferable && !needsLegalConsent) return;
-
-    transferDetectedRef.current = true;
-    oauthTransferableRef.current = isTransferable;
-    setOauthConsentPending(true);
-  }, [mode, signInLoaded, signUpLoaded, signIn, signUp]);
-
-  const handleOAuthConsentConfirm = async () => {
-    if (!signUp || !setSignUpActive || !oauthConsentChecked) return;
+  async function completeOAuthSignUp(): Promise<boolean> {
+    if (!signUp || !setSignUpActive) return false;
     setLoading(true);
     setErrorMessage(null);
     try {
@@ -142,7 +142,7 @@ export default function LoginPage() {
           // Non-fatal — consent can be recorded on a later authenticated request.
         }
         router.push(destination);
-        return;
+        return true;
       }
       setErrorMessage(`Could not finish creating your account (${result.status}).`);
     } catch (err) {
@@ -150,6 +150,39 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+    return false;
+  }
+
+  useEffect(() => {
+    if (mode !== "sign-up") return;
+    if (!signInLoaded || !signUpLoaded || !signIn || !signUp) return;
+    if (transferDetectedRef.current) return;
+
+    const isTransferable = signIn.firstFactorVerification?.status === "transferable";
+    const needsLegalConsent =
+      signUp.status === "missing_requirements" &&
+      (signUp.missingFields ?? []).includes("legal_accepted");
+    if (!isTransferable && !needsLegalConsent) return;
+
+    transferDetectedRef.current = true;
+    oauthTransferableRef.current = isTransferable;
+    if (takeOAuthTermsAccepted()) {
+      // They ticked Terms on the sign-up form before choosing the provider.
+      // If that fails, the consent screen offers a retry.
+      void completeOAuthSignUp().then((done) => {
+        if (!done) setOauthConsentPending(true);
+      });
+    } else {
+      // Started from the sign-in form (no checkbox there): ask once.
+      setOauthConsentPending(true);
+    }
+    // Runs once (transferDetectedRef); completeOAuthSignUp reads the same Clerk objects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, signInLoaded, signUpLoaded, signIn, signUp]);
+
+  const handleOAuthConsentConfirm = async () => {
+    if (!oauthConsentChecked) return;
+    await completeOAuthSignUp();
   };
 
   const clerkReady = signInLoaded && signUpLoaded && !!signIn && !!signUp;
@@ -159,6 +192,14 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMessage(null);
 
+    if (mode === "sign-up") {
+      // The form only lets this run once Terms is ticked (see SignInPage).
+      try {
+        sessionStorage.setItem(OAUTH_TERMS_KEY, String(Date.now()));
+      } catch {
+        // Without storage the return trip falls back to the consent screen.
+      }
+    }
     try {
       // Provider scopes (Gmail/Drive for the Email agent) are configured on the
       // Google connection in the Clerk Dashboard, not passed from the client.
