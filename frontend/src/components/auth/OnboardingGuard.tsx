@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useAuth, useClerk } from "@clerk/nextjs";
+import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { apiClient } from "@/lib/api";
 import { UserStatusProvider, type UserStatus } from "@/components/auth/UserStatusContext";
@@ -28,6 +28,8 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
+  // Set by Clerk when the Terms box was ticked on the sign-up page.
+  const legalAcceptedAt = useUser().user?.legalAcceptedAt ?? null;
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<GuardError | null>(null);
   const [needsConsent, setNeedsConsent] = useState(false);
@@ -71,6 +73,17 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
         // Agreeing to the Terms/Privacy Policy comes before anything else —
         // the backend blocks every other endpoint until this is recorded, so
         // check it first rather than letting onboarding fail underneath it.
+        if (!data.policy_accepted_at && legalAcceptedAt) {
+          // They agreed on the sign-up page; the record just didn't land then
+          // (e.g. the session wasn't ready). Record it now, no second page.
+          try {
+            await apiClient.post("/users/me/consent");
+            if (cancelled) return;
+            data.policy_accepted_at = new Date().toISOString();
+          } catch {
+            // Fall through to the explicit agreement screen.
+          }
+        }
         if (!data.policy_accepted_at) {
           setNeedsConsent(true);
           setReady(true);
@@ -144,7 +157,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, router, isLoaded, isSignedIn, getToken, refreshKey]);
+  }, [pathname, router, isLoaded, isSignedIn, getToken, refreshKey, legalAcceptedAt]);
 
   async function handleLoginAgain() {
     try {

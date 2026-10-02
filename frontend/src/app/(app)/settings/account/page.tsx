@@ -56,6 +56,10 @@ import { apiClient } from "@/lib/api";
 import { connectGmail } from "@/lib/nango-connect";
 import { useClerk, useUser } from "@clerk/nextjs";
 import { useUserStatus } from "@/components/auth/UserStatusContext";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+
+// Typed by the member to confirm scheduling deletion.
+const DELETE_CONFIRM_PHRASE = "DELETE";
 
 type Tab = "account" | "security" | "notifications";
 
@@ -178,6 +182,8 @@ export default function AccountSettingsPage() {
   const { refresh: refreshUserStatus } = useUserStatus();
   const [activeTab, setActiveTab] = useState<Tab>("account");
   const [deletionActionPending, setDeletionActionPending] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [exporting, setExporting] = useState(false);
   const { data: notifyPrefs } = useQuery<NotificationPreferences>({
     queryKey: ["preferences"],
@@ -359,13 +365,9 @@ export default function AccountSettingsPage() {
   };
 
   const handleScheduleDeletion = async () => {
-    if (
-      !confirm(
-        "Delete your account? Your data will be permanently removed after a 15-day grace period, which you can cancel any time before then.",
-      )
-    ) {
-      return;
-    }
+    if (deleteConfirmText.trim() !== DELETE_CONFIRM_PHRASE) return;
+    setDeleteDialogOpen(false);
+    setDeleteConfirmText("");
     setDeletionActionPending(true);
     try {
       await apiClient.delete("/users/me");
@@ -374,9 +376,10 @@ export default function AccountSettingsPage() {
       } catch {
         // ignore — nothing more we can do without storage
       }
-      toast.success("Account deletion scheduled — you can still cancel it below.");
-      queryClient.invalidateQueries({ queryKey: ["me"] });
-      refreshUserStatus();
+      toast.success("Account deletion scheduled. Sign in again within 15 days to cancel it.");
+      // Deleting ends the session; signing back in shows the cancel option.
+      await handleSignOut();
+      return;
     } catch (err) {
       const detail = (
         err as {
@@ -893,11 +896,59 @@ export default function AccountSettingsPage() {
                             size="sm"
                             disabled={deletionActionPending}
                             icon={<Trash size={14} weight="light" />}
-                            onClick={handleScheduleDeletion}
+                            onClick={() => setDeleteDialogOpen(true)}
                             className="justify-self-start md:justify-self-end"
                           >
                             {deletionActionPending ? "Scheduling…" : "Delete my account"}
                           </IslandButton>
+                          <Dialog
+                            open={deleteDialogOpen}
+                            onOpenChange={(open) => {
+                              setDeleteDialogOpen(open);
+                              if (!open) setDeleteConfirmText("");
+                            }}
+                          >
+                            <DialogContent className="w-[calc(100%-2rem)] rounded-3xl border-border bg-card p-5 sm:p-6">
+                              <DialogTitle>Delete your account?</DialogTitle>
+                              <DialogDescription className="leading-6">
+                                Your data will be permanently removed after a 15-day grace period. You can cancel
+                                any time before then.
+                              </DialogDescription>
+                              <form
+                                className="mt-2 space-y-4"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  void handleScheduleDeletion();
+                                }}
+                              >
+                                <label htmlFor="delete-confirm" className="block text-sm text-muted-foreground">
+                                  Type <span className="font-geist-mono font-semibold text-foreground">{DELETE_CONFIRM_PHRASE}</span> to confirm.
+                                </label>
+                                <Input
+                                  id="delete-confirm"
+                                  autoFocus
+                                  autoComplete="off"
+                                  value={deleteConfirmText}
+                                  onChange={(event: ChangeEvent<HTMLInputElement>) => setDeleteConfirmText(event.target.value)}
+                                  placeholder={DELETE_CONFIRM_PHRASE}
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <IslandButton type="button" tone="ghost" size="sm" onClick={() => setDeleteDialogOpen(false)}>
+                                    Cancel
+                                  </IslandButton>
+                                  <IslandButton
+                                    type="submit"
+                                    tone="danger"
+                                    size="sm"
+                                    disabled={deleteConfirmText.trim() !== DELETE_CONFIRM_PHRASE || deletionActionPending}
+                                    icon={<Trash size={14} weight="light" />}
+                                  >
+                                    Delete my account
+                                  </IslandButton>
+                                </div>
+                              </form>
+                            </DialogContent>
+                          </Dialog>
                         </div>
                       )}
                     </Bezel>

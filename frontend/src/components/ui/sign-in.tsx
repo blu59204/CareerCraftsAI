@@ -492,7 +492,8 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               <button
                 type="submit"
                 disabled={loading || submitBlocked}
-                className="animate-element animate-delay-600 w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+                // Not opacity: the entrance animation pins opacity to 1, so disabled looked enabled.
+                className="animate-element animate-delay-600 w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
               >
                 {loading
                   ? "Please wait…"

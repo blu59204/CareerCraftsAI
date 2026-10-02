@@ -225,6 +225,7 @@ export default function LoginPage() {
     phone,
     headline,
     linkedinUrl,
+    agreedToPolicies,
   }: AuthPasswordSubmitData) => {
     if (!signIn || !signUp || !setSignInActive) return;
 
@@ -308,6 +309,9 @@ export default function LoginPage() {
       await signUp.create({
         emailAddress: email,
         password,
+        // The required Terms checkbox: stored on the Clerk user (legalAcceptedAt),
+        // so consent is never asked a second time after sign-up.
+        legalAccepted: agreedToPolicies === true,
         unsafeMetadata: {
           full_name: fullName,
           phone,
