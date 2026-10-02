@@ -379,7 +379,7 @@ async def test_public_fetch_pins_dns_and_strips_redirect_secrets(monkeypatch):
     assert "content-encoding" not in response.headers
     assert all(call[0].host == "8.8.8.8" for call in calls)
     assert calls[0][1]["headers"]["Host"] == "public.example"
-    assert calls[0][1]["extensions"]["sni_hostname"] == b"public.example"
+    assert calls[0][1]["extensions"]["sni_hostname"] == "public.example"
     assert not any(key.lower() in {"authorization", "cookie"} for key in calls[1][1]["headers"])
 
 

@@ -49,7 +49,8 @@ async def public_get(
                 pinned,
                 headers=request_headers,
                 json=json_body,
-                extensions={"sni_hostname": parsed.hostname.encode()},
+                # str, not bytes: anyio>=4.15 calls .encode() on it during TLS setup.
+                extensions={"sni_hostname": parsed.hostname},
             ) as response:
                 if response.status_code in (301, 302, 303, 307, 308):
                     if json_body is not None:
