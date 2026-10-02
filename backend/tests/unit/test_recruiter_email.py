@@ -125,3 +125,77 @@ async def test_failed_provider_is_logged_without_the_api_key(monkeypatch, caplog
         verdict = await re_.verify_address(client, "a@b.co")
     assert verdict == (re_.UNKNOWN, None)
     assert "secret-key-123" not in caplog.text
+
+
+def test_employer_domain_comes_from_the_company_site_not_job_boards():
+    assert re_.employer_domain("https://careers.acme.co.in/jobs/1", "") == "acme.co.in"
+    assert re_.employer_domain("https://boards.greenhouse.io/acme/jobs/1", "") is None
+    assert re_.employer_domain("https://jobs.peakxv.com/jobs/1", "") is None
+    posting = "Send your CV to hr@acme.com or me@gmail.com. Also ask jane@acme.com"
+    assert re_.employer_domain("https://www.linkedin.com/jobs/view/1", posting) == "acme.com"
+    assert re_.employer_domain(None, "mail me@gmail.com") is None
+
+
+def test_the_companys_own_address_format_is_inferred_and_tried_first():
+    known = [
+        re_.Contact("jane.roe@acme.com", "hunter", name="Jane Roe"),
+        re_.Contact("bob.lee@acme.com", "hunter", name="Bob Lee"),
+        re_.Contact("jobs@acme.com", "hunter"),
+    ]
+    assert re_.infer_pattern(known) == "{first}.{last}"
+    guesses = re_.pattern_candidates("acme.com", "Ann", "Wu", "{f}{last}")
+    assert guesses[0].email == "awu@acme.com"
+    assert re_.infer_pattern([]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_guessed_domain_never_counts_as_verified(monkeypatch):
+    monkeypatch.setattr(settings, "ZEROBOUNCE_API_KEY", "key")
+    client = _client({"zerobounce": {"status": "valid"}})
+    guessed = await re_.find_recruiter_contact("Acme", client=client)
+    assert guessed.best.verdict == "risky"  # held for the member
+    confirmed = await re_.find_recruiter_contact(
+        "Acme",
+        domain="acme.com",
+        domain_confirmed=True,
+        client=_client({"zerobounce": {"status": "valid"}}),
+    )
+    assert confirmed.best.verdict == "valid"
+
+
+@pytest.mark.asyncio
+async def test_prospeo_and_findymail_are_inert_without_keys_and_read_their_answers(monkeypatch):
+    client = _client({})
+    assert await re_.prospeo_candidates(client, "acme.com", "Ann", "Wu") == []
+    assert await re_.findymail_candidates(client, "acme.com", "Ann", "Wu") == []
+    monkeypatch.setattr(settings, "PROSPEO_API_KEY", "k")
+    monkeypatch.setattr(settings, "FINDYMAIL_API_KEY", "k")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "prospeo" in str(request.url):
+            return httpx.Response(200, json={"response": {"email": "Ann.Wu@acme.com"}})
+        return httpx.Response(200, json={"contact": {"email": "ann@acme.com"}})
+
+    live = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert (await re_.prospeo_candidates(live, "acme.com", "Ann", "Wu"))[
+        0
+    ].email == "ann.wu@acme.com"
+    assert (await re_.findymail_candidates(live, "acme.com", "Ann", "Wu"))[0].source == "findymail"
+
+
+@pytest.mark.asyncio
+async def test_company_pages_supply_published_addresses(monkeypatch):
+    pages = {
+        "https://acme.com/": "<a>hello@acme.com</a> noreply@acme.com",
+        "https://acme.com/careers": "Write to careers@acme.com or x@other.org",
+    }
+
+    async def fake_get(url, **kwargs):
+        if url not in pages:
+            raise ValueError("blocked")
+        return httpx.Response(200, text=pages[url], request=httpx.Request("GET", url))
+
+    monkeypatch.setattr("app.services.public_http.public_get", fake_get)
+    found = await re_.website_candidates("acme.com")
+    assert [c.email for c in found] == ["hello@acme.com", "careers@acme.com"]
+    assert {c.source for c in found} == {"website"}

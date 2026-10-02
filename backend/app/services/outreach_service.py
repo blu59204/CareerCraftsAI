@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 FOLLOWUP_AFTER_DAYS = 6
 AUTO_SEND_AFTER_APPROVED = 3  # emails the member approved by hand first
 DEFAULT_DAILY_CAP = 25
+# New senders start low and earn the member's cap slowly so Gmail does not
+# flag the account: RAMP_START a day, RAMP_STEP more each full week.
+RAMP_START = 20
+RAMP_STEP = 2
+STUCK_SENDING_AFTER = timedelta(hours=1)
 _PENDING = ("held", "draft", "approved")
 _BOUNCE_SENDERS = ("mailer-daemon", "postmaster")
 
@@ -58,14 +63,72 @@ def followup_text(company: str, role: str | None, contact_name: str = "") -> tup
     return subject, body
 
 
-def tracked_html(body: str, token: str) -> str:
-    """HTML version of a plain email with the open-tracking pixel. The text
-    part stays the readable original."""
-    from html import escape
+def ramp_cap(first_sent_at: datetime | None, now: datetime, ceiling: int) -> int:
+    """Today's allowed sends: the member's cap, reached gradually."""
+    weeks = 0 if first_sent_at is None else max((now - first_sent_at).days, 0) // 7
+    return max(min(ceiling, RAMP_START + RAMP_STEP * weeks), 0)
+
+
+def domain_of(address: str) -> str:
+    return address.rsplit("@", 1)[-1].strip().lower()
+
+
+def company_key(address: str) -> str:
+    """What identifies a company in an address: its domain, or the whole
+    address for free-mail providers, where the domain says nothing about who
+    works there."""
+    from app.services.recruiter_email import _FREE_MAIL, registrable_domain
+
+    domain = domain_of(address)
+    if registrable_domain(domain) in _FREE_MAIL:
+        return address.strip().lower()
+    return domain
+
+
+def _same_company(address: str):
+    key = company_key(address)
+    if key == domain_of(address):
+        return func.lower(func.split_part(RecruiterOutreach.to_email, "@", 2)) == key
+    return func.lower(RecruiterOutreach.to_email) == key
+
+
+async def replied_domains(db, user_id: uuid.UUID) -> set[str]:
+    """Companies where anyone has answered the member (see company_key)."""
+    rows = await db.execute(
+        select(RecruiterOutreach.to_email).where(
+            RecruiterOutreach.user_id == user_id, RecruiterOutreach.replied_at.is_not(None)
+        )
+    )
+    return {company_key(address) for address in rows.scalars().all()}
+
+
+def pixel_base() -> str | None:
+    """Public address recipients' mail apps can load the pixel from, or None
+    when none is configured (localhost or plain http would never work)."""
+    from urllib.parse import urlsplit
 
     from app.core.config import settings
 
-    pixel = f"{settings.NEXT_PUBLIC_API_URL.rstrip('/')}/api/v1/outreach/open/{token}.gif"
+    base = (settings.PUBLIC_API_URL or "").rstrip("/")
+    parts = urlsplit(base)
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.hostname in {"localhost", "127.0.0.1"}
+    ):
+        return None
+    return base
+
+
+def tracked_html(body: str, token: str) -> str | None:
+    """HTML version of a plain email with the open-tracking pixel. The text
+    part stays the readable original. None when there is no public address."""
+    from html import escape
+
+    base = pixel_base()
+    if base is None:
+        return None
+    pixel = f"{base}/api/v1/outreach/open/{token}.gif"
     text = escape(body).replace("\n", "<br>")
     return f'<div>{text}</div><img src="{escape(pixel, quote=True)}" width="1" height="1" alt="">'
 
@@ -197,6 +260,7 @@ async def queue_outreach(
     email_source: str | None = None,
     verified_by: str | None = None,
     resume_version: str | None = None,
+    resume_document_id: str | None = None,
 ) -> RecruiterOutreach | None:
     """Add an email to the member's outreach. Returns None when the address is
     invalid or this application already has a first email."""
@@ -219,6 +283,7 @@ async def queue_outreach(
             subject=subject,
             body=body,
             resume_version=resume_version,
+            resume_document_id=uuid.UUID(str(resume_document_id)) if resume_document_id else None,
             state=state,
             approved_at=None,
         )
@@ -320,9 +385,36 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
         prefs = await _preferences(db, owner)
         cap = prefs.outreach_daily_cap if prefs else DEFAULT_DAILY_CAP
         track = bool(prefs and prefs.outreach_track_opens)
+        first_sent = (
+            await db.execute(
+                select(func.min(RecruiterOutreach.sent_at)).where(
+                    RecruiterOutreach.user_id == owner
+                )
+            )
+        ).scalar_one()
+        cap = ramp_cap(first_sent, now, cap)
+        # A send interrupted by a crash is never retried blindly: the email
+        # may have gone out, so the member checks the Sent folder.
+        await db.execute(
+            update(RecruiterOutreach)
+            .where(
+                RecruiterOutreach.user_id == owner,
+                RecruiterOutreach.state == "sending",
+                or_(
+                    RecruiterOutreach.sending_at.is_(None),
+                    RecruiterOutreach.sending_at < now - STUCK_SENDING_AFTER,
+                ),
+            )
+            .values(
+                state="failed",
+                last_error="Sending was interrupted. Check your Sent folder before retrying.",
+            )
+        )
+        await db.commit()
         room = max(cap - await sent_in_last_day(db, owner, now), 0)
         if room == 0:
             return {"sent": 0, "failed": 0, "cap_reached": True}
+        answered = await replied_domains(db, owner)
         rows = (
             (
                 await db.execute(
@@ -339,13 +431,34 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
             .all()
         )
         for row in rows:
+            if company_key(row.to_email) in answered:
+                # Someone at this company already replied: nothing more goes out.
+                row.state = "cancelled"
+                await db.commit()
+                continue
+            attachments = []
+            if row.resume_document_id:
+                from app.applications.submission import load_resume
+
+                try:
+                    pdf, _ = await load_resume(owner, str(row.resume_document_id))
+                except Exception:
+                    row.state, row.last_error = "failed", "The tailored resume is unavailable."
+                    failed += 1
+                    await db.commit()
+                    continue
+                attachments.append(("Resume.pdf", pdf))
             # Recorded before the send so a crash can never send it twice.
-            row.state = "sending"
+            row.state, row.sending_at = "sending", now
             await db.commit()
             extra = {}
+            if attachments:
+                extra["attachments"] = attachments
             if track:
-                row.open_token = secrets.token_urlsafe(24)
-                extra["html"] = tracked_html(row.body, row.open_token)
+                token = secrets.token_urlsafe(24)
+                if html := tracked_html(row.body, token):
+                    row.open_token = token
+                    extra["html"] = html
             try:
                 response = await asyncio.to_thread(
                     gmail.send_message, row.to_email, row.subject, row.body, **extra
@@ -372,6 +485,7 @@ async def queue_due_followups(user_id: str, now: datetime | None = None) -> int:
     queued = 0
     async with AsyncSessionLocal() as db:
         allow_auto = await auto_send_allowed(db, owner)
+        answered = await replied_domains(db, owner)
         due = (
             (
                 await db.execute(
@@ -389,6 +503,9 @@ async def queue_due_followups(user_id: str, now: datetime | None = None) -> int:
             .all()
         )
         for original in due:
+            if company_key(original.to_email) in answered:
+                original.followup_due_at = None
+                continue
             subject, body = followup_text(original.company, original.role)
             db.add(
                 RecruiterOutreach(
@@ -460,7 +577,6 @@ async def record_replies(user_id: str, gmail_factory=None) -> dict:
             if outcome == "replied":
                 # Any reply from the company stops everything still waiting to
                 # go to it, on this application or another.
-                company_domain = "%@" + row.to_email.split("@")[-1]
                 await db.execute(
                     update(RecruiterOutreach)
                     .where(
@@ -468,7 +584,7 @@ async def record_replies(user_id: str, gmail_factory=None) -> dict:
                         RecruiterOutreach.id != row.id,
                         RecruiterOutreach.state.in_(_PENDING),
                         or_(
-                            RecruiterOutreach.to_email.like(company_domain),
+                            _same_company(row.to_email),
                             RecruiterOutreach.job_application_id == row.job_application_id,
                         ),
                     )

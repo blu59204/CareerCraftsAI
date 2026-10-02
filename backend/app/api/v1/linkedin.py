@@ -182,12 +182,15 @@ async def approve_outreach(
     current_user: User = Depends(get_current_user),
 ):
     """Approve or reject a pending outreach message. HITL gate enforced."""
+    # Locked, so a double click cannot send every connection request twice.
     result = await db.execute(
-        select(AgentRun).where(
+        select(AgentRun)
+        .where(
             AgentRun.id == run_id,
             AgentRun.user_id == current_user.id,
             AgentRun.agent_type == "linkedin_outreach",
         )
+        .with_for_update()
     )
     run = result.scalar_one_or_none()
     if not run:
@@ -210,28 +213,40 @@ async def approve_outreach(
             raise HTTPException(status_code=400, detail="No active model settings configured")
         llm = _build_llm(model_settings)
 
+        # Claimed and committed before anything is sent: a second request now
+        # sees "running" and is refused instead of sending again.
+        run.status = "running"
+        await db.commit()
         sent: list[dict] = []
-        for item in messages:
-            if not isinstance(item, dict):
-                continue
+        remaining = [item for item in messages if isinstance(item, dict)]
+        for item in list(remaining):
             profile_url = item.get("profile_url")
             message = body.edited_message or item.get("message")
+            problem: HTTPException | None = None
             if not profile_url or not message:
-                raise HTTPException(
+                problem = HTTPException(
                     status_code=422,
                     detail="Outreach message missing profile_url or message",
                 )
-            try:
-                await linkedin_send_connection(
-                    llm=llm,
-                    user_id=str(current_user.id),
-                    profile_url=profile_url,
-                    note=message,
-                    run_id=str(run_id),
-                )
-            except Exception as exc:
-                logger.warning("LinkedIn outreach send failed for run %s: %s", run_id, exc)
-                raise HTTPException(status_code=502, detail="LinkedIn send failed") from exc
+            else:
+                try:
+                    await linkedin_send_connection(
+                        llm=llm,
+                        user_id=str(current_user.id),
+                        profile_url=profile_url,
+                        note=message,
+                        run_id=str(run_id),
+                    )
+                except Exception as exc:
+                    logger.warning("LinkedIn outreach send failed for run %s: %s", run_id, exc)
+                    problem = HTTPException(status_code=502, detail="LinkedIn send failed")
+            if problem is not None:
+                # Back to awaiting approval with only what is still unsent, so a
+                # retry never repeats the requests that already went out.
+                run.status = "awaiting_approval"
+                run.output = {**output, "messages": remaining, "sent": sent}
+                await db.commit()
+                raise problem
 
             queue_id = item.get("queue_id")
             if queue_id:
@@ -249,6 +264,9 @@ async def approve_outreach(
                     if body.edited_message:
                         queue_item.message = body.edited_message
             sent.append({"profile_url": profile_url, "contact_name": item.get("contact_name")})
+            remaining.remove(item)
+            run.output = {**output, "messages": remaining, "sent": sent}
+            await db.commit()
 
         run.status = "completed"
         run.output = {**output, "sent": sent}

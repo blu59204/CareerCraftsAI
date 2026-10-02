@@ -24,10 +24,20 @@ REFRESHED = "funding:refreshed"
 TTL_SECONDS = 45 * 86400
 REFRESH_SECONDS = 6 * 3600
 BONUS = 5
+_background: set[asyncio.Task] = set()
 _HEADLINE = re.compile(
     r"^(?P<company>[A-Z0-9][\w&.\-' ]{1,40}?)\s+"
-    r"(?:raises|bags|secures|lands|closes|snags|nets|picks up|gets)\b",
+    r"(?:raises|bags|secures|lands|closes|snags|nets)\b",
 )
+
+
+def with_bonus(score: int) -> int:
+    """The score after the ranking nudge. It never lifts a job over the
+    auto-apply threshold that its own evidence did not reach."""
+    boosted = min(100, score + BONUS)
+    if score < settings.AUTO_APPLY_MIN_SCORE:
+        boosted = min(boosted, settings.AUTO_APPLY_MIN_SCORE - 1)
+    return max(score, boosted)
 
 
 def company_from_headline(title: str) -> str | None:
@@ -83,7 +93,11 @@ async def funded_among(companies: list[str]) -> set[str]:
     if not settings.FUNDING_FEEDS or not companies:
         return set()
     try:
-        await asyncio.wait_for(refresh(), 8)
+        # Refreshing reads outside feeds, so it runs in the background and
+        # never delays a search; this search uses what is already stored.
+        task = asyncio.create_task(refresh())
+        _background.add(task)
+        task.add_done_callback(_background.discard)
         redis = await _redis()
         keys = sorted({_squash(c) for c in companies if _squash(c)})
         values = await redis.mget([KEY + k for k in keys])

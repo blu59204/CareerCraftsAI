@@ -85,6 +85,7 @@ Write a 3-paragraph email:
 1. Hook — mention the specific role and something about the company
 2. Value — 2-3 sentences on why I'm a fit (reference specific skills from JD)
 3. CTA — ask for a quick call, suggest availability
+Mention that my resume is attached.
 
 Keep it under 150 words. Be direct, not generic.
 Format: Subject: <subject>\n\n<body>"""
@@ -178,9 +179,13 @@ async def run_auto_apply_pipeline(
         score = _score_job_quick(llm, job, user_profile)
         scored_jobs.append((job, score))
 
+    results["jobs_scored"] = len(scored_jobs)
+    # Only jobs at or above the member's match threshold move on to applying.
+    from app.services.apply_limits import score_error
+
+    scored_jobs = [(job, score) for job, score in scored_jobs if score_error(score) is None]
     scored_jobs.sort(key=lambda x: x[1], reverse=True)
     top_jobs = scored_jobs[:max_applications]
-    results["jobs_scored"] = len(scored_jobs)
 
     # ── Step 3-6: For each top job, run the full apply sequence ─────
 
@@ -281,7 +286,17 @@ async def _apply_to_job(
                 },
             )
         # ── Find and verify the recruiter's email ───────────────────
-        contact = (await find_recruiter_contact(job.company, posting_text=job.description)).best
+        from app.services.recruiter_email import employer_domain
+
+        domain = employer_domain(job.job_url, job.description)
+        contact = (
+            await find_recruiter_contact(
+                job.company,
+                domain=domain,
+                domain_confirmed=bool(domain),
+                posting_text=job.description,
+            )
+        ).best
         recruiter_email = contact.email if contact else None
         recruiter_name = (contact.name if contact else "") or "Hiring Manager"
 
@@ -350,6 +365,7 @@ async def _apply_to_job(
                     await _get_or_create_job_application(user_id, job) if job.job_url else None
                 ),
                 resume_version=(resume_sha256 or "")[:16] or None,
+                resume_document_id=resume_draft.get("pdf_document_id"),
             )
             result["outreach_state"] = queued.state if queued else "not_queued"
 
@@ -478,7 +494,8 @@ def _score_job_quick(llm: Any, job: JobListing, profile: str) -> int:
         bonus = decision_bonus.get(decision, 0)
         return max(0, min(100, base + bonus))
     except Exception:
-        return 50
+        # A job that could not be scored is not eligible to be applied to.
+        return 0
 
 
 def _generate_cold_email(

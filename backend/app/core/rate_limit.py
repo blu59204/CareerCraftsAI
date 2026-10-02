@@ -15,15 +15,12 @@ def _get_user_or_ip(request: Request) -> str:
         import hashlib
 
         return "ext:" + hashlib.sha256(auth.encode()).hexdigest()[:16]
-    if auth.startswith("Bearer "):
-        try:
-            import jwt
-
-            token = auth.removeprefix("Bearer ").strip()
-            payload = jwt.decode(token, options={"verify_signature": False})
-            return payload.get("sub", get_remote_address(request))
-        except Exception as exc:
-            logger.debug("Rate limit JWT subject extraction failed: %s", exc)
+    # Only a subject the middleware already verified counts. Reading it from
+    # the unverified token would let a forged JWT with a random `sub` get a
+    # fresh bucket on every request, including on public routes.
+    user = getattr(request.state, "user", None)
+    if isinstance(user, dict) and user.get("sub"):
+        return str(user["sub"])
     return get_remote_address(request)
 
 

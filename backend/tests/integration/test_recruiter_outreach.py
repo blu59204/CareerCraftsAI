@@ -35,9 +35,10 @@ class FakeGmail:
         self.sent = []
         self.threads = threads or {}
 
-    def send_message(self, to, subject, body, html=None):
+    def send_message(self, to, subject, body, html=None, attachments=None):
         self.sent.append(to)
         self.html = html
+        self.attachments = attachments
         return {"id": f"msg-{len(self.sent)}", "threadId": f"thr-{len(self.sent)}"}
 
     def get_thread_headers(self, thread_id):
@@ -356,6 +357,7 @@ async def test_replying_to_the_needs_you_email_saves_the_answers(maker, monkeypa
                     {
                         "id": "m2",
                         "internalDate": "2",
+                        "labelIds": ["SENT"],
                         "payload": {
                             "headers": [{"name": "From", "value": f"Me <{user}@example.test>"}],
                             "mimeType": "text/plain",
@@ -430,8 +432,11 @@ async def _noop():
     return None
 
 
-async def test_open_tracking_is_off_by_default_and_marks_the_first_load_when_on(maker):
+async def test_open_tracking_is_off_by_default_and_marks_the_first_load_when_on(maker, monkeypatch):
+    from app.core.config import settings
     from app.models.db import UserPreferences
+
+    monkeypatch.setattr(settings, "PUBLIC_API_URL", "https://api.example.com")
     from app.services import outreach_service as service
 
     user = await _member(maker)
@@ -520,3 +525,154 @@ async def test_agent_metrics_are_empty_not_zero_without_data(maker):
         result = await agent_metrics(db, uuid.UUID(user))
     assert result["applications"] == 0
     assert result["hands_off_rate"] is None and result["bounce_rate"] is None
+
+
+async def test_open_tracking_adds_no_pixel_without_a_public_https_address(maker, monkeypatch):
+    from app.core.config import settings
+    from app.models.db import UserPreferences
+    from app.services import outreach_service as service
+
+    monkeypatch.setattr(settings, "PUBLIC_API_URL", "http://localhost:8000")
+    user = await _member(maker)
+    async with maker() as db:
+        prefs = await db.scalar(
+            select(UserPreferences).where(UserPreferences.user_id == uuid.UUID(user))
+        )
+        prefs.outreach_track_opens = True
+        await db.commit()
+    row = await _queue(user, "a@acme.com")
+    await service.approve_outreach(user, str(row.id))
+    gmail = FakeGmail(user)
+    await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    assert gmail.html is None and (await _rows(maker, user))[0].open_token is None
+
+
+async def test_the_tailored_resume_is_attached_and_a_missing_one_blocks_the_send(
+    maker, monkeypatch
+):
+    import app.applications.submission as submission
+    from app.services import outreach_service as service
+    from app.services.outreach_service import queue_outreach
+
+    async def load_resume(owner, document_id):
+        if document_id.startswith("0000"):
+            raise ValueError("Approved resume is unavailable")
+        return b"%PDF-1.4 test", "sha"
+
+    monkeypatch.setattr(submission, "load_resume", load_resume)
+    user = await _member(maker)
+    good = await queue_outreach(
+        user,
+        company="Acme",
+        to_email="a@acme.com",
+        verdict="valid",
+        subject="Hi",
+        body="B",
+        resume_document_id=str(uuid.uuid4()),
+    )
+    bad = await queue_outreach(
+        user,
+        company="Beta",
+        to_email="b@beta.com",
+        verdict="valid",
+        subject="Hi",
+        body="B",
+        resume_document_id="00000000-0000-0000-0000-000000000001",
+    )
+    for row in (good, bad):
+        await service.approve_outreach(user, str(row.id))
+    gmail = FakeGmail(user)
+    outcome = await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    assert outcome["sent"] == 1 and outcome["failed"] == 1
+    assert gmail.sent == ["a@acme.com"] and gmail.attachments == [("Resume.pdf", b"%PDF-1.4 test")]
+    states = {r.to_email: r.state for r in await _rows(maker, user)}
+    assert states == {"a@acme.com": "sent", "b@beta.com": "failed"}
+
+
+async def test_a_reply_from_a_company_stops_its_later_follow_ups_and_sends(maker):
+    from sqlalchemy import update
+
+    from app.models.db import RecruiterOutreach
+    from app.services import outreach_service as service
+
+    user = await _member(maker)
+    first = await _queue(user, "hr@acme.com")
+    second = await _queue(user, "jobs@acme.com")
+    other = await _queue(user, "hr@beta.com", company="Beta")
+    for row in (first, second, other):
+        await service.approve_outreach(user, str(row.id))
+    gmail = FakeGmail(user)
+    await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    now = datetime.now(UTC)
+    async with maker() as db:
+        # someone at acme answered the first email; the second is due a follow-up
+        await db.execute(
+            update(RecruiterOutreach)
+            .where(RecruiterOutreach.to_email == "hr@acme.com")
+            .values(replied_at=now)
+        )
+        await db.execute(
+            update(RecruiterOutreach)
+            .where(RecruiterOutreach.to_email.in_(("jobs@acme.com", "hr@beta.com")))
+            .values(followup_due_at=now - timedelta(hours=1))
+        )
+        await db.commit()
+    assert await service.queue_due_followups(user) == 1  # beta only
+    followups = [r for r in await _rows(maker, user) if r.kind == "followup"]
+    assert [r.to_email for r in followups] == ["hr@beta.com"]
+
+
+async def test_a_queued_email_to_an_answered_company_is_cancelled_at_send_time(maker):
+    from sqlalchemy import update
+
+    from app.models.db import RecruiterOutreach
+    from app.services import outreach_service as service
+
+    user = await _member(maker)
+    sent = await _queue(user, "hr@acme.com")
+    await service.approve_outreach(user, str(sent.id))
+    gmail = FakeGmail(user)
+    await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    async with maker() as db:
+        await db.execute(
+            update(RecruiterOutreach)
+            .where(RecruiterOutreach.to_email == "hr@acme.com")
+            .values(replied_at=datetime.now(UTC))
+        )
+        await db.commit()
+    late = await _queue(user, "jobs@acme.com")
+    await service.approve_outreach(user, str(late.id))
+    outcome = await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    assert outcome["sent"] == 0 and gmail.sent == ["hr@acme.com"]
+    assert {r.to_email: r.state for r in await _rows(maker, user)}["jobs@acme.com"] == "cancelled"
+
+
+async def test_the_daily_cap_ramps_up_and_an_interrupted_send_is_surfaced(maker):
+    from sqlalchemy import update
+
+    from app.models.db import RecruiterOutreach
+    from app.services import outreach_service as service
+
+    user = await _member(maker, cap=30)
+    for i in range(22):
+        row = await _queue(user, f"p{i}@c{i}.com", company=f"C{i}")
+        await service.approve_outreach(user, str(row.id))
+    gmail = FakeGmail(user)
+    first_day = await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    assert first_day["sent"] == service.RAMP_START  # 20, not the member's 30
+    now = datetime.now(UTC)
+    assert service.ramp_cap(None, now, 30) == 20
+    assert service.ramp_cap(now - timedelta(days=15), now, 30) == 24
+    assert service.ramp_cap(now - timedelta(days=400), now, 30) == 30
+    assert service.ramp_cap(now - timedelta(days=400), now, 12) == 12
+
+    async with maker() as db:
+        await db.execute(
+            update(RecruiterOutreach)
+            .where(RecruiterOutreach.to_email == "p0@c0.com")
+            .values(state="sending", sent_at=None, sending_at=now - timedelta(hours=3))
+        )
+        await db.commit()
+    await service.send_approved(user, gmail_factory=lambda _u: gmail)
+    stuck = next(r for r in await _rows(maker, user) if r.to_email == "p0@c0.com")
+    assert stuck.state == "failed" and "Sent folder" in stuck.last_error

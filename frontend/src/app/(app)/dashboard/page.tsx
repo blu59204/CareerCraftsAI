@@ -270,7 +270,7 @@ export default function DashboardPage() {
   const { data: pendingApprovals = [] } = useQuery<PendingApproval[]>({
     queryKey: ["pending-approvals"],
     queryFn: async () => {
-      const { data } = await apiClient.get("/agents/runs?limit=20");
+      const { data } = await apiClient.get("/agents/runs?status=awaiting_approval&limit=100");
       return ((Array.isArray(data) ? data : data.runs ?? []) as PendingApproval[]).filter((r) => r.status === "awaiting_approval");
     },
     refetchInterval: 10000,

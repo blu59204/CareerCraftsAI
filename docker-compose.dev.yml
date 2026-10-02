@@ -61,17 +61,17 @@ services:
   # Single-container Temporal dev server (in-memory; history is lost on
   # restart). Web UI on http://localhost:8233.
   temporal:
-    image: temporalio/temporal:latest
+    image: temporalio/temporal:1.5.1
     command: server start-dev --ip 0.0.0.0
     ports:
-      - "7233:7233"
-      - "8233:8233"
+      - "127.0.0.1:7233:7233"
+      - "127.0.0.1:8233:8233"
     restart: unless-stopped
 
   redis:
     image: redis:8-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: >
       redis-server
       --appendonly yes

@@ -40,8 +40,8 @@ class JobSearchRequest(JobSearchQuerySchema):
     experience_level: str | None = None
     years_experience: int | None = Field(None, ge=0, le=60)
     job_type: str | None = None
-    target_roles: list[str] | None = None
-    preferred_locations: list[str] | None = None
+    target_roles: list[str] | None = Field(None, max_length=20)
+    preferred_locations: list[str] | None = Field(None, max_length=20)
 
 
 def make_job_search_id(

@@ -6,6 +6,7 @@ LLM output for known key patterns and replacing them with [REDACTED].
 
 Integrates as a LangChain callback handler attached to every LLM call.
 """
+
 import re
 import logging
 from typing import Any
@@ -16,16 +17,18 @@ from langchain_core.outputs import LLMResult
 logger = logging.getLogger(__name__)
 
 # Patterns that match known API key formats
+# Anchored so ordinary words that merely end in "sk-" ("risk-based-testing-...")
+# are left alone.
+_B = r"(?<![A-Za-z0-9_-])"
 _KEY_PATTERNS = [
-    re.compile(r"sk-[a-zA-Z0-9_-]{20,}"),          # OpenAI
-    re.compile(r"sk-ant-[a-zA-Z0-9_-]{20,}"),      # Anthropic
-    re.compile(r"AIza[a-zA-Z0-9_-]{30,}"),          # Google
-    re.compile(r"gsk_[a-zA-Z0-9_-]{20,}"),          # Groq
-    re.compile(r"nvapi-[a-zA-Z0-9_-]{20,}"),        # NVIDIA NIM
-    re.compile(r"hf_[a-zA-Z0-9]{20,}"),             # HuggingFace
-    re.compile(r"xai-[a-zA-Z0-9_-]{20,}"),          # xAI
-    re.compile(r"Bearer\s+[a-zA-Z0-9_.-]{20,}"),    # Generic bearer tokens
-    re.compile(r"[a-f0-9]{32,64}"),                 # Hex keys (32+ chars)
+    re.compile(_B + r"sk-[a-zA-Z0-9_-]{20,}"),  # OpenAI
+    re.compile(_B + r"sk-ant-[a-zA-Z0-9_-]{20,}"),  # Anthropic
+    re.compile(_B + r"AIza[a-zA-Z0-9_-]{30,}"),  # Google
+    re.compile(_B + r"gsk_[a-zA-Z0-9_-]{20,}"),  # Groq
+    re.compile(_B + r"nvapi-[a-zA-Z0-9_-]{20,}"),  # NVIDIA NIM
+    re.compile(_B + r"hf_[a-zA-Z0-9]{20,}"),  # HuggingFace
+    re.compile(_B + r"xai-[a-zA-Z0-9_-]{20,}"),  # xAI
+    re.compile(r"Bearer\s+[a-zA-Z0-9_.-]{20,}"),  # Generic bearer tokens
 ]
 
 REDACTED = "[REDACTED]"

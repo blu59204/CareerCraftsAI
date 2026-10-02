@@ -4,7 +4,7 @@ and see how they are doing."""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,13 @@ router = APIRouter(prefix="/outreach", tags=["outreach"])
 class OutreachEdit(BaseModel):
     subject: str | None = Field(default=None, min_length=1, max_length=300)
     body: str | None = Field(default=None, min_length=1, max_length=8000)
+
+    @field_validator("subject")
+    @classmethod
+    def _single_line(cls, value):
+        if value is not None and ("\r" in value or "\n" in value):
+            raise ValueError("Subject must be a single line")
+        return value
 
 
 def _item(row: RecruiterOutreach) -> dict:

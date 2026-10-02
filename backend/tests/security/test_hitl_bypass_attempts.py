@@ -126,8 +126,8 @@ class TestHITLBypassPrevention:
                 return_value=90,
             ),
             patch(
-                "app.agents.auto_apply_pipeline.find_email_for_company",
-                new=AsyncMock(return_value=None),
+                "app.agents.auto_apply_pipeline.find_recruiter_contact",
+                new=AsyncMock(return_value=MagicMock(best=None)),
             ),
             patch(
                 "app.agents.auto_apply_pipeline.resume_agent_node",

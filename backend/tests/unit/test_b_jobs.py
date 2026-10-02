@@ -109,6 +109,21 @@ from app.services.job_matching import rule_score
             },
         ),
         (
+            "themuse",
+            {
+                "page_count": 1,
+                "results": [
+                    {
+                        "id": 1,
+                        "name": "Engineer",
+                        "company": {"name": "Company"},
+                        "refs": {"landing_page": "https://jobs.example/a"},
+                        "locations": [{"name": "Remote"}],
+                    }
+                ],
+            },
+        ),
+        (
             "remoteok",
             [
                 {"legal": "metadata"},

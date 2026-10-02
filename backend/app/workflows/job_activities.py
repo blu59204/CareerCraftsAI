@@ -212,30 +212,30 @@ async def maintenance_activity(params: dict) -> dict:
         # In-progress rows get 15 minutes; checkpoints the full approval
         # window, since inline-route runs wait at a checkpoint with no
         # workflow until the user decides (signal-with-start creates one).
-        runs = (
-            (
-                await db.execute(
-                    select(AgentRun)
-                    .where(
-                        or_(
-                            and_(
-                                AgentRun.status.in_(("queued", "running")),
-                                AgentRun.started_at < now - _STALE_AFTER,
-                            ),
-                            and_(
-                                AgentRun.status == "awaiting_approval",
-                                AgentRun.started_at < approval_cutoff,
-                            ),
-                        )
-                    )
-                    .order_by(AgentRun.started_at)
-                    .limit(100)
-                )
+        # Paged by start time: runs whose workflow is still legitimately
+        # running (an application waiting a day for its member) would
+        # otherwise fill a single page and starve every newer stale run.
+        candidates = []
+        after = None
+        for _ in range(10):
+            stale = or_(
+                and_(
+                    AgentRun.status.in_(("queued", "running")),
+                    AgentRun.started_at < now - _STALE_AFTER,
+                ),
+                and_(
+                    AgentRun.status == "awaiting_approval",
+                    AgentRun.started_at < approval_cutoff,
+                ),
             )
-            .scalars()
-            .all()
-        )
-        candidates = [(run.id, _workflow_id_for(run)) for run in runs]
+            query = select(AgentRun).where(stale).order_by(AgentRun.started_at).limit(100)
+            if after is not None:
+                query = query.where(AgentRun.started_at > after)
+            runs = (await db.execute(query)).scalars().all()
+            candidates += [(run.id, _workflow_id_for(run)) for run in runs]
+            if len(runs) < 100:
+                break
+            after = runs[-1].started_at
 
     for run_id, workflow_id in candidates:
         try:

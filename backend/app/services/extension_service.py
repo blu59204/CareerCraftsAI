@@ -168,9 +168,12 @@ async def get_device_task(
 
 def _file_answer(field: ApplicationField) -> str | None:
     label = field.label.lower()
-    if "cover" in label:
+    if re.search(
+        r"cover|passport|\bid\b|photo|picture|transcript|certificate|portfolio|sample", label
+    ):
         return None
-    if any(word in label for word in ("resume", "cv", "curriculum", "upload")):
+    # Whole words only: "Upload your passport" must not get the resume.
+    if re.search(r"\b(resume|cv|curriculum)\b", label):
         return RESUME_TOKEN
     return None
 

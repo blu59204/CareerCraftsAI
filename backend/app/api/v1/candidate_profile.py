@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +82,17 @@ async def upsert_candidate_profile(
         )
     ).scalar_one_or_none()
     update_data = payload.model_dump(exclude_unset=True)
+    if update_data.get("default_resume_id") is not None:
+        from app.models.db import UserDocument
+
+        owned = await db.execute(
+            select(UserDocument.id).where(
+                UserDocument.id == update_data["default_resume_id"],
+                UserDocument.user_id == current_user.id,
+            )
+        )
+        if owned.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Resume document not found")
     if profile is None:
         profile = CandidateProfile(user_id=current_user.id, **update_data)
         db.add(profile)

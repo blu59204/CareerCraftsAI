@@ -296,6 +296,9 @@ class ApplicationAttempt(Base):
 
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # When this attempt is allowed to start (after the pacing gap). The next
+    # reservation spaces itself from this, so a batch is spread out.
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -334,8 +337,11 @@ class RecruiterOutreach(Base):
     subject: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     resume_version: Mapped[str | None] = mapped_column(String(64))
+    # The tailored resume PDF (a user document) attached to the first email.
+    resume_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     state: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sending_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     gmail_message_id: Mapped[str | None] = mapped_column(String)
     gmail_thread_id: Mapped[str | None] = mapped_column(String)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

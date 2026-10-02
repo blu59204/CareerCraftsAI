@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import uuid as _uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -177,6 +178,25 @@ async def get_preferences(
     return result.scalar_one_or_none()
 
 
+def _model_uuid(value: str) -> _uuid.UUID:
+    try:
+        return _uuid.UUID(str(value))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Model not found") from None
+
+
+_CLEARABLE_PREFERENCES = {
+    "experience_level",
+    "years_experience",
+    "job_type",
+    "work_mode",
+    "salary_min",
+    "salary_max",
+    "current_title",
+    "bio",
+}
+
+
 @router.patch("/me/preferences", response_model=UserPreferencesResponse)
 async def upsert_preferences(
     payload: UserPreferencesSchema,
@@ -187,7 +207,14 @@ async def upsert_preferences(
         select(UserPreferences).where(UserPreferences.user_id == current_user.id)
     )
     prefs = result.scalar_one_or_none()
-    update_data = payload.model_dump(exclude_none=True)
+    # Only what the client sent: a PATCH of one switch must not reset target
+    # roles, locations or the browser choice to their schema defaults. A
+    # profile field can be cleared with an explicit null; the rest cannot.
+    update_data = {
+        field: value
+        for field, value in payload.model_dump(exclude_unset=True).items()
+        if value is not None or field in _CLEARABLE_PREFERENCES
+    }
     if prefs is None:
         prefs = UserPreferences(user_id=current_user.id, **update_data)
         db.add(prefs)
@@ -378,8 +405,6 @@ async def activate_model(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    import uuid as _uuid
-
     from sqlalchemy import update as sa_update
 
     # Deactivate the others in one statement before activating the target,
@@ -391,7 +416,7 @@ async def activate_model(
     )
     target_res = await db.execute(
         select(UserModelSettings).where(
-            UserModelSettings.id == _uuid.UUID(model_id),
+            UserModelSettings.id == _model_uuid(model_id),
             UserModelSettings.user_id == current_user.id,
         )
     )
@@ -409,11 +434,10 @@ async def delete_model(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    import uuid as _uuid
 
     result = await db.execute(
         select(UserModelSettings).where(
-            UserModelSettings.id == _uuid.UUID(model_id),
+            UserModelSettings.id == _model_uuid(model_id),
             UserModelSettings.user_id == current_user.id,
         )
     )
@@ -430,7 +454,6 @@ async def test_model(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    import uuid as _uuid
 
     from langchain_core.messages import HumanMessage
 
@@ -438,7 +461,7 @@ async def test_model(
 
     result = await db.execute(
         select(UserModelSettings).where(
-            UserModelSettings.id == _uuid.UUID(payload.model_id),
+            UserModelSettings.id == _model_uuid(payload.model_id),
             UserModelSettings.user_id == current_user.id,
         )
     )

@@ -22,7 +22,14 @@ async def _recent_attempt_stats(db, user_id, exclude_id, now):
         conditions.append(ApplicationAttempt.id != exclude_id)
     row = (
         await db.execute(
-            select(func.count(), func.max(ApplicationAttempt.created_at)).where(*conditions)
+            select(
+                func.count(),
+                func.max(
+                    func.coalesce(
+                        ApplicationAttempt.scheduled_start_at, ApplicationAttempt.created_at
+                    )
+                ),
+            ).where(*conditions)
         )
     ).one()
     return row[0], row[1]
@@ -46,7 +53,7 @@ async def reserve_application_attempt(params: dict) -> dict:
     Raises ValueError (ownership/state violations) — non-retryable by the
     workflow's own error-type handling in auto_apply.py.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from app.applications.submission import load_resume
     from app.core.database import AsyncSessionLocal
@@ -60,6 +67,12 @@ async def reserve_application_attempt(params: dict) -> dict:
     run_id = _uuid.UUID(params["run_id"])
 
     async with AsyncSessionLocal() as db:
+        # One reservation per member at a time: otherwise a batch of workflows
+        # all read the same 24h count and pass the daily cap together.
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"apply-reserve:{user_id}"},
+        )
         app_row = (
             await db.execute(
                 select(JobApplication)
@@ -107,6 +120,7 @@ async def reserve_application_attempt(params: dict) -> dict:
         if error:
             raise ValueError(error)
         wait_seconds = apply_limits.pacing_wait_seconds(last_started, now)
+        scheduled_start = now + timedelta(seconds=wait_seconds)
 
         _, resume_sha256 = await load_resume(user_id, str(app_row.resume_id))
 
@@ -141,12 +155,17 @@ async def reserve_application_attempt(params: dict) -> dict:
             attempt.last_error = None
             attempt.submitted_at = None
             attempt.verified_at = None
+            # A retry is a new start: it counts toward the 24h cap and the
+            # pacing gap from now, not from the attempt's first creation.
+            attempt.created_at = now
+            attempt.scheduled_start_at = scheduled_start
         else:
             attempt = ApplicationAttempt(
                 user_id=user_id,
                 job_application_id=job_application_id,
                 run_id=run_id,
                 workflow_id=workflow_id,
+                scheduled_start_at=scheduled_start,
                 state="preparing",
             )
             db.add(attempt)

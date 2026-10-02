@@ -50,7 +50,7 @@ async def _human_delay() -> None:
 def _detect_portal(job_url: str) -> str:
     """Detect portal name from URL domain for task-hint purposes."""
     try:
-        host = urlparse(job_url).netloc.lower().lstrip("www.")
+        host = urlparse(job_url).netloc.lower().removeprefix("www.")
     except Exception:
         return "unknown"
     portal_map = {

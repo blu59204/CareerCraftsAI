@@ -86,18 +86,10 @@ class TokenTrackingCallback(BaseCallbackHandler):
         total = _total_tokens(response)
         if total > 0:
             _add_tokens(total)
-            from app.services.token_budget_service import consume_tokens
+            from app.services.token_budget_service import record_tokens_sync
 
             try:
-                import asyncio
-
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.call_soon_threadsafe(
-                        lambda: asyncio.ensure_future(consume_tokens(self.user_id, total))
-                    )
-                else:
-                    loop.run_until_complete(consume_tokens(self.user_id, total))
+                record_tokens_sync(self.user_id, total)
             except Exception as exc:
                 logger.debug("Token budget tracking failed for user %s: %s", self.user_id, exc)
 

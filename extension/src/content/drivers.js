@@ -11,16 +11,16 @@
   const GENERIC_SUCCESS_RE =
     /application (has been |was )?(successfully )?submitted|thank you for applying|we have received your application|application received/i;
   const SUBMIT_TEXT_RE = /submit( your)? application|send application|submit|apply/i;
-  const LINKEDIN_LOGIN_URL_RE = /login|authwall|checkpoint|uas/i;
+  const LINKEDIN_LOGIN_URL_RE = /^\/(login|authwall|checkpoint|uas)(\/|$)/i;
   const LINKEDIN_SUBMIT_RE = /submit application/i;
   const LINKEDIN_NEXT_RE = /^(continue to next step|next|review your application|review)$/i;
-  const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|applied/i;
+  const LINKEDIN_CONFIRM_RE = /your application was sent|application sent|you applied|application submitted/i;
   const NAUKRI_LOGIN_RE = /\/nlogin/i;
-  const NAUKRI_SUCCESS_RE = /successfully applied|applied to|application sent/i;
+  const NAUKRI_SUCCESS_RE = /successfully applied|you have applied|application sent/i;
   // Controls that lead from a job description to its application form.
   const APPLY_LINK_RE = /^(apply|apply now|apply here|apply for this (job|position|role)|apply to this job|apply online|start (your )?application|i'?m interested)$/i;
   // Hosted application forms that company career sites embed in an iframe.
-  const ATS_FRAME_RE = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|jobvite\.com|icims\.com|bamboohr\.com|recruitee\.com|myworkdayjobs\.com)$/i;
+  const ATS_FRAME_RE = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|jobvite\.com|icims\.com|bamboohr\.com|recruitee\.com|myworkdayjobs\.com|taleo\.net|successfactors\.(com|eu)|darwinbox\.(in|com)|keka\.com)$/i;
 
   // Returned by a driver that sent the tab to another page: the runner stops
   // quietly and the background re-runs it once that page has loaded.
@@ -416,7 +416,7 @@
   // ── LinkedIn Easy Apply driver ──────────────────────────────────────────
 
   function linkedinLooksSignedOut() {
-    if (LINKEDIN_LOGIN_URL_RE.test(location.href)) return true;
+    if (LINKEDIN_LOGIN_URL_RE.test(location.pathname)) return true;
     const hasNav = !!document.querySelector(".global-nav, #global-nav");
     const hasLoginForm = !!document.querySelector('form[action*="login"], #login-form, input[name="session_password"], input[name="session_key"]');
     return hasLoginForm && !hasNav;
@@ -755,6 +755,39 @@
     },
   };
 
+
+  // ── Wizard portals without a Workday-style marker set ───────────────────
+  // iCIMS, Taleo, SuccessFactors, Darwinbox and Keka share one shape: a job
+  // page with an Apply control, then a form (one page or several steps) that
+  // the wizard loop fills. Hosted-tenant selectors only differ in how the
+  // Apply control is found, so they share a factory. Sign-in is detected by
+  // a visible password field and handed to the member, never filled.
+  function formPortalCfg(label, applySelector) {
+    const cfg = {
+      label,
+      success: ATS_SUCCESS_RE,
+      stepDelay: [1200, 1700],
+      loginMessage: `Sign in or create your ${label} account in this tab, then press Continue. CareerCraft never sees your password.`,
+      signedOut: () => !!visibleOne("input[type=password]") && !cfg.findRoot(),
+      findRoot() {
+        const forms = Array.from(document.forms).filter((f) => dom.isVisible(f) || f.querySelector("input,select,textarea"));
+        return forms.find(looksLikeApplication) || null;
+      },
+      findPrimary: (root) => primaryFrom(dom.deepQueryAll(root, ANY_BUTTON)),
+      async enter(ctx) {
+        const apply = visibleOne(applySelector) || findApplyControl();
+        return apply ? clickThrough(ctx, apply, () => cfg.findRoot() || cfg.signedOut()) : null;
+      },
+    };
+    return cfg;
+  }
+
+  const icimsCfg = formPortalCfg("iCIMS", 'a[href*="mode=apply"], a.iCIMS_Anchor[href*="apply"], a[href*="/apply"]');
+  const taleoCfg = formPortalCfg("Taleo", 'a[href*="apply"], [id*="applyButton"], input[value*="Apply"]');
+  const successFactorsCfg = formPortalCfg("SuccessFactors", '[id*="applyButton"], a[href*="/apply"], button[data-testid*="apply"]');
+  const darwinboxCfg = formPortalCfg("Darwinbox", 'a[href*="apply"], button[class*="apply"]');
+  const kekaCfg = formPortalCfg("Keka", 'a[href*="apply"], button[class*="apply"]');
+
   async function ensureSignedIn(ctx, cfg) {
     for (let attempt = 0; attempt < 5 && cfg.signedOut(); attempt++) {
       await ctx.api.event("login_required", { message: cfg.loginMessage });
@@ -824,7 +857,9 @@
           let primary = cfg.findPrimary(m);
           if (!primary.el) {
             const chosen = await decideAdvanceButton(ctx, primary.buttons || []);
-            if (chosen) primary = { el: chosen, kind: SUBMIT_BTN_RE.test(buttonLabel(chosen)) ? "submit" : "next" };
+            // An unrecognised button is treated as the final step unless it is
+            // plainly "Next": a "Finish" or "Apply" click must go through review.
+            if (chosen) primary = { el: chosen, kind: NEXT_BTN_RE.test(buttonLabel(chosen)) ? "next" : "submit" };
           }
           if (!primary.el) throw new Error(`Could not find the Next or Submit button in ${cfg.label}`);
 
@@ -879,6 +914,11 @@
   const workdayDriver = makeAtsDriver(workdayCfg);
   const smartRecruitersDriver = makeAtsDriver(smartRecruitersCfg);
   const workableDriver = makeAtsDriver(workableCfg);
+  const icimsDriver = makeAtsDriver(icimsCfg);
+  const taleoDriver = makeAtsDriver(taleoCfg);
+  const successFactorsDriver = makeAtsDriver(successFactorsCfg);
+  const darwinboxDriver = makeAtsDriver(darwinboxCfg);
+  const kekaDriver = makeAtsDriver(kekaCfg);
 
   // ── Selection ────────────────────────────────────────────────────────────
 
@@ -891,10 +931,24 @@
     if (/(^|\.)myworkdayjobs\.com$/.test(host) || /(^|\.)myworkdaysite\.com$/.test(host) || platform === "workday" || document.querySelector('[data-automation-id="adventureButton"], [data-automation-id="jobPostingHeader"]')) return "workday";
     if (/(^|\.)smartrecruiters\.com$/.test(host) || platform === "smartrecruiters") return "smartrecruiters";
     if (/(^|\.)workable\.com$/.test(host) || platform === "workable") return "workable";
+    if (/(^|\.)icims\.com$/.test(host) || platform === "icims") return "icims";
+    if (/(^|\.)taleo\.net$/.test(host) || platform === "taleo") return "taleo";
+    if (/(^|\.)successfactors\.(com|eu)$/.test(host) || platform === "successfactors") return "successfactors";
+    if (/(^|\.)darwinbox\.(in|com)$/.test(host) || platform === "darwinbox") return "darwinbox";
+    if (/(^|\.)keka\.com$/.test(host) || platform === "keka") return "keka";
     return null;
   }
 
-  const ATS_DRIVERS = { workday: workdayDriver, smartrecruiters: smartRecruitersDriver, workable: workableDriver };
+  const ATS_DRIVERS = {
+    workday: workdayDriver,
+    smartrecruiters: smartRecruitersDriver,
+    workable: workableDriver,
+    icims: icimsDriver,
+    taleo: taleoDriver,
+    successfactors: successFactorsDriver,
+    darwinbox: darwinboxDriver,
+    keka: kekaDriver,
+  };
 
   function select(task) {
     const platform = (task && task.platform) || "";
@@ -913,5 +967,5 @@
     await reportConfirmationResult(ctx, result, "The page after submitting does not show a confirmation.");
   }
 
-  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, workdayDriver, smartRecruitersDriver, workableDriver, NAVIGATING };
+  window.CareerCraftDrivers = { select, confirmAfterNavigation, genericDriver, linkedinDriver, naukriDriver, workdayDriver, smartRecruitersDriver, workableDriver, icimsDriver, taleoDriver, successFactorsDriver, darwinboxDriver, kekaDriver, NAVIGATING };
 })();

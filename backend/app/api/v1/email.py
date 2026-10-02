@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.messages import HumanMessage
@@ -238,7 +239,9 @@ class InboxCleanupEmail(BaseModel):
 
 
 class InboxCleanupArchiveRequest(BaseModel):
-    message_ids: list[str] = Field(min_length=1, max_length=50)
+    message_ids: list[Annotated[str, Field(pattern=r"^[0-9a-zA-Z_-]{1,64}$")]] = Field(
+        min_length=1, max_length=50
+    )
 
 
 def _header_value(headers: list[dict], name: str) -> str:
@@ -327,10 +330,14 @@ async def approve_and_send(
 ):
     # Locked so a second concurrent approval of the same run sees the
     # status flip below before it can read a stale "awaiting_approval".
+    try:
+        run_uuid = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Run not found") from None
     result = await db.execute(
         select(AgentRun)
         .where(
-            AgentRun.id == uuid.UUID(run_id),
+            AgentRun.id == run_uuid,
             AgentRun.user_id == current_user.id,
         )
         .with_for_update()

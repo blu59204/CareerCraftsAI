@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from temporalio.client import WorkflowHandle
 from temporalio.common import WorkflowIDReusePolicy
@@ -177,8 +177,12 @@ async def start_notification(
     title: str,
     body: str | None = None,
     link: str | None = None,
+    dedupe_key: str | None = None,
 ) -> str:
     """Fire-and-forget: start a NotificationWorkflow and return immediately.
+
+    With `dedupe_key`, the same key is only ever started once: a retried
+    caller (for example a scheduled summary) cannot send it twice.
 
     Every call gets a fresh workflow id (each notification is a distinct
     event, not something to de-duplicate by content) and targets the
@@ -189,7 +193,7 @@ async def start_notification(
     """
     from app.workflows.notification_workflow import NotificationInput, NotificationWorkflow
 
-    workflow_id = f"notification/{uuid.uuid4()}"
+    workflow_id = f"notification/{dedupe_key or uuid.uuid4()}"
     client = await _client()
     try:
         await client.start_workflow(
@@ -197,6 +201,11 @@ async def start_notification(
             NotificationInput(user_id=str(user_id), type=type, title=title, body=body, link=link),
             id=workflow_id,
             task_queue=settings.TEMPORAL_NOTIFICATION_TASK_QUEUE,
+            id_reuse_policy=(
+                WorkflowIDReusePolicy.REJECT_DUPLICATE
+                if dedupe_key
+                else WorkflowIDReusePolicy.ALLOW_DUPLICATE
+            ),
         )
     except WorkflowAlreadyStartedError:
         pass

@@ -10,6 +10,10 @@ on:
   # deployed-environment secrets and may exercise a real account.
   workflow_dispatch:
 
+# Least privilege: jobs only read the repository.
+permissions:
+  contents: read
+
 jobs:
   backend-quality:
     runs-on: ubuntu-latest
@@ -60,7 +64,7 @@ jobs:
         run: bandit -r app/ -ll -x tests/
 
       - name: Unit tests
-        run: pytest tests/unit -v --cov=app --cov-report=term-missing
+        run: pytest tests/unit tests/security -v --cov=app --cov-report=term-missing
         env:
           APP_SECRET_KEY: "test-secret-key-32-chars-minimum!!"
           DATABASE_URL: "postgresql+asyncpg://x:x@localhost/x"

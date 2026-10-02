@@ -50,6 +50,23 @@ async def check_budget(user_id: str, limit: int = DEFAULT_DAILY_LIMIT) -> int:
     return max(0, limit - used)
 
 
+def record_tokens_sync(user_id: str, tokens: int) -> int:
+    """Add to today's usage from synchronous code (LLM callbacks run on worker
+    threads where no event loop exists). Never raises: the check happens
+    before a call, this only keeps the count honest."""
+    import redis
+
+    client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+    try:
+        key = _budget_key(user_id)
+        new_total = client.incrby(key, tokens)
+        if new_total == tokens:
+            client.expire(key, 86400)
+        return int(new_total)
+    finally:
+        client.close()
+
+
 async def consume_tokens(user_id: str, tokens: int, limit: int = DEFAULT_DAILY_LIMIT) -> int:
     """Record token consumption. Raises TokenBudgetExceeded if over limit.
 

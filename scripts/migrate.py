@@ -97,7 +97,22 @@ def baseline(conn: psycopg.Connection, upto: str | None) -> list[str]:
     return recorded
 
 
+LOCK_KEY = 727274  # arbitrary, shared by every run of this script
+
+
 def migrate(conn: psycopg.Connection, *, dry_run: bool = False) -> list[str]:
+    """Apply pending files. Runs are serialised with an advisory lock, so two
+    deploys (or a deploy and a manual run) cannot apply the same file twice."""
+    if dry_run:
+        return _migrate(conn, dry_run=True)
+    conn.execute("SELECT pg_advisory_lock(%s)", (LOCK_KEY,))
+    try:
+        return _migrate(conn, dry_run=False)
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
+
+
+def _migrate(conn: psycopg.Connection, *, dry_run: bool = False) -> list[str]:
     if not _ledger_exists(conn):
         if _schema_exists(conn):
             raise SystemExit(

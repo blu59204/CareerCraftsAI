@@ -44,7 +44,11 @@ def format_summary(stats: dict) -> tuple[str, str] | None:
 
 async def build_summary(user_id: str, now: datetime | None = None) -> dict:
     owner = uuid.UUID(user_id)
-    since = (now or datetime.now(UTC)) - timedelta(hours=24)
+    # The window is the schedule's interval, so a summary every 48 hours does
+    # not lose a day and one every 6 hours does not repeat events.
+    from app.core.config import settings
+
+    since = (now or datetime.now(UTC)) - timedelta(hours=settings.DAILY_SUMMARY_INTERVAL_HOURS)
     async with AsyncSessionLocal() as db:
 
         async def count(query) -> int:
@@ -108,7 +112,16 @@ async def send_summary(user_id: str) -> bool:
     text = format_summary(await build_summary(user_id))
     if text is None:
         return False
+    from app.core.config import settings
+
+    # One summary per member per interval, even if the activity is retried.
+    window = int(datetime.now(UTC).timestamp() // (settings.DAILY_SUMMARY_INTERVAL_HOURS * 3600))
     await start_notification(
-        user_id, type="daily_summary", title=text[0], body=text[1], link="/applications"
+        user_id,
+        type="daily_summary",
+        title=text[0],
+        body=text[1],
+        link="/applications",
+        dedupe_key=f"daily-summary/{user_id}/{window}",
     )
     return True

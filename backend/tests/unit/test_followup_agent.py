@@ -97,6 +97,9 @@ class _FakeSingleResult:
     def scalar_one_or_none(self):
         return self._item
 
+    def scalars(self):
+        return types.SimpleNamespace(first=lambda: None)
+
 
 class _FakeFollowupSession:
     """Minimal AsyncSession stand-in: every execute() returns the one
