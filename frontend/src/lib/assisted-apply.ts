@@ -13,6 +13,7 @@ import { detectExtension, wakeExtension } from "@/lib/extension-bridge";
  */
 export async function startAssistedApply(app: { id: string; job_url: string | null }): Promise<boolean> {
   const tab = window.open("about:blank", "_blank");
+  if (tab) tab.opener = null; // we keep the handle; the opened page can't script ours
   try {
     const extension = await detectExtension();
     if (extension) {

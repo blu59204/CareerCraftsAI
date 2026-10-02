@@ -236,6 +236,7 @@ function ApplicationsView() {
   const exportToSheets = async () => {
     setShowExportMenu(false);
     const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null; // we keep the handle; the opened page can't script ours
     const params: Record<string, string | number> = { sort };
     if (filters.minMatch != null) params.min_match = filters.minMatch;
     if (filters.foundAfter) params.found_after = filters.foundAfter;
