@@ -275,10 +275,6 @@ class CompanyIntelResponse(BaseModel):
 # ─── NL Job Search Schemas ────────────────────────────────────────────────────
 
 
-class NLSearchRequest(BaseModel):
-    query: str = Field(min_length=5, max_length=500)
-
-
 class SearchInterpretation(BaseModel):
     role_title: str | None = None
     seniority: str | None = None

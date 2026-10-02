@@ -238,6 +238,15 @@ def retrieve(
     k: int = 5,
 ) -> list[Document]:
     """Retrieve top-k relevant chunks."""
+    if doc_type == "resume":
+        # A resume the member picked for this run replaces similarity search:
+        # vectors carry no document id, so other resumes would leak into the context.
+        from app.core.sync_db import fetch_chosen_resume
+
+        chosen = fetch_chosen_resume(user_id)
+        if chosen is not None and chosen.raw_text:
+            return [Document(page_content=c, metadata={"doc_type": "resume"})
+                    for c in chunk_text(chosen.raw_text)[:k]]
     try:
         embeddings = get_embedding_model(model_settings)
         store = get_vector_store(

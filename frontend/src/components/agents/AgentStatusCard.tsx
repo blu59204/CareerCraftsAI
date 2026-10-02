@@ -38,7 +38,6 @@ const STATUS_ICONS: Record<AgentRunStatus, Icon> = {
 const AGENT_LABELS: Record<string, string> = {
   resume_optimize: "Resume Optimization",
   linkedin_optimize: "LinkedIn Optimization",
-  nl_job_search: "Natural Language Job Search",
   apply_prepare: "Application Preparation",
 };
 
