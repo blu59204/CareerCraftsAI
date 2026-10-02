@@ -37,6 +37,7 @@ export type ApplicationFilters = {
   sort?: ApplicationSort;
   location?: string;
   source?: string;
+  postedWithinDays?: number; // 1-90, filters on the employer's posting date
 };
 
 export type ApplicationPage = { items: ApplicationRecord[]; total: number };
@@ -53,6 +54,7 @@ export async function fetchApplications(
   if (filters.sort) params.sort = filters.sort;
   if (filters.location) params.location = filters.location;
   if (filters.source) params.source = filters.source;
+  if (filters.postedWithinDays) params.posted_within_days = filters.postedWithinDays;
   if (page.offset) params.offset = page.offset;
   if (page.limit) params.limit = page.limit;
   const res = await apiClient.get<ApplicationRecord[]>("/jobs/applications", { params });

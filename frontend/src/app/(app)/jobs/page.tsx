@@ -1275,8 +1275,7 @@ export default function JobsPage() {
       const filters: ApplicationFilters = { status: "saved", sort: "match_desc" };
       if (jobSource) filters.source = jobSource;
       if (minMatch > 0) filters.minMatch = minMatch;
-      // Applications has no posted_at filter, so "posted within" maps to found-at.
-      if (postedDays !== 30) filters.foundAfter = new Date(Date.now() - postedDays * 86400000).toISOString();
+      if (postedDays !== 30) filters.postedWithinDays = postedDays;
       const locations = Array.from(activeFilters).filter((f) => QUERY_LOCATION_FILTERS.includes(f));
       if (locations.length > 0) filters.location = locations.join(",");
       return fetchApplications(filters, { limit: TOP_JOBS });
