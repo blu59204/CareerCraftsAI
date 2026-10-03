@@ -735,10 +735,10 @@ export default function AccountSettingsPage() {
                       <Bezel size="md" tone="primary" className="h-full" coreClassName="flex h-full flex-col p-6">
                         <PanelTitle icon={<Briefcase size={16} weight="light" />} title="Job preferences" />
                         <p className="mt-3 flex-1 text-sm leading-6 text-muted-foreground">
-                          Set your target role, experience level, work mode and salary preferences.
+                          Set your target role, experience level, work mode and salary on the Jobs page.
                         </p>
                         <div className="mt-5">
-                          <IslandLink href="/settings/profile" tone="ghost" size="sm" trailing>
+                          <IslandLink href="/jobs#search-profile" tone="ghost" size="sm" trailing>
                             Manage preferences
                           </IslandLink>
                         </div>

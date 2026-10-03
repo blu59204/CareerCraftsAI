@@ -71,6 +71,7 @@ import { getResumeInsightData } from "@/lib/resume-insights";
 import { isCurrentAnalysis } from "@/lib/resume-state";
 import { takePendingJd } from "@/lib/job-handoff";
 import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
+import { ResumePreferencesCard } from "@/components/settings/ResumePreferences";
 import {
   countOpenIssues,
   type ContactFields,
@@ -1891,6 +1892,8 @@ export default function ResumePage() {
               />
             </Bezel>
           )}
+          {/* Length is set by the page's own Single/Multi-page control above. */}
+          <ResumePreferencesCard showLength={false} />
         </Reveal>
       </div>
     </Screen>

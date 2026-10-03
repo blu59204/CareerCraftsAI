@@ -590,13 +590,14 @@ export default function DashboardPage() {
               />
             </Reveal>
 
+            {/* Only shown when an agent is actually waiting; an empty card just padded the column. */}
+            {approvalsCount > 0 ? (
             <Reveal delay={0.14} className="min-w-0">
               <Bezel
                 id="approvals"
                 size="lg"
                 className={cn(
-                  "h-full scroll-mt-24",
-                  approvalsCount > 0 && "bg-warning/[0.05] ring-warning/20 dark:bg-warning/[0.06] dark:ring-warning/25",
+                  "h-full scroll-mt-24 bg-warning/[0.05] ring-warning/20 dark:bg-warning/[0.06] dark:ring-warning/25",
                 )}
                 coreClassName="flex flex-col p-6 md:p-7"
               >
@@ -604,16 +605,12 @@ export default function DashboardPage() {
                   title="Approvals"
                   icon={<ShieldCheck size={16} weight="light" />}
                   meta={
-                    approvalsCount > 0 ? (
-                      <StatusPill tone="warning" live>
-                        {approvalsCount} pending
-                      </StatusPill>
-                    ) : null
+                    <StatusPill tone="warning" live>
+                      {approvalsCount} pending
+                    </StatusPill>
                   }
                 />
                 <div className="mt-5 flex-1" aria-live="polite">
-                  {approvalsCount > 0 ? (
-                    <>
                       <p className="text-[13px] leading-5 text-muted-foreground">
                         {approvalsCount} action{approvalsCount > 1 ? "s" : ""} require approval. Nothing is sent or submitted until you approve.
                       </p>
@@ -634,18 +631,10 @@ export default function DashboardPage() {
                           </motion.li>
                         ))}
                       </motion.ul>
-                    </>
-                  ) : (
-                    <EmptyPanel
-                      compact
-                      icon={<SealCheck size={22} weight="light" />}
-                      title="Nothing waiting on you"
-                      description="Agents pause here before sending an email or submitting an application."
-                    />
-                  )}
                 </div>
               </Bezel>
             </Reveal>
+            ) : null}
           </div>
 
           {/* Key metrics */}

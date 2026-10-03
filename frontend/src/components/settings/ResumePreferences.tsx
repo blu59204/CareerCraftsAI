@@ -51,7 +51,16 @@ export function useAutoApplyPrefs() {
 
 const labelClass = "text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground";
 
-export function ResumePrefsFields({ value, onChange }: { value: ResumePrefs; onChange: (next: ResumePrefs) => void }) {
+export function ResumePrefsFields({
+  value,
+  onChange,
+  showLength = true,
+}: {
+  value: ResumePrefs;
+  onChange: (next: ResumePrefs) => void;
+  /** Off where the page already has its own single/multi-page control. */
+  showLength?: boolean;
+}) {
   const set = <K extends keyof ResumePrefs>(key: K, v: ResumePrefs[K]) => onChange({ ...value, [key]: v });
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -68,6 +77,7 @@ export function ResumePrefsFields({ value, onChange }: { value: ResumePrefs; onC
           ))}
         </Select>
       </label>
+      {showLength && (
       <label className="space-y-1.5">
         <span className={labelClass}>Length</span>
         <Select
@@ -78,6 +88,7 @@ export function ResumePrefsFields({ value, onChange }: { value: ResumePrefs; onC
           <option value="2">Multi page</option>
         </Select>
       </label>
+      )}
       <label className="space-y-1.5">
         <span className={labelClass}>Tone</span>
         <Select value={value.resume_tone} onChange={(e) => set("resume_tone", e.target.value)}>
@@ -102,19 +113,19 @@ export function ResumePrefsFields({ value, onChange }: { value: ResumePrefs; onC
   );
 }
 
-/** Settings card: edit the resume preferences auto-apply uses. */
-export function ResumePreferencesCard() {
+/** Card editing the resume preferences auto-apply uses (shown on the Resume page). */
+export function ResumePreferencesCard({ showLength = true }: { showLength?: boolean }) {
   const { prefs, isLoading, patch } = useAutoApplyPrefs();
   const [draft, setDraft] = useState<ResumePrefs | null>(null);
   const value = draft ?? toResumePrefs(prefs);
   return (
     <Bezel coreClassName="p-5 md:p-6">
-      <PanelTitle title="Resume preferences" />
-      <p className="mt-2 text-sm text-muted-foreground">
-        Used when auto-apply tailors a resume for a job. Turn tailoring off to send your active resume as is.
+      <PanelTitle title="Auto-apply resume" />
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        How auto-apply tailors your resume for each job. Turn tailoring off to send your active resume as is.
       </p>
-      <div className="mt-5">
-        <ResumePrefsFields value={value} onChange={setDraft} />
+      <div className="mt-4">
+        <ResumePrefsFields value={value} onChange={setDraft} showLength={showLength} />
       </div>
       <div className="mt-5 flex justify-end">
         <IslandButton

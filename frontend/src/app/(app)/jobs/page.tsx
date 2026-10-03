@@ -120,6 +120,8 @@ interface JobSearchPrefs {
   years_experience?: number | null;
   current_title?: string;
   bio?: string | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
 }
 
 interface JobSearchProfile {
@@ -145,6 +147,8 @@ interface SearchProfileForm {
   job_type: string;
   work_mode: string;
   current_title: string;
+  salary_min: string;
+  salary_max: string;
 }
 
 function splitCsv(value: string | null | undefined): string[] {
@@ -1053,6 +1057,36 @@ function ProfileSearchPanel({
               />
             )}
           </Field>
+          <Field label="Salary minimum (USD / year)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                leading={<span className="text-sm">$</span>}
+                value={form.salary_min}
+                onChange={(e) => onChange("salary_min", e.target.value)}
+                placeholder="80000"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
+          <Field label="Salary maximum (USD / year)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                leading={<span className="text-sm">$</span>}
+                value={form.salary_max}
+                onChange={(e) => onChange("salary_max", e.target.value)}
+                placeholder="150000"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
           <div role="group" aria-labelledby={`${groupId}-type`} className="space-y-2.5">
             <p id={`${groupId}-type`} className="pl-1 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
               Job type
@@ -1232,6 +1266,8 @@ export default function JobsPage() {
     job_type: "full-time",
     work_mode: "remote",
     current_title: "",
+    salary_min: "",
+    salary_max: "",
   });
   const [profileInitialized, setProfileInitialized] = useState(false);
   const initRun = useAgentStore((s) => s.initRun);
@@ -1332,6 +1368,8 @@ export default function JobsPage() {
       job_type: saved.job_type ?? "full-time",
       work_mode: saved.work_mode ?? searchProfile.work_mode_preview ?? "remote",
       current_title: saved.current_title ?? "",
+      salary_min: saved.salary_min != null ? String(saved.salary_min) : "",
+      salary_max: saved.salary_max != null ? String(saved.salary_max) : "",
     });
     setProfileInitialized(true);
   }, [searchProfile, profileInitialized]);
@@ -1401,6 +1439,9 @@ export default function JobsPage() {
         work_mode: profileForm.work_mode || undefined,
         target_roles: splitCsv(profileForm.target_roles),
         preferred_locations: splitCsv(profileForm.preferred_locations),
+        // null clears a stored value; omitted would keep the old one.
+        salary_min: profileForm.salary_min !== "" ? parseInt(profileForm.salary_min, 10) : null,
+        salary_max: profileForm.salary_max !== "" ? parseInt(profileForm.salary_max, 10) : null,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -1816,7 +1857,7 @@ export default function JobsPage() {
           )}
         </Section>
 
-        <Section aria-label="Search profile">
+        <Section id="search-profile" aria-label="Search profile" className="scroll-mt-24">
           <Reveal>
             <SectionHeading
               eyebrow="Search profile"
