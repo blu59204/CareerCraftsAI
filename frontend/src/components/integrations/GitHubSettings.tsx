@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { openNangoConnectWindow } from "@/lib/nango-connect";
+import { ArrowsClockwise, CircleNotch, GithubLogo } from "@phosphor-icons/react";
+import { Bezel, Input, IslandButton, Notice, PanelTitle, StatusPill } from "@/components/vanguard";
 
 type Profile = { skills: { name: string }[]; top_repos: { name: string; url: string }[]; suggested_projects: { name: string; url: string; reason: string }[] };
 export function GitHubSettings({ onboarding = false }: { onboarding?: boolean }) {
@@ -43,25 +45,115 @@ export function GitHubSettings({ onboarding = false }: { onboarding?: boolean })
     } catch (e) { setError(getApiErrorMessage(e, "Could not delete GitHub data")); }
     finally { setBusy(false); }
   }
-  return <section aria-labelledby="github-section-title" className="rounded-2xl border border-border bg-card p-6 space-y-4">
-    <h2 id="github-section-title" className="text-xl font-semibold">GitHub · optional</h2>
-    <p className="text-sm text-muted-foreground">Add evidence from public repositories to job matching and review project suggestions. Public access only; private repositories are excluded. You can continue without connecting.</p>
-    {profile.isPending && <p role="status">Loading GitHub connection…</p>}
-    {!profile.data && !profile.isPending && <p>GitHub is not connected.</p>}
-    <div className="flex flex-wrap gap-2">
-      <button type="button" disabled={busy} onClick={() => void connect()} className="rounded-lg border border-border p-2">Connect with Nango</button>
-      <button type="button" disabled={busy} onClick={() => void refresh()} className="rounded-lg border border-border p-2">Refresh profile</button>
-    </div>
-    <form onSubmit={e => { e.preventDefault(); void refresh("/integrations/github/public-profile", { url }); }} className="flex flex-wrap gap-2">
-      <label className="grid gap-1 text-sm">Public profile URL<input type="url" required value={url} onChange={e => setUrl(e.target.value)} placeholder="https://github.com/username" className="rounded-lg border border-border bg-background p-2" /></label>
-      <button disabled={busy} className="self-end rounded-lg border border-border p-2">Use public profile</button>
-    </form>
-    {(error || profile.isError) && <p role="alert">{error || "GitHub is unavailable. You can continue without it."}</p>}
-    {busy && <p role="status">Updating GitHub…</p>}
-    {profile.data && <>
-      <p className="text-sm">Repository evidence: {profile.data.skills.map(s => s.name).join(", ") || "No skills found"}</p>
-      <ul className="space-y-2">{profile.data.suggested_projects.map(p => <li key={p.url}><a href={p.url} target="_blank" rel="noopener noreferrer" className="underline">{p.name}</a><p className="text-sm text-muted-foreground">{p.reason}</p></li>)}</ul>
-      <div className="flex gap-2"><button disabled={busy} onClick={() => void remove(true)} className="rounded-lg border p-2">Disconnect</button><button disabled={busy} onClick={() => void remove(false)} className="rounded-lg border p-2">Delete profile data</button></div>
-    </>}
-  </section>;
+  const connected = !!profile.data;
+  const spinner = <CircleNotch size={14} weight="light" className="animate-spin motion-reduce:animate-none" />;
+  const body = (
+      <section aria-labelledby="github-section-title" className="space-y-5">
+        <PanelTitle
+          icon={<GithubLogo size={16} weight="light" />}
+          title={<span id="github-section-title">GitHub</span>}
+          meta={
+            profile.isPending ? (
+              <StatusPill tone="neutral" live>Checking…</StatusPill>
+            ) : (
+              <StatusPill tone={connected ? "success" : "neutral"}>{connected ? "Connected" : "Optional"}</StatusPill>
+            )
+          }
+        />
+        <p className="text-sm leading-6 text-muted-foreground">
+          Adds evidence from your public repositories to job matching and suggests projects to highlight. Public
+          repositories only. You can skip this.
+        </p>
+
+        {!connected && (
+          <>
+            <div className="flex flex-wrap gap-2">
+              <IslandButton
+                type="button"
+                tone="primary"
+                size="sm"
+                disabled={busy}
+                onClick={() => void connect()}
+                icon={busy ? spinner : <GithubLogo size={14} weight="light" />}
+              >
+                Connect GitHub
+              </IslandButton>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void refresh("/integrations/github/public-profile", { url });
+              }}
+              className="space-y-2"
+            >
+              <label htmlFor="github-public-url" className="block pl-1 text-[12px] font-medium text-muted-foreground">
+                Or use a public profile URL
+              </label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  id="github-public-url"
+                  type="url"
+                  required
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://github.com/username"
+                  trayClassName="flex-1"
+                />
+                <IslandButton type="submit" tone="ghost" size="md" disabled={busy}>
+                  Use public profile
+                </IslandButton>
+              </div>
+            </form>
+          </>
+        )}
+
+        {(error || profile.isError) && (
+          <Notice tone="danger">{error || "GitHub is unavailable. You can continue without it."}</Notice>
+        )}
+
+        {connected && profile.data && (
+          <div className="space-y-4">
+            <div>
+              <p className="pl-1 text-[12px] font-medium text-muted-foreground">Skills from your repositories</p>
+              {profile.data.skills.length ? (
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {profile.data.skills.map((s) => (
+                    <li key={s.name}>
+                      <StatusPill tone="neutral">{s.name}</StatusPill>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-muted-foreground">No skills found yet.</p>
+              )}
+            </div>
+            {profile.data.suggested_projects.length > 0 && (
+              <ul className="space-y-2">
+                {profile.data.suggested_projects.map((p) => (
+                  <li key={p.url} className="rounded-2xl bg-foreground/[0.03] px-4 py-3 ring-1 ring-foreground/[0.06] dark:bg-white/[0.03] dark:ring-white/10">
+                    <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-primary hover:underline">
+                      {p.name}
+                    </a>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{p.reason}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <IslandButton type="button" tone="ghost" size="sm" disabled={busy} onClick={() => void refresh()} icon={busy ? spinner : <ArrowsClockwise size={14} weight="light" />}>
+                Refresh
+              </IslandButton>
+              <IslandButton type="button" tone="quiet" size="sm" disabled={busy} onClick={() => void remove(false)}>
+                Delete profile data
+              </IslandButton>
+              <IslandButton type="button" tone="danger" size="sm" disabled={busy} onClick={() => void remove(true)}>
+                Disconnect
+              </IslandButton>
+            </div>
+          </div>
+        )}
+      </section>
+  );
+  // Onboarding already frames each step in a card.
+  return onboarding ? body : <Bezel coreClassName="p-6 md:p-7">{body}</Bezel>;
 }

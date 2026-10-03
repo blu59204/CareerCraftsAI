@@ -1,29 +1,33 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ArrowSquareOut,
   ArrowsLeftRight,
   Briefcase,
   CaretDown,
+  CircleNotch,
   Export,
   FileCsv,
   MagnifyingGlass,
-  Rows,
-  SquaresFour,
   Table,
+  Trash,
   Tray,
   WarningCircle,
   X,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { APP_STAGES, ApplicationKanban, ApplicationList, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationKanban";
+import { ApplicationList, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationList";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { deleteApplications, fetchApplications, restoreApplications, type ApplicationFilters, type ApplicationRecord, type ApplicationSort } from "@/lib/applications-api";
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
 import {
   Bezel,
+  Chip,
   EmptyPanel,
   IconButton,
   IslandButton,
@@ -33,7 +37,6 @@ import {
   Reveal,
   SPRING_SOFT,
   Screen,
-  Segmented,
   Section,
   Skeleton,
   StatStrip,
@@ -48,25 +51,6 @@ type AgentRun = {
   output_summary?: string;
 };
 
-type ApplicationRecord = {
-  id: string;
-  company: string;
-  role: string;
-  location: string | null;
-  job_url: string | null;
-  jd_text: string | null;
-  match_score: number | null;
-  status: AppStage;
-  applied_at: string | null;
-  followup_day5: string | null;
-  followup_day12: string | null;
-  notes: string | null;
-  source: string | null;
-  resume_label: string | null;
-  outreach_status: string | null;
-  outreach_to: string | null;
-};
-
 function nextFollowUp(application: ApplicationRecord): string | undefined {
   const next = [application.followup_day5, application.followup_day12]
     .filter((date): date is string => !!date && new Date(date).getTime() > Date.now())
@@ -74,36 +58,112 @@ function nextFollowUp(application: ApplicationRecord): string | undefined {
   return next ? new Date(next).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : undefined;
 }
 
+const MATCH_CHIPS = [{ label: "Any", value: 0 }, { label: "≥50", value: 50 }, { label: "≥70", value: 70 }, { label: "≥80", value: 80 }];
+const FOUND_CHIPS = [{ label: "Any", value: "any" }, { label: "Today", value: "today" }, { label: "7d", value: "7d" }, { label: "30d", value: "30d" }, { label: "Custom", value: "custom" }] as const;
+type FoundRange = (typeof FOUND_CHIPS)[number]["value"];
+const SORTS: ApplicationSort[] = ["found_desc", "found_asc", "match_desc", "match_asc"];
+const DAY_MS = 86_400_000;
+const PAGE_SIZE = 50;
+
 export default function ApplicationsPage() {
+  // useSearchParams needs a Suspense boundary under the App Router.
+  return (
+    <Suspense fallback={null}>
+      <ApplicationsView />
+    </Suspense>
+  );
+}
+
+function ApplicationsView() {
   const qc = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"list" | "board">("list");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
+  const [matchDraft, setMatchDraft] = useState<number | null>(null);
 
-  const { data: items = [], isLoading, isError, refetch } = useQuery<ApplicationItem[]>({
-    queryKey: ["applications"],
-    queryFn: async () => {
-      const { data } = await apiClient.get<ApplicationRecord[]>("/jobs/applications");
-      return data.map((application) => ({
-        id: String(application.id),
-        company: application.company,
-        role: application.role,
-        location: application.location,
-        jobUrl: application.job_url,
-        jobDescription: application.jd_text,
-        matchPercent: application.match_score,
-        stage: application.status,
-        appliedAt: application.applied_at,
-        nextFollowUp: nextFollowUp(application),
-        notes: application.notes,
-        source: application.source,
-        resumeLabel: application.resume_label,
-        outreachStatus: application.outreach_status,
-        outreachTo: application.outreach_to,
-      }));
+  // Filter + sort state lives in the URL so reload/share keeps it.
+  const minMatch = Math.min(100, Math.max(0, Number(params.get("min")) || 0));
+  const foundParam = params.get("found");
+  const found: FoundRange = FOUND_CHIPS.some((c) => c.value === foundParam) ? (foundParam as FoundRange) : "any";
+  const from = params.get("from") ?? "";
+  const to = params.get("to") ?? "";
+  const sortParam = params.get("sort") as ApplicationSort | null;
+  const sort: ApplicationSort = sortParam && SORTS.includes(sortParam) ? sortParam : "found_desc";
+
+  const setParams = (patch: Record<string, string | null>) => {
+    const next = new URLSearchParams(params.toString());
+    for (const [key, value] of Object.entries(patch)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  // Memoised on URL params so relative ranges ("7d") don't change the query key every render.
+  const filters = useMemo<ApplicationFilters>(() => {
+    const f: ApplicationFilters = { sort };
+    if (minMatch > 0) f.minMatch = minMatch;
+    const now = Date.now();
+    if (found === "today") f.foundAfter = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
+    else if (found === "7d") f.foundAfter = new Date(now - 7 * DAY_MS).toISOString();
+    else if (found === "30d") f.foundAfter = new Date(now - 30 * DAY_MS).toISOString();
+    else if (found === "custom") {
+      if (from) f.foundAfter = new Date(`${from}T00:00:00`).toISOString();
+      if (to) f.foundBefore = new Date(`${to}T23:59:59.999`).toISOString();
+    }
+    if (query) f.q = query;
+    return f;
+  }, [sort, minMatch, found, from, to, query]);
+  const filtersActive = minMatch > 0 || found !== "any";
+
+  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
+    queryKey: ["applications", filters],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const page = await fetchApplications(filters, { offset: pageParam, limit: PAGE_SIZE });
+      return {
+        total: page.total,
+        stageCounts: page.stageCounts,
+        next: pageParam + page.items.length,
+        items: page.items.map((application: ApplicationRecord): ApplicationItem => ({
+          id: String(application.id),
+          company: application.company,
+          role: application.role,
+          location: application.location,
+          jobUrl: application.job_url,
+          jobDescription: application.jd_text,
+          matchPercent: application.match_score,
+          stage: application.status,
+          appliedAt: application.applied_at,
+          foundAt: application.found_at,
+          nextFollowUp: nextFollowUp(application),
+          notes: application.notes,
+          source: application.source,
+          resumeLabel: application.resume_label,
+          outreachStatus: application.outreach_status,
+          outreachTo: application.outreach_to,
+          applyState: application.apply_state,
+        })),
+      };
     },
+    getNextPageParam: (last) => (last.next < last.total && last.items.length > 0 ? last.next : undefined),
+    placeholderData: (previous) => previous,
   });
+  const items = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+  const total = data?.pages[0]?.total ?? 0;
+  // Whole-list stage counts from the server, so stats stay right while paging.
+  const stageCounts = data?.pages[0]?.stageCounts ?? {};
 
   const { data: activityRuns = [] } = useQuery<AgentRun[]>({
     queryKey: ["agent-runs", selectedId],
@@ -125,20 +185,63 @@ export default function ApplicationsPage() {
     onError: () => toast.error("Could not update the application status"),
   });
 
-  const selected = items.find((item) => item.id === selectedId) ?? null;
-  const filteredItems = items.filter((item) =>
-    `${item.company} ${item.role} ${item.location ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
-  );
-  const activeCount = items.filter((item) => ["applied", "viewed", "interview"].includes(item.stage)).length;
-  const interviewCount = items.filter((item) => item.stage === "interview").length;
-  const offerCount = items.filter((item) => item.stage === "offer").length;
+  const deleteMutation = useMutation({
+    mutationFn: (ids: string[]) => deleteApplications(ids),
+    onSuccess: (_res, ids) => {
+      setPendingDelete(null);
+      setChecked(new Set());
+      if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      toast.success(ids.length === 1 ? "Application deleted" : `${ids.length} applications deleted`, {
+        duration: 8000,
+        action: {
+          label: "Undo",
+          onClick: () =>
+            restoreApplications(ids)
+              .then(() => toast.success("Restored"))
+              .catch(() => toast.error("Could not restore"))
+              .finally(() => qc.invalidateQueries({ queryKey: ["applications"] })),
+        },
+      });
+    },
+    onError: () => toast.error("Could not delete. Nothing was changed."),
+  });
 
-  const exportToCSV = () => {
-    const csvCell = (value: string | number | null | undefined) =>
-      `"${String(value ?? "").replace(/"/g, '""')}"`;
-    const headers = ["Company", "Role", "Location", "Source", "Match %", "Stage", "Next follow-up"];
-    const rows = items.map((item) => [
-      item.company, item.role, item.location, item.jobUrl, item.matchPercent, item.stage, item.nextFollowUp,
+  const selected = items.find((item) => item.id === selectedId) ?? null;
+  const filteredItems = items;
+  const checkedIds = filteredItems.filter((item) => checked.has(item.id)).map((item) => item.id);
+  const activeCount = (stageCounts.applied ?? 0) + (stageCounts.viewed ?? 0) + (stageCounts.interview ?? 0);
+  const interviewCount = stageCounts.interview ?? 0;
+  const offerCount = stageCounts.offer ?? 0;
+
+  const onCheckedChange = (ids: string[], on: boolean) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
+  // Exports the whole filtered list, not just the pages loaded so far.
+  const exportToCSV = async () => {
+    setShowExportMenu(false);
+    let all: ApplicationRecord[];
+    try {
+      all = (await fetchApplications(filters)).items;
+    } catch {
+      toast.error("Could not export your applications.");
+      return;
+    }
+    // Cells starting with = + - @ would run as formulas in Excel / Sheets.
+    const csvCell = (value: string | number | null | undefined) => {
+      const text = String(value ?? "");
+      return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replace(/"/g, '""')}"`;
+    };
+    const headers = ["Company", "Role", "Location", "Job URL", "Match %", "Stage", "Found", "Next follow-up"];
+    const rows = all.map((app) => [
+      app.company, app.role, app.location, app.job_url, app.match_score, app.status, app.found_at, nextFollowUp(app),
     ]);
     const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -147,21 +250,73 @@ export default function ApplicationsPage() {
     anchor.download = "applications.csv";
     anchor.click();
     URL.revokeObjectURL(url);
-    setShowExportMenu(false);
   };
 
-  const openSheets = () => {
-    window.open("https://sheets.new", "_blank", "noopener,noreferrer");
+  // One-click export of the current (filtered) list into a new Google Sheet. The tab must be
+  // opened synchronously from the click or popup blockers drop it. Each export makes a NEW sheet
+  // (appending to an existing one isn't supported).
+  const exportToSheets = async () => {
     setShowExportMenu(false);
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null; // we keep the handle; the opened page can't script ours
+    const params: Record<string, string | number> = { sort };
+    if (filters.minMatch != null) params.min_match = filters.minMatch;
+    if (filters.foundAfter) params.found_after = filters.foundAfter;
+    if (filters.foundBefore) params.found_before = filters.foundBefore;
+    if (filters.q) params.q = filters.q;
+    const create = () =>
+      apiClient.post<{ url: string }>("/jobs/applications/export-sheet", null, { params }).then((r) => r.data.url);
+    const notConnected = (err: unknown) => (err as { response?: { status?: number } }).response?.status === 409;
+    const showSheet = (url: string, viaTab: boolean) => {
+      if (viaTab && tab) tab.location.href = url;
+      else toast.success("Sheet created", { action: { label: "Open", onClick: () => window.open(url, "_blank", "noopener,noreferrer") } });
+    };
+    try {
+      showSheet(await create(), true);
+    } catch (err) {
+      if (!notConnected(err) || !tab) {
+        tab?.close();
+        toast.error(notConnected(err) ? "Connect Google Drive in Settings, then try again." : "Could not export to Google Sheets.");
+        return;
+      }
+      // Drive isn't connected: run the Nango connect flow in the tab we already hold (a new popup
+      // opened after an await would be blocked), then retry once when the member closes it.
+      try {
+        const { data } = await apiClient.post<{ connect_link?: string }>("/integrations/connect-session", { provider: "google_drive", return_path: "/applications" });
+        if (!data.connect_link) throw new Error("no connect link");
+        tab.location.href = data.connect_link;
+        toast.message("Connect Google Drive in the new tab, then close it to finish the export.");
+        await new Promise<void>((resolve, reject) => {
+          let ticks = 0;
+          const timer = window.setInterval(() => {
+            if (tab.closed) resolve();
+            else if (++ticks > 1200) reject(new Error("timeout"));
+            else return;
+            window.clearInterval(timer);
+          }, 500);
+        });
+        showSheet(await create(), false);
+      } catch {
+        tab.close();
+        toast.error("Could not connect Google Drive. Try Settings, Integrations.");
+      }
+    }
   };
 
   const boardStatus = isLoading
-    ? "Loading your board…"
+    ? "Loading your roles…"
     : isError
-      ? "Board unavailable"
-      : search
-        ? `${filteredItems.length} matching ${filteredItems.length === 1 ? "role" : "roles"}`
-        : `${items.length} ${items.length === 1 ? "role" : "roles"} across ${APP_STAGES.length} stages`;
+      ? "Roles unavailable"
+      : `${total} ${query ? "matching " : ""}${total === 1 ? "job" : "jobs"}`;
+
+  const clearFilters = () => setParams({ min: null, found: null, from: null, to: null });
+  const commitMatch = () => {
+    if (matchDraft == null) return;
+    setParams({ min: matchDraft > 0 ? String(matchDraft) : null });
+    setMatchDraft(null);
+  };
+  const dateInput = "h-8 rounded-full bg-card px-3 text-xs text-foreground ring-1 ring-foreground/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-white/[0.03] dark:ring-white/10";
+  const pendingCount = pendingDelete?.length ?? 0;
 
   return (
     <Screen>
@@ -181,20 +336,55 @@ export default function ApplicationsPage() {
 
       <StatStrip
         items={[
-          { label: "All roles", value: items.length },
+          { label: "All roles", value: total },
           { label: "In progress", value: activeCount },
           { label: "Interviews", value: interviewCount },
           { label: "Offers", value: offerCount },
         ]}
       />
 
-      <Section aria-label="Applications by stage" className="space-y-5 md:space-y-5">
-        <h2 className="sr-only">Applications by stage</h2>
+      <Section aria-label="Applications" className="space-y-5 md:space-y-5">
+        <h2 className="sr-only">Applications</h2>
 
         <Bezel size="md" coreClassName="flex min-w-0 flex-wrap items-center gap-3 p-3">
           <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search company or role" aria-label="Search applications" trayClassName="w-full sm:flex-1 sm:min-w-[12rem]" leading={<MagnifyingGlass size={16} weight="light" />} trailing={search ? <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}><X size={13} weight="light" /></IconButton> : undefined} />
-          <Segmented value={view} onChange={setView} asTabs={false} ariaLabel="Application view" size="sm" options={[{ value: "list", label: "List", icon: <Rows size={14} /> }, { value: "board", label: "Board", icon: <SquaresFour size={14} /> }]} />
-          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onOpenSheets={openSheets} />
+          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onExportSheets={exportToSheets} />
+        </Bezel>
+
+        <Bezel size="md" coreClassName="space-y-3 p-3">
+          <div role="group" aria-label="Match filter" className="flex flex-wrap items-center gap-2">
+            <span className="w-20 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Match</span>
+            {MATCH_CHIPS.map((chip) => (
+              <Chip key={chip.value} active={minMatch === chip.value} onClick={() => setParams({ min: chip.value ? String(chip.value) : null })}>{chip.label}</Chip>
+            ))}
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={matchDraft ?? minMatch}
+              aria-label="Minimum match percent"
+              onChange={(event) => setMatchDraft(Number(event.target.value))}
+              onPointerUp={commitMatch}
+              onKeyUp={commitMatch}
+              onBlur={commitMatch}
+              className="h-1.5 w-32 accent-primary"
+            />
+            <span className="w-10 font-geist-mono text-xs tabular-nums text-muted-foreground">≥{matchDraft ?? minMatch}%</span>
+          </div>
+          <div role="group" aria-label="Found date filter" className="flex flex-wrap items-center gap-2">
+            <span className="w-20 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Found</span>
+            {FOUND_CHIPS.map((chip) => (
+              <Chip key={chip.value} active={found === chip.value} onClick={() => setParams(chip.value === "any" ? { found: null, from: null, to: null } : { found: chip.value })}>{chip.label}</Chip>
+            ))}
+            {found === "custom" ? (
+              <>
+                <input type="date" aria-label="Found from" value={from} max={to || undefined} onChange={(event) => setParams({ from: event.target.value || null })} className={dateInput} />
+                <span aria-hidden className="text-xs text-muted-foreground">to</span>
+                <input type="date" aria-label="Found until" value={to} min={from || undefined} onChange={(event) => setParams({ to: event.target.value || null })} className={dateInput} />
+              </>
+            ) : null}
+          </div>
         </Bezel>
 
         <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
@@ -202,30 +392,26 @@ export default function ApplicationsPage() {
             <ArrowsLeftRight size={15} weight="light" aria-hidden />
             <span className="tabular-nums">{boardStatus}</span>
           </p>
-          <span className="text-xs text-muted-foreground">{view === "board" ? "Drag roles to update their stage" : "Select a role to view details"}</span>
+          {checkedIds.length > 0 ? (
+            <IslandButton tone="danger" size="sm" icon={<Trash size={14} />} onClick={() => setPendingDelete(checkedIds)}>
+              Delete {checkedIds.length} selected
+            </IslandButton>
+          ) : (
+            <span className="text-xs text-muted-foreground">Select a role to view details</span>
+          )}
         </Reveal>
 
-        {isLoading && view === "list" ? (
+        {isLoading ? (
           <Bezel size="md" aria-busy="true" aria-label="Loading applications" coreClassName="space-y-3 p-4">
             {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-16 w-full rounded-xl" />)}
           </Bezel>
-        ) : isLoading ? (
-          <div aria-busy="true" aria-label="Loading applications" className="flex gap-4 overflow-hidden p-1">
-            {APP_STAGES.map((stage) => (
-              <Bezel key={stage} size="md" tone="muted" className="w-[17.25rem] shrink-0 md:w-[18.5rem]" coreClassName="min-h-[24rem] space-y-2.5 p-2.5">
-                <Skeleton className="mx-2 mb-3 mt-2 h-4 w-24 rounded-full" />
-                <Skeleton className="h-28 rounded-[1.15rem]" />
-                <Skeleton className="h-24 rounded-[1.15rem]" />
-              </Bezel>
-            ))}
-          </div>
         ) : isError ? (
           <Reveal>
             <Bezel role="alert" coreClassName="px-4">
               <EmptyPanel
                 icon={<WarningCircle size={24} weight="light" />}
                 title="Could not load your applications."
-                description="The board could not reach the server. Your saved roles are safe."
+                description="The list could not reach the server. Your saved roles are safe."
                 action={
                   <IslandButton tone="ghost" size="sm" onClick={() => refetch()}>
                     Try again
@@ -234,6 +420,8 @@ export default function ApplicationsPage() {
               />
             </Bezel>
           </Reveal>
+        ) : items.length === 0 && filtersActive ? (
+          <Bezel><EmptyPanel compact title="No jobs match these filters" description="Loosen the match or found-date filter." action={<IslandButton tone="ghost" size="sm" onClick={clearFilters}>Clear filters</IslandButton>} /></Bezel>
         ) : items.length === 0 ? (
           <Reveal>
             <Bezel coreClassName="px-4">
@@ -251,16 +439,34 @@ export default function ApplicationsPage() {
           </Reveal>
         ) : filteredItems.length === 0 ? (
           <Bezel><EmptyPanel compact title="No matching applications" description="Try another company or role." action={<IslandButton tone="ghost" size="sm" onClick={() => setSearch("")}>Clear search</IslandButton>} /></Bezel>
-        ) : view === "list" ? (
-          <ApplicationList items={filteredItems} onSelect={setSelectedId} onStageChange={(id, newStage) => statusMutation.mutate({ id, newStage })} />
         ) : (
-          <ApplicationKanban
+          <ApplicationList
             items={filteredItems}
             onSelect={setSelectedId}
             onStageChange={(id, newStage) => statusMutation.mutate({ id, newStage })}
-            emptyColumnLabel={search ? "No matching roles" : "No roles yet"}
+            checked={checked}
+            onCheckedChange={onCheckedChange}
+            onDelete={(id) => setPendingDelete([id])}
+            sort={sort}
+            onSortChange={(next) => setParams({ sort: next === "found_desc" ? null : next })}
           />
         )}
+        {hasNextPage ? (
+          <div className="flex items-center justify-center gap-3">
+            <span className="text-xs tabular-nums text-muted-foreground">
+              Showing {items.length} of {total}
+            </span>
+            <IslandButton
+              tone="ghost"
+              size="sm"
+              disabled={isFetchingNextPage}
+              icon={isFetchingNextPage ? <CircleNotch size={14} className="animate-spin" /> : undefined}
+              onClick={() => fetchNextPage()}
+            >
+              Load more
+            </IslandButton>
+          </div>
+        ) : null}
       </Section>
 
       <ApplicationDrawer
@@ -270,6 +476,21 @@ export default function ApplicationsPage() {
         onStageChange={(stage) => selected && statusMutation.mutate({ id: selected.id, newStage: stage })}
         activityRuns={activityRuns}
       />
+
+      <Dialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open && !deleteMutation.isPending) setPendingDelete(null); }}>
+        <DialogContent className="w-[calc(100%-2rem)] rounded-3xl border-border bg-card p-5 sm:p-6">
+          <DialogTitle>{pendingCount === 1 ? "Delete this application?" : `Delete ${pendingCount} applications?`}</DialogTitle>
+          <DialogDescription className="leading-6">
+            {pendingCount === 1 ? "It" : "They"} will be removed from your tracker. You can undo right after deleting.
+          </DialogDescription>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <IslandButton tone="ghost" size="sm" disabled={deleteMutation.isPending} onClick={() => setPendingDelete(null)}>Cancel</IslandButton>
+            <IslandButton tone="danger" size="sm" disabled={deleteMutation.isPending} aria-busy={deleteMutation.isPending} onClick={() => pendingDelete && deleteMutation.mutate(pendingDelete)} icon={deleteMutation.isPending ? <CircleNotch size={14} className="animate-spin" /> : <Trash size={14} />}>
+              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+            </IslandButton>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Screen>
   );
 }
@@ -279,12 +500,12 @@ function ExportMenu({
   open,
   onOpenChange,
   onDownloadCsv,
-  onOpenSheets,
+  onExportSheets,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDownloadCsv: () => void;
-  onOpenSheets: () => void;
+  onExportSheets: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -308,7 +529,7 @@ function ExportMenu({
 
   const options = [
     { key: "csv", label: "Download CSV", hint: "Every role on the board as a file", icon: <FileCsv size={17} weight="light" />, onClick: onDownloadCsv, trailing: null },
-    { key: "sheets", label: "Open Sheets", hint: "Start a blank Google Sheet", icon: <Table size={17} weight="light" />, onClick: onOpenSheets, trailing: <ArrowSquareOut size={13} weight="light" /> },
+    { key: "sheets", label: "Export to Google Sheets", hint: "New sheet in your Drive from the current filters", icon: <Table size={17} weight="light" />, onClick: onExportSheets, trailing: <ArrowSquareOut size={13} weight="light" /> },
   ];
 
   return (

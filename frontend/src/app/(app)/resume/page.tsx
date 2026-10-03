@@ -61,6 +61,8 @@ import { ResumePreview } from "@/components/resume/ResumePreview";
 import { ResumeFixPanel } from "@/components/resume/ResumeFixPanel";
 import { GithubProjects } from "@/components/resume/GithubProjects";
 import { ScoreExplanation } from "@/components/resume/ScoreExplanation";
+import { ResumeList } from "@/components/resume/ResumeList";
+import { activateResume, type AutoApplyPreferences } from "@/lib/applications-api";
 import { scoreAnalysisSchema, tailoredResumeSchema } from "@/lib/profile-contracts";
 import { SAMPLE_RESUME_MARKDOWN } from "@/components/resume/sample-resume";
 import { apiClient, getApiErrorMessage, UserFacingError } from "@/lib/api";
@@ -69,6 +71,7 @@ import { getResumeInsightData } from "@/lib/resume-insights";
 import { isCurrentAnalysis } from "@/lib/resume-state";
 import { takePendingJd } from "@/lib/job-handoff";
 import { postResumeFix, RESUME_TAILORED_KEY } from "@/lib/resume-api";
+import { ResumePreferencesCard } from "@/components/settings/ResumePreferences";
 import {
   countOpenIssues,
   type ContactFields,
@@ -84,6 +87,8 @@ import {
 
 interface AtsData {
   content_version?: string;
+  /** Set when there is nothing to score (image-only PDF) or scoring failed. */
+  score_error?: "no_text" | "scoring_failed";
   matched_keywords: string[];
   missing_keywords: string[];
   suggestions: string[];
@@ -667,7 +672,7 @@ export default function ResumePage() {
       setJdText(pending.jdText);
       setJdPanelOpen(true);
       setTab("builder");
-      toast.info(`Job description loaded from ${pending.role} at ${pending.company}`);
+      toast.info(`Job description loaded from ${pending.role} at ${pending.company}`, { id: "pending-jd" });
     }
   }, []);
 
@@ -749,9 +754,42 @@ export default function ResumePage() {
     refetchInterval: (query) => {
       const docs = query.state.data;
       const primary = docs?.find((d) => d.is_primary);
-      return primary && primary.ats_score === null ? 3000 : false;
+      return primary && primary.ats_score === null && !primary.ats_data?.score_error ? 3000 : false;
     },
   });
+
+  // "Set active" re-scores server-side in the background: refetch a few times so the new ats_score lands.
+  const activateMutation = useMutation<unknown, unknown, string>({
+    mutationFn: (id) => activateResume(id),
+    onSuccess: () => {
+      toast.success("Active resume updated");
+      [0, 2000, 5000, 10000].forEach((ms) =>
+        setTimeout(() => void queryClient.invalidateQueries({ queryKey: ["resume-docs"] }), ms),
+      );
+    },
+    onError: (err) => toast.error(getApiErrorMessage(err, "Could not switch the active resume")),
+  });
+
+  // Page target (single vs multi-page) is a saved preference; the toggle initialises from it.
+  const { data: resumePrefs } = useQuery<AutoApplyPreferences>({
+    queryKey: ["user-preferences", userId],
+    queryFn: async () => (await apiClient.get("/users/me/preferences")).data ?? {},
+  });
+  const savedPageTarget = resumePrefs?.resume_page_target;
+  const prefsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (savedPageTarget && !prefsAppliedRef.current) {
+      prefsAppliedRef.current = true;
+      setPageTarget(savedPageTarget);
+    }
+  }, [savedPageTarget]);
+  const changePageTarget = (next: 1 | 2) => {
+    setPageTarget(next);
+    apiClient
+      .patch("/users/me/preferences", { resume_page_target: next })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["user-preferences", userId] }))
+      .catch((err: unknown) => toast.error(getApiErrorMessage(err, "Could not save your page preference")));
+  };
 
   const primaryDoc = resumeDocs?.find((d) => d.is_primary) ?? resumeDocs?.[0] ?? null;
   const scoreDocumentId = lastDocId ?? primaryDoc?.id;
@@ -1135,7 +1173,7 @@ export default function ResumePage() {
   const panelVariants = reduceMotion
     ? { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } }, exit: { opacity: 0, transition: { duration: 0.15 } } }
     : panelSwap;
-  const scoreComputing = tailoredPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !activeJobAts && !savedSnapshot);
+  const scoreComputing = tailoredPending || scoreQuery.isFetching || scoreTarget !== jdText.trim() || (!!primaryDoc && primaryDoc.ats_score === null && !primaryDoc.ats_data?.score_error && !activeJobAts && !savedSnapshot);
   const canShowTemplateBar = !!(lastDocId && resumePreviewText && !editingText);
 
   const heroActions = (
@@ -1268,14 +1306,8 @@ export default function ResumePage() {
                 <h2 id="primary-resume-heading" className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
                   Current resume
                 </h2>
-                {scoreDocumentId && !docsLoading ? (
-                  scoreComputing ? (
-                    <StatusPill tone="primary" live>Scoring</StatusPill>
-                  ) : activeJobAts ? (
-                    <StatusPill tone="success">Analyzed</StatusPill>
-                  ) : (
-                    <StatusPill tone="neutral">Baseline</StatusPill>
-                  )
+                {primaryDoc && !docsLoading && primaryDoc.ats_score === null && !primaryDoc.ats_data?.score_error ? (
+                  <StatusPill tone="primary" live>Scoring</StatusPill>
                 ) : null}
               </div>
 
@@ -1290,37 +1322,58 @@ export default function ResumePage() {
                     </div>
                   </div>
                 ) : scoreDocumentId ? (
-                  <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
-                    {!scoreComputing && insightData.score != null ? (
-                      <AtsScoreRing score={insightData.score} size={136} />
-                    ) : (
-                      <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
-                        <span className="flex flex-col items-center gap-2 text-center text-[11px] text-muted-foreground">
-                          {!scoreQuery.isError && <Spinner size={18} />}
-                          {scoreQuery.isError ? "Score unavailable" : "Scoring…"}
-                        </span>
+                  <>
+                    {/* Headline = the active resume's stored score (same number the dashboard shows). */}
+                    <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-center">
+                      {primaryDoc && primaryDoc.ats_score != null ? (
+                        <AtsScoreRing score={primaryDoc.ats_score} size={136} />
+                      ) : primaryDoc?.ats_data?.score_error ? (
+                        <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
+                          <span role="status" className="px-3 text-center text-[11px] leading-4 text-muted-foreground">
+                            {primaryDoc.ats_data.score_error === "no_text"
+                              ? "No text found. Upload a text-based PDF or DOCX."
+                              : "Score unavailable. Re-upload to try again."}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="grid h-[136px] w-[136px] shrink-0 place-items-center rounded-full ring-1 ring-foreground/[0.07] dark:ring-white/10">
+                          <span className="flex flex-col items-center gap-2 text-center text-[11px] text-muted-foreground">
+                            <Spinner size={18} />
+                            Scoring…
+                          </span>
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1 space-y-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <FilePdf size={16} weight="light" aria-hidden="true" className="shrink-0 text-muted-foreground" />
+                          <span className="truncate font-geist-mono text-xs text-foreground" title={primaryDoc?.filename}>
+                            {primaryDoc?.filename}
+                          </span>
+                        </div>
+                        <Hairline />
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          <span className="font-medium text-foreground">Resume score</span>
+                          {" · estimated ATS compatibility of your active resume"}
+                        </p>
+                      </div>
+                    </div>
+                    {/* A pasted JD gets its own, separately labelled score; it never replaces the headline. */}
+                    {jdText.trim() && (
+                      <div className="mt-5 space-y-2 border-t border-foreground/[0.07] pt-4 dark:border-white/10">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">Match vs this job</p>
+                        {scoreQuery.isError ? (
+                          <p role="alert" className="text-sm text-danger">Could not calculate the match. <button type="button" className="underline" onClick={() => void scoreQuery.refetch()}>Retry</button></p>
+                        ) : scoreComputing || !activeJobAts ? (
+                          <p className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner size={14} /> Analyzing…</p>
+                        ) : (
+                          <>
+                            <p className="font-geist text-3xl font-semibold tabular-nums text-foreground">{activeJobAts.composite_score}<span className="text-base text-muted-foreground">/100</span></p>
+                            <ScoreExplanation estimate={activeJobAts.estimate} />
+                          </>
+                        )}
                       </div>
                     )}
-                    <div className="min-w-0 flex-1 space-y-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <FilePdf size={16} weight="light" aria-hidden="true" className="shrink-0 text-muted-foreground" />
-                        <span className="truncate font-geist-mono text-xs text-foreground" title={savedSnapshot ? "Tailored resume" : primaryDoc?.filename}>
-                          {savedSnapshot ? "Tailored resume" : primaryDoc?.filename}
-                        </span>
-                      </div>
-                      <Hairline />
-                      {scoreQuery.isError && <p role="alert" className="text-sm text-danger">Could not calculate compatibility. <button type="button" className="underline" onClick={() => void scoreQuery.refetch()}>Retry</button></p>}
-                      {!scoreComputing && <ScoreExplanation estimate={activeJobAts?.estimate} />}
-                      {!scoreComputing && insightData.score != null ? (
-                        <p className="text-xs leading-5 text-muted-foreground">
-                          <span className="font-medium text-foreground">{insightData.scoreLabel}</span>
-                          {activeJobAts?.estimate.mode === "target_job" ? " for this job" : " · general document assessment"}
-                        </p>
-                      ) : (
-                        <p className="text-xs leading-5 text-muted-foreground">{scoreQuery.isError ? "Reopen the resume or retry scoring." : "Calculating estimated ATS compatibility…"}</p>
-                      )}
-                    </div>
-                  </div>
+                  </>
                 ) : (
                   <div className={TRAY}>
                     <EmptyPanel
@@ -1348,6 +1401,15 @@ export default function ResumePage() {
                   </Notice>
                 )}
               </div>
+              {!docsLoading && !!resumeDocs?.length && (
+                <ResumeList
+                  docs={resumeDocs}
+                  activatingId={activateMutation.isPending ? (activateMutation.variables ?? null) : null}
+                  uploading={uploading}
+                  onActivate={(id) => activateMutation.mutate(id)}
+                  onUpload={() => fileInputRef.current?.click()}
+                />
+              )}
             </Bezel>
           </section>
         </Reveal>
@@ -1601,7 +1663,7 @@ export default function ResumePage() {
 
                       {(canShowTemplateBar || (resumePreviewText && !editingText)) && (
                         <div className="mt-4 flex flex-wrap gap-4 text-sm">
-                          <label>Maximum pages <select className="ml-2 rounded bg-background p-2" value={pageTarget} disabled={busy} onChange={(event) => setPageTarget(Number(event.target.value) as 1 | 2)}><option value={1}>1 page</option><option value={2}>2 pages</option></select></label>
+                          <label>Length <select className="ml-2 rounded bg-background p-2" value={pageTarget} disabled={busy} onChange={(event) => changePageTarget(Number(event.target.value) as 1 | 2)}><option value={1}>Single page</option><option value={2}>Multi-page (up to 2)</option></select></label>
                           <label>Export format <select className="ml-2 rounded bg-background p-2" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as "pdf" | "docx")}><option value="pdf">PDF</option><option value="docx">DOCX</option></select></label>
                           <p className="text-muted-foreground">Exports determine pagination. DOCX may reflow in Word.</p>
                         </div>
@@ -1830,6 +1892,8 @@ export default function ResumePage() {
               />
             </Bezel>
           )}
+          {/* Length is set by the page's own Single/Multi-page control above. */}
+          <ResumePreferencesCard showLength={false} />
         </Reveal>
       </div>
     </Screen>

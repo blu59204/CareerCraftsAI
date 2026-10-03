@@ -71,6 +71,17 @@ class UserPreferencesSchema(BaseModel):
     outreach_track_opens: bool | None = None
     notify_daily_summary: bool | None = None
     auto_apply_enabled: bool | None = None
+    # Auto-apply rule: new saved job >= auto_rule_min_match -> auto_rule_action.
+    # auto_apply_enabled above is its pause switch.
+    auto_rule_min_match: int | None = Field(default=None, ge=0, le=100)
+    auto_rule_action: Literal["apply", "outreach", "both", "notify"] | None = None
+    # Resume preferences (asked once on first auto-apply; resume_prefs_set_at
+    # stays null until then). The client sets resume_prefs_set_at when saving.
+    resume_template: str | None = Field(None, max_length=50)
+    resume_page_target: Literal[1, 2] | None = None
+    resume_tailor_per_job: bool | None = None
+    resume_tone: str | None = Field(None, max_length=50)
+    resume_prefs_set_at: datetime | None = None
 
 
 class UserPreferencesResponse(UserPreferencesSchema):
@@ -262,10 +273,6 @@ class CompanyIntelResponse(BaseModel):
 
 
 # ─── NL Job Search Schemas ────────────────────────────────────────────────────
-
-
-class NLSearchRequest(BaseModel):
-    query: str = Field(min_length=5, max_length=500)
 
 
 class SearchInterpretation(BaseModel):

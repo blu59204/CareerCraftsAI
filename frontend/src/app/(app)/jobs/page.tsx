@@ -24,9 +24,11 @@ import {
   Briefcase,
   Sparkle,
   Broadcast,
+  ArrowRight,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { setPendingJd } from "@/lib/job-handoff";
+import { fetchApplications, fetchApplicationJd, type ApplicationFilters, type ApplicationPage } from "@/lib/applications-api";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { JobSearchBasis } from "@/components/jobs/JobSearchBasis";
 import { wakeExtension } from "@/lib/extension-bridge";
@@ -43,6 +45,7 @@ import {
   IconButton,
   Input,
   IslandButton,
+  IslandLink,
   Notice,
   PageHero,
   PanelTitle,
@@ -117,6 +120,8 @@ interface JobSearchPrefs {
   years_experience?: number | null;
   current_title?: string;
   bio?: string | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
 }
 
 interface JobSearchProfile {
@@ -142,6 +147,8 @@ interface SearchProfileForm {
   job_type: string;
   work_mode: string;
   current_title: string;
+  salary_min: string;
+  salary_max: string;
 }
 
 function splitCsv(value: string | null | undefined): string[] {
@@ -795,13 +802,23 @@ function JobDetailBody({ job, onClose, titleId }: { job: SavedJob; onClose?: () 
   const router = useRouter();
   const p = clampScore(job.match_score);
 
-  const handleTailorResume = () => {
-    if (!job.jd_text) {
-      toast.error("No job description saved for this listing yet.");
-      return;
+  const [tailoring, setTailoring] = useState(false);
+
+  // The row's jd_text is truncated/often empty, so ask the API (falls back to the shared job catalog).
+  const handleTailorResume = async () => {
+    if (tailoring) return;
+    setTailoring(true);
+    try {
+      const jd = await fetchApplicationJd(job.id);
+      if (!jd.jd_text?.trim()) throw Object.assign(new Error("empty"), { response: { status: 404 } });
+      setPendingJd({ jdText: jd.jd_text, role: job.role, company: job.company });
+      router.push("/resume");
+    } catch (err) {
+      const notFound = (err as { response?: { status?: number } }).response?.status === 404;
+      toast.error(notFound ? "No job description saved for this listing yet." : "Could not load the job description. Try again.");
+    } finally {
+      setTailoring(false);
     }
-    setPendingJd({ jdText: job.jd_text, role: job.role, company: job.company });
-    router.push("/resume");
   };
 
   return (
@@ -855,8 +872,8 @@ function JobDetailBody({ job, onClose, titleId }: { job: SavedJob; onClose?: () 
         <IslandButton
           className="flex-1"
           onClick={handleTailorResume}
-          disabled={!job.jd_text}
-          icon={<Lightning size={16} weight="light" />}
+          disabled={tailoring}
+          icon={tailoring ? <CircleNotch size={16} weight="light" className="animate-spin" /> : <Lightning size={16} weight="light" />}
         >
           Tailor resume for this job
         </IslandButton>
@@ -1040,6 +1057,36 @@ function ProfileSearchPanel({
               />
             )}
           </Field>
+          <Field label="Salary minimum (USD / year)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                leading={<span className="text-sm">$</span>}
+                value={form.salary_min}
+                onChange={(e) => onChange("salary_min", e.target.value)}
+                placeholder="80000"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
+          <Field label="Salary maximum (USD / year)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                leading={<span className="text-sm">$</span>}
+                value={form.salary_max}
+                onChange={(e) => onChange("salary_max", e.target.value)}
+                placeholder="150000"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
           <div role="group" aria-labelledby={`${groupId}-type`} className="space-y-2.5">
             <p id={`${groupId}-type`} className="pl-1 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
               Job type
@@ -1182,6 +1229,13 @@ function ProfileSearchPanel({
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 
+const TOP_JOBS = 10;
+const BIG_LIST = 50;
+const MIN_OPTIONS = [50, 60, 70, 80, 90];
+const LIST_CHOICE_KEY = "jobs.listChoice";
+const QUERY_LOCATION_FILTERS = ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"];
+type ListChoice = { choice: "filter"; min: number } | { choice: "all" };
+
 export default function JobsPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -1212,6 +1266,8 @@ export default function JobsPage() {
     job_type: "full-time",
     work_mode: "remote",
     current_title: "",
+    salary_min: "",
+    salary_max: "",
   });
   const [profileInitialized, setProfileInitialized] = useState(false);
   const initRun = useAgentStore((s) => s.initRun);
@@ -1226,29 +1282,55 @@ export default function JobsPage() {
     activeRunId ? s.runs[activeRunId]?.status : undefined,
   );
 
-  const { data: jobs = [], isLoading } = useQuery<SavedJob[]>({
-    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(","),jobSource,postedDays],
-    queryFn: async () => {
-      const params = new URLSearchParams({ status: "saved" });
-      if (jobSource) params.set("source",jobSource);
-      if (postedDays!==30) params.set("posted_within_days",String(postedDays));
-      // Pass active filters to backend
-      const locations = Array.from(activeFilters).filter((f) =>
-        ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"].includes(f)
-      );
-      const jobTypes = Array.from(activeFilters).filter((f) =>
-        ["Full-time", "Part-time", "Contract", "Internship"].includes(f)
-      );
-      const expLevels = Array.from(activeFilters).filter((f) =>
-        ["Entry-level", "Mid-level", "Senior", "Lead"].includes(f)
-      );
-      if (locations.length > 0) params.set("location", locations.join(","));
-      if (jobTypes.length > 0) params.set("job_type", jobTypes.join(","));
-      if (expLevels.length > 0) params.set("experience_level", expLevels.join(","));
-      const { data } = await apiClient.get(`/jobs/applications?${params.toString()}`);
-      return data;
+  // Listing choice for large result sets, remembered per browser. undefined = not read yet.
+  const [listChoice, setListChoice] = useState<ListChoice | null | undefined>(undefined);
+  const [draftMin, setDraftMin] = useState(70);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LIST_CHOICE_KEY);
+      const c = raw ? (JSON.parse(raw) as ListChoice) : null;
+      setListChoice(c && (c.choice === "all" || (c.choice === "filter" && MIN_OPTIONS.includes(c.min))) ? c : null);
+    } catch {
+      setListChoice(null);
+    }
+  }, []);
+  const chooseList = (c: ListChoice | null) => {
+    setListChoice(c);
+    try {
+      if (c) localStorage.setItem(LIST_CHOICE_KEY, JSON.stringify(c));
+      else localStorage.removeItem(LIST_CHOICE_KEY);
+    } catch {
+      /* storage blocked: choice lasts for this visit only */
+    }
+  };
+  const minMatch = listChoice?.choice === "filter" ? listChoice.min : 0;
+
+  const { data: jobsPage, isLoading } = useQuery<ApplicationPage>({
+    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(","), jobSource, postedDays, minMatch],
+    queryFn: () => {
+      const filters: ApplicationFilters = { status: "saved", sort: "match_desc" };
+      if (jobSource) filters.source = jobSource;
+      if (minMatch > 0) filters.minMatch = minMatch;
+      if (postedDays !== 30) filters.postedWithinDays = postedDays;
+      const locations = Array.from(activeFilters).filter((f) => QUERY_LOCATION_FILTERS.includes(f));
+      if (locations.length > 0) filters.location = locations.join(",");
+      return fetchApplications(filters, { limit: TOP_JOBS });
     },
   });
+  const jobs: SavedJob[] = jobsPage?.items ?? [];
+  const totalJobs = jobsPage?.total ?? 0;
+
+  // Same filters on the full list: /applications reads min, found (7d | custom + from) and sort.
+  const viewAllParams = new URLSearchParams({ sort: "match_desc" });
+  if (minMatch > 0) viewAllParams.set("min", String(minMatch));
+  if (postedDays === 7) viewAllParams.set("found", "7d");
+  else if (postedDays !== 30) {
+    viewAllParams.set("found", "custom");
+    const d = new Date(Date.now() - postedDays * 86400000);
+    viewAllParams.set("from", `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  const viewAllHref = `/applications?${viewAllParams.toString()}`;
+  const showSizePrompt = listChoice === null && totalJobs > BIG_LIST;
 
   const { data: prefs } = useQuery({
     queryKey: ["preferences"],
@@ -1286,6 +1368,8 @@ export default function JobsPage() {
       job_type: saved.job_type ?? "full-time",
       work_mode: saved.work_mode ?? searchProfile.work_mode_preview ?? "remote",
       current_title: saved.current_title ?? "",
+      salary_min: saved.salary_min != null ? String(saved.salary_min) : "",
+      salary_max: saved.salary_max != null ? String(saved.salary_max) : "",
     });
     setProfileInitialized(true);
   }, [searchProfile, profileInitialized]);
@@ -1355,6 +1439,9 @@ export default function JobsPage() {
         work_mode: profileForm.work_mode || undefined,
         target_roles: splitCsv(profileForm.target_roles),
         preferred_locations: splitCsv(profileForm.preferred_locations),
+        // null clears a stored value; omitted would keep the old one.
+        salary_min: profileForm.salary_min !== "" ? parseInt(profileForm.salary_min, 10) : null,
+        salary_max: profileForm.salary_max !== "" ? parseInt(profileForm.salary_max, 10) : null,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -1621,7 +1708,7 @@ export default function JobsPage() {
             <AgentConsole
               running={agentRunning}
               isLoading={isLoading}
-              jobsCount={jobs.length}
+              jobsCount={totalJobs}
               avgMatch={avgMatch}
               newToday={newToday}
             />
@@ -1660,11 +1747,42 @@ export default function JobsPage() {
             actions={
               jobs.length > 0 ? (
                 <StatusPill tone="primary" className="tabular-nums">
-                  {jobs.length} {jobs.length === 1 ? "role" : "roles"}
+                  {totalJobs} {totalJobs === 1 ? "role" : "roles"}
                 </StatusPill>
               ) : null
             }
           />
+
+          {showSizePrompt && (
+            <div className="flex flex-wrap items-center gap-3 rounded-[1.25rem] bg-foreground/[0.025] p-4 ring-1 ring-foreground/[0.05] dark:bg-white/[0.03] dark:ring-white/[0.06]">
+              <label htmlFor="jobs-min-match" className="text-sm text-foreground">
+                {totalJobs} saved roles. Show only matches ≥
+              </label>
+              <Select id="jobs-min-match" className="h-9 w-24" trayClassName="w-24" value={draftMin} onChange={(e) => setDraftMin(Number(e.target.value))}>
+                {MIN_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}%
+                  </option>
+                ))}
+              </Select>
+              <span className="text-sm text-foreground">?</span>
+              <IslandButton size="sm" onClick={() => chooseList({ choice: "filter", min: draftMin })}>
+                Filter
+              </IslandButton>
+              <IslandButton size="sm" tone="ghost" onClick={() => chooseList({ choice: "all" })}>
+                Show all
+              </IslandButton>
+            </div>
+          )}
+
+          {listChoice?.choice === "filter" && (
+            <p className="text-sm text-muted-foreground">
+              Showing matches ≥ {listChoice.min}%.{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => chooseList({ choice: "all" })}>
+                Show all
+              </button>
+            </p>
+          )}
 
           {isLoading ? (
             <ResultsSkeleton />
@@ -1729,9 +1847,17 @@ export default function JobsPage() {
               </aside>
             </div>
           )}
+
+          {!isLoading && totalJobs > 0 && (
+            <div className="flex justify-end">
+              <IslandLink href={viewAllHref} tone="ghost" icon={<ArrowRight size={16} weight="light" />} trailing>
+                View all {totalJobs} jobs
+              </IslandLink>
+            </div>
+          )}
         </Section>
 
-        <Section aria-label="Search profile">
+        <Section id="search-profile" aria-label="Search profile" className="scroll-mt-24">
           <Reveal>
             <SectionHeading
               eyebrow="Search profile"

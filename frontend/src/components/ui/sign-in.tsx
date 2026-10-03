@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Eye, EyeOff, Mail } from "lucide-react";
+import { Check, Eye, EyeOff, Mail, X } from "lucide-react";
+import { checkPassword } from "@/lib/password-strength";
 import { BrandGithub, BrandLinkedin } from "@/components/icons/BrandIcons";
 
 // --- HELPER ICON ---
@@ -80,6 +81,52 @@ const GlassInputWrapper = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
+const STRENGTH = [
+  { label: "Too weak", bar: "bg-danger" },
+  { label: "Weak", bar: "bg-danger" },
+  { label: "Fair", bar: "bg-amber-500" },
+  { label: "Good", bar: "bg-amber-500" },
+  { label: "Almost there", bar: "bg-primary/70" },
+  { label: "Strong", bar: "bg-primary" },
+];
+
+function PasswordStrength({ password }: { password: string }) {
+  const { checks, passed } = checkPassword(password);
+  const level = STRENGTH[passed];
+  return (
+    <div id="password-rules" className="mt-3 space-y-2" aria-live="polite">
+      <div className="flex items-center gap-3">
+        <div
+          role="progressbar"
+          aria-label="Password strength"
+          aria-valuemin={0}
+          aria-valuemax={checks.length}
+          aria-valuenow={passed}
+          aria-valuetext={level.label}
+          className="h-1.5 flex-1 overflow-hidden rounded-full bg-foreground/10"
+        >
+          <div
+            className={`h-full rounded-full transition-[width,background-color] duration-300 ${level.bar}`}
+            style={{ width: `${(passed / checks.length) * 100}%` }}
+          />
+        </div>
+        <span className="w-24 text-right text-xs text-muted-foreground">{password ? level.label : ""}</span>
+      </div>
+      <ul className="grid gap-1 text-xs sm:grid-cols-2">
+        {checks.map((check) => (
+          <li key={check.id} className={`flex items-center gap-1.5 ${check.ok ? "text-primary" : "text-muted-foreground"}`}>
+            {check.ok ? <Check className="h-3.5 w-3.5" aria-hidden /> : <X className="h-3.5 w-3.5" aria-hidden />}
+            <span>
+              {check.label}
+              <span className="sr-only">{check.ok ? " (met)" : " (not met)"}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // --- MAIN COMPONENT ---
 
 export const SignInPage: React.FC<SignInPageProps> = ({
@@ -106,8 +153,23 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   const [resetPasswordMode, setResetPasswordMode] = useState(false);
   const [captchaKey, setCaptchaKey] = useState(0);
   const [verificationCode, setVerificationCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [agreed, setAgreed] = useState(false);
+  const [oauthHint, setOauthHint] = useState(false);
 
   const isSignUp = mode === "sign-up";
+  // A new password (sign-up or reset) must meet every rule before it is sent.
+  const newPassword = isSignUp || resetPasswordMode;
+  const passwordStrong = checkPassword(password).strong;
+  const submitBlocked = newPassword && !magicLinkMode && (!passwordStrong || (isSignUp && !agreed));
+  // Signing up with Google/LinkedIn/GitHub needs the same Terms agreement first.
+  const social = (start?: () => void) => () => {
+    if (isSignUp && !agreed) {
+      setOauthHint(true);
+      return;
+    }
+    start?.();
+  };
 
   useEffect(() => {
     if (isSignUp) {
@@ -154,6 +216,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
     const headline = String(formData.get("headline") ?? "").trim();
     const linkedinUrl = String(formData.get("linkedinUrl") ?? "").trim();
     const agreedToPolicies = formData.get("agreedToPolicies") === "on";
+    if (submitBlocked) return;
 
     if (resetPasswordMode) {
       await onResetPassword?.({ email, password });
@@ -334,9 +397,12 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                         name="password"
                         type={showPassword ? "text" : "password"}
                         required
-                        minLength={isSignUp || resetPasswordMode ? 8 : 1}
-                        autoComplete={isSignUp || resetPasswordMode ? "new-password" : "current-password"}
-                        placeholder={isSignUp || resetPasswordMode ? "Min 8 characters" : "Enter your password"}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        aria-invalid={newPassword && password.length > 0 && !passwordStrong}
+                        aria-describedby={newPassword ? "password-rules" : undefined}
+                        autoComplete={newPassword ? "new-password" : "current-password"}
+                        placeholder={newPassword ? "At least 12 characters" : "Enter your password"}
                         className="w-full bg-transparent text-sm p-4 pr-12 rounded-2xl focus:outline-none"
                       />
                       <button
@@ -353,6 +419,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                       </button>
                     </div>
                   </GlassInputWrapper>
+                  {newPassword && <PasswordStrength password={password} />}
                 </div>
               )}
 
@@ -382,6 +449,11 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                     name="agreedToPolicies"
                     type="checkbox"
                     required
+                    checked={agreed}
+                    onChange={(event) => {
+                      setAgreed(event.target.checked);
+                      if (event.target.checked) setOauthHint(false);
+                    }}
                     className="custom-checkbox mt-0.5 shrink-0"
                   />
                   <label htmlFor="agreedToPolicies" className="cursor-pointer text-foreground/90">
@@ -411,10 +483,17 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                 />
               )}
 
+              {isSignUp && oauthHint && (
+                <p role="alert" className="text-sm text-danger">
+                  Agree to the Terms of Service and Privacy Policy to continue with Google, LinkedIn or GitHub.
+                </p>
+              )}
+
               <button
                 type="submit"
-                disabled={loading}
-                className="animate-element animate-delay-600 w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+                disabled={loading || submitBlocked}
+                // Not opacity: the entrance animation pins opacity to 1, so disabled looked enabled.
+                className="animate-element animate-delay-600 w-full rounded-2xl bg-primary py-4 font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
               >
                 {loading
                   ? "Please wait…"
@@ -460,7 +539,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
             <div className="grid grid-cols-3 gap-3">
               <button
                 type="button"
-                onClick={onGoogleSignIn}
+                onClick={social(onGoogleSignIn)}
                 disabled={loading}
                 aria-label="Continue with Google"
                 className="animate-element animate-delay-800 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors disabled:pointer-events-none disabled:opacity-60"
@@ -469,7 +548,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={onLinkedInSignIn}
+                onClick={social(onLinkedInSignIn)}
                 disabled={loading}
                 aria-label="Continue with LinkedIn"
                 className="animate-element animate-delay-900 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors disabled:pointer-events-none disabled:opacity-60"
@@ -478,7 +557,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={onGithubSignIn}
+                onClick={social(onGithubSignIn)}
                 disabled={loading}
                 aria-label="Continue with GitHub"
                 className="animate-element animate-delay-1000 flex items-center justify-center gap-2 border border-border rounded-2xl py-4 hover:bg-secondary transition-colors disabled:pointer-events-none disabled:opacity-60"

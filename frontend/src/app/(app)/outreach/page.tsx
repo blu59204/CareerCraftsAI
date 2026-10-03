@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { EnvelopeSimple } from "@phosphor-icons/react";
+import { CircleNotch, EnvelopeSimple } from "@phosphor-icons/react";
 import { apiClient } from "@/lib/api";
 import {
   Bezel,
@@ -94,6 +94,7 @@ function Row({ item }: { item: OutreachItem }) {
 
   const status = statusOf(item);
   const open = item.state === "held" || item.state === "draft";
+  const busy = approve.isPending || save.isPending || cancel.isPending;
 
   return (
     <li className="py-4">
@@ -135,12 +136,12 @@ function Row({ item }: { item: OutreachItem }) {
       {open || item.state === "approved" ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {open && !editing ? (
-            <IslandButton size="sm" disabled={approve.isPending} onClick={() => approve.mutate()}>
+            <IslandButton tone="primary" size="sm" disabled={busy} icon={approve.isPending ? <CircleNotch className="animate-spin motion-reduce:animate-none" size={16} /> : undefined} onClick={() => approve.mutate()}>
               Approve and send
             </IslandButton>
           ) : null}
           {open && editing ? (
-            <IslandButton size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+            <IslandButton tone="primary" size="sm" disabled={busy || !subject.trim() || !body.trim()} icon={save.isPending ? <CircleNotch className="animate-spin motion-reduce:animate-none" size={16} /> : undefined} onClick={() => save.mutate()}>
               Save changes
             </IslandButton>
           ) : null}
@@ -148,6 +149,7 @@ function Row({ item }: { item: OutreachItem }) {
             <IslandButton
               size="sm"
               tone="quiet"
+              disabled={busy}
               onClick={() => {
                 // Entering or leaving edit mode starts from what is stored, so
                 // discarded text never comes back and server changes show.
@@ -159,7 +161,7 @@ function Row({ item }: { item: OutreachItem }) {
               {editing ? "Discard edits" : "Edit"}
             </IslandButton>
           ) : null}
-          <IslandButton size="sm" tone="ghost" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+          <IslandButton size="sm" tone="danger" disabled={busy} icon={cancel.isPending ? <CircleNotch className="animate-spin motion-reduce:animate-none" size={16} /> : undefined} onClick={() => cancel.mutate()}>
             Cancel
           </IslandButton>
         </div>

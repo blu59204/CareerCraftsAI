@@ -36,6 +36,7 @@ import {
   Warning,
 } from "@phosphor-icons/react";
 import {
+  REVEAL_VIEWPORT,
   Bezel,
   Eyebrow,
   Hairline,
@@ -1570,7 +1571,7 @@ function ResumeFixForm({
                 variants={listStagger}
                 initial="hidden"
                 whileInView="show"
-                viewport={{ once: true, amount: 0.1 }}
+                viewport={REVEAL_VIEWPORT}
                 className="grid min-w-0 content-start gap-3 sm:grid-cols-2 lg:col-span-8"
               >
                 {warnings.map((warning, i) => (

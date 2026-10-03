@@ -26,6 +26,33 @@ def apply_harness_result(
     return output
 
 
+async def _check_run_choices(db, user: User, context: dict[str, Any]) -> None:
+    """Per-run model / resume picks must be the caller's own rows."""
+    import uuid
+
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    from app.models.db import UserDocument, UserModelSettings
+
+    for key, model, extra in (
+        ("model_setting_id", UserModelSettings, None),
+        ("resume_document_id", UserDocument, UserDocument.doc_type == "resume"),
+    ):
+        raw = context.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            row_id = uuid.UUID(str(raw))
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Invalid {key}") from None
+        query = select(model.id).where(model.id == row_id, model.user_id == user.id)
+        if extra is not None:
+            query = query.where(extra)
+        if (await db.execute(query)).first() is None:
+            raise HTTPException(status_code=404, detail=f"{key} not found")
+
+
 async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any]) -> str:
     """Create a queued agent run and start its durable AgentRunWorkflow.
 
@@ -46,6 +73,8 @@ async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any
         validate_context(context)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    await _check_run_choices(db, user, context)
 
     # Serialize admission for this user across all API replicas.
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())

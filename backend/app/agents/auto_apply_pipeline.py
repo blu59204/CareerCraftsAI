@@ -46,10 +46,14 @@ async def _get_or_create_job_application(user_id: str, job: JobListing) -> str:
                 _select(JobApplication).where(
                     JobApplication.user_id == uuid.UUID(user_id),
                     JobApplication.job_url == job.job_url,
-                )
+                ).execution_options(include_deleted=True)
             )
         ).scalar_one_or_none()
         if existing:
+            if existing.deleted_at is not None:
+                # The member deleted it, but is now explicitly applying again.
+                existing.deleted_at = None
+                await db.commit()
             return str(existing.id)
         row = JobApplication(
             user_id=uuid.UUID(user_id),
@@ -155,8 +159,9 @@ async def run_auto_apply_pipeline(
                 "location": location,
             },
         )
-    jobs = await asyncio.get_running_loop().run_in_executor(
-        None, scrape_jobs, search_query, location, max_applications * 3, 72, platforms
+    # to_thread (not run_in_executor) copies contextvars: the run's model/resume pick.
+    jobs = await asyncio.to_thread(
+        scrape_jobs, search_query, location, max_applications * 3, 72, platforms
     )
     results["jobs_found"] = len(jobs)
 
@@ -312,9 +317,7 @@ async def _apply_to_job(
             result=None,
             error=None,
         )
-        resume_result = await asyncio.get_running_loop().run_in_executor(
-            None, resume_agent_node, state
-        )
+        resume_result = await asyncio.to_thread(resume_agent_node, state)
         result["resume_tailored"] = resume_result["status"] in ("completed", "awaiting_approval")
         resume_draft = resume_result.get("pending_action") or resume_result.get("result") or {}
         if (resume_draft.get("grounding") or {}).get("unsupported"):

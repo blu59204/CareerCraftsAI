@@ -5,16 +5,33 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 from sqlalchemy import text
 
-from app.services.job_connectors import Source, dedupe, fetch_page
+from app.services.job_connectors import Source, dedupe, fetch_page, normalize
 from app.services.jobs_database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+# Catalog rows seen within this window are served before any live fetch.
+CATALOG_FRESH_DAYS = 14
+# Cold/gap-fill refresh targets: bounded set of fast public sources.
+PREFERRED_SOURCES = {
+    "greenhouse:stripe",
+    "greenhouse:gitlab",
+    "greenhouse:figma",
+    "lever:netflix",
+    "lever:benchling",
+    "ashby:linear",
+    "ashby:vanta",
+    "remotive",
+    "remoteok",
+    "arbeitnow",
+}
 
 
 def sources() -> list[Source]:
@@ -35,6 +52,72 @@ def sources() -> list[Source]:
         source = Source(**row)
         mapped[source.id] = source
     return [source for source in mapped.values() if source.permitted]
+
+
+async def upsert_jobs(db, jobs: list[dict], source_id: str) -> None:
+    """Upsert normalized jobs into the shared catalog + occurrences (caller commits)."""
+    for job in dedupe(jobs, 90):
+        await db.execute(
+            text("""INSERT INTO job_catalog(job_id,url,title,company,posted_at,data)
+            VALUES(:id,:url,:title,:company,:posted,CAST(:data AS jsonb))
+            ON CONFLICT(job_id) DO UPDATE SET data=EXCLUDED.data ||
+            jsonb_build_object('first_seen_at',job_catalog.first_seen_at,
+            -- A thinner sighting (e.g. a live scrape snippet) never replaces a fuller description.
+            'description',CASE WHEN length(coalesce(job_catalog.data->>'description',''))
+                > length(coalesce(EXCLUDED.data->>'description',''))
+              THEN job_catalog.data->'description'
+              ELSE coalesce(EXCLUDED.data->'description',to_jsonb(''::text)) END),
+            title=EXCLUDED.title,
+            company=EXCLUDED.company,posted_at=EXCLUDED.posted_at,last_seen_at=now()"""),
+            {
+                "id": job["job_id"],
+                "url": job["url"],
+                "title": job["title"],
+                "company": job["company"],
+                "posted": (datetime.fromisoformat(job["posted_at"]) if job["posted_at"] else None),
+                "data": json.dumps(job),
+            },
+        )
+        await db.execute(
+            text("""INSERT INTO job_source_occurrences(job_id,source_id)
+            VALUES(:job,:source) ON CONFLICT(job_id,source_id)
+            DO UPDATE SET last_seen_at=now()"""),
+            {"job": job["job_id"], "source": source_id},
+        )
+
+
+async def write_through(raw_jobs: list[dict], platform: str) -> int:
+    """Store live-fetched jobs (url/title/company/... dicts) under source ``live:<platform>``.
+
+    Never raises: a failed catalog write must not fail the user's search.
+    """
+    try:
+        source = Source(id=f"live:{platform}", family=platform)
+        jobs = []
+        for raw in raw_jobs:
+            # Live adapters emit free-text "remote"; only the literal flag counts here.
+            flag = str(raw.get("remote", "")).lower() == "remote"
+            job = normalize({**raw, "remote": flag}, source)
+            if job:
+                jobs.append(job)
+        if not jobs:
+            return 0
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO job_source_health(source_id) VALUES (:id) ON CONFLICT DO NOTHING"
+                ),
+                {"id": source.id},
+            )
+            await upsert_jobs(db, jobs, source.id)
+            await db.commit()
+        return len(jobs)
+    except Exception as exc:
+        logger.warning(
+            "job_catalog_write_through_failed",
+            extra={"platform": platform, "error_type": type(exc).__name__},
+        )
+        return 0
 
 
 async def refresh_source(source: Source, query="", force=False) -> tuple[list[dict], str | None]:
@@ -120,30 +203,7 @@ async def refresh_source(source: Source, query="", force=False) -> tuple[list[di
             },
         )
         if not warning:
-            for job in dedupe(jobs, 90):
-                await db.execute(
-                    text("""INSERT INTO job_catalog(job_id,url,title,company,posted_at,data)
-                    VALUES(:id,:url,:title,:company,:posted,CAST(:data AS jsonb))
-                    ON CONFLICT(job_id) DO UPDATE SET data=EXCLUDED.data ||
-                    jsonb_build_object('first_seen_at',job_catalog.first_seen_at),title=EXCLUDED.title,
-                    company=EXCLUDED.company,posted_at=EXCLUDED.posted_at,last_seen_at=now()"""),
-                    {
-                        "id": job["job_id"],
-                        "url": job["url"],
-                        "title": job["title"],
-                        "company": job["company"],
-                        "posted": (
-                            datetime.fromisoformat(job["posted_at"]) if job["posted_at"] else None
-                        ),
-                        "data": json.dumps(job),
-                    },
-                )
-                await db.execute(
-                    text("""INSERT INTO job_source_occurrences(job_id,source_id)
-                    VALUES(:job,:source) ON CONFLICT(job_id,source_id)
-                    DO UPDATE SET last_seen_at=now()"""),
-                    {"job": job["job_id"], "source": source.id},
-                )
+            await upsert_jobs(db, jobs, source.id)
             if cursor is None:
                 await db.execute(
                     text(
@@ -187,32 +247,117 @@ async def refresh_catalog() -> dict:
     }
 
 
-async def search_catalog(query: dict, selected_sources=None):
+_STOPWORDS = {"and", "the", "for", "with", "role", "job", "jobs"}
+_ANYWHERE = {"", "remote", "anywhere", "worldwide", "any"}
+_CITY_ALIASES = {"bangalore": "bengaluru", "gurgaon": "gurugram", "bombay": "mumbai"}
+
+
+def _country_of(text: str) -> str | None:
+    from app.services.job_platforms_service import _COUNTRY_MAP
+
+    for key in sorted(_COUNTRY_MAP, key=len, reverse=True):
+        if re.search(r"\b" + re.escape(key) + r"\b", text):
+            return _COUNTRY_MAP[key]
+    return None
+
+
+def _cities(locations: list[str]) -> list[str] | None:
+    """Requested cities (aliases folded), or None for a remote/anywhere search."""
+    wanted = [loc.split(",")[0].strip().lower() for loc in locations]
+    if not wanted or any(w in _ANYWHERE for w in wanted):
+        return None
+    return [_CITY_ALIASES.get(w, w) for w in wanted]
+
+
+def in_city(job: dict, locations: list[str]) -> bool:
+    """The job is located in one of the requested cities (False for remote searches)."""
+    where = str(job.get("location") or "").lower()
+    for city in _cities(locations) or []:
+        if city in where or any(a in where for a, c in _CITY_ALIASES.items() if c == city):
+            return True
+    return False
+
+
+def _location_ok(job: dict, locations: list[str]) -> bool:
+    """A job fits a city search when it is in that city, or remote and not
+    restricted to another country ("Remote, United States" is not a fit for
+    Bengaluru). Remote/anywhere searches accept every location."""
+    wanted = _cities(locations)
+    if wanted is None:
+        return True
+    if in_city(job, locations):
+        return True
+    where = str(job.get("location") or "").lower().replace(".", "")
+    hay = f"{where} {str(job.get('remote') or '').lower()}"
+    for city in wanted:
+        if "remote" in hay or job.get("remote") is True:
+            job_country = _country_of(where)
+            if job_country is None or job_country == _country_of(city):
+                return True
+    return False
+
+
+async def search_catalog(query: dict, selected_sources=None, live_platforms=()):
+    """Serve fresh shared-catalog jobs first; refresh public sources only for a shortfall.
+
+    ``live_platforms`` also reads jobs other users' live searches stored under ``live:<name>``.
+    """
     families = set(selected_sources or [])
-    public = [s for s in sources() if not families or s.family in families or s.id in families]
-    if not public:
+    live_ids = [f"live:{p}" for p in live_platforms]
+    public = (
+        []
+        if live_ids and not families
+        else [s for s in sources() if not families or s.family in families or s.id in families]
+    )
+    if not public and not live_ids:
         return [], ["No public source matches the requested filters"]
     terms = (
         (" ".join(query.get("titles") or []) or query.get("search_query") or "software engineer")
         .lower()
         .split()
     )
+    days = query.get("posted_within_days", 30)
+    need = int(query.get("max_results") or 10)
+    locations = [str(x) for x in (query.get("locations") or [query.get("location") or ""]) if x]
+    remote = query.get("remote", "any")
+
+    keywords = [w for w in terms if len(w) > 2 and w not in _STOPWORDS]
+
+    def relevant_of(rows):
+        # Every query word must be in the title: "engineer" appears in nearly every
+        # posting's description, so matching descriptions returned unrelated roles.
+        out = [
+            j
+            for j in dedupe(rows, days)
+            if all(w in j["title"].lower() for w in keywords) and _location_ok(j, locations)
+        ]
+        if remote in {"remote", "hybrid", "onsite"}:
+            out = [
+                j
+                for j in out
+                if j["remote"] == remote or (remote == "onsite" and j["remote"] == "unknown")
+            ]
+        return out
+
     async with AsyncSessionLocal() as db:
         rows = (
             (
                 await db.execute(
+                    # ponytail: LIMIT 2000 is a safety ceiling on rows read per search, not a
+                    # product cap; page by posted_at if a query ever saturates it.
                     text("""SELECT c.data || jsonb_build_object('occurrences',
-            jsonb_agg(jsonb_build_object('source_id',o.source_id,'url',c.url))) FROM job_catalog c
+            jsonb_agg(jsonb_build_object('source_id',o.source_id,'url',c.url)),
+            'last_seen_at',c.last_seen_at) FROM job_catalog c
             JOIN job_source_occurrences o ON o.job_id=c.job_id
-            WHERE o.source_id=ANY(:sources) AND c.last_seen_at > now()-interval '7 days'
+            WHERE o.source_id=ANY(:sources) AND c.last_seen_at > :fresh
             AND (c.posted_at IS NULL OR c.posted_at >= :cutoff)
             AND lower(c.title) LIKE ANY(:terms)
             GROUP BY c.job_id ORDER BY c.posted_at DESC NULLS LAST LIMIT 2000"""),
                     {
-                        "sources": [s.id for s in public],
+                        "sources": [s.id for s in public] + live_ids,
                         "terms": ["%" + t + "%" for t in terms if len(t) > 2],
-                        "cutoff": datetime.now(UTC)
-                        - timedelta(days=query.get("posted_within_days", 30)),
+                        "fresh": datetime.now(UTC) - timedelta(days=CATALOG_FRESH_DAYS),
+                        "cutoff": datetime.now(UTC) - timedelta(days=days),
                     },
                 )
             )
@@ -220,26 +365,13 @@ async def search_catalog(query: dict, selected_sources=None):
             .all()
         )
     warnings = []
-    if not rows:
+    relevant = relevant_of(rows)
+    if public and len(relevant) < need:
         semaphore = asyncio.Semaphore(6)
-        # Cold start is bounded; the Schedule refreshes the complete employer catalog.
-        preferred = [
-            s
-            for s in public
-            if s.id
-            in {
-                "greenhouse:stripe",
-                "greenhouse:gitlab",
-                "greenhouse:figma",
-                "lever:netflix",
-                "lever:benchling",
-                "ashby:linear",
-                "ashby:vanta",
-                "remotive",
-                "remoteok",
-                "arbeitnow",
-            }
-        ]
+        # Gap fill is bounded (<=12 sources, 6 at a time); refresh_source honours its own
+        # lease/backoff so repeated shortfalls do not re-hit upstream. The Schedule refreshes
+        # the complete employer catalog.
+        preferred = [s for s in public if s.id in PREFERRED_SOURCES]
 
         async def one(source):
             async with semaphore:
@@ -249,21 +381,7 @@ async def search_catalog(query: dict, selected_sources=None):
                     return [], source.id + ": " + type(exc).__name__
 
         results = await asyncio.gather(*(one(s) for s in (preferred or public)[:12]))
-        rows = [j for jobs, _ in results for j in jobs]
+        rows = rows + [j for jobs, _ in results for j in jobs]
         warnings.extend(w for _, w in results if w)
-    jobs = dedupe(rows, query.get("posted_within_days", 30))
-    relevant = [
-        j
-        for j in jobs
-        if any(
-            word in (j["title"] + " " + j["description"]).lower() for word in terms if len(word) > 2
-        )
-    ]
-    remote = query.get("remote", "any")
-    if remote in {"remote", "hybrid", "onsite"}:
-        relevant = [
-            j
-            for j in relevant
-            if j["remote"] == remote or (remote == "onsite" and j["remote"] == "unknown")
-        ]
-    return relevant[:300], warnings
+        relevant = relevant_of(rows)
+    return relevant, warnings

@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion, type HTMLMotionProps } from "motion/react";
 import { cn } from "@/lib/utils";
-import { reveal, revealStagger, listItem } from "./motion";
+import { REVEAL_VIEWPORT, reveal, revealStagger, listItem } from "./motion";
 
 type RevealProps = HTMLMotionProps<"div"> & {
   /** Delay in seconds before the entrance starts. */
@@ -22,7 +22,7 @@ export function Reveal({ delay = 0, subtle = false, className, children, ...prop
     <motion.div
       initial="hidden"
       whileInView="show"
-      viewport={{ once: true, amount: 0.15, margin: "0px 0px -8% 0px" }}
+      viewport={REVEAL_VIEWPORT}
       variants={
         reduce
           ? { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } } }
@@ -48,7 +48,7 @@ export function RevealGroup({ className, children, ...props }: HTMLMotionProps<"
     <motion.div
       initial="hidden"
       whileInView="show"
-      viewport={{ once: true, amount: 0.1 }}
+      viewport={REVEAL_VIEWPORT}
       variants={revealStagger}
       className={className}
       {...props}

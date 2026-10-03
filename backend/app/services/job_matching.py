@@ -188,4 +188,4 @@ async def rank_jobs(user_id: str, context: dict, jobs: list[dict]):
     except Exception:
         warnings.append("Semantic ranking unavailable; using resume keyword and role rules")
     matches.sort(key=lambda job: (job["match_score"], job.get("posted_at") or ""), reverse=True)
-    return matches[: int(context.get("max_results", 10))], warnings
+    return matches, warnings  # no cap: every relevant match is returned

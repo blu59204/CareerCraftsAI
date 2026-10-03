@@ -7,7 +7,6 @@ import {
   Article,
   BracketsCurly,
   Buildings,
-  ChatText,
   ChatsCircle,
   CheckCircle,
   CircleNotch,
@@ -33,6 +32,7 @@ import {
 import { toast } from "sonner";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
+import { AutoApplyPanel } from "@/components/agents/AutoApplyPanel";
 import {
   Bezel,
   EmptyPanel,
@@ -46,6 +46,7 @@ import {
   Reveal,
   RevealGroup,
   Screen,
+  Select,
   Section,
   Skeleton,
   StatusPill,
@@ -87,7 +88,6 @@ const AGENTS: ReadonlyArray<{ key: string; label: string; icon: Icon; group: Age
   { key: "auto_apply", label: "Auto Apply", icon: Robot, group: "pipeline", note: "Isolated browser + two reviews", wide: true },
   { key: "resume_optimize", label: "Resume", icon: FileText, group: "document", note: "Tailored resume draft" },
   { key: "job_search", label: "Job Search", icon: MagnifyingGlass, group: "pipeline", note: "Fresh matching roles" },
-  { key: "nl_job_search", label: "NL Search", icon: ChatText, group: "pipeline", note: "Plain-English query parser" },
   { key: "linkedin_optimize", label: "LinkedIn", icon: LinkedinLogo, group: "document", note: "Profile rewrite" },
   { key: "linkedin_outreach", label: "Outreach", icon: Users, group: "outreach", note: "Recruiter drafts" },
   { key: "email", label: "Email", icon: EnvelopeSimple, group: "outreach", note: "Reviewable draft" },
@@ -103,7 +103,6 @@ const DEFAULT_CONTEXT: Record<string, Record<string, unknown>> = {
   auto_apply: { search_query: "software engineer", location: "Remote", max_applications: 1 },
   resume_optimize: { jd_text: "Software Engineer role focused on product delivery, reliability, and measurable impact." },
   job_search: { search_query: "software engineer", location: "Remote", max_results: 10 },
-  nl_job_search: { query: "remote senior backend role at a product company using Python or TypeScript" },
   linkedin_optimize: { target_role: "Software Engineer" },
   linkedin_outreach: { company_name: "Target Company", role_context: "Software Engineer" },
   email: { company: "Target Company", role: "Software Engineer", recipient_email: "recruiter@example.com" },
@@ -126,6 +125,7 @@ interface AgentRun {
 }
 
 interface RagDocument {
+  id: string;
   filename: string;
   doc_type: string;
   is_primary: boolean;
@@ -175,6 +175,9 @@ const DOT: Record<StatusTone, string> = {
 export default function AgentsPage() {
   const [active, setActive] = useState("resume_optimize");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  // "" = use the active resume / model; anything else is sent as a per-run override.
+  const [resumeId, setResumeId] = useState("");
+  const [modelId, setModelId] = useState("");
   const [contextText, setContextText] = useState(JSON.stringify(DEFAULT_CONTEXT.resume_optimize, null, 2));
   const qc = useQueryClient();
   const initRun = useAgentStore((s) => s.initRun);
@@ -196,7 +199,11 @@ export default function AgentsPage() {
       if (!context || Array.isArray(context) || typeof context !== "object") throw new Error("Context must be a JSON object");
       return apiClient.post<{ run_id: string }>("/agents/run", {
         task_type: active,
-        context,
+        context: {
+          ...context,
+          ...(resumeId ? { resume_document_id: resumeId } : {}),
+          ...(modelId ? { model_setting_id: modelId } : {}),
+        },
       });
     },
     onSuccess: (res) => {
@@ -235,7 +242,8 @@ export default function AgentsPage() {
   });
 
   const activeModel = userModels.find((m) => m.is_active);
-  const primaryResume = ragDocs.find((d) => d.doc_type === "resume" && d.is_primary);
+  const resumes = ragDocs.filter((d) => d.doc_type === "resume");
+  const primaryResume = resumes.find((d) => d.is_primary);
   const filteredRuns = runs.filter((r) => r.agent_type === active);
   const activeAgent = AGENTS.find((a) => a.key === active) ?? AGENTS[0];
   const activeGroup = GROUPS.find((g) => g.key === activeAgent.group) ?? GROUPS[0];
@@ -452,6 +460,8 @@ export default function AgentsPage() {
                 </div>
               </div>
 
+              {active === "auto_apply" ? <AutoApplyPanel /> : null}
+
               <div className="mt-7 space-y-2">
                 <div className="flex items-center justify-between gap-3 pl-1">
                   <label htmlFor={contextFieldId} className="flex items-center gap-2 text-[12px] font-medium tracking-[-0.005em] text-muted-foreground">
@@ -524,8 +534,22 @@ export default function AgentsPage() {
                     <FileText aria-hidden size={16} weight="light" className="shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <dt className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Resume</dt>
-                      <dd className="mt-0.5 truncate text-sm font-medium text-foreground" title={primaryResume?.filename}>
-                        {primaryResume?.filename ?? "No resume uploaded"}
+                      <dd className="mt-1">
+                        <Select
+                          aria-label="Resume for this run"
+                          value={resumeId}
+                          onChange={(e) => setResumeId(e.target.value)}
+                          disabled={resumes.length === 0}
+                        >
+                          <option value="">{primaryResume ? `Active: ${primaryResume.filename}` : "No resume uploaded"}</option>
+                          {resumes
+                            .filter((d) => !d.is_primary)
+                            .map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.filename}
+                              </option>
+                            ))}
+                        </Select>
                       </dd>
                     </div>
                     {!primaryResume ? (
@@ -539,8 +563,24 @@ export default function AgentsPage() {
                     <Cpu aria-hidden size={16} weight="light" className="shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <dt className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Model</dt>
-                      <dd className="mt-0.5 truncate font-geist-mono text-[13px] text-foreground">
-                        {activeModel?.model_name ?? activeModel?.provider ?? "Not configured"}
+                      <dd className="mt-1">
+                        <Select
+                          aria-label="Model for this run"
+                          value={modelId}
+                          onChange={(e) => setModelId(e.target.value)}
+                          disabled={userModels.length === 0}
+                        >
+                          <option value="">
+                            {activeModel ? `Active: ${activeModel.model_name ?? activeModel.provider}` : "Not configured"}
+                          </option>
+                          {userModels
+                            .filter((m) => !m.is_active)
+                            .map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.model_name ?? m.provider}
+                              </option>
+                            ))}
+                        </Select>
                       </dd>
                     </div>
                     {!activeModel ? (

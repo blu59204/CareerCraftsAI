@@ -68,7 +68,6 @@ TASK_TO_AGENT: dict[str, str] = {
     "evaluate_answer": "interview_coach",
     "salary_intelligence": "salary",
     "company_research": "company_research",
-    "nl_job_search": "nl_search",
     "linkedin_outreach": "linkedin_outreach",
     "email_monitor": "email_monitor",
     "auto_apply": "auto_apply",

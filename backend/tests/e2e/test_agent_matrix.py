@@ -67,7 +67,6 @@ pytestmark = [
 
 AGENT_CASES = [
     ("job_search", {"titles": ["Senior Python Engineer"], "location": "Remote", "max_results": 3}),
-    ("nl_job_search", {"query": "remote senior Python engineer role"}),
     ("resume_optimize", {"jd_text": "Senior Python Engineer using FastAPI and PostgreSQL"}),
     ("cover_letter", {"jd_text": "Senior Python Engineer using FastAPI", "tone": "formal"}),
     ("linkedin_optimize", {"target_role": "Senior Python Engineer"}),

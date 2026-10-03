@@ -2,15 +2,20 @@
 
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { X } from "@phosphor-icons/react";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { profileResultSchema } from "@/lib/profile-contracts";
 import { Bezel, Input, IslandButton } from "@/components/vanguard";
+import { cn } from "@/lib/utils";
 
 export function ProfilePdfUpload() {
   const [targetRole, setTargetRole] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
+  const [dragActive, setDragActive] = useState(false);
   const generation = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const analysis = useMutation({
     mutationFn: async () => {
       const requestGeneration = generation.current;
@@ -27,18 +32,110 @@ export function ProfilePdfUpload() {
     },
     onError: (err) => setError(getApiErrorMessage(err, "Could not analyze this PDF. Check your model settings and try again.")),
   });
+
   const reset = () => { generation.current += 1; analysis.reset(); setError(""); };
+
+  const handleFileSelect = (f: File | null) => {
+    reset();
+    setFile(f);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (analysis.isPending) return;
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      handleFileSelect(droppedFile);
+    }
+  };
+
+  const handleRemove = () => {
+    reset();
+    setFile(null);
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  };
+
   return (
     <div className="space-y-6">
       <Bezel coreClassName="space-y-4 p-5 md:p-6">
         <p id="linkedin-pdf-help" className="text-sm text-muted-foreground">Profile → More → Save to PDF → upload. Use the text PDF exported by LinkedIn, up to 5 MB. Suggestions are for you to review and apply.</p>
         <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); setError(""); analysis.mutate(); }}>
-          <label className="block text-sm" htmlFor="linkedin-profile-pdf">LinkedIn profile PDF</label>
-          <input id="linkedin-profile-pdf" type="file" accept=".pdf,application/pdf" aria-describedby="linkedin-pdf-help" disabled={analysis.isPending}
-            onChange={(event) => { reset(); setFile(event.target.files?.[0] ?? null); }} />
-          <label className="block text-sm" htmlFor="linkedin-target-role">Target role</label>
-          <Input id="linkedin-target-role" value={targetRole} maxLength={200} required disabled={analysis.isPending}
-            onChange={(event) => { reset(); setTargetRole(event.target.value); }} placeholder="Senior Python Engineer" />
+          <div className="space-y-2">
+            <label htmlFor="linkedin-profile-pdf" className="block text-sm">LinkedIn profile PDF</label>
+            <label
+              htmlFor="linkedin-profile-pdf"
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={cn(
+                "block rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors cursor-pointer",
+                "focus-within:ring-2 focus-within:ring-ring",
+                dragActive ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/50",
+                analysis.isPending && "pointer-events-none opacity-60"
+              )}
+            >
+              <input
+                id="linkedin-profile-pdf"
+                ref={inputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                aria-describedby="linkedin-pdf-help"
+                disabled={analysis.isPending}
+                onChange={(event) => handleFileSelect(event.target.files?.[0] ?? null)}
+                className="sr-only"
+              />
+              {file ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">{file.name}</p>
+                  <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}</p>
+                  <button
+                    type="button"
+                    onClick={handleRemove}
+                    disabled={analysis.isPending}
+                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                    aria-label="Remove file"
+                  >
+                    <X size={14} />
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-foreground">Drop your PDF here or click to select</p>
+                  <p className="text-xs text-muted-foreground">Maximum 5 MB</p>
+                </div>
+              )}
+            </label>
+          </div>
+          <div>
+            <label className="block text-sm mb-2" htmlFor="linkedin-target-role">Target role</label>
+            <Input id="linkedin-target-role" value={targetRole} maxLength={200} required disabled={analysis.isPending}
+              onChange={(event) => { reset(); setTargetRole(event.target.value); }} placeholder="Senior Python Engineer" />
+          </div>
           <IslandButton type="submit" tone="primary" disabled={analysis.isPending || !file || !targetRole.trim()}>{analysis.isPending ? "Analyzing profile…" : "Analyze uploaded profile"}</IslandButton>
           {analysis.isPending && <p role="status">Reading your profile and preparing section edits…</p>}
           {error && <p role="alert" className="text-danger">{error}</p>}
