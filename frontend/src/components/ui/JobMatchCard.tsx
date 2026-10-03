@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
 import { ArrowRight, ArrowUpRight, MagnifyingGlass, MapPin, Target } from "@phosphor-icons/react";
-import { Bezel, EASE_OUT_EXPO, EmptyPanel, PanelTitle, listItem, listStagger } from "@/components/vanguard";
+import { REVEAL_VIEWPORT, Bezel, EASE_OUT_EXPO, EmptyPanel, PanelTitle, listItem, listStagger } from "@/components/vanguard";
 
 type Props = {
   jobs: { id: string; company: string; role: string; matchPercent: number; location?: string; jobUrl?: string | null }[];
@@ -118,7 +118,7 @@ export function JobMatchCard({ jobs }: Props) {
           className="mt-4 divide-y divide-foreground/[0.06] dark:divide-white/[0.07]"
           initial="hidden"
           whileInView="show"
-          viewport={{ once: true, amount: 0.2 }}
+          viewport={REVEAL_VIEWPORT}
           variants={listStagger}
         >
           {jobs.slice(0, 4).map((j) => (

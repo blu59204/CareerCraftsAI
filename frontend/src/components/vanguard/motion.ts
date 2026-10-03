@@ -24,6 +24,14 @@ export const SPRING_PANEL: Transition = { type: "spring", stiffness: 260, dampin
  */
 export const FILTER_CLEAR = { filter: "none" } as const;
 
+/**
+ * When scroll entrances fire: as soon as any part of the element is within
+ * 15% of the bottom of the viewport. Waiting for a share of it to be well
+ * inside left sections that only peeked into view invisible, which read as
+ * blank space at the bottom of every page until the user scrolled.
+ */
+export const REVEAL_VIEWPORT = { once: true, amount: 0, margin: "0px 0px 15% 0px" } as const;
+
 /** Heavy fade-up with a short blur resolve (≈850ms). */
 export const reveal: Variants = {
   hidden: { opacity: 0, y: 40, filter: "blur(10px)" },

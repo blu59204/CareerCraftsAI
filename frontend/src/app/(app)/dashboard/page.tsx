@@ -31,6 +31,7 @@ import { JobMatchCard } from "@/components/ui/JobMatchCard";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { ApprovalCard } from "@/components/agents/ApprovalCard";
 import {
+  REVEAL_VIEWPORT,
   Bezel,
   EmptyPanel,
   Hairline,
@@ -559,7 +560,7 @@ export default function DashboardPage() {
                   className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
                   initial="hidden"
                   whileInView="show"
-                  viewport={{ once: true, amount: 0.2 }}
+                  viewport={REVEAL_VIEWPORT}
                   variants={listStagger}
                 >
                   {quickActions.map((action) => (
@@ -740,7 +741,7 @@ export default function DashboardPage() {
                     className="space-y-2"
                     initial="hidden"
                     whileInView="show"
-                    viewport={{ once: true, amount: 0.15 }}
+                    viewport={REVEAL_VIEWPORT}
                     variants={listStagger}
                   >
                     {recentRuns.map((run) => (
