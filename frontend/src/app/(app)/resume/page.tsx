@@ -53,6 +53,8 @@ import {
   listStagger,
   panelSwap,
   type StatusTone,
+  Field,
+  Select,
 } from "@/components/vanguard";
 import { AtsScoreRing } from "@/components/resume/AtsScoreRing";
 import { KeywordCoverage } from "@/components/resume/KeywordCoverage";
@@ -1663,8 +1665,8 @@ export default function ResumePage() {
 
                       {(canShowTemplateBar || (resumePreviewText && !editingText)) && (
                         <div className="mt-4 flex flex-wrap gap-4 text-sm">
-                          <label>Length <select className="ml-2 rounded bg-background p-2" value={pageTarget} disabled={busy} onChange={(event) => changePageTarget(Number(event.target.value) as 1 | 2)}><option value={1}>Single page</option><option value={2}>Multi-page (up to 2)</option></select></label>
-                          <label>Export format <select className="ml-2 rounded bg-background p-2" value={exportFormat} onChange={(event) => setExportFormat(event.target.value as "pdf" | "docx")}><option value="pdf">PDF</option><option value="docx">DOCX</option></select></label>
+                          <Field label="Length">{(id) => <Select id={id} value={pageTarget} disabled={busy} onChange={(event) => changePageTarget(Number(event.target.value) as 1 | 2)}><option value={1}>Single page</option><option value={2}>Multi-page (up to 2)</option></Select>}</Field>
+                          <Field label="Export format">{(id) => <Select id={id} value={exportFormat} onChange={(event) => setExportFormat(event.target.value as "pdf" | "docx")}><option value="pdf">PDF</option><option value="docx">DOCX</option></Select>}</Field>
                           <p className="text-muted-foreground">Exports determine pagination. DOCX may reflow in Word.</p>
                         </div>
                       )}

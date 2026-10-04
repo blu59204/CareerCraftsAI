@@ -78,3 +78,17 @@ async def test_rule_only_reads_jobs_found_after_it_was_switched_on(monkeypatch):
     await q._candidates(uuid.uuid4(), datetime.now(UTC), rule)
     saved_query = next(sql for sql in seen if "job_applications.status" in sql)
     assert "job_applications.found_at >=" in saved_query
+
+
+def test_city_filter_matches_old_and_new_names_and_any_listed_city():
+    from types import SimpleNamespace
+
+    from app.api.v1.jobs import _matches_location_filter
+
+    def at(loc):
+        return SimpleNamespace(location=loc)
+
+    assert _matches_location_filter(at("Bangalore, Karnataka"), "Bengaluru")
+    assert _matches_location_filter(at("Bengaluru East"), "bangalore")
+    assert _matches_location_filter(at("Pune, India"), "Bengaluru,Pune")
+    assert not _matches_location_filter(at("Chennai, India"), "Bengaluru,Pune")

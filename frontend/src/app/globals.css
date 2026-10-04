@@ -4,6 +4,8 @@
 
 @layer base {
   :root {
+    /* Native controls (select lists, date pickers, scrollbars) follow the theme. */
+    color-scheme: light;
     --background: 60 17% 98%;
     --foreground: 60 9% 5%;
     --card: 0 0% 100%;
@@ -32,6 +34,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     /* Dark mode previously drifted to a different brand entirely: neutrals sat
        on a cool 240/210 blue axis while light mode is a warm 60, and primary
        jumped from green (146) to purple (258) with a purple accent at 265.
@@ -407,7 +410,8 @@ body {
   .job-row-action { grid-column: span 1; }
 }
 
-@media (max-width: 639px) {
+/* Seven columns need a desktop width; below lg each row becomes a labeled card. */
+@media (max-width: 1023px) {
   .application-table, .application-table tbody { display: block; }
   .application-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .application-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0.5rem; }
@@ -422,6 +426,10 @@ body {
     letter-spacing: 0.05em;
     text-transform: uppercase;
   }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .application-table tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .premium-command-bg::before {

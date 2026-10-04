@@ -53,7 +53,8 @@ export function PageHero({ eyebrow, title, accent, description, actions, aside, 
 
   return (
     <header className={cn("grid gap-6 pb-2 pt-2 md:pb-4 md:pt-4 lg:grid-cols-12 lg:items-end", className)}>
-      <div className="min-w-0 lg:col-span-7 xl:col-span-8">
+      {/* Without an aside the content spans the row; title and copy keep their own measure. */}
+      <div className={cn("min-w-0", aside ? "lg:col-span-7 xl:col-span-8" : "lg:col-span-12")}>
         <motion.div {...enter(0)}>
           <Eyebrow>{eyebrow}</Eyebrow>
         </motion.div>

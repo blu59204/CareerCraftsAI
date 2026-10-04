@@ -23,6 +23,8 @@ export type ApplicationItem = {
   jobDescription?: string | null;
   appliedAt?: string | null;
   foundAt?: string | null;
+  /** When the employer posted the job (from the source), if known. */
+  postedAt?: string | null;
   notes?: string | null;
   source?: string | null;
   resumeLabel?: string | null;
@@ -121,22 +123,23 @@ export function ApplicationList({ items, onSelect, onStageChange, checked, onChe
         <caption className="sr-only">Applications and their next steps</caption>
         <thead className="bg-muted/40 text-[11px] uppercase tracking-wider text-muted-foreground">
           <tr>
-            <th scope="col" className="w-[32%] px-4 py-3 font-medium">
+            <th scope="col" className="w-[28%] px-4 py-3 font-medium">
               <label className="flex items-center gap-3">
                 <input type="checkbox" aria-label="Select all applications on this page" checked={allChecked} onChange={(event) => onCheckedChange(items.map((item) => item.id), event.target.checked)} className="h-4 w-4 accent-primary" />
                 Role / company
               </label>
             </th>
-            <th scope="col" className="w-[16%] px-4 py-3 font-medium">Stage</th>
+            <th scope="col" className="w-[14%] px-4 py-3 font-medium">Stage</th>
             <th scope="col" className="w-[8%] px-4 py-3 font-medium">Match</th>
-            <th scope="col" aria-sort={foundDir} className="w-[11%] px-4 py-3 font-medium">
+            <th scope="col" className="w-[10%] px-4 py-3 font-medium">Posted</th>
+            <th scope="col" aria-sort={foundDir} className="w-[10%] px-4 py-3 font-medium">
               <button type="button" onClick={() => onSortChange(sort === "found_desc" ? "found_asc" : "found_desc")} className="inline-flex items-center gap-1 rounded uppercase tracking-wider hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 Found
                 {sort === "found_desc" ? <ArrowDown size={11} weight="bold" aria-hidden /> : sort === "found_asc" ? <ArrowUp size={11} weight="bold" aria-hidden /> : null}
               </button>
             </th>
-            <th scope="col" className="w-[11%] px-4 py-3 font-medium">Follow-up</th>
-            <th scope="col" className="w-[22%] px-4 py-3 font-medium">Apply</th>
+            <th scope="col" className="w-[10%] px-4 py-3 font-medium">Follow-up</th>
+            <th scope="col" className="w-[20%] px-4 py-3 font-medium">Apply</th>
           </tr>
         </thead>
         <tbody role="rowgroup" className="divide-y divide-border">
@@ -160,6 +163,9 @@ export function ApplicationList({ items, onSelect, onStageChange, checked, onChe
                 ) : <StatusPill tone={STAGE_TONE[item.stage]}>{STAGE_LABELS[item.stage]}</StatusPill>}
               </td>
               <td role="cell" data-label="Match" className="px-4 py-3 align-middle font-geist-mono tabular-nums text-primary">{item.matchPercent != null ? `${item.matchPercent}%` : "—"}</td>
+              <td role="cell" data-label="Posted" className="px-4 py-3 align-middle text-xs text-muted-foreground">
+                <span title={item.postedAt ? new Date(item.postedAt).toLocaleString() : "Posting date not listed by the source"}>{relativeTime(item.postedAt)}</span>
+              </td>
               <td role="cell" data-label="Found" className="px-4 py-3 align-middle text-xs text-muted-foreground">
                 <span title={item.foundAt ? new Date(item.foundAt).toLocaleString() : undefined}>{relativeTime(item.foundAt)}</span>
               </td>

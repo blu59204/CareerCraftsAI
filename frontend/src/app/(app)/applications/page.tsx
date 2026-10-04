@@ -27,8 +27,8 @@ import { deleteApplications, fetchApplications, restoreApplications, type Applic
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
 import {
   Bezel,
-  Chip,
   EmptyPanel,
+  Field,
   IconButton,
   IslandButton,
   IslandLink,
@@ -39,8 +39,12 @@ import {
   Screen,
   Section,
   Skeleton,
+  Select,
   StatStrip,
+  inputControlClass,
+  inputTrayClass,
 } from "@/components/vanguard";
+import { LocationInput } from "@/components/ui/LocationInput";
 import { apiClient } from "@/lib/api";
 
 type AgentRun = {
@@ -58,8 +62,8 @@ function nextFollowUp(application: ApplicationRecord): string | undefined {
   return next ? new Date(next).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : undefined;
 }
 
-const MATCH_CHIPS = [{ label: "Any", value: 0 }, { label: "≥50", value: 50 }, { label: "≥70", value: 70 }, { label: "≥80", value: 80 }];
-const FOUND_CHIPS = [{ label: "Any", value: "any" }, { label: "Today", value: "today" }, { label: "7d", value: "7d" }, { label: "30d", value: "30d" }, { label: "Custom", value: "custom" }] as const;
+const MATCH_OPTIONS = [0, 50, 60, 70, 80, 90];
+const FOUND_CHIPS = [{ label: "Any time", value: "any" }, { label: "Today", value: "today" }, { label: "Last 7 days", value: "7d" }, { label: "Last 30 days", value: "30d" }, { label: "Custom range", value: "custom" }] as const;
 type FoundRange = (typeof FOUND_CHIPS)[number]["value"];
 const SORTS: ApplicationSort[] = ["found_desc", "found_asc", "match_desc", "match_asc"];
 const DAY_MS = 86_400_000;
@@ -89,7 +93,6 @@ function ApplicationsView() {
   }, [search]);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
-  const [matchDraft, setMatchDraft] = useState<number | null>(null);
 
   // Filter + sort state lives in the URL so reload/share keeps it.
   const minMatch = Math.min(100, Math.max(0, Number(params.get("min")) || 0));
@@ -97,6 +100,9 @@ function ApplicationsView() {
   const found: FoundRange = FOUND_CHIPS.some((c) => c.value === foundParam) ? (foundParam as FoundRange) : "any";
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
+  const cityParam = params.get("city") ?? "";
+  const cities = useMemo(() => cityParam.split(",").map((c) => c.trim()).filter(Boolean), [cityParam]);
+  const [cityDraft, setCityDraft] = useState("");
   const sortParam = params.get("sort") as ApplicationSort | null;
   const sort: ApplicationSort = sortParam && SORTS.includes(sortParam) ? sortParam : "found_desc";
 
@@ -123,9 +129,16 @@ function ApplicationsView() {
       if (to) f.foundBefore = new Date(`${to}T23:59:59.999`).toISOString();
     }
     if (query) f.q = query;
+    if (cities.length) f.location = cities.join(",");
     return f;
-  }, [sort, minMatch, found, from, to, query]);
-  const filtersActive = minMatch > 0 || found !== "any";
+  }, [sort, minMatch, found, from, to, query, cities]);
+  const filtersActive = minMatch > 0 || found !== "any" || cities.length > 0;
+  const setCities = (next: string[]) => setParams({ city: next.length ? next.join(",") : null });
+  const addCity = (picked: string) => {
+    const name = picked.split(",")[0].trim(); // "Bengaluru, India" -> "Bengaluru"
+    if (name && !cities.some((c) => c.toLowerCase() === name.toLowerCase())) setCities([...cities, name]);
+    setCityDraft("");
+  };
 
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ["applications", filters],
@@ -147,6 +160,7 @@ function ApplicationsView() {
           stage: application.status,
           appliedAt: application.applied_at,
           foundAt: application.found_at,
+          postedAt: application.posted_at,
           nextFollowUp: nextFollowUp(application),
           notes: application.notes,
           source: application.source,
@@ -309,13 +323,8 @@ function ApplicationsView() {
       ? "Roles unavailable"
       : `${total} ${query ? "matching " : ""}${total === 1 ? "job" : "jobs"}`;
 
-  const clearFilters = () => setParams({ min: null, found: null, from: null, to: null });
-  const commitMatch = () => {
-    if (matchDraft == null) return;
-    setParams({ min: matchDraft > 0 ? String(matchDraft) : null });
-    setMatchDraft(null);
-  };
-  const dateInput = "h-8 rounded-full bg-card px-3 text-xs text-foreground ring-1 ring-foreground/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-white/[0.03] dark:ring-white/10";
+  const clearFilters = () => setParams({ min: null, found: null, from: null, to: null, city: null });
+  const matchOptions = MATCH_OPTIONS.includes(minMatch) ? MATCH_OPTIONS : [...MATCH_OPTIONS, minMatch].sort((a, b) => a - b);
   const pendingCount = pendingDelete?.length ?? 0;
 
   return (
@@ -346,51 +355,87 @@ function ApplicationsView() {
       <Section aria-label="Applications" className="space-y-5 md:space-y-5">
         <h2 className="sr-only">Applications</h2>
 
-        <Bezel size="md" coreClassName="flex min-w-0 flex-wrap items-center gap-3 p-3">
-          <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search company or role" aria-label="Search applications" trayClassName="w-full sm:flex-1 sm:min-w-[12rem]" leading={<MagnifyingGlass size={16} weight="light" />} trailing={search ? <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}><X size={13} weight="light" /></IconButton> : undefined} />
-          <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onExportSheets={exportToSheets} />
-        </Bezel>
+        <Bezel size="md" coreClassName="space-y-4 p-4">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search company, role or location" aria-label="Search applications" trayClassName="w-full sm:flex-1" leading={<MagnifyingGlass size={16} weight="light" />} trailing={search ? <IconButton size="sm" aria-label="Clear search" onClick={() => setSearch("")}><X size={13} weight="light" /></IconButton> : undefined} />
+            <ExportMenu open={showExportMenu} onOpenChange={setShowExportMenu} onDownloadCsv={exportToCSV} onExportSheets={exportToSheets} />
+          </div>
 
-        <Bezel size="md" coreClassName="space-y-3 p-3">
-          <div role="group" aria-label="Match filter" className="flex flex-wrap items-center gap-2">
-            <span className="w-20 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Match</span>
-            {MATCH_CHIPS.map((chip) => (
-              <Chip key={chip.value} active={minMatch === chip.value} onClick={() => setParams({ min: chip.value ? String(chip.value) : null })}>{chip.label}</Chip>
-            ))}
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={matchDraft ?? minMatch}
-              aria-label="Minimum match percent"
-              onChange={(event) => setMatchDraft(Number(event.target.value))}
-              onPointerUp={commitMatch}
-              onKeyUp={commitMatch}
-              onBlur={commitMatch}
-              className="h-1.5 w-32 accent-primary"
-            />
-            <span className="w-10 font-geist-mono text-xs tabular-nums text-muted-foreground">≥{matchDraft ?? minMatch}%</span>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
+            <Field label="Match">
+              {(id) => (
+                <Select id={id} value={minMatch} onChange={(event) => setParams({ min: Number(event.target.value) > 0 ? event.target.value : null })}>
+                  {matchOptions.map((m) => (
+                    <option key={m} value={m}>{m === 0 ? "Any match" : `${m}% or higher`}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Found">
+              {(id) => (
+                <Select id={id} value={found} onChange={(event) => setParams(event.target.value === "any" ? { found: null, from: null, to: null } : { found: event.target.value })}>
+                  {FOUND_CHIPS.map((chip) => (
+                    <option key={chip.value} value={chip.value}>{chip.label}</option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="City">
+              {(id) => (
+                <div className={inputTrayClass}>
+                  <LocationInput
+                    id={id}
+                    value={cityDraft}
+                    onChange={setCityDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && cityDraft.trim()) {
+                        event.preventDefault();
+                        addCity(cityDraft);
+                      }
+                    }}
+                    onBlur={() => cityDraft.trim() && addCity(cityDraft)}
+                    placeholder={cities.length ? "Add another city" : "Any city"}
+                    inputClassName={cn(inputControlClass, "h-11")}
+                  />
+                </div>
+              )}
+            </Field>
           </div>
-          <div role="group" aria-label="Found date filter" className="flex flex-wrap items-center gap-2">
-            <span className="w-20 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Found</span>
-            {FOUND_CHIPS.map((chip) => (
-              <Chip key={chip.value} active={found === chip.value} onClick={() => setParams(chip.value === "any" ? { found: null, from: null, to: null } : { found: chip.value })}>{chip.label}</Chip>
-            ))}
-            {found === "custom" ? (
-              <>
-                <input type="date" aria-label="Found from" value={from} max={to || undefined} onChange={(event) => setParams({ from: event.target.value || null })} className={dateInput} />
-                <span aria-hidden className="text-xs text-muted-foreground">to</span>
-                <input type="date" aria-label="Found until" value={to} min={from || undefined} onChange={(event) => setParams({ to: event.target.value || null })} className={dateInput} />
-              </>
-            ) : null}
-          </div>
+
+          {found === "custom" || cities.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {found === "custom" ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input type="date" aria-label="Found from" value={from} max={to || undefined} onChange={(event) => setParams({ from: event.target.value || null })} trayClassName="w-44" />
+                  <span aria-hidden className="text-xs text-muted-foreground">to</span>
+                  <Input type="date" aria-label="Found until" value={to} min={from || undefined} onChange={(event) => setParams({ to: event.target.value || null })} trayClassName="w-44" />
+                </div>
+              ) : null}
+              {cities.map((city) => (
+                <button
+                  key={city}
+                  type="button"
+                  onClick={() => setCities(cities.filter((c) => c !== city))}
+                  aria-label={`Remove city ${city}`}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary/10 px-3 text-xs font-medium text-primary ring-1 ring-primary/20 transition-colors duration-500 ease-vanguard hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {city}
+                  <X size={12} weight="light" aria-hidden />
+                </button>
+              ))}
+            </div>
+          ) : null}
         </Bezel>
 
         <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
           <p aria-live="polite" className="flex items-center gap-2 pl-1 text-[13px] text-muted-foreground">
             <ArrowsLeftRight size={15} weight="light" aria-hidden />
             <span className="tabular-nums">{boardStatus}</span>
+            {filtersActive ? (
+              <button type="button" onClick={clearFilters} className="ml-1 text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                Clear filters
+              </button>
+            ) : null}
           </p>
           {checkedIds.length > 0 ? (
             <IslandButton tone="danger" size="sm" icon={<Trash size={14} />} onClick={() => setPendingDelete(checkedIds)}>

@@ -37,8 +37,11 @@ import {
   listItem,
   listStagger,
   panelSwap,
+  inputControlClass,
+  inputTrayClass,
   type StatusTone,
 } from '@/components/vanguard'
+import { LocationInput } from '@/components/ui/LocationInput'
 
 // Matches the shape we render from the salary_intelligence agent's run
 // output — see backend/app/agents/salary_agent.py (report + negotiation
@@ -533,14 +536,16 @@ export default function SalaryPage() {
                   </Field>
                   <Field label="Location">
                     {(id) => (
-                      <Input
-                        id={id}
-                        type="text"
-                        name="location"
-                        placeholder="Location (optional)"
-                        value={location}
-                        onChange={(e) => setLocation(e.target.value)}
-                      />
+                      <div className={inputTrayClass}>
+                        <LocationInput
+                          id={id}
+                          name="location"
+                          placeholder="City or Remote (optional)"
+                          value={location}
+                          onChange={setLocation}
+                          inputClassName={cn(inputControlClass, "h-11")}
+                        />
+                      </div>
                     )}
                   </Field>
                   <Field label="Experience (years)">

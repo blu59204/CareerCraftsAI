@@ -8,6 +8,8 @@ import { Sparkles } from "lucide-react";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { OnboardingStepper } from "@/components/onboarding/OnboardingStepper";
 import { GitHubSettings } from "@/components/integrations/GitHubSettings";
+import { LocationInput } from "@/components/ui/LocationInput";
+import { Select } from "@/components/vanguard";
 import { LiquidGlassButton } from "@/components/ui/LiquidGlassButton";
 import { apiClient } from "@/lib/api";
 import { PROVIDERS, type Provider } from "@/lib/model-providers";
@@ -282,21 +284,20 @@ export default function OnboardingPage() {
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-sm font-medium">Career goal</label>
-            <select
+            <Select
               value={formData.goal}
               onChange={(e) => setFormData((p) => ({ ...p, goal: e.target.value }))}
-              className="w-full rounded-2xl border border-border bg-background p-3 text-sm"
             >
               <option>First job after college</option>
               <option>Switch roles</option>
               <option>Internship</option>
               <option>Promotion / senior move</option>
               <option>Freelance / contract</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium">Experience level</label>
-            <select
+            <Select
               value={formData.experienceLevel}
               onChange={(e) =>
                 setFormData((p) => ({
@@ -305,14 +306,13 @@ export default function OnboardingPage() {
                   yearsExperience: e.target.value === "fresher" ? "0" : p.yearsExperience,
                 }))
               }
-              className="w-full rounded-2xl border border-border bg-background p-3 text-sm"
             >
               <option value="fresher">Fresher (0–1 yr)</option>
               <option value="junior">Junior (1–3 yrs)</option>
               <option value="mid">Mid-level (3–6 yrs)</option>
               <option value="senior">Senior (6–10 yrs)</option>
               <option value="lead">Lead / Staff (10+ yrs)</option>
-            </select>
+            </Select>
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium">Exact years of experience</label>
@@ -513,13 +513,14 @@ export default function OnboardingPage() {
       content: wrap(
         <div className="space-y-2">
           <label className="mb-1.5 block text-sm font-medium">Locations (comma-separated)</label>
-          <input
+          <LocationInput
+            multiple
             value={formData.preferredLocations}
-            onChange={(e) => setFormData((p) => ({ ...p, preferredLocations: e.target.value }))}
-            placeholder="Bangalore, Remote, Hyderabad"
-            className="w-full rounded-2xl border border-border bg-background p-3 text-sm"
+            onChange={(v) => setFormData((p) => ({ ...p, preferredLocations: v }))}
+            placeholder="Bengaluru, Remote, Hyderabad"
+            inputClassName="w-full rounded-2xl border border-border bg-background p-3 text-sm"
           />
-          <p className="text-xs text-muted-foreground">Separate multiple locations with commas.</p>
+          <p className="text-xs text-muted-foreground">Pick from the list or type your own; add as many as you like.</p>
         </div>,
       ),
     },
@@ -530,7 +531,7 @@ export default function OnboardingPage() {
         <div className="space-y-4 text-sm">
           <div>
             <label className="mb-1.5 block font-medium">Provider</label>
-            <select
+            <Select
               value={formData.provider}
               onChange={(e) => {
                 const p = e.target.value as FormData["provider"];
@@ -540,14 +541,13 @@ export default function OnboardingPage() {
                   modelName: MODEL_DEFAULTS[p] ?? "",
                 }));
               }}
-              className="w-full rounded-2xl border border-border bg-background p-3"
             >
               {PROVIDERS.map((p) => (
                 <option key={p.value} value={p.value}>
                   {p.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
             <label className="mb-1.5 block font-medium">Model name</label>

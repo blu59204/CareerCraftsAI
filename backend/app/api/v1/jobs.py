@@ -151,6 +151,17 @@ def is_example_job_url(job_url: str | None) -> bool:
     return hostname == "example.com" or hostname.endswith(".example.com")
 
 
+# Old and new city names both appear in postings; a filter on either matches both.
+_CITY_PAIRS = (
+    ("bengaluru", "bangalore"),
+    ("gurugram", "gurgaon"),
+    ("mumbai", "bombay"),
+    ("chennai", "madras"),
+    ("kolkata", "calcutta"),
+)
+_CITY_NAMES = {name: pair for pair in _CITY_PAIRS for name in pair}
+
+
 def _matches_location_filter(app: JobApplication, location_filter: str | None) -> bool:
     if not location_filter:
         return True
@@ -170,7 +181,9 @@ def _matches_location_filter(app: JobApplication, location_filter: str | None) -
         return False
 
     city_filters = filters - {"remote", "hybrid", "onsite"}
-    if city_filters and not any(city in location for city in city_filters):
+    if city_filters and not any(
+        name in location for city in city_filters for name in _CITY_NAMES.get(city, (city,))
+    ):
         return False
 
     return True
