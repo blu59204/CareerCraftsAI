@@ -11,7 +11,9 @@
     "test": "node --test src/lib/*.test.mjs"
   },
   "dependencies": {
+    "@ag-ui/client": "^1.0.1",
     "@clerk/nextjs": "^7.9.2",
+    "@copilotkit/react-core": "^1.77.0",
     "@microsoft/fetch-event-source": "^2.0.1",
     "@phosphor-icons/react": "2.1.10",
     "@radix-ui/react-accordion": "^1.2.12",
