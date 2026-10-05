@@ -162,6 +162,11 @@ async def _jwt_middleware(request: Request, call_next):
         # so one slow/cold JWKS fetch can't stall every other in-flight request.
         payload = await asyncio.to_thread(verify_token, token)
         request.state.user = payload
+        # Graph nodes (e.g. the AG-UI chat copilot) have no route dependency to
+        # receive the user through — they read this instead.
+        from app.core.request_context import set_current_user_id
+
+        set_current_user_id(str(payload.get("sub") or "") or None)
     except Exception:
         return JSONResponse(
             status_code=401,
@@ -294,6 +299,12 @@ app.include_router(extension.router, prefix="/api/v1")
 app.include_router(agent_memory.router)
 
 app.include_router(llm_gw)
+
+# AG-UI chat endpoint (Career Copilot) — guarded by the JWT middleware like
+# every other non-public path.
+from app.api.v1.copilot_chat import mount_copilot_chat
+
+mount_copilot_chat(app)
 
 
 # ── Health endpoints (no auth required) ──────────────────────────

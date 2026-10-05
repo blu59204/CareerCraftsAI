@@ -14,3 +14,7 @@ langchain-google-community==5.0.0
 langchain-text-splitters==1.1.2
 langgraph-checkpoint==4.2.0
 langgraph-sdk==0.4.5
+# AG-UI chat endpoint stack (pip-verified 2026-10-05 with the pins above)
+ag-ui-langgraph==0.0.46
+ag-ui-protocol==1.0.0
+ag-ui-a2ui-toolkit==0.0.4
