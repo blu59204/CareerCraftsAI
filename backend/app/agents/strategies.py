@@ -49,10 +49,10 @@ STRATEGIES: dict[str, list[str]] = {
     # Learnings from past runs override these defaults: e.g. after 3 Workday
     # blocks the harness learns "workday:requires_manual" and stops trying.
     "auto_apply": [
-        "stop_before_submit",        # always enforce HITL — never skip
-        "use_uploaded_resume",       # prefer pre-uploaded resume over file picker
-        "fill_optional_fields",      # fill non-required fields when data is available
-        "retry_with_generic_filler", # fall back to universal filler if portal-specific fails
+        "stop_before_submit",  # always enforce HITL — never skip
+        "use_uploaded_resume",  # prefer pre-uploaded resume over file picker
+        "fill_optional_fields",  # fill non-required fields when data is available
+        "retry_with_generic_filler",  # fall back to universal filler if portal-specific fails
     ],
 }
 

@@ -43,10 +43,12 @@ async def _get_or_create_job_application(user_id: str, job: JobListing) -> str:
     async with AsyncSessionLocal() as db:
         existing = (
             await db.execute(
-                _select(JobApplication).where(
+                _select(JobApplication)
+                .where(
                     JobApplication.user_id == uuid.UUID(user_id),
                     JobApplication.job_url == job.job_url,
-                ).execution_options(include_deleted=True)
+                )
+                .execution_options(include_deleted=True)
             )
         ).scalar_one_or_none()
         if existing:

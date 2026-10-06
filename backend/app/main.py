@@ -37,6 +37,7 @@ from app.api.v1 import (
     salary,
     users,
 )
+from app.api.v1.copilot_chat import mount_copilot_chat
 from app.core.clerk_auth import verify_token
 from app.core.config import settings
 from app.core.llm_gateway import router as llm_gw
@@ -307,8 +308,6 @@ app.include_router(llm_gw)
 
 # AG-UI chat endpoint (Career Copilot) — guarded by the JWT middleware like
 # every other non-public path.
-from app.api.v1.copilot_chat import mount_copilot_chat
-
 mount_copilot_chat(app)
 
 

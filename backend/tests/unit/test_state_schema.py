@@ -10,6 +10,7 @@ Bugs caught:
 
 Each test is annotated with what the OLD code did vs what the NEW code does.
 """
+
 import uuid
 from unittest.mock import MagicMock
 
@@ -17,7 +18,6 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from app.agents.state import AgentState
-
 
 # ---------------------------------------------------------------------------
 # 1. Required fields
@@ -68,9 +68,7 @@ def test_model_settings_is_propagated_state_data():
 def test_resume_memory_heuristic_uses_resume_markdown():
     from app.agents.semantic_memory import _heuristic_memories
 
-    memories = _heuristic_memories(
-        uuid.uuid4(), "resume", {"resume_markdown": "# Tailored resume"}
-    )
+    memories = _heuristic_memories(uuid.uuid4(), "resume", {"resume_markdown": "# Tailored resume"})
 
     assert any("tailored resume" in memory.content for memory in memories)
 
@@ -138,39 +136,47 @@ def make_state(task_type: str, status: str = "running") -> AgentState:
     }
 
 
-@pytest.mark.parametrize("task_type,expected_node", [
-    ("resume_optimize", "resume"),
-    ("job_search", "job_search"),
-    ("linkedin_optimize", "linkedin"),
-    ("email", "email"),
-    ("cover_letter", "cover_letter"),
-    ("interview_prep", "interview_prep"),
-    ("salary_intelligence", "salary"),
-    ("auto_apply", "auto_apply"),
-])
+@pytest.mark.parametrize(
+    "task_type,expected_node",
+    [
+        ("resume_optimize", "resume"),
+        ("job_search", "job_search"),
+        ("linkedin_optimize", "linkedin"),
+        ("email", "email"),
+        ("cover_letter", "cover_letter"),
+        ("interview_prep", "interview_prep"),
+        ("salary_intelligence", "salary"),
+        ("auto_apply", "auto_apply"),
+    ],
+)
 def test_orchestrator_routing_with_new_schema(task_type, expected_node):
     """Verify all TASK_ROUTES entries still resolve correctly after schema change."""
     from app.agents.orchestrator import route_task
+
     assert route_task(make_state(task_type)) == expected_node
 
 
 def test_orchestrator_routes_unknown_to_end():
     from app.agents.orchestrator import route_task
+
     assert route_task(make_state("not_a_real_task")) == "__end__"
 
 
 def test_orchestrator_routes_completed_to_end():
     from app.agents.orchestrator import route_task
+
     assert route_task(make_state("resume_optimize", status="completed")) == "__end__"
 
 
 def test_orchestrator_routes_awaiting_approval_to_end():
     from app.agents.orchestrator import route_task
+
     assert route_task(make_state("resume_optimize", status="awaiting_approval")) == "__end__"
 
 
 def test_orchestrator_routes_failed_to_end():
     from app.agents.orchestrator import route_task
+
     assert route_task(make_state("job_search", status="failed")) == "__end__"
 
 

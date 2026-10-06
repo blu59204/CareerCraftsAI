@@ -129,9 +129,7 @@ async def continue_agent_run_activity(params: dict) -> dict:
         return {"status": status, "action_type": None}
     started = time.monotonic()
     with run_choice((run.input or {}).get("context")):
-        result = await _run_with_timeout(
-            continue_action(run, params.get("continuation") or {})
-        )
+        result = await _run_with_timeout(continue_action(run, params.get("continuation") or {}))
     return await record_run_result(run_id, result, started)
 
 

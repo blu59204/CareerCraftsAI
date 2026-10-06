@@ -56,8 +56,14 @@ def test_logged_or_attempted_jobs_do_not_fire_again():
 @pytest.fixture
 def wired(monkeypatch):
     calls = SimpleNamespace(apply=[], outreach=[], notify=[], log=[])
-    rule = {"min_match": 80, "action": "both", "template": "classic", "page_target": 1,
-            "tailor": True, "tone": "concise"}
+    rule = {
+        "min_match": 80,
+        "action": "both",
+        "template": "classic",
+        "page_target": 1,
+        "tailor": True,
+        "tone": "concise",
+    }
     state = SimpleNamespace(rule=rule, jobs={}, outreach_state="draft")
 
     async def load_rule(_):
@@ -80,9 +86,14 @@ def wired(monkeypatch):
     async def log(owner, app_id, action, detail):
         calls.log.append((app_id, action))
 
-    for name, fn in [("load_rule", load_rule), ("_candidates", candidates),
-                     ("_apply_one", apply_one), ("draft_outreach", draft),
-                     ("_notify", notify), ("_log", log)]:
+    for name, fn in [
+        ("load_rule", load_rule),
+        ("_candidates", candidates),
+        ("_apply_one", apply_one),
+        ("draft_outreach", draft),
+        ("_notify", notify),
+        ("_log", log),
+    ]:
         monkeypatch.setattr(q, name, fn)
     return state, calls
 

@@ -15,10 +15,10 @@ from app.models.db import (
     UserPreferences,
 )
 from app.models.schemas import (
-    ATSScoreRequest,
-    ATSScoreResponse,
     AnswerEvaluation,
     AnswerSubmitRequest,
+    ATSScoreRequest,
+    ATSScoreResponse,
     CompanyIntelResponse,
     CompanyResearchRequest,
     CoverLetterRequest,

@@ -42,9 +42,17 @@ async def _list(db, user, response=None, **kw):
     from app.api.v1.jobs import list_applications
 
     params = {
-        "status": None, "location": None, "source": None, "posted_within_days": None,
-        "min_match": None, "found_after": None, "found_before": None, "sort": None, "q": None,
-        "offset": 0, "limit": None,
+        "status": None,
+        "location": None,
+        "source": None,
+        "posted_within_days": None,
+        "min_match": None,
+        "found_after": None,
+        "found_before": None,
+        "sort": None,
+        "q": None,
+        "offset": 0,
+        "limit": None,
     }
     params.update(kw)
     return await list_applications(response or Response(), db=db, current_user=user, **params)
@@ -177,10 +185,22 @@ async def test_activate_resume_keeps_exactly_one_primary(ctx, monkeypatch):
     maker, user = ctx
     rescored = []
     monkeypatch.setattr(background, "spawn_background", lambda coro: rescored.append(coro.close()))
-    a = UserDocument(user_id=user.id, doc_type="resume", filename="a.pdf", storage_path="a",
-                     raw_text="A", is_primary=True)
-    b = UserDocument(user_id=user.id, doc_type="resume", filename="b.pdf", storage_path="b",
-                     raw_text="B", is_primary=False)
+    a = UserDocument(
+        user_id=user.id,
+        doc_type="resume",
+        filename="a.pdf",
+        storage_path="a",
+        raw_text="A",
+        is_primary=True,
+    )
+    b = UserDocument(
+        user_id=user.id,
+        doc_type="resume",
+        filename="b.pdf",
+        storage_path="b",
+        raw_text="B",
+        is_primary=False,
+    )
     async with maker() as db:
         db.add_all([a, b])
         await db.commit()
@@ -189,12 +209,16 @@ async def test_activate_resume_keeps_exactly_one_primary(ctx, monkeypatch):
         assert out.is_primary
     async with maker() as db:
         primaries = (
-            await db.execute(
-                select(UserDocument.id).where(
-                    UserDocument.user_id == user.id, UserDocument.is_primary.is_(True)
+            (
+                await db.execute(
+                    select(UserDocument.id).where(
+                        UserDocument.user_id == user.id, UserDocument.is_primary.is_(True)
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert primaries == [b.id]
     assert len(rescored) == 1
 
@@ -217,14 +241,18 @@ async def test_live_write_through_is_shared_and_keeps_fuller_description(ctx, mo
             text("SELECT data->>'description' FROM job_catalog WHERE url = :u"), {"u": url}
         )
         sources = (
-            await db.execute(
-                text(
-                    "SELECT o.source_id FROM job_source_occurrences o "
-                    "JOIN job_catalog c USING (job_id) WHERE c.url = :u"
-                ),
-                {"u": url},
+            (
+                await db.execute(
+                    text(
+                        "SELECT o.source_id FROM job_source_occurrences o "
+                        "JOIN job_catalog c USING (job_id) WHERE c.url = :u"
+                    ),
+                    {"u": url},
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert stored.strip() == full.strip()
     assert sources == ["live:jobspy"]
 
@@ -258,8 +286,14 @@ async def test_scoring_failure_is_recorded_so_the_ui_stops_waiting(ctx, monkeypa
     maker, user = ctx
     monkeypatch.setattr(database, "AsyncSessionLocal", maker)
     monkeypatch.setattr(ats, "score_resume_baseline", lambda *a: 1 / 0)
-    doc = UserDocument(user_id=user.id, doc_type="resume", filename="r.pdf", storage_path="r",
-                       raw_text="Some text", is_primary=True)
+    doc = UserDocument(
+        user_id=user.id,
+        doc_type="resume",
+        filename="r.pdf",
+        storage_path="r",
+        raw_text="Some text",
+        is_primary=True,
+    )
     async with maker() as db:
         db.add(doc)
         await db.commit()
