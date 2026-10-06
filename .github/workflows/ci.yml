@@ -139,6 +139,9 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Computer purge ownership checks
+        run: node --test ../deploy/computers/purge-supervisor.test.mjs
+
       - name: Build
         run: npm run build
 
@@ -162,8 +165,6 @@ jobs:
           find src -name '*.js' -print0 | xargs -0 -n1 node --check
       - name: Sender and approval boundary checks
         run: node test/submit_sender.test.mjs
-      - name: Computer purge ownership checks
-        run: node --test ../deploy/computers/purge-supervisor.test.mjs
       # Real Chromium with the unpacked extension against local fixture job
       # sites and a fake API; no request leaves the runner.
       - name: End-to-end apply flow
