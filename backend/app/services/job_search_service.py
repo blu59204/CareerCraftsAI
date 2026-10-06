@@ -189,7 +189,7 @@ async def search_all_platforms(
         (normalized deduped jobs, warnings). Platform failures become
         warnings — this function never raises for source errors.
     """
-    from app.services.job_catalog import search_catalog, write_through
+    from app.services.job_catalog import matches_query, search_catalog, write_through
     from app.services.job_connectors import FAMILIES
 
     selected = platforms or DEFAULT_PLATFORMS
@@ -213,6 +213,7 @@ async def search_all_platforms(
             catalog_jobs, catalog_warnings = await search_catalog(
                 query, public, live_platforms=cacheable
             )
+            catalog_jobs = [job for job in catalog_jobs if matches_query(job, query)]
             warnings.extend(catalog_warnings)
         except Exception as exc:
             if not valid_names:
@@ -249,7 +250,6 @@ async def search_all_platforms(
 
     # 2. Shortfall: live adapters fill the gap.
     titles = query.get("titles") or []
-    remote = str(query.get("remote") or "").strip().lower()
     q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
     fetch_n = max(need, LIVE_FETCH_LIMIT)
 
@@ -285,19 +285,4 @@ async def search_all_platforms(
     )
 
     jobs = _dedupe(catalog_jobs + [job for group in per_source for job in group])
-    if remote in ("remote", "hybrid", "onsite"):
-        # Post-fetch predicate: none of the adapters accept a remote/work-mode
-        # parameter, so filter on each job's normalized location + remote
-        # fields directly rather than dropping the request's remote field.
-        def _mode_matches(job: dict) -> bool:
-            haystack = f"{job.get('location', '')} {job.get('remote', '')}".lower()
-            is_remote = "remote" in haystack
-            is_hybrid = "hybrid" in haystack
-            if remote == "remote":
-                return is_remote
-            if remote == "hybrid":
-                return is_hybrid
-            return not is_remote and not is_hybrid  # onsite
-
-        jobs = [j for j in jobs if _mode_matches(j)]
-    return jobs, warnings
+    return [job for job in jobs if matches_query(job, query)], warnings

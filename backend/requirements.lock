@@ -1,13 +1,17 @@
-agentql==1.19.0
-    # via -r requirements.txt
 ag-ui-a2ui-toolkit==0.0.4
-    # via ag-ui-langgraph
+    # via
+    #   -c constraints.txt
+    #   ag-ui-langgraph
 ag-ui-langgraph==0.0.46
-    # via -r requirements.txt
+    # via
+    #   -c constraints.txt
+    #   -r requirements.txt
 ag-ui-protocol==1.0.0
     # via
-    #   ag-ui-a2ui-toolkit
+    #   -c constraints.txt
     #   ag-ui-langgraph
+agentql==1.19.0
+    # via -r requirements.txt
 aiofiles==25.1.0
     # via
     #   agentql
@@ -126,7 +130,9 @@ fake-http-header==0.3.5
 fakeredis==2.38.0
     # via -r requirements.txt
 fastapi==0.142.2
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   ag-ui-langgraph
 filetype==1.2.0
     # via langchain-google-genai
 frozenlist==1.8.0
@@ -260,6 +266,7 @@ langchain==1.4.3
     # via
     #   -c constraints.txt
     #   -r requirements.txt
+    #   ag-ui-langgraph
     #   langchain-google-community
 langchain-anthropic==1.7.5
     # via
@@ -275,6 +282,7 @@ langchain-core==1.6.6
     # via
     #   -c constraints.txt
     #   -r requirements.txt
+    #   ag-ui-langgraph
     #   langchain
     #   langchain-anthropic
     #   langchain-classic
@@ -319,6 +327,7 @@ langgraph==1.2.12
     # via
     #   -c constraints.txt
     #   -r requirements.txt
+    #   ag-ui-langgraph
     #   langchain
     #   langchain-google-community
 langgraph-checkpoint==4.2.0
@@ -461,6 +470,8 @@ pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementatio
 pydantic==2.13.4
     # via
     #   -r requirements.txt
+    #   ag-ui-langgraph
+    #   ag-ui-protocol
     #   agentql
     #   anthropic
     #   browser-use-sdk

@@ -287,7 +287,13 @@ async def maintenance_activity(params: dict) -> dict:
                         select(ExtensionTask).where(
                             ExtensionTask.run_id == run_id,
                             ExtensionTask.status.in_(
-                                ("pending", "claimed", "filling", "needs_input", "review")
+                                (
+                                    "pending",
+                                    "claimed",
+                                    "filling",
+                                    "needs_input",
+                                    "review",
+                                )
                             ),
                         )
                     )
@@ -303,7 +309,9 @@ async def maintenance_activity(params: dict) -> dict:
 
     try:
         async with AsyncSessionLocal() as db:
-            from app.services.account_deletion_service import reap_expired_account_deletions
+            from app.services.account_deletion_service import (
+                reap_expired_account_deletions,
+            )
 
             deleted = await reap_expired_account_deletions(db)
             await db.commit()
@@ -311,5 +319,12 @@ async def maintenance_activity(params: dict) -> dict:
                 logger.info("Reaped %d expired account deletion(s)", deleted)
     except Exception:
         logger.exception("Account deletion reaper failed")
+
+    try:
+        from app.services.document_cleanup import sweep_document_cleanup
+
+        await sweep_document_cleanup()
+    except Exception:
+        logger.exception("Document cleanup sweep failed; retained items will retry")
 
     return {"reconciled": reconciled}

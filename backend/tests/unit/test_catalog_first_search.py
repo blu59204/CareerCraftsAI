@@ -136,7 +136,12 @@ async def test_write_through_uses_live_source_and_shared_upsert():
 @pytest.mark.asyncio
 async def test_search_catalog_serves_fresh_rows_first_and_has_no_300_cap():
     rows = [
-        {**_job(i), "url": f"https://co{i}.example/job", "company": f"Co{i}", "occurrences": []}
+        {
+            **_job(i),
+            "url": f"https://co{i}.example/job",
+            "company": f"Co{i}",
+            "occurrences": [],
+        }
         for i in range(400)
     ]
     for r in rows:
@@ -260,7 +265,10 @@ async def test_catalog_requires_every_query_word_in_title_and_the_location(monke
         None,
         live_platforms=["jobspy"],
     )
-    assert [j["title"] for j in jobs] == ["Software Engineer", "Senior Software Engineer, Payments"]
+    assert [j["title"] for j in jobs] == [
+        "Software Engineer",
+        "Senior Software Engineer, Payments",
+    ]
 
 
 def test_jobspy_is_a_default_source_with_a_budget_linkedin_fits_in():
@@ -277,3 +285,51 @@ def test_dotted_country_and_city_coverage():
     assert in_city({"location": "Bangalore, India"}, ["Bengaluru"])
     assert not in_city({"location": "Remote"}, ["Bengaluru"])
     assert not in_city({"location": "Bengaluru"}, ["Remote"])
+
+
+@pytest.mark.asyncio
+async def test_live_and_warm_results_share_role_city_and_country_rules():
+    rows = [
+        _job(1, title="Software Engineer", location="Bengaluru, India", remote="onsite"),
+        _job(2, title="Finance Analyst", location="Bengaluru", remote="onsite"),
+        _job(
+            3,
+            title="Software Engineer",
+            location="New York, United States",
+            remote="onsite",
+        ),
+        _job(4, title="Software Engineer", location="Remote U.S.", remote="remote"),
+        _job(
+            5,
+            title="Senior Software Engineer",
+            location="Remote India",
+            remote="remote",
+        ),
+    ]
+    query = {
+        "titles": ["Software Engineer"],
+        "locations": ["Bengaluru"],
+        "max_results": 10,
+    }
+    cold, _ = await _search(
+        ["jobspy"],
+        AsyncMock(return_value=([], [])),
+        MagicMock(return_value=rows),
+        AsyncMock(),
+        **query,
+    )
+    warm, _ = await _search(
+        ["jobspy"],
+        AsyncMock(return_value=(rows, [])),
+        MagicMock(return_value=[]),
+        AsyncMock(),
+        **query,
+    )
+    assert {job["url"] for job in cold} == {rows[0]["url"], rows[4]["url"]}
+    assert {job["url"] for job in warm} == {job["url"] for job in cold}
+
+
+def test_shared_work_mode_treats_hybrid_separately_from_remote():
+    row = _job(1, remote="hybrid", location="Bengaluru (hybrid/remote)")
+    assert cat.matches_query(row, {"titles": ["Backend"], "remote": "hybrid"})
+    assert not cat.matches_query(row, {"titles": ["Backend"], "remote": "remote"})

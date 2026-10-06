@@ -92,7 +92,7 @@ function SwitchRow({
   title: string;
   description: ReactNode;
   checked: boolean;
-  onChange: (next: boolean) => void;
+  onChange?: (next: boolean) => void;
   children?: ReactNode;
 }) {
   return (
@@ -114,7 +114,7 @@ function SwitchRow({
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
           {children}
         </div>
-        <Toggle checked={checked} onChange={onChange} label={title} />
+        {onChange && <Toggle checked={checked} onChange={onChange} label={title} />}
       </div>
     </li>
   );
@@ -231,10 +231,9 @@ export default function AutomationSettingsPage() {
                 />
                 <SwitchRow
                   icon={<PaperPlaneTilt size={16} weight="light" />}
-                  title="Send verified recruiter emails without asking"
-                  description="After you approve three, emails to verified addresses go out on their own. Unverified addresses always wait for you."
-                  checked={form.outreach_auto_send}
-                  onChange={(v) => set("outreach_auto_send", v)}
+                  title="Review every recruiter email"
+                  description="Every outreach and follow-up waits for your explicit approval of the message and attachments."
+                  checked
                 >
                   <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-3">
                     <label className="flex items-center gap-2 text-xs text-muted-foreground">

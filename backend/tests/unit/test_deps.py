@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -99,3 +99,31 @@ async def test_reuses_claims_the_jwt_middleware_already_verified(mock_user, mock
 
     verify.assert_not_called()
     subject.assert_called_once_with({"sub": "user_123"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,allowed",
+    [
+        ("/api/v1/rag/documents", False),
+        ("/api/v1/agents/chat", False),
+        ("/api/v1/users/me/export", True),
+    ],
+)
+async def test_due_erasure_blocks_new_work_but_preserves_data_rights(
+    mock_user, mock_db, path, allowed
+):
+    mock_user.policy_accepted_at = datetime.now(UTC)
+    mock_user.deletion_scheduled_for = datetime.now(UTC) - timedelta(seconds=1)
+    request = _make_request("GET", path)
+    request.state.user = {"sub": "user_123"}
+    with (
+        patch("app.api.v1.deps.subject_from_payload", return_value="user_123"),
+        patch("app.api.v1.deps.get_or_provision_user", AsyncMock(return_value=mock_user)),
+    ):
+        if allowed:
+            assert await get_current_user(request, db=mock_db) is mock_user
+        else:
+            with pytest.raises(HTTPException) as failure:
+                await get_current_user(request, db=mock_db)
+            assert failure.value.status_code == 410

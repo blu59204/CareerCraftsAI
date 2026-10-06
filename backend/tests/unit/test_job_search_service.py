@@ -240,6 +240,7 @@ def _override_auth(monkeypatch):
     # and clerk_user_id so that guard short-circuits instead of calling out
     # to the real Clerk API with a MagicMock as the subject.
     model_row.email = "t@e.com"
+    model_row.deletion_scheduled_for = None
     model_row.clerk_user_id = "00000000-0000-0000-0000-000000000001"
     db = MagicMock()
     db.add = MagicMock()

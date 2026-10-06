@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,7 +35,9 @@ async def test_approval_runs_do_not_consume_admission_slots(monkeypatch):
     start = AsyncMock(return_value="agent-run/x")
     monkeypatch.setattr(starters, "start_agent_run", start)
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[MagicMock(), _result([])])
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = SimpleNamespace(id="user-1")
+    db.execute = AsyncMock(side_effect=[lock_result, MagicMock(), _result([])])
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.add = MagicMock()
@@ -54,6 +56,11 @@ async def test_approval_runs_do_not_consume_admission_slots(monkeypatch):
     # The row is committed before the workflow that reads it is started.
     db.commit.assert_awaited()
     start.assert_awaited_once_with(response["run_id"], "user-1")
+    active_query = db.execute.call_args_list[2].args[0]
+    params = active_query.compile().params
+    assert ["queued", "running"] in params.values()
+    assert "apply_prepare" in params.values()
+    assert "computer_action" in params.values()
 
 
 @pytest.mark.asyncio
@@ -69,7 +76,9 @@ async def test_run_fails_visibly_when_temporal_is_unreachable(monkeypatch):
         AsyncMock(side_effect=starters.WorkflowUnavailable("down")),
     )
     db = MagicMock()
-    db.execute = AsyncMock(side_effect=[MagicMock(), _result([])])
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = SimpleNamespace(id="user-1")
+    db.execute = AsyncMock(side_effect=[lock_result, MagicMock(), _result([])])
     db.commit = AsyncMock()
     added = []
     db.add = MagicMock(side_effect=added.append)
@@ -94,7 +103,9 @@ async def test_concurrency_error_includes_active_run_ids(monkeypatch):
     db = MagicMock()
     active = MagicMock()
     active.scalars.return_value.all.return_value = ["run-1", "run-2"]
-    db.execute = AsyncMock(side_effect=[MagicMock(), active])
+    lock_result = MagicMock()
+    lock_result.scalar_one_or_none.return_value = SimpleNamespace(id="user-1")
+    db.execute = AsyncMock(side_effect=[lock_result, MagicMock(), active])
     user = SimpleNamespace(id="user-1")
     request = _request()
 
@@ -121,7 +132,7 @@ async def test_maintenance_reconciles_runs_whose_workflow_is_gone(monkeypatch):
 
     from app.workflows import job_activities
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     orphan = SimpleNamespace(
         id=uuid.uuid4(),
         status="running",

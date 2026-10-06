@@ -104,35 +104,56 @@ def test_model_has_no_private_capability(operation):
 
 
 def test_upload_requires_stored_document_and_reviewed_snapshot():
-    valid = ComputerAction(operation="upload", computer_run="run", approved_snapshot=3,
-        parameters={"document_id": str(uuid.uuid4()), "ref": "e1", "snapshotId": 3})
+    valid = ComputerAction(
+        operation="upload",
+        computer_run="run",
+        approved_snapshot=3,
+        parameters={"document_id": str(uuid.uuid4()), "ref": "e1", "snapshotId": 3},
+    )
     valid.validate_operation(AGENT_WRITES)
     for changes in [{"approved_snapshot": 2}, {"computer_run": None}]:
         with pytest.raises(ValueError):
             valid.model_copy(update=changes).validate_operation(AGENT_WRITES)
     with pytest.raises(ValueError):
-        ComputerAction(operation="upload", parameters={"path": "/etc/passwd"}).validate_operation(AGENT_WRITES)
+        ComputerAction(operation="upload", parameters={"path": "/etc/passwd"}).validate_operation(
+            AGENT_WRITES
+        )
 
 
 @pytest.mark.asyncio
 async def test_upload_cannot_read_another_members_resume():
     from app.services.computer_service import act
+
     owner, document = uuid.uuid4(), uuid.uuid4()
     db = AsyncMock()
-    result = MagicMock(); result.scalar_one_or_none.return_value = None
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
     db.execute.return_value = result
-    context = AsyncMock(); context.__aenter__.return_value = db
-    with patch("app.core.database.AsyncSessionLocal", return_value=context), \
-         patch("app.services.computer_service.audit", new=AsyncMock(return_value="audit")), \
-         patch("app.services.computer_service.finish_audit", new=AsyncMock()), \
-         patch("app.services.computer_service.relay", new=AsyncMock()) as relay, \
-         patch("app.services.storage_service.download_file") as read:
+    context = AsyncMock()
+    context.__aenter__.return_value = db
+    with (
+        patch("app.core.database.AsyncSessionLocal", return_value=context),
+        patch("app.services.computer_service.audit", new=AsyncMock(return_value="audit")),
+        patch("app.services.computer_service.finish_audit", new=AsyncMock()),
+        patch("app.services.computer_service.relay", new=AsyncMock()) as relay,
+        patch("app.services.storage_service.download_file") as read,
+    ):
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc:
-            await act(owner, ComputerAction(operation="upload", computer_run="run", approved_snapshot=3,
-                parameters={"document_id": str(document), "ref": "e1", "snapshotId": 3}), "agent")
+            await act(
+                owner,
+                ComputerAction(
+                    operation="upload",
+                    computer_run="run",
+                    approved_snapshot=3,
+                    parameters={"document_id": str(document), "ref": "e1", "snapshotId": 3},
+                ),
+                "agent",
+            )
         assert exc.value.status_code == 404
-        read.assert_not_called(); relay.assert_not_called()
+        read.assert_not_called()
+        relay.assert_not_called()
         query = db.execute.await_args.args[0].compile()
         assert owner in query.params.values() and document in query.params.values()
 
@@ -150,11 +171,14 @@ def test_approval_payload_immutable():
 @pytest.mark.asyncio
 async def test_private_browser_lock_reports_required_input_without_reading_page():
     from fastapi import HTTPException
+
     from app.agents import computer_agent as agent
 
     run = SimpleNamespace(user_id=uuid.uuid4(), input={"context": {"task": "Open employer page"}})
     with (
-        patch.object(agent, "act", AsyncMock(side_effect=HTTPException(409, "Private input locked"))) as act,
+        patch.object(
+            agent, "act", AsyncMock(side_effect=HTTPException(409, "Private input locked"))
+        ) as act,
         patch.object(agent, "get_chat_gateway_llm", AsyncMock()) as gateway,
     ):
         result = await agent.plan(run)
@@ -194,7 +218,11 @@ async def test_planner_cannot_execute_own_proposal():
     db = MagicMock()
     db.__aenter__ = AsyncMock(return_value=db)
     db.__aexit__ = AsyncMock(return_value=False)
-    db.get = AsyncMock(return_value=SimpleNamespace(full_name="Test Candidate", email="test@example.com", phone=None, linkedin_url=None))
+    db.get = AsyncMock(
+        return_value=SimpleNamespace(
+            full_name="Test Candidate", email="test@example.com", phone=None, linkedin_url=None
+        )
+    )
     db.execute = AsyncMock(return_value=MagicMock())
     db.execute.return_value.scalars.return_value.first.return_value = None
     with (

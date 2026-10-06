@@ -50,6 +50,7 @@ _TOOL_ARGS_MAX_CHARS = 20000
 _SESSION_TTL_SECONDS = 3600
 _SESSION_KEY_PREFIX = "llm_gw:session:"
 
+
 def _get_redis() -> aioredis.Redis:
     from app.core.redis_client import get_redis
 
@@ -163,8 +164,7 @@ def _validate_tools(raw_tools) -> list | None:
             "type": "function",
             "function": {
                 "name": name,
-                "parameters": parameters
-                or {"type": "object", "properties": {}},
+                "parameters": parameters or {"type": "object", "properties": {}},
             },
         }
         if description:
@@ -332,9 +332,8 @@ async def proxy_llm_request(path: str, request: Request) -> Response:
         for call in result.tool_calls or []:
             tool_calls.append(
                 {
-                    "id": call.get("id") or "call_" + _generate_session_token(
-                        session["user_id"], session["provider"]
-                    ),
+                    "id": call.get("id")
+                    or "call_" + _generate_session_token(session["user_id"], session["provider"]),
                     "type": "function",
                     "function": {
                         "name": call["name"],

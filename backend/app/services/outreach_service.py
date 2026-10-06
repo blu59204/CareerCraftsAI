@@ -2,18 +2,17 @@
 and stop the moment the company answers.
 
 Rules this module enforces:
-- Only a verified-valid address can be sent without the member looking at it;
-  unverified ones are held for the member, invalid ones are never queued.
-- Every email is approved by the member until a few have been, and then only
-  if the member turned on auto-send.
-- At most `outreach_daily_cap` emails go out per rolling 24 hours.
-- One follow-up, FOLLOWUP_AFTER_DAYS after the first, and none once the
-  company has replied or the address bounced.
+- Every initial email and follow-up requires explicit approval of its payload.
+- Address validation cannot grant approval; invalid addresses are never queued.
+- Daily caps and reply/bounce detection apply after approval.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 import re
 import secrets
@@ -24,12 +23,11 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.database import AsyncSessionLocal
-from app.models.db import RecruiterOutreach, UserPreferences
+from app.models.db import RecruiterOutreach, User, UserPreferences
 
 logger = logging.getLogger(__name__)
 
 FOLLOWUP_AFTER_DAYS = 6
-AUTO_SEND_AFTER_APPROVED = 3  # emails the member approved by hand first
 DEFAULT_DAILY_CAP = 25
 # New senders start low and earn the member's cap slowly so Gmail does not
 # flag the account: RAMP_START a day, RAMP_STEP more each full week.
@@ -46,7 +44,7 @@ def initial_state(verdict: str, auto_send_allowed: bool) -> str | None:
         return None
     if verdict != "valid":
         return "held"
-    return "approved" if auto_send_allowed else "draft"
+    return "draft"
 
 
 def followup_text(company: str, role: str | None, contact_name: str = "") -> tuple[str, str]:
@@ -96,7 +94,8 @@ async def replied_domains(db, user_id: uuid.UUID) -> set[str]:
     """Companies where anyone has answered the member (see company_key)."""
     rows = await db.execute(
         select(RecruiterOutreach.to_email).where(
-            RecruiterOutreach.user_id == user_id, RecruiterOutreach.replied_at.is_not(None)
+            RecruiterOutreach.user_id == user_id,
+            RecruiterOutreach.replied_at.is_not(None),
         )
     )
     return {company_key(address) for address in rows.scalars().all()}
@@ -141,7 +140,10 @@ async def record_open(token: str) -> bool:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             update(RecruiterOutreach)
-            .where(RecruiterOutreach.open_token == token, RecruiterOutreach.opened_at.is_(None))
+            .where(
+                RecruiterOutreach.open_token == token,
+                RecruiterOutreach.opened_at.is_(None),
+            )
             .values(opened_at=datetime.now(UTC))
         )
         await db.commit()
@@ -200,20 +202,33 @@ async def _preferences(db, user_id: uuid.UUID) -> UserPreferences | None:
     ).scalar_one_or_none()
 
 
-async def auto_send_allowed(db, user_id: uuid.UUID) -> bool:
-    prefs = await _preferences(db, user_id)
-    if not prefs or not prefs.outreach_auto_send:
-        return False
-    approved = (
-        await db.execute(
-            select(func.count()).where(
-                RecruiterOutreach.user_id == user_id,
-                RecruiterOutreach.state == "sent",
-                RecruiterOutreach.approved_at.is_not(None),
-            )
-        )
-    ).scalar_one()
-    return approved >= AUTO_SEND_AFTER_APPROVED
+def payload_hash(row, attachments: list[tuple[str, bytes]]) -> str:
+    """Bind approval to the exact wording, recipient and attachment bytes."""
+    payload = {
+        "to": row.to_email,
+        "subject": row.subject,
+        "body": row.body,
+        "resume_document_id": (str(row.resume_document_id) if row.resume_document_id else None),
+        "attachments": [(name, hashlib.sha256(data).hexdigest()) for name, data in attachments],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+async def _attachments(row) -> list[tuple[str, bytes]]:
+    if not row.resume_document_id:
+        return []
+    from app.applications.submission import load_resume
+
+    pdf, _ = await load_resume(row.user_id, str(row.resume_document_id))
+    return [("Resume.pdf", pdf)]
+
+
+def has_current_approval(row, attachments) -> bool:
+    return bool(
+        row.approved_at
+        and row.approved_payload_hash
+        and hmac.compare_digest(row.approved_payload_hash, payload_hash(row, attachments))
+    )
 
 
 async def sent_in_last_day(db, user_id: uuid.UUID, now: datetime) -> int:
@@ -222,7 +237,8 @@ async def sent_in_last_day(db, user_id: uuid.UUID, now: datetime) -> int:
             select(func.count()).where(
                 RecruiterOutreach.user_id == user_id,
                 RecruiterOutreach.state.in_(("sending", "sent")),
-                RecruiterOutreach.sent_at > now - timedelta(hours=24),
+                func.coalesce(RecruiterOutreach.sent_at, RecruiterOutreach.sending_at)
+                > now - timedelta(hours=24),
             )
         )
     ).scalar_one()
@@ -266,13 +282,13 @@ async def queue_outreach(
     invalid or this application already has a first email."""
     owner = uuid.UUID(user_id)
     async with AsyncSessionLocal() as db:
-        state = initial_state(verdict, await auto_send_allowed(db, owner))
+        state = initial_state(verdict, False)
         if state is None:
             return None
         row = RecruiterOutreach(
             id=uuid.uuid4(),
             user_id=owner,
-            job_application_id=uuid.UUID(job_application_id) if job_application_id else None,
+            job_application_id=(uuid.UUID(job_application_id) if job_application_id else None),
             kind="initial",
             company=company,
             role=role,
@@ -283,7 +299,7 @@ async def queue_outreach(
             subject=subject,
             body=body,
             resume_version=resume_version,
-            resume_document_id=uuid.UUID(str(resume_document_id)) if resume_document_id else None,
+            resume_document_id=(uuid.UUID(str(resume_document_id)) if resume_document_id else None),
             state=state,
             approved_at=None,
         )
@@ -300,17 +316,28 @@ async def approve_outreach(user_id: str, outreach_id: str) -> bool:
     """The member's go-ahead for a held or draft email. Held (unverified)
     emails need this too: approving one is the member vouching for it."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            update(RecruiterOutreach)
-            .where(
-                RecruiterOutreach.id == uuid.UUID(outreach_id),
-                RecruiterOutreach.user_id == uuid.UUID(user_id),
-                RecruiterOutreach.state.in_(("held", "draft")),
+        row = (
+            await db.execute(
+                select(RecruiterOutreach)
+                .where(
+                    RecruiterOutreach.id == uuid.UUID(outreach_id),
+                    RecruiterOutreach.user_id == uuid.UUID(user_id),
+                    RecruiterOutreach.state.in_(("held", "draft")),
+                )
+                .with_for_update()
             )
-            .values(state="approved", approved_at=datetime.now(UTC))
-        )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        # Missing/replaced attachments cannot inherit approval of the old file.
+        try:
+            attachments = await _attachments(row)
+        except Exception:
+            return False
+        row.approved_payload_hash = payload_hash(row, attachments)
+        row.state, row.approved_at = "approved", datetime.now(UTC)
         await db.commit()
-        return result.rowcount == 1
+        return True
 
 
 async def cancel_outreach(user_id: str, outreach_id: str) -> bool:
@@ -362,7 +389,14 @@ async def outreach_stats(db, user_id: uuid.UUID) -> dict:
         .where(RecruiterOutreach.user_id == user_id)
         .group_by(RecruiterOutreach.state)
     )
-    stats = {"held": 0, "draft": 0, "approved": 0, "sent": 0, "failed": 0, "cancelled": 0}
+    stats = {
+        "held": 0,
+        "draft": 0,
+        "approved": 0,
+        "sent": 0,
+        "failed": 0,
+        "cancelled": 0,
+    }
     replied = bounced = opened = 0
     for state, count, replies, bounces, opens in rows.all():
         stats[state] = stats.get(state, 0) + count
@@ -371,6 +405,21 @@ async def outreach_stats(db, user_id: uuid.UUID) -> dict:
         opened += opens
     stats["replied"], stats["bounced"], stats["opened"] = replied, bounced, opened
     return stats
+
+
+async def _eligible_sender(db, owner, now) -> bool:
+    user = (
+        await db.execute(
+            select(User)
+            .where(User.id == owner)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    return bool(
+        user is not None
+        and (user.deletion_scheduled_for is None or user.deletion_scheduled_for > now)
+    )
 
 
 async def send_approved(user_id: str, gmail_factory=None) -> dict:
@@ -382,6 +431,9 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
     sent = failed = 0
     async with AsyncSessionLocal() as db:
         now = datetime.now(UTC)
+        # Always acquire the owner before outreach rows, matching account erasure.
+        if not await _eligible_sender(db, owner, now):
+            return {"sent": 0, "failed": 0, "cap_reached": False}
         prefs = await _preferences(db, owner)
         cap = prefs.outreach_daily_cap if prefs else DEFAULT_DAILY_CAP
         track = bool(prefs and prefs.outreach_track_opens)
@@ -410,9 +462,21 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
                 last_error="Sending was interrupted. Check your Sent folder before retrying.",
             )
         )
-        await db.commit()
+        await db.execute(
+            update(RecruiterOutreach)
+            .where(
+                RecruiterOutreach.user_id == owner,
+                RecruiterOutreach.state == "approved",
+                or_(
+                    RecruiterOutreach.approved_at.is_(None),
+                    RecruiterOutreach.approved_payload_hash.is_(None),
+                ),
+            )
+            .values(state="draft", approved_at=None, approved_payload_hash=None)
+        )
         room = max(cap - await sent_in_last_day(db, owner, now), 0)
         if room == 0:
+            await db.commit()
             return {"sent": 0, "failed": 0, "cap_reached": True}
         answered = await replied_domains(db, owner)
         rows = (
@@ -420,7 +484,8 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
                 await db.execute(
                     select(RecruiterOutreach)
                     .where(
-                        RecruiterOutreach.user_id == owner, RecruiterOutreach.state == "approved"
+                        RecruiterOutreach.user_id == owner,
+                        RecruiterOutreach.state == "approved",
                     )
                     .order_by(RecruiterOutreach.created_at)
                     .limit(room)
@@ -430,24 +495,55 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
             .scalars()
             .all()
         )
-        for row in rows:
+        for candidate in rows:
+            # Serialize quota reservation across send workers. A sending row's
+            # timestamp counts before Gmail returns, so two workers cannot both
+            # spend the last remaining slot.
+            if not await _eligible_sender(db, owner, datetime.now(UTC)):
+                await db.commit()
+                return {"sent": sent, "failed": failed, "cap_reached": False}
+            if await sent_in_last_day(db, owner, datetime.now(UTC)) >= cap:
+                await db.commit()
+                return {"sent": sent, "failed": failed, "cap_reached": True}
+            # A previous send commits and releases all selected locks. Reacquire
+            # and reload each row before claiming it, including across workers.
+            row = (
+                await db.execute(
+                    select(RecruiterOutreach)
+                    .where(
+                        RecruiterOutreach.id == candidate.id,
+                        RecruiterOutreach.user_id == owner,
+                        RecruiterOutreach.state == "approved",
+                    )
+                    .with_for_update(skip_locked=True)
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                continue
             if company_key(row.to_email) in answered:
                 # Someone at this company already replied: nothing more goes out.
                 row.state = "cancelled"
                 await db.commit()
                 continue
-            attachments = []
-            if row.resume_document_id:
-                from app.applications.submission import load_resume
-
-                try:
-                    pdf, _ = await load_resume(owner, str(row.resume_document_id))
-                except Exception:
-                    row.state, row.last_error = "failed", "The tailored resume is unavailable."
-                    failed += 1
-                    await db.commit()
-                    continue
-                attachments.append(("Resume.pdf", pdf))
+            try:
+                attachments = await _attachments(row)
+            except Exception:
+                row.state, row.last_error = (
+                    "failed",
+                    "The tailored resume is unavailable.",
+                )
+                failed += 1
+                await db.commit()
+                continue
+            if not has_current_approval(row, attachments):
+                row.state = "draft"
+                row.approved_at = row.approved_payload_hash = None
+                row.last_error = "Message or attachment changed; review and approve again."
+                await db.commit()
+                continue
+            # Freeze the values used by Gmail before releasing the SQL row lock.
+            recipient, subject, body = row.to_email, row.subject, row.body
             # Recorded before the send so a crash can never send it twice.
             row.state, row.sending_at = "sending", now
             await db.commit()
@@ -456,12 +552,12 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
                 extra["attachments"] = attachments
             if track:
                 token = secrets.token_urlsafe(24)
-                if html := tracked_html(row.body, token):
+                if html := tracked_html(body, token):
                     row.open_token = token
                     extra["html"] = html
             try:
                 response = await asyncio.to_thread(
-                    gmail.send_message, row.to_email, row.subject, row.body, **extra
+                    gmail.send_message, recipient, subject, body, **extra
                 )
             except GmailSendError as exc:
                 row.state, row.last_error = "failed", str(exc)[:500]
@@ -475,6 +571,7 @@ async def send_approved(user_id: str, gmail_factory=None) -> dict:
                     row.followup_due_at = row.sent_at + timedelta(days=FOLLOWUP_AFTER_DAYS)
                 sent += 1
             await db.commit()
+        await db.commit()
     return {"sent": sent, "failed": failed, "cap_reached": False}
 
 
@@ -484,7 +581,6 @@ async def queue_due_followups(user_id: str, now: datetime | None = None) -> int:
     now = now or datetime.now(UTC)
     queued = 0
     async with AsyncSessionLocal() as db:
-        allow_auto = await auto_send_allowed(db, owner)
         answered = await replied_domains(db, owner)
         due = (
             (
@@ -523,7 +619,7 @@ async def queue_due_followups(user_id: str, now: datetime | None = None) -> int:
                     subject=subject,
                     body=body,
                     resume_version=original.resume_version,
-                    state="approved" if allow_auto and original.verdict == "valid" else "draft",
+                    state="draft",
                 )
             )
             original.followup_due_at = None  # never queue a second follow-up

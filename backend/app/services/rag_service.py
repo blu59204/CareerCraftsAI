@@ -1,4 +1,3 @@
-import io
 import logging
 import re
 
@@ -89,18 +88,13 @@ def collection_name(user_id: str, doc_type: str, provider: str = "openai") -> st
 
 
 def extract_text(content: bytes, filename: str) -> str:
-    lower = filename.lower()
-    if lower.endswith(".pdf"):
-        import fitz  # PyMuPDF
+    # The filename is descriptive only; verified bytes select the parser.
+    from app.services.document_parsing import extract_verified_text, sniff_content_type
 
-        doc = fitz.open(stream=content, filetype="pdf")
-        return "\n".join(page.get_text() for page in doc)
-    if lower.endswith(".docx"):
-        from docx import Document as DocxDocument
-
-        doc = DocxDocument(io.BytesIO(content))
-        return "\n".join(p.text for p in doc.paragraphs)
-    return content.decode("utf-8", errors="replace")
+    content_type = sniff_content_type(content)
+    if content_type is None:
+        raise ValueError("Unsupported or unsafe document")
+    return extract_verified_text(content, content_type)
 
 
 def chunk_text(text: str) -> list[str]:
@@ -205,24 +199,59 @@ def get_vector_store(user_id: str, doc_type: str, embeddings, provider: str = "o
 
 
 def _ensure_hnsw_index() -> None:
-    """Create the LangChain embedding HNSW index after the table exists."""
-    try:
-        from sqlalchemy import create_engine, text
+    """Index each supported dimension; retrieval uses the same cast/predicate."""
+    from sqlalchemy import text
 
-        engine = create_engine(_psycopg_url(), pool_pre_ping=True)
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                conn.execute(text("""
-                    CREATE INDEX IF NOT EXISTS idx_langchain_embedding_hnsw
-                    ON public.langchain_pg_embedding
-                    USING hnsw (embedding vector_cosine_ops)
-                    WITH (m = 16, ef_construction = 64)
-                """))
-        finally:
-            engine.dispose()
-    except Exception as exc:
-        logger.warning("Failed to ensure langchain_pg_embedding HNSW index: %s", exc)
+    from app.core.sync_db import _get_sync_factory
+
+    with _get_sync_factory()() as db:
+        for dimension in sorted(set(EMBEDDING_DIMENSIONS.values())):
+            db.execute(text(f"""
+                CREATE INDEX IF NOT EXISTS idx_langchain_embedding_hnsw_{dimension}
+                ON public.langchain_pg_embedding
+                USING hnsw ((embedding::vector({dimension})) vector_cosine_ops)
+                WITH (m = 16, ef_construction = 64)
+                WHERE vector_dims(embedding) = {dimension}
+            """))
+        db.commit()
+
+
+def _search_live_documents(user_id, doc_type, provider, embeddings, query, k):
+    """Legacy/unowned/orphaned vectors never enter a model prompt."""
+    from sqlalchemy import text
+
+    from app.core.sync_db import _get_sync_factory
+
+    dimension = EMBEDDING_DIMENSIONS[provider]
+    vector = embeddings.embed_query(query)
+    if len(vector) != dimension:
+        raise ValueError("Embedding dimension mismatch")
+    with _get_sync_factory()() as db:
+        rows = db.execute(
+            text(f"""
+            SELECT e.document, e.cmetadata
+            FROM langchain_pg_embedding e
+            JOIN langchain_pg_collection c ON c.uuid = e.collection_id
+            WHERE c.name = :collection
+              AND vector_dims(e.embedding) = {dimension}
+              AND e.cmetadata->>'user_id' = :owner
+              AND EXISTS (
+                  SELECT 1 FROM user_documents d
+                  WHERE d.id::text = e.cmetadata->>'document_id'
+                    AND d.user_id::text = :owner AND d.doc_type = :doc_type
+              )
+            ORDER BY e.embedding::vector({dimension}) <=> CAST(:query AS vector({dimension}))
+            LIMIT :limit
+        """),  # noqa: S608 # nosec B608
+            {
+                "collection": collection_name(user_id, doc_type, provider),
+                "owner": str(user_id),
+                "doc_type": doc_type,
+                "query": "[" + ",".join(str(float(v)) for v in vector) + "]",
+                "limit": max(1, min(k, 100)),
+            },
+        ).all()
+    return [Document(page_content=row.document, metadata=row.cmetadata or {}) for row in rows]
 
 
 def ingest_document(
@@ -233,16 +262,21 @@ def ingest_document(
     model_settings,
 ) -> int:
     """Chunk, embed, store. Returns chunk count."""
+    if not metadata.get("document_id"):
+        raise ValueError("document_id is required for owned vector ingestion")
+    metadata = {**metadata, "user_id": str(user_id), "doc_type": doc_type}
     chunks = chunk_text(text)
     embeddings = get_embedding_model(model_settings)
     docs = [
         Document(page_content=chunk, metadata={**metadata, "chunk_index": i})
         for i, chunk in enumerate(chunks)
     ]
-    store = get_vector_store(
-        user_id, doc_type, embeddings, provider=get_embedding_provider(model_settings)
+    provider = get_embedding_provider(model_settings)
+    store = get_vector_store(user_id, doc_type, embeddings, provider=provider)
+    store.add_documents(
+        docs,
+        ids=[f"{metadata['document_id']}:{provider}:{i}" for i in range(len(docs))],
     )
-    store.add_documents(docs)
     _ensure_hnsw_index()
     return len(docs)
 
@@ -257,7 +291,7 @@ def retrieve(
     """Retrieve top-k relevant chunks."""
     if doc_type == "resume":
         # A resume the member picked for this run replaces similarity search:
-        # vectors carry no document id, so other resumes would leak into the context.
+        # Restrict context to that selection regardless of similarity ranking.
         from app.core.sync_db import fetch_chosen_resume
 
         chosen = fetch_chosen_resume(user_id)
@@ -268,10 +302,14 @@ def retrieve(
             ]
     try:
         embeddings = get_embedding_model(model_settings)
-        store = get_vector_store(
-            user_id, doc_type, embeddings, provider=get_embedding_provider(model_settings)
+        return _search_live_documents(
+            user_id,
+            doc_type,
+            get_embedding_provider(model_settings),
+            embeddings,
+            query,
+            k,
         )
-        return store.similarity_search(query, k=k)
     except Exception as exc:
         logger.warning("Vector retrieval failed for %s/%s: %s", user_id, doc_type, exc)
         if doc_type == "resume":

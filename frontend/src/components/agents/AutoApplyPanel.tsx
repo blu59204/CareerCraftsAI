@@ -189,19 +189,13 @@ export function AutoApplyPanel() {
         </div>
         <div className="mt-4 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p id="auto-send" className="text-sm text-foreground">
-              Auto-send outreach (skip review)
+            <p className="text-sm text-foreground">
+              Review every outreach email
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Off by default: emails wait in Outreach for your approval. On sends them without you looking.
+              Outreach and follow-up drafts wait in Outreach until you approve the message and attachments.
             </p>
           </div>
-          <Switch
-            aria-labelledby="auto-send"
-            checked={Boolean(prefs?.outreach_auto_send)}
-            disabled={prefsLoading}
-            onCheckedChange={(v) => patch.mutate({ outreach_auto_send: v })}
-          />
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
           Applications always open in your browser for you to review and submit. Rule actions are logged.

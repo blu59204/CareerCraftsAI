@@ -1,22 +1,22 @@
 import asyncio
-import io
 import logging
 import os
 import re
 import uuid
-import zipfile
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
+from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.models.db import User, UserDocument, UserModelSettings
 from app.services.drive_service import DriveError, upload_to_drive
-from app.services.rag_service import EmbeddingUnavailable, extract_text, ingest_document
-from app.services.storage_service import delete_file, download_file, upload_file
+from app.services.rag_service import EmbeddingUnavailable, ingest_document
+from app.services.storage_service import download_file, upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -45,18 +45,41 @@ _BINARY_MAGICS = (
 
 
 def _sniff_content_type(content: bytes) -> str | None:
-    """Identify the file's real type from its bytes — never trust the client's declared Content-Type."""
-    if content.startswith(_PDF_MAGIC):
-        return "application/pdf"
-    if content.startswith(_ZIP_MAGICS) and zipfile.is_zipfile(io.BytesIO(content)):
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    if not content.startswith(_BINARY_MAGICS) and b"\x00" not in content[:8192]:
-        try:
-            content.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
-        return "text/plain"
-    return None
+    from app.services.document_parsing import sniff_content_type
+
+    return sniff_content_type(content)
+
+
+async def _read_bounded(file: UploadFile) -> bytes:
+    content = bytearray()
+    while True:
+        piece = await file.read(min(65536, MAX_SIZE_BYTES + 1 - len(content)))
+        if not piece:
+            return bytes(content)
+        content.extend(piece)
+        if len(content) > MAX_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="File too large — max 10 MB")
+
+
+_parser_slots = asyncio.Semaphore(2)
+
+
+async def _lock_document_owner(db: AsyncSession, owner_id) -> User:
+    """Serialize storage writes/primary selection with the account eraser."""
+    owner = (
+        await db.execute(
+            select(User)
+            .where(User.id == owner_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if owner is None or (
+        owner.deletion_scheduled_for is not None
+        and owner.deletion_scheduled_for <= datetime.now(UTC)
+    ):
+        raise HTTPException(status_code=403, detail="Account deletion is in progress")
+    return owner
 
 
 def _safe_filename(filename: str | None) -> str:
@@ -177,7 +200,9 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=201)
+@limiter.limit(settings.RATE_LIMIT_UPLOAD)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     doc_type: str = Form(...),
     is_primary: bool = Form(False),
@@ -189,7 +214,7 @@ async def upload_document(
             status_code=400,
             detail=f"Invalid doc_type. Must be one of: {VALID_DOC_TYPES}",
         )
-    content = await file.read()
+    content = await _read_bounded(file)
     if len(content) > MAX_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="File too large — max 10 MB")
 
@@ -203,33 +228,31 @@ async def upload_document(
         )
     safe_filename = _safe_filename(file.filename)
 
+    from app.services.document_parsing import parse_isolated
+
+    if _parser_slots.locked():
+        raise HTTPException(status_code=429, detail="Document parsers are busy; retry shortly")
+    try:
+        async with _parser_slots:
+            raw_text = await asyncio.to_thread(parse_isolated, content, sniffed_type)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422, detail="Could not read this document within parsing limits"
+        ) from exc
+
+    current_user = await _lock_document_owner(db, current_user.id)
     storage_path = upload_file(
         str(current_user.id),
         safe_filename,
         content,
         sniffed_type,
     )
-    try:
-        # PDF/DOCX parsing is CPU-bound: keep it off the event loop.
-        raw_text = await asyncio.to_thread(extract_text, content, safe_filename)
-    except Exception as exc:
-        # Nothing refers to the stored file yet, so do not leave it behind.
-        from app.services.storage_service import delete_file
-
-        try:
-            delete_file(storage_path, str(current_user.id))
-        except Exception:
-            logger.warning("Could not remove the file of a rejected upload", exc_info=True)
-        logger.warning(
-            "Text extraction failed for %s (user=%s): %s", safe_filename, current_user.id, exc
-        )
-        raise HTTPException(
-            status_code=422,
-            detail="Could not read this document — it may be corrupted or not a valid file of its declared type.",
-        ) from exc
     upload_warning: str | None = None
     if safe_filename.lower().endswith(".pdf") and len(raw_text.strip()) < 100:
-        upload_warning = "Scanned or image-only PDF detected — text extraction yielded little content. Re-upload a text-based PDF for best results."
+        upload_warning = (
+            "Scanned or image-only PDF detected — text extraction yielded little content. "
+            "Re-upload a text-based PDF for best results."
+        )
 
     result = await db.execute(
         select(UserModelSettings).where(
@@ -239,6 +262,7 @@ async def upload_document(
     )
     model_settings = result.scalars().first()
 
+    document_id = uuid.uuid4()
     embedded_at = None
     if model_settings:
         try:
@@ -251,6 +275,7 @@ async def upload_document(
                     "user_id": str(current_user.id),
                     "doc_type": doc_type,
                     "filename": safe_filename,
+                    "document_id": str(document_id),
                 },
                 model_settings,
             )
@@ -277,6 +302,7 @@ async def upload_document(
     if is_primary and doc_type == "resume":
         await _clear_primary_resume(db, current_user.id)
     doc = UserDocument(
+        id=document_id,
         user_id=current_user.id,
         doc_type=doc_type,
         filename=safe_filename,
@@ -285,7 +311,7 @@ async def upload_document(
         embedded_at=embedded_at,
         is_primary=is_primary,
         # Image-only PDFs extract no text, so there is nothing to score.
-        ats_data=None if raw_text.strip() or doc_type != "resume" else {"score_error": "no_text"},
+        ats_data=(None if raw_text.strip() or doc_type != "resume" else {"score_error": "no_text"}),
     )
     db.add(doc)
     await db.flush()
@@ -393,13 +419,16 @@ async def activate_resume(
     the dashboard and resume page (both read ``ats_score``) follow it."""
     from app.core.background import spawn_background
 
+    await _lock_document_owner(db, current_user.id)
     doc = (
         await db.execute(
-            select(UserDocument).where(
+            select(UserDocument)
+            .where(
                 UserDocument.id == document_id,
                 UserDocument.user_id == current_user.id,
                 UserDocument.doc_type == "resume",
             )
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if not doc:
@@ -452,13 +481,11 @@ async def delete_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    storage_path = doc.storage_path
+    from app.services.document_cleanup import enqueue_document_cleanup
+
+    await enqueue_document_cleanup(db, doc)
     await db.delete(doc)
     await db.flush()
-    try:
-        delete_file(storage_path, owner_id=str(current_user.id))
-    except Exception as exc:
-        logger.warning("Storage file delete failed for %s (best-effort): %s", storage_path, exc)
 
 
 _DRIVE_MIME_BY_EXT = {

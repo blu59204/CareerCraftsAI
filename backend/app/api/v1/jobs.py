@@ -4,14 +4,13 @@ import logging
 import re
 import urllib.parse
 import uuid
-from collections import Counter
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
@@ -54,7 +53,11 @@ class JobSearchRequest(JobSearchQuerySchema):
 
 
 def make_job_search_id(
-    user_id: str, search_query: str, location: str, max_results: int, filters: dict | None = None
+    user_id: str,
+    search_query: str,
+    location: str,
+    max_results: int,
+    filters: dict | None = None,
 ) -> str:
     """Content hash of a search — identical repeat clicks reuse the run
     that is already in flight instead of starting another."""
@@ -867,13 +870,18 @@ async def search_jobs(
 _SORTS = {
     "found_desc": (JobApplication.found_at.desc(),),
     "found_asc": (JobApplication.found_at.asc(),),
-    "match_desc": (JobApplication.match_score.desc().nulls_last(), JobApplication.found_at.desc()),
-    "match_asc": (JobApplication.match_score.asc().nulls_last(), JobApplication.found_at.desc()),
+    "match_desc": (
+        JobApplication.match_score.desc().nulls_last(),
+        JobApplication.found_at.desc(),
+    ),
+    "match_asc": (
+        JobApplication.match_score.asc().nulls_last(),
+        JobApplication.found_at.desc(),
+    ),
 }
 
 
-async def _filtered_applications(
-    db: AsyncSession,
+def _application_query(
     user_id: uuid.UUID,
     *,
     status: str | None = None,
@@ -885,12 +893,35 @@ async def _filtered_applications(
     found_before: datetime | None = None,
     sort: str | None = None,
     q: str | None = None,
-) -> list[JobApplication]:
-    """Shared by the list view and the Sheets export so both see the same rows."""
+):
+    """Filters owned rows in SQL for paging, counts and exports."""
     if status and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of: {VALID_STATUSES}")
 
     query = select(JobApplication).where(JobApplication.user_id == user_id)
+    host = func.substring(
+        func.coalesce(JobApplication.job_url, ""),
+        r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//(?:[^/?#]*@)?([^:/?#]+)",
+    )
+    query = query.where(~func.coalesce(func.lower(host).op("~")(r"(^|\.)example\.com$"), False))
+    filters = {item.strip().lower() for item in (location or "").split(",") if item.strip()}
+    for mode in filters & {"remote", "hybrid"}:
+        query = query.where(JobApplication.location.icontains(mode, autoescape=True))
+    if "onsite" in filters:
+        query = query.where(~JobApplication.location.icontains("remote", autoescape=True))
+    cities = filters - {"remote", "hybrid", "onsite"}
+    if cities:
+        query = query.where(
+            or_(
+                *(
+                    JobApplication.location.icontains(name, autoescape=True)
+                    for city in cities
+                    for name in _CITY_NAMES.get(city, (city,))
+                )
+            )
+        )
+    if filters:
+        query = query.where(JobApplication.location.is_not(None), JobApplication.location != "")
     if status:
         query = query.where(JobApplication.status == status)
     if source:
@@ -898,7 +929,7 @@ async def _filtered_applications(
     if posted_within_days:
         query = query.where(
             JobApplication.posted_at
-            >= datetime.now(timezone.utc) - timedelta(days=posted_within_days)  # noqa: UP017
+            >= datetime.now(UTC) - timedelta(days=posted_within_days)  # noqa: UP017
         )
     if min_match is not None:
         query = query.where(JobApplication.match_score >= min_match)
@@ -920,15 +951,19 @@ async def _filtered_applications(
     elif status == "saved":
         order = (JobApplication.match_score.desc().nulls_last(),)
     else:
-        order = (JobApplication.applied_at.desc().nulls_last(), JobApplication.found_at.desc())
-    result = await db.execute(query.order_by(*order))
-    # ponytail: example-URL/location filters run in Python over the member's own
-    # rows (hundreds, not millions); move them into SQL if that ever changes.
-    return [
-        app
-        for app in result.scalars().all()
-        if not is_example_job_url(app.job_url) and _matches_location_filter(app, location)
-    ]
+        order = (
+            JobApplication.applied_at.desc().nulls_last(),
+            JobApplication.found_at.desc(),
+        )
+    return query.order_by(*order, JobApplication.id.asc())
+
+
+async def _filtered_applications(
+    db: AsyncSession, user_id: uuid.UUID, **filters
+) -> list[JobApplication]:
+    """Exports deliberately request all matching rows, using the list's filters."""
+    result = await db.execute(_application_query(user_id, **filters))
+    return list(result.scalars().all())
 
 
 @router.get("/applications", response_model=list[ApplicationResponse])
@@ -952,8 +987,7 @@ async def list_applications(
     offset/limit) is returned in the ``X-Total-Count`` header and per-stage
     counts in ``X-Stage-Counts`` (JSON), so the body stays a plain list for
     existing callers and a paged view can still show whole-list stats."""
-    apps = await _filtered_applications(
-        db,
+    query = _application_query(
         current_user.id,
         status=status,
         location=location,
@@ -965,9 +999,19 @@ async def list_applications(
         sort=sort,
         q=q,
     )
-    response.headers["X-Total-Count"] = str(len(apps))
-    response.headers["X-Stage-Counts"] = json.dumps(Counter(a.status for a in apps))
-    apps = apps[offset : offset + limit] if limit else apps[offset:]
+    counts = (
+        await db.execute(
+            query.order_by(None)
+            .with_only_columns(JobApplication.status, func.count())
+            .group_by(JobApplication.status)
+        )
+    ).all()
+    response.headers["X-Total-Count"] = str(sum(count for _, count in counts))
+    response.headers["X-Stage-Counts"] = json.dumps(dict(counts))
+    page = query.offset(offset)
+    if limit:
+        page = page.limit(limit)
+    apps = list((await db.execute(page)).scalars().all())
     return await _with_tracking(db, current_user.id, apps)
 
 
@@ -1012,7 +1056,16 @@ async def export_applications_sheet(
     )
     rows = [["Company", "Role", "Location", "Match", "Status", "Found", "URL", "Source"]]
     rows += [
-        [a.company, a.role, a.location, a.match_score, a.status, a.found_at, a.job_url, a.source]
+        [
+            a.company,
+            a.role,
+            a.location,
+            a.match_score,
+            a.status,
+            a.found_at,
+            a.job_url,
+            a.source,
+        ]
         for a in apps
     ]
     csv = "\r\n".join(",".join(_csv_cell(c) for c in row) for row in rows)
@@ -1043,7 +1096,11 @@ async def export_applications_sheet(
 
 
 async def _owned_applications(
-    db: AsyncSession, user_id: uuid.UUID, ids: list[uuid.UUID], *, include_deleted: bool = False
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    ids: list[uuid.UUID],
+    *,
+    include_deleted: bool = False,
 ) -> list[JobApplication]:
     rows = await db.execute(
         select(JobApplication)
@@ -1144,7 +1201,11 @@ async def set_apply_state(
     app = apps[0]
     app.apply_state = body.state
     db.add(
-        ActionLog(user_id=current_user.id, job_application_id=app.id, action=f"apply_{body.state}")
+        ActionLog(
+            user_id=current_user.id,
+            job_application_id=app.id,
+            action=f"apply_{body.state}",
+        )
     )
     await db.commit()
     if body.state == "applied" and app.status == "saved":
@@ -1354,7 +1415,8 @@ async def prepare_application_apply(
     ).scalar_one_or_none()
     if attempt and attempt.state in ACTIVE_SUBMISSION_STATES:
         raise HTTPException(
-            status_code=409, detail="Verify the existing application before applying again"
+            status_code=409,
+            detail="Verify the existing application before applying again",
         )
 
     if not await has_active_device(db, current_user.id):

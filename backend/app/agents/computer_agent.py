@@ -4,11 +4,11 @@ import json
 
 from fastapi import HTTPException
 from langchain_core.messages import HumanMessage, SystemMessage
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.core.llm_gateway import get_chat_gateway_llm
 from app.models.db import AgentRun, User, UserDocument
-from sqlalchemy import select
 from app.services.computer_service import AGENT_WRITES, ComputerAction, act
 
 PROPOSAL = {
@@ -24,7 +24,8 @@ PROPOSAL = {
                     "type": "object",
                     "description": (
                         "navigate:{url}; click:{ref,snapshotId}; "
-                        "type:{ref,snapshotId,text}; scroll:{deltaY}; upload:{ref,snapshotId,document_id}"
+                        "type:{ref,snapshotId,text}; scroll:{deltaY}; "
+                        "upload:{ref,snapshotId,document_id}"
                     ),
                 },
                 "summary": {"type": "string"},
@@ -71,22 +72,34 @@ async def plan(run: AgentRun, note="") -> dict:
                     "message": (
                         "Start or resume your computer, finish private login "
                         "and release human control, then ask again."
-                    )
+                    ),
                 },
             }
         raise
     async with AsyncSessionLocal() as db:
         user = await db.get(User, run.user_id)
-        resume = (await db.execute(select(UserDocument).where(
-            UserDocument.user_id == run.user_id, UserDocument.doc_type == "resume",
-            UserDocument.is_primary == True  # noqa: E712
-        ))).scalars().first()
-        profile = {"full_name": user.full_name if user else None,
-            "email": user.email if user else None, "phone": user.phone if user else None,
+        resume = (
+            (
+                await db.execute(
+                    select(UserDocument).where(
+                        UserDocument.user_id == run.user_id,
+                        UserDocument.doc_type == "resume",
+                        UserDocument.is_primary == True,  # noqa: E712
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        profile = {
+            "full_name": user.full_name if user else None,
+            "email": user.email if user else None,
+            "phone": user.phone if user else None,
             "linkedin_url": user.linkedin_url if user else None,
             "resume_text": (resume.raw_text or "")[:8000] if resume else "",
             "resume_document_id": str(resume.id) if resume else None,
-            "resume_filename": resume.filename if resume else None}
+            "resume_filename": resume.filename if resume else None,
+        }
         try:
             llm = await get_chat_gateway_llm(str(run.user_id), db)
         except HTTPException as exc:

@@ -168,18 +168,24 @@ async def refresh_source(source: Source, query="", force=False) -> tuple[list[di
                 break
             await asyncio.sleep(1)
     except Exception as exc:
-        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {401, 403, 429}:
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {
+            401,
+            403,
+            429,
+        }:
             retry_after = 3600
             try:
                 retry_after = max(
-                    3600, min(86400, int(exc.response.headers.get("retry-after", "3600")))
+                    3600,
+                    min(86400, int(exc.response.headers.get("retry-after", "3600"))),
                 )
             except ValueError:
                 pass
         # Never log URL/request/response bodies: they may contain API keys.
         warning = f"{source.id}: {type(exc).__name__}"
         logger.warning(
-            "job_source_failure", extra={"source_id": source.id, "error_type": type(exc).__name__}
+            "job_source_failure",
+            extra={"source_id": source.id, "error_type": type(exc).__name__},
         )
         jobs = cached["cached_jobs"] or []
     interval = timedelta(hours=24 if source.family == "remotive" else source.refresh_hours)
@@ -297,6 +303,36 @@ def _location_ok(job: dict, locations: list[str]) -> bool:
     return False
 
 
+def matches_query(job: dict, query: dict) -> bool:
+    """The same relevance contract for catalog and live results."""
+    terms = (
+        (" ".join(query.get("titles") or []) or query.get("search_query") or "software engineer")
+        .lower()
+        .split()
+    )
+    keywords = [word for word in terms if len(word) > 2 and word not in _STOPWORDS]
+    locations = [str(x) for x in (query.get("locations") or [query.get("location") or ""]) if x]
+    if not all(word in str(job.get("title") or "").lower() for word in keywords):
+        return False
+    if not _location_ok(job, locations):
+        return False
+    mode = str(query.get("remote") or "any").lower()
+    if mode not in {"remote", "hybrid", "onsite"}:
+        return True
+    where = str(job.get("location") or "").lower()
+    remote = str(job.get("remote") or "").lower()
+    actual = (
+        "hybrid"
+        if "hybrid" in remote or "hybrid" in where
+        else (
+            "remote"
+            if job.get("remote") is True or "remote" in remote or "remote" in where
+            else "onsite"
+        )
+    )
+    return actual == mode
+
+
 async def search_catalog(query: dict, selected_sources=None, live_platforms=()):
     """Serve fresh shared-catalog jobs first; refresh public sources only for a shortfall.
 
@@ -318,26 +354,9 @@ async def search_catalog(query: dict, selected_sources=None, live_platforms=()):
     )
     days = query.get("posted_within_days", 30)
     need = int(query.get("max_results") or 10)
-    locations = [str(x) for x in (query.get("locations") or [query.get("location") or ""]) if x]
-    remote = query.get("remote", "any")
-
-    keywords = [w for w in terms if len(w) > 2 and w not in _STOPWORDS]
 
     def relevant_of(rows):
-        # Every query word must be in the title: "engineer" appears in nearly every
-        # posting's description, so matching descriptions returned unrelated roles.
-        out = [
-            j
-            for j in dedupe(rows, days)
-            if all(w in j["title"].lower() for w in keywords) and _location_ok(j, locations)
-        ]
-        if remote in {"remote", "hybrid", "onsite"}:
-            out = [
-                j
-                for j in out
-                if j["remote"] == remote or (remote == "onsite" and j["remote"] == "unknown")
-            ]
-        return out
+        return [job for job in dedupe(rows, days) if matches_query(job, query)]
 
     async with AsyncSessionLocal() as db:
         rows = (

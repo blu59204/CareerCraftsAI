@@ -1,17 +1,27 @@
 """Targeted browser-profile persistence proof with disposable fixture data."""
+
 import json
 import os
 import uuid
+
 import httpx
 
-c = httpx.Client(base_url="http://127.0.0.1:4302", timeout=75,
-                 headers={"Authorization": "Bearer " + os.environ["SANDBOX_RELAY_TOKEN"]})
+c = httpx.Client(
+    base_url="http://127.0.0.1:4302",
+    timeout=75,
+    headers={"Authorization": "Bearer " + os.environ["SANDBOX_RELAY_TOKEN"]},
+)
 user = str(uuid.uuid4())
 base = f"/users/{user}"
+
+
 def action(op, params=None):
-    response = c.post(base + "/action", json={"operation": op, "parameters": params or {}})
+    response = c.post(
+        base + "/action", json={"operation": op, "parameters": params or {}}
+    )
     response.raise_for_status()
     return response.json()
+
 
 try:
     c.post(base + "/start").raise_for_status()
@@ -24,20 +34,42 @@ try:
     refs = {x["name"]: x["ref"] for x in snapshot["elements"]}
     action("control/release", {"requestId": request})
     snapshot = action("snapshot")
+
     # These synthetic nonsecret fields can use the model action path.
     def agent(op, params):
-        response = c.post(base + "/action", json={"operation": op, "parameters": params,
-            "actor": "agent", "computer_run": snapshot["computer_run"], "approved_snapshot": snapshot["snapshotId"]})
+        response = c.post(
+            base + "/action",
+            json={
+                "operation": op,
+                "parameters": params,
+                "actor": "agent",
+                "computer_run": snapshot["computer_run"],
+                "approved_snapshot": snapshot["snapshotId"],
+            },
+        )
         response.raise_for_status()
-    for label, value in [("Full name", "Synthetic Profile Test"), ("Email", "fixture@example.com"), ("Cover letter", "Profile persistence test")]:
+
+    for label, value in [
+        ("Full name", "Synthetic Profile Test"),
+        ("Email", "fixture@example.com"),
+        ("Cover letter", "Profile persistence test"),
+    ]:
         refs = {x["name"]: x["ref"] for x in snapshot["elements"]}
-        agent("type", {"ref": refs[label], "snapshotId": snapshot["snapshotId"], "text": value})
+        agent(
+            "type",
+            {"ref": refs[label], "snapshotId": snapshot["snapshotId"], "text": value},
+        )
         snapshot = action("snapshot")
     refs = {x["name"]: x["ref"] for x in snapshot["elements"]}
-    agent("click", {"ref": refs["Submit test application"], "snapshotId": snapshot["snapshotId"]})
+    agent(
+        "click",
+        {"ref": refs["Submit test application"], "snapshotId": snapshot["snapshotId"]},
+    )
     c.post(base + "/stop").raise_for_status()
     c.post(base + "/start").raise_for_status()
-    request = action("control/request", {"reason": "Review restored browser"})["request"]["id"]
+    request = action("control/request", {"reason": "Review restored browser"})[
+        "request"
+    ]["id"]
     action("control/take", {"requestId": request})
     action("human/navigate", {"url": "http://test-portal/"})
     action("control/release", {"requestId": request})

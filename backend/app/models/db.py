@@ -17,7 +17,13 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, Session, mapped_column, relationship, with_loader_criteria
+from sqlalchemy.orm import (
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    with_loader_criteria,
+)
 
 from app.core.database import Base
 
@@ -144,7 +150,9 @@ def _hide_deleted_applications(state) -> None:
     if state.is_select and not state.execution_options.get("include_deleted", False):
         state.statement = state.statement.options(
             with_loader_criteria(
-                JobApplication, lambda cls: cls.deleted_at.is_(None), include_aliases=True
+                JobApplication,
+                lambda cls: cls.deleted_at.is_(None),
+                include_aliases=True,
             )
         )
 
@@ -187,7 +195,9 @@ class PortalCredential(Base):
 
     __tablename__ = "portal_credentials"
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     origin: Mapped[str] = mapped_column(String(255), nullable=False)
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     username_enc: Mapped[str] = mapped_column(Text, nullable=False)
@@ -376,6 +386,7 @@ class RecruiterOutreach(Base):
     resume_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     state: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_payload_hash: Mapped[str | None] = mapped_column(String(64))
     sending_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     gmail_message_id: Mapped[str | None] = mapped_column(String)
     gmail_thread_id: Mapped[str | None] = mapped_column(String)
@@ -818,7 +829,8 @@ class NotificationDelivery(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'sent', 'dead')", name="notification_deliveries_status_check"
+            "status IN ('pending', 'sent', 'dead')",
+            name="notification_deliveries_status_check",
         ),
     )
 
@@ -841,8 +853,11 @@ class ActionLog(Base):
 
 class CopilotConversation(Base):
     """Durable AG-UI messages; composite ownership and a per-thread turn lease."""
+
     __tablename__ = "copilot_conversations"
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     thread_id: Mapped[str] = mapped_column(String(200), primary_key=True)
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     messages: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)

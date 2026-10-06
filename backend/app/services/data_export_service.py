@@ -10,11 +10,12 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import Base
-from app.models.db import Notification, NotificationDelivery, User
+from app.models.db import Notification, NotificationDelivery, User, UserDocument
+from app.services.account_deletion_service import _MEMORY_DELETES
 
 
 def _json_safe(value: object) -> object:
@@ -38,6 +39,8 @@ def _row_to_dict(instance: object) -> dict:
         # them into a plaintext archive would be a bigger exposure than any
         # duty to include them.
         if not column.name.endswith("_enc")
+        and column.name
+        not in {"submission_token", "token_hash", "submission_token_hash", "open_token"}
     }
 
 
@@ -52,10 +55,52 @@ async def build_user_data_export(db: AsyncSession, user: User) -> bytes:
             model = mapper.class_
             if model is User or not hasattr(model, "user_id"):
                 continue
-            result = await db.execute(select(model).where(model.user_id == user.id))
+            result = await db.execute(
+                select(model)
+                .where(model.user_id == user.id)
+                .execution_options(include_deleted=True)
+            )
             rows = [_row_to_dict(row) for row in result.scalars().all()]
             if rows:
                 zf.writestr(f"{model.__tablename__}.json", json.dumps(rows, indent=2))
+
+        # Standalone memory tables are not ORM models. Use the same fixed table
+        # ownership registry as erasure; SQL names never come from user input.
+        for table in _MEMORY_DELETES:
+            exists = (
+                await db.execute(text("SELECT to_regclass(:table)"), {"table": table})
+            ).scalar()
+            if not exists:
+                continue
+            result = await db.execute(
+                text(
+                    f"SELECT to_jsonb(m) - 'embedding' AS record FROM {table} m "  # noqa: S608 # nosec B608
+                    "WHERE user_id::text = :uid"
+                ),
+                {"uid": str(user.id)},
+            )
+            records = result.scalars().all()
+            if records:
+                zf.writestr(table.split(".")[-1] + ".json", json.dumps(records, indent=2))
+
+        # Uploaded files use generated archive names, never user-controlled paths.
+        from app.services.storage_service import download_file
+
+        documents = (
+            (await db.execute(select(UserDocument).where(UserDocument.user_id == user.id)))
+            .scalars()
+            .all()
+        )
+        unavailable = []
+        for document in documents:
+            try:
+                data = download_file(document.storage_path, str(user.id))
+            except RuntimeError:
+                unavailable.append(str(document.id))
+                continue
+            zf.writestr(f"documents/{document.id}.bin", data)
+        if unavailable:
+            zf.writestr("unavailable_documents.json", json.dumps(unavailable))
 
         # Delivery records hang off notifications rather than the user.
         result = await db.execute(
@@ -70,12 +115,16 @@ async def build_user_data_export(db: AsyncSession, user: User) -> bytes:
         zf.writestr(
             "README.txt",
             "This archive contains every record CareerCraft AI stores that is tied to "
-            "your account, as one JSON file per table, plus your profile.\n\n"
+            "your account, as one JSON file per table, plus your profile and uploaded files.\n"
+            "Memory embedding vectors are omitted; their original text is included.\n"
+            "Remote browser cookies and temporary Redis sessions are excluded.\n"
+            "Files missing from storage are listed in unavailable_documents.json.\n\n"
             "Not included: your AI provider API key(s) and, if saved, your LinkedIn "
             "sign-in credentials. Those are encrypted secrets used to act on your "
             "behalf, not informational data about you, so they're deliberately left "
             "out of a plaintext export. You can review, rotate, or delete them from "
-            "Settings at any time.\n",
+            "Settings at any time. Operational submission/pairing/tracking tokens and "
+            "their hashes are also omitted.\n",
         )
 
     return buffer.getvalue()

@@ -7,6 +7,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 def _get_pool() -> aioredis.ConnectionPool:
     # Redis sockets and locks belong to the loop that first uses them. Agent
     # nodes run on short-lived loops as well as the API/Temporal worker loop.
@@ -18,7 +19,7 @@ def _get_pool() -> aioredis.ConnectionPool:
             max_connections=20,
             decode_responses=True,
         )
-        setattr(loop, "_careercraft_redis_pool", pool)
+        loop._careercraft_redis_pool = pool
     return pool
 
 

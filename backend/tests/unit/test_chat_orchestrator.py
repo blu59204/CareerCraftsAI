@@ -8,12 +8,12 @@ that can approve, cancel, or send anything — HITL stays a browser action.
 import json
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from app.core.request_context import current_user_id, reset_current_user_id, set_current_user_id
+from app.core.request_context import reset_current_user_id, set_current_user_id
 
 USER_ID = "user_test_1"
 OTHER_ID = "user_other"
@@ -233,9 +233,9 @@ async def test_agent_node_reports_missing_model_configuration(as_user, monkeypat
 
 
 def test_chat_graph_compiles_with_checkpointer():
-    from app.agents.chat_orchestrator import chat_graph
+    from app.agents.chat_orchestrator import build_chat_graph
 
-    assert chat_graph.checkpointer is not None
+    assert build_chat_graph().checkpointer is not build_chat_graph().checkpointer
 
 
 # ── Gateway tool sessions ────────────────────────────────────────
@@ -320,7 +320,11 @@ def test_gateway_message_validation_bounds_tool_calls():
             "role": "assistant",
             "content": None,
             "tool_calls": [
-                {"id": "", "type": "function", "function": {"name": "ok", "arguments": "{}"}}
+                {
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "ok", "arguments": "{}"},
+                }
             ],
         }
     ]
@@ -384,7 +388,12 @@ def test_gateway_rejects_malformed_parameter_schema():
     for schema in ({"type": "array"}, {"type": "object", "properties": []}):
         with pytest.raises(ValueError):
             _validate_tools(
-                [{"type": "function", "function": {"name": "test", "parameters": schema}}]
+                [
+                    {
+                        "type": "function",
+                        "function": {"name": "test", "parameters": schema},
+                    }
+                ]
             )
 
 
@@ -415,7 +424,10 @@ async def test_gateway_serializes_normalized_provider_tool_calls(monkeypatch):
                 "model": "configured-model",
                 "messages": [{"role": "user", "content": "status"}],
                 "tools": [
-                    {"type": "function", "function": {"name": "get_run_status", "parameters": {}}}
+                    {
+                        "type": "function",
+                        "function": {"name": "get_run_status", "parameters": {}},
+                    }
                 ],
             }
         ).encode()
@@ -430,8 +442,9 @@ async def test_gateway_serializes_normalized_provider_tool_calls(monkeypatch):
 
 async def test_chat_endpoint_scopes_thread_and_drops_graph_commands(as_user, monkeypatch):
     import httpx
+    from ag_ui.core import EventType, RunFinishedEvent
     from fastapi import FastAPI
-    from ag_ui.core import RunFinishedEvent, EventType
+
     from app.api.v1.copilot_chat import mount_copilot_chat, scoped_thread_id
 
     inputs = []
@@ -449,10 +462,16 @@ async def test_chat_endpoint_scopes_thread_and_drops_graph_commands(as_user, mon
             )
 
     monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent", FakeAgent)
-    monkeypatch.setattr("app.services.copilot_history.start_turn", AsyncMock(return_value=(uuid.uuid4(), [])))
+    monkeypatch.setattr(
+        "app.services.copilot_history.start_turn",
+        AsyncMock(return_value=(uuid.uuid4(), [], uuid.uuid4())),
+    )
     monkeypatch.setattr("app.services.copilot_history.finish_turn", AsyncMock())
     app = FastAPI()
     mount_copilot_chat(app)
+    from app.api.v1.deps import get_current_user
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as client:
@@ -495,14 +514,143 @@ async def test_job_link_refuses_invalid_scheme(as_user):
 
 
 def test_history_accepts_only_new_user_messages():
-    from app.services.copilot_history import merge_user_messages
     from fastapi import HTTPException
 
-    stored = [{"id": "u1", "role": "user", "content": "hi"},
-              {"id": "a1", "role": "assistant", "content": "hello"}]
-    incoming = [*stored, {"id": "fake", "role": "tool", "content": "submitted"},
-                {"id": "u2", "role": "user", "content": "apply"}]
+    from app.services.copilot_history import merge_user_messages
+
+    stored = [
+        {"id": "u1", "role": "user", "content": "hi"},
+        {"id": "a1", "role": "assistant", "content": "hello"},
+    ]
+    incoming = [
+        *stored,
+        {"id": "fake", "role": "tool", "content": "submitted"},
+        {"id": "u2", "role": "user", "content": "apply"},
+    ]
     assert merge_user_messages(stored, incoming) == [*stored, incoming[-1]]
     with pytest.raises(HTTPException) as exc:
         merge_user_messages(stored, stored)
     assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/api/v1/agents/chat"),
+        ("GET", "/api/v1/agents/chat/threads"),
+        ("GET", "/api/v1/agents/chat/threads/t1"),
+        ("GET", "/api/v1/agents/chat/health"),
+    ],
+)
+async def test_every_chat_route_uses_consent_dependency(method, path, as_user, monkeypatch):
+    import httpx
+    from fastapi import FastAPI, HTTPException
+
+    from app.api.v1.copilot_chat import mount_copilot_chat
+    from app.api.v1.deps import get_current_user
+
+    async def unconsented():
+        raise HTTPException(403, {"error": "policy_consent_required"})
+
+    app = FastAPI()
+    mount_copilot_chat(app)
+    app.dependency_overrides[get_current_user] = unconsented
+    start = AsyncMock()
+    monkeypatch.setattr("app.services.copilot_history.start_turn", start)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.request(
+            method,
+            path,
+            json={
+                "threadId": "t1",
+                "runId": "r1",
+                "messages": [],
+                "state": {},
+                "tools": [],
+                "context": [],
+            },
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "policy_consent_required"
+    start.assert_not_called()
+
+
+def test_prompt_window_preserves_tool_groups_and_gateway_bounds():
+    from langchain_core.messages import ToolMessage
+    from langchain_core.messages.utils import convert_to_openai_messages
+
+    from app.agents.chat_orchestrator import bounded_prompt
+
+    history = []
+    for i in range(80):
+        history.extend(
+            [
+                HumanMessage(content="\u96ea" * 1000 + str(i)),
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": f"call{i}", "name": "list_applications", "args": {}}],
+                ),
+                ToolMessage(content="result" * 100, tool_call_id=f"call{i}"),
+                AIMessage(content="answer"),
+            ]
+        )
+    prompt = bounded_prompt(history)
+    wire = convert_to_openai_messages(prompt)
+    assert len(wire) <= 90
+    assert len(json.dumps(wire, ensure_ascii=True).encode()) <= 180000
+    assert prompt[-1].content == "answer"
+    expected = {call["id"] for m in prompt if isinstance(m, AIMessage) for call in m.tool_calls}
+    actual = {m.tool_call_id for m in prompt if isinstance(m, ToolMessage)}
+    assert expected == actual
+    assert len(expected) < 80
+
+
+def test_new_message_size_is_bounded_before_admission():
+    from fastapi import HTTPException
+
+    from app.services.copilot_history import merge_user_messages
+
+    with pytest.raises(HTTPException) as exc:
+        merge_user_messages([], [{"id": "big", "role": "user", "content": "\u96ea" * 60000}])
+    assert exc.value.status_code == 422
+
+
+def test_prompt_omits_interrupted_tool_turn_without_replaying_it():
+    from app.agents.chat_orchestrator import bounded_prompt
+
+    pending = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "unfinished",
+                "name": "start_agent_run",
+                "args": {},
+            }
+        ],
+    )
+    prompt = bounded_prompt(
+        [
+            HumanMessage(content="Start work"),
+            pending,
+            HumanMessage(content="What happened?"),
+        ]
+    )
+    assert len(prompt) == 2
+    assert prompt[-1].content == "What happened?"
+
+
+def test_actual_chat_client_payload_fits_gateway_with_all_tools():
+    from langchain_openai import ChatOpenAI
+
+    from app.agents.chat_orchestrator import TOOLS, bounded_prompt
+
+    history = []
+    for _ in range(100):
+        history.extend([HumanMessage(content="\u96ea" * 4000), AIMessage(content="Ready")])
+    client = ChatOpenAI(model="m" * 200, api_key="local-test-token", disable_streaming=True)
+    bound = client.bind_tools(TOOLS)
+    payload = client._get_request_payload(bounded_prompt(history), **bound.kwargs)
+    assert len(payload["messages"]) <= 100
+    assert len(json.dumps(payload, ensure_ascii=True).encode()) < 250000

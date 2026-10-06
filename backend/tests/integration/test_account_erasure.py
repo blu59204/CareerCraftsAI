@@ -33,20 +33,35 @@ _UNLINKED_DDL = [
 
 @pytest.fixture
 async def database(monkeypatch, tmp_path):
+    import psycopg
+    from psycopg import sql
+
     import app.core.database as core_database
     from app.core.config import settings
     from app.core.database import Base
 
-    engine = create_async_engine(ASYNC_URL)
+    # Keep erasure tests independent of older fixtures and vector-table schemas.
+    # This named database belongs only to this test; never drop workflow_test.
+    database_name = "account_erasure_test_" + uuid.uuid4().hex
+    admin_url = "postgresql://workflow_test:workflow_test@127.0.0.1:55439/workflow_test"
+    with psycopg.connect(admin_url, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+    engine = create_async_engine(ASYNC_URL.rsplit("/", 1)[0] + "/" + database_name)
     factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-        for statement in _UNLINKED_DDL:
-            await connection.execute(text(statement))
-    monkeypatch.setattr(core_database, "AsyncSessionLocal", factory)
-    monkeypatch.setattr(settings, "DOCUMENT_STORAGE_DIR", str(tmp_path))
-    yield factory
-    await engine.dispose()
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+            for statement in _UNLINKED_DDL:
+                await connection.execute(text(statement))
+        monkeypatch.setattr(core_database, "AsyncSessionLocal", factory)
+        monkeypatch.setattr(settings, "DOCUMENT_STORAGE_DIR", str(tmp_path))
+        yield factory
+    finally:
+        await engine.dispose()
+        with psycopg.connect(admin_url, autocommit=True) as admin:
+            admin.execute(
+                sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database_name))
+            )
 
 
 async def _seed(factory, tmp_path):
@@ -64,7 +79,11 @@ async def _seed(factory, tmp_path):
             )
         )
         await db.flush()
-        db.add(AgentRun(id=uuid.uuid4(), user_id=user_id, agent_type="email", status="running"))
+        db.add(
+            AgentRun(
+                id=uuid.uuid5(user_id, "run"), user_id=user_id, agent_type="email", status="running"
+            )
+        )
         collection = uuid.uuid4()
         await db.execute(
             text("INSERT INTO langchain_pg_collection VALUES (:id, :name)"),
@@ -137,9 +156,13 @@ async def test_sweep_erases_everything_then_the_account(database, monkeypatch, t
         removed = await service.reap_expired_account_deletions(db)
         await db.commit()
 
+    # Prove this owner was swept and the non-expired owner was untouched.
+    from app.workflows.agent_run import agent_run_workflow_id
+
     assert removed == 1
-    assert len(terminated) == 1  # the running agent run
-    clerk.assert_awaited_once_with(f"user_{user_id.hex[:8]}", strict=True)
+    assert agent_run_workflow_id(str(uuid.uuid5(user_id, "run"))) in terminated
+    assert agent_run_workflow_id(str(uuid.uuid5(other, "run"))) not in terminated
+    clerk.assert_any_await(f"user_{user_id.hex[:8]}", strict=True)
     assert await _remaining(database, user_id) == {
         "user": 0,
         "runs": 0,
@@ -154,3 +177,56 @@ async def test_sweep_erases_everything_then_the_account(database, monkeypatch, t
         "memory": 1,
     }
     assert (tmp_path / str(other)).exists()
+
+
+async def test_database_cascade_erases_loaded_preferences_and_application_relationships(
+    database, monkeypatch
+):
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.db import JobApplication, User, UserDocument, UserPreferences
+    from app.services import account_deletion_service as service
+
+    owner = uuid.uuid4()
+    async with database() as db:
+        db.add(
+            User(
+                id=owner,
+                email=f"{owner}@example.test",
+                deletion_scheduled_for=datetime.now(UTC) - timedelta(days=1),
+            )
+        )
+        await db.flush()
+        db.add(UserPreferences(user_id=owner))
+        db.add(JobApplication(user_id=owner, company="Synthetic", role="Engineer"))
+        db.add(
+            UserDocument(
+                user_id=owner,
+                doc_type="resume",
+                filename="resume.pdf",
+                storage_path=f"{owner}/resume.pdf",
+            )
+        )
+        await db.commit()
+    # External effects are mocked; real Postgres owns every child cascade.
+    monkeypatch.setattr(service, "erase_external_data", AsyncMock())
+    async with database() as db:
+        account = (
+            await db.execute(
+                select(User)
+                .where(User.id == owner)
+                .options(
+                    selectinload(User.preferences),
+                    selectinload(User.applications),
+                    selectinload(User.documents),
+                )
+            )
+        ).scalar_one()
+        assert account.preferences is not None and len(account.applications) == 1
+        assert await service.reap_expired_account_deletions(db) == 1
+        await db.commit()
+    async with database() as db:
+        assert await db.get(User, owner) is None
+        for model in (UserPreferences, JobApplication, UserDocument):
+            assert (await db.execute(select(model).where(model.user_id == owner))).first() is None

@@ -32,6 +32,7 @@ def _run_fresh(coro):
     spawns a subprocess) works — the default Selector loop that uvicorn installs
     raises NotImplementedError on subprocess creation.
     """
+
     async def run_and_close():
         from app.core.redis_client import close_redis
 
@@ -175,12 +176,16 @@ def fetch_model_settings(user_id: str):
     with factory() as db:
         chosen_id = _chosen("model_setting_id")
         if chosen_id is not None:
-            chosen = db.execute(
-                select(UserModelSettings).where(
-                    UserModelSettings.id == chosen_id,
-                    UserModelSettings.user_id == _to_uuid(user_id),
+            chosen = (
+                db.execute(
+                    select(UserModelSettings).where(
+                        UserModelSettings.id == chosen_id,
+                        UserModelSettings.user_id == _to_uuid(user_id),
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if chosen is not None:
                 return chosen
         result = db.execute(

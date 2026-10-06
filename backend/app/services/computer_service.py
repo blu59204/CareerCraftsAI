@@ -1,8 +1,8 @@
 """CareerCraft's owner-scoped client for the private, bounded OpenBot relay."""
 
-import json
 import asyncio
 import base64
+import json
 import logging
 import time
 import uuid
@@ -152,6 +152,36 @@ async def relay(user_id, route="", method="GET", body=None):
         raise HTTPException(503, "Sandbox worker is unavailable") from exc
 
 
+async def purge_user(user_id) -> None:
+    """Strict owner-scoped erasure; failures keep the account for sweep retry."""
+    # An unconfigured feature may be skipped only for owners with no recorded
+    # computer activity. Removing configuration cannot silently erase an account
+    # that previously allocated remote storage.
+    if not settings.SANDBOX_RELAY_URL and not settings.SANDBOX_RELAY_TOKEN:
+        from sqlalchemy import select
+
+        from app.core.database import AsyncSessionLocal
+        from app.models.db import AgentRun
+
+        async with AsyncSessionLocal() as db:
+            used = (
+                await db.execute(
+                    select(AgentRun.id)
+                    .where(
+                        AgentRun.user_id == uuid.UUID(str(user_id)),
+                        AgentRun.agent_type == "computer_action",
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        if used is not None:
+            raise RuntimeError("Restore sandbox relay configuration to erase this computer owner")
+        return
+    result = await relay(user_id, method="DELETE")
+    if result.get("purged") is not True:
+        raise RuntimeError("Computer erasure was not confirmed")
+
+
 async def audit(user_id, operation, status="completed", duration_ms=0):
     from app.core.database import AsyncSessionLocal
     from app.models.db import AgentRun
@@ -206,24 +236,35 @@ async def act(user_id, action: ComputerAction, actor="human"):
         body = {**action.model_dump(), "actor": actor}
         if action.operation == "upload":
             from sqlalchemy import select
+
+            from app.api.v1.rag import MAX_SIZE_BYTES, _sniff_content_type
             from app.core.database import AsyncSessionLocal
             from app.models.db import UserDocument
             from app.services.storage_service import download_file
-            from app.api.v1.rag import _sniff_content_type, MAX_SIZE_BYTES
+
             async with AsyncSessionLocal() as db:
-                doc = (await db.execute(select(UserDocument).where(
-                    UserDocument.id == uuid.UUID(str(action.parameters["document_id"])),
-                    UserDocument.user_id == uuid.UUID(str(user_id)),
-                    UserDocument.doc_type == "resume",
-                ))).scalar_one_or_none()
+                doc = (
+                    await db.execute(
+                        select(UserDocument).where(
+                            UserDocument.id == uuid.UUID(str(action.parameters["document_id"])),
+                            UserDocument.user_id == uuid.UUID(str(user_id)),
+                            UserDocument.doc_type == "resume",
+                        )
+                    )
+                ).scalar_one_or_none()
                 if not doc:
                     raise HTTPException(404, "Resume not found")
                 content = await asyncio.to_thread(download_file, doc.storage_path, str(user_id))
                 mime = _sniff_content_type(content)
                 if len(content) > MAX_SIZE_BYTES or mime is None:
                     raise HTTPException(422, "Resume format or size is unsupported")
-                body["parameters"] = {"ref": action.parameters["ref"], "snapshotId": action.parameters["snapshotId"],
-                    "filename": doc.filename, "mimeType": mime, "base64": base64.b64encode(content).decode("ascii")}
+                body["parameters"] = {
+                    "ref": action.parameters["ref"],
+                    "snapshotId": action.parameters["snapshotId"],
+                    "filename": doc.filename,
+                    "mimeType": mime,
+                    "base64": base64.b64encode(content).decode("ascii"),
+                }
         return await relay(user_id, "/action", "POST", body)
     except Exception:
         status = "failed"

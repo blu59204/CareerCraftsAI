@@ -53,31 +53,51 @@ async def _check_run_choices(db, user: User, context: dict[str, Any]) -> None:
             raise HTTPException(status_code=404, detail=f"{key} not found")
 
 
-async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any]) -> str:
-    """Create a queued agent run and start its durable AgentRunWorkflow.
+async def check_run_admission(db, user: User) -> None:
+    """Serialize execution admission across chat, API and scheduled work.
 
-    The one way an API route starts agent work: it enforces the per-user
-    concurrency cap, commits the row before the workflow's first activity
-    reads it, and returns the run id for the client to poll or stream.
+    The caller must create its queued/running row before committing the same
+    transaction. The user lock makes check + reservation atomic on all replicas.
     """
-    import uuid
+    from datetime import UTC, timedelta
 
     from fastapi import HTTPException
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select, update
 
     from app.core.config import settings
-    from app.services.workflow_service import validate_context
-    from app.workflows.starters import WorkflowUnavailable, start_agent_run
 
-    try:
-        validate_context(context)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-
-    await _check_run_choices(db, user, context)
-
-    # Serialize admission for this user across all API replicas.
-    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    locked_user = (
+        await db.execute(select(User).where(User.id == user.id).with_for_update())
+    ).scalar_one_or_none()
+    if locked_user is None:
+        raise HTTPException(status_code=404, detail="User account not found")
+    now = datetime.now(UTC)
+    deletion_due = getattr(locked_user, "deletion_scheduled_for", None)
+    if deletion_due is not None and deletion_due <= now:
+        raise HTTPException(status_code=403, detail="Account deletion is in progress")
+    # A crashed process cannot leave request/activity-owned work occupying a
+    # slot forever. Durable workflows own their own recovery; only the bounded
+    # chat/outreach draft paths below use this expiry.
+    await db.execute(
+        update(AgentRun)
+        .where(
+            AgentRun.user_id == user.id,
+            or_(
+                AgentRun.agent_type == "chat_orchestrator",
+                and_(
+                    AgentRun.agent_type == "email",
+                    AgentRun.input["source"].astext == "application_outreach",
+                ),
+            ),
+            AgentRun.status == "running",
+            AgentRun.started_at < now - timedelta(minutes=10),
+        )
+        .values(
+            status="failed",
+            completed_at=now,
+            output={"error": "Agent work interrupted"},
+        )
+    )
     # Applications waiting in the user's own browser (extension mode) use no
     # server capacity and can wait for hours, so they never block agents.
     active_runs = await db.execute(
@@ -99,6 +119,30 @@ async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any
                 "run_ids": active_run_ids,
             },
         )
+
+
+async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any]) -> str:
+    """Create a queued agent run and start its durable AgentRunWorkflow.
+
+    The one way an API route starts agent work: it enforces the per-user
+    concurrency cap, commits the row before the workflow's first activity
+    reads it, and returns the run id for the client to poll or stream.
+    """
+    import uuid
+
+    from fastapi import HTTPException
+
+    from app.services.workflow_service import validate_context
+    from app.workflows.starters import WorkflowUnavailable, start_agent_run
+
+    try:
+        validate_context(context)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    await _check_run_choices(db, user, context)
+
+    await check_run_admission(db, user)
 
     run_id = str(uuid.uuid4())
     agent_run = AgentRun(

@@ -6,23 +6,6 @@ const dst = "src/app/(app)/copilot/copilot-v2.css";
 
 const root = postcss.parse(readFileSync(src, "utf-8"));
 
-function hoistLayers(node) {
-  for (const child of [...node.nodes ?? []]) {
-    if (child.type === "atrule" && child.name === "layer") {
-      // Move the layer's children up in its place, preserving order.
-      const index = node.index(child);
-      for (const [i, grand] of [...child.nodes ?? []].entries()) {
-        node.insertAfter(node.nodes[index + i - 1] ?? child, grand);
-      }
-      // insertAfter placed them after child; recompute: simpler—remove and re-append at index.
-      child.remove();
-      // Re-run to fix any nesting order issues.
-    } else {
-      hoistLayers(child);
-    }
-  }
-}
-
 // Robust approach: recursively unwrap all @layer atrules anywhere.
 function unwrap(rootNode) {
   let found = true;

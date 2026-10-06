@@ -91,7 +91,7 @@ async def load_rule(user_id: uuid.UUID) -> dict | None:
         return None
     return {
         "min_match": prefs.auto_rule_min_match,
-        "action": prefs.auto_rule_action if prefs.auto_rule_action in RULE_ACTIONS else "apply",
+        "action": (prefs.auto_rule_action if prefs.auto_rule_action in RULE_ACTIONS else "apply"),
         "template": prefs.resume_template or "modern",
         "page_target": prefs.resume_page_target,
         "tailor": prefs.resume_tailor_per_job,
@@ -195,31 +195,70 @@ async def _log(user_id: uuid.UUID, application_id: uuid.UUID, action: str, detai
         await db.commit()
 
 
-def _tailor(user_id: str, application: JobApplication, rule: dict) -> dict:
-    """Tailor a resume for one job on a worker thread (the agent is synchronous)."""
-    from langchain_core.messages import HumanMessage
+async def _tailor(user_id: str, application: JobApplication, rule: dict) -> dict:
+    """Reuse durable, audited agent execution; a retried rule reuses its run.
 
-    from app.agents.resume_agent import resume_agent_node
+    Only read the draft checkpoint. This never approves an application or sends
+    anything. The extension still presents the final application for review.
+    """
+    from app.api.v1.run_utils import queue_agent_run
+    from app.models.db import AgentRun
 
-    jd = (application.jd_text or f"{application.role} at {application.company}")[:3000]
-    state = {
-        "user_id": user_id,
-        "run_id": str(uuid.uuid4()),
-        "task_type": "resume_optimize",
-        "messages": [HumanMessage(content=jd)],
-        "context": {
-            "jd_text": jd,
-            "template": rule["template"],
-            "page_target": rule["page_target"],
-            "tone": rule["tone"],
-        },
-        "status": "running",
-        "pending_action": None,
-        "result": None,
-        "error": None,
-    }
-    result = resume_agent_node(state)  # type: ignore[arg-type]
-    return result.get("pending_action") or {}
+    owner = uuid.UUID(user_id)
+    generation = str(rule.get("since") or "legacy")
+    async with AsyncSessionLocal() as db:
+        user = (
+            await db.execute(select(User).where(User.id == owner).with_for_update())
+        ).scalar_one()
+        if user.policy_accepted_at is None or user.deletion_scheduled_for is not None:
+            raise ValueError("Account is not eligible for scheduled agent work")
+        run = (
+            await db.execute(
+                select(AgentRun)
+                .where(
+                    AgentRun.user_id == owner,
+                    AgentRun.agent_type == "resume_optimize",
+                    AgentRun.input["context"]["rule_application_id"].astext == str(application.id),
+                    AgentRun.input["context"]["rule_generation"].astext == generation,
+                )
+                .order_by(AgentRun.started_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if run is None:
+            run_id = await queue_agent_run(
+                db,
+                user,
+                "resume_optimize",
+                {
+                    "jd_text": (
+                        application.jd_text or f"{application.role} at {application.company}"
+                    )[:3000],
+                    "template": rule["template"],
+                    "page_target": rule["page_target"],
+                    "tone": rule["tone"],
+                    "rule_application_id": str(application.id),
+                    "rule_generation": generation,
+                },
+            )
+        else:
+            run_id = str(run.id)
+            if run.status in {"queued", "running"}:
+                from app.workflows.starters import start_agent_run
+
+                # Recover the commit-before-start crash window. The starter
+                # uses this run's stable workflow id and is idempotent.
+                await start_agent_run(run_id, owner)
+    # SQL is the user-facing run record. Temporal owns execution and survives
+    # this polling activity timing out or its worker restarting.
+    while True:
+        async with AsyncSessionLocal() as db:
+            run = await db.get(AgentRun, uuid.UUID(run_id))
+            if run is None or run.status in {"failed", "cancelled", "expired"}:
+                return {}
+            if run.status in {"awaiting_approval", "completed"}:
+                return run.output or {}
+        await asyncio.sleep(1)
 
 
 async def _active_resume_id(owner: uuid.UUID) -> uuid.UUID | None:
@@ -229,7 +268,8 @@ async def _active_resume_id(owner: uuid.UUID) -> uuid.UUID | None:
                 select(UserDocument.id)
                 .where(UserDocument.user_id == owner, UserDocument.doc_type == "resume")
                 .order_by(
-                    UserDocument.is_primary.desc(), UserDocument.embedded_at.desc().nulls_last()
+                    UserDocument.is_primary.desc(),
+                    UserDocument.embedded_at.desc().nulls_last(),
                 )
                 .limit(1)
             )
@@ -241,9 +281,7 @@ async def _apply_one(owner: uuid.UUID, application: JobApplication, rule: dict) 
     from app.workflows.starters import start_auto_apply
 
     if rule["tailor"]:
-        draft = await asyncio.wait_for(
-            asyncio.to_thread(_tailor, str(owner), application, rule), timeout=300
-        )
+        draft = await asyncio.wait_for(_tailor(str(owner), application, rule), timeout=300)
         document_id = draft.get("pdf_document_id")
         if not document_id or (draft.get("grounding") or {}).get("unsupported"):
             return False
@@ -264,52 +302,146 @@ async def _apply_one(owner: uuid.UUID, application: JobApplication, rule: dict) 
 
 
 async def draft_outreach(user_id: str, application: JobApplication) -> str | None:
-    """Queue a recruiter email draft for the member's review (or auto-send if
-    they opted in). None when there is no usable contact or model, or one is
-    already queued for this job."""
+    """Prepare one draft under the shared admission and audit contract.
+
+    This job-specific generator has different inputs from the thread-based
+    email agent. Keep its semantics, but reserve capacity before any work and
+    record every outcome. Sending still requires explicit payload approval.
+    """
+    import time
+
+    import anyio
+
     from app.agents.auto_apply_pipeline import _generate_cold_email
-    from app.core.model_router import build_agent_llm
-    from app.core.sync_db import fetch_model_settings, fetch_user_profile_text
+    from app.api.v1.run_utils import check_run_admission
+    from app.core.model_router import (
+        begin_token_tracking,
+        build_agent_llm,
+        get_and_reset_tokens,
+    )
+    from app.core.sync_db import (
+        fetch_model_settings,
+        fetch_user_profile_text,
+        run_choice,
+    )
+    from app.models.db import AgentRun
     from app.services.outreach_service import queue_outreach
     from app.services.recruiter_email import employer_domain, find_recruiter_contact
 
-    jd = application.jd_text or ""
-    domain = employer_domain(application.job_url, jd)
-    contact = (
-        await find_recruiter_contact(
-            application.company, domain=domain, domain_confirmed=bool(domain), posting_text=jd
+    owner = uuid.UUID(user_id)
+    if application.user_id != owner:
+        raise ValueError("Application does not belong to this account")
+    run_id = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        user = (
+            await db.execute(select(User).where(User.id == owner).with_for_update())
+        ).scalar_one()
+        if user.policy_accepted_at is None or user.deletion_scheduled_for is not None:
+            raise ValueError("Account is not eligible for outreach drafts")
+        await check_run_admission(db, user)
+        db.add(
+            AgentRun(
+                id=run_id,
+                user_id=owner,
+                agent_type="email",
+                status="running",
+                tokens_used=0,
+                input={
+                    "task_type": "email",
+                    "source": "application_outreach",
+                    "context": {
+                        "application_id": str(application.id),
+                        "resume_document_id": (
+                            str(application.resume_id) if application.resume_id else None
+                        ),
+                    },
+                },
+            )
         )
-    ).best
-    model_settings = await asyncio.to_thread(fetch_model_settings, user_id)
-    if not contact or not model_settings:
-        return None
-    profile = await asyncio.to_thread(fetch_user_profile_text, user_id)
-    email = await asyncio.to_thread(
-        _generate_cold_email,
-        build_agent_llm(model_settings),
-        contact.name or "Hiring Manager",
-        contact.email,
-        application.company,
-        application.role,
-        jd,
-        profile,
-    )
-    if not email:
-        return None
-    queued = await queue_outreach(
-        user_id,
-        company=application.company,
-        role=application.role,
-        to_email=contact.email,
-        verdict=contact.verdict,
-        email_source=contact.source,
-        verified_by=contact.verified_by,
-        subject=email["subject"],
-        body=email["body"],
-        job_application_id=str(application.id),
-        resume_document_id=str(application.resume_id) if application.resume_id else None,
-    )
-    return queued.state if queued else None
+        await db.commit()
+
+    started = time.monotonic()
+    status, output, tokens = "failed", {"error": "Outreach draft failed"}, 0
+    generation = None
+    try:
+        jd = application.jd_text or ""
+        domain = employer_domain(application.job_url, jd)
+        contact = (
+            await find_recruiter_contact(
+                application.company,
+                domain=domain,
+                domain_confirmed=bool(domain),
+                posting_text=jd,
+            )
+        ).best
+        if not contact:
+            status, output = "completed", {"state": "no_contact"}
+            return None
+
+        def generate():
+            # All sync lookups and callbacks run in the same worker context.
+            with run_choice(
+                {
+                    "resume_document_id": (
+                        str(application.resume_id) if application.resume_id else None
+                    )
+                }
+            ):
+                begin_token_tracking()
+                model_settings = fetch_model_settings(user_id)
+                if not model_settings:
+                    return None, 0
+                email = _generate_cold_email(
+                    build_agent_llm(model_settings),
+                    contact.name or "Hiring Manager",
+                    contact.email,
+                    application.company,
+                    application.role,
+                    jd,
+                    fetch_user_profile_text(user_id),
+                )
+                return email, get_and_reset_tokens()
+
+        generation = asyncio.create_task(asyncio.to_thread(generate))
+        # Cancellation must not release the slot while its provider thread is
+        # still executing. The bounded gateway call is awaited in finally.
+        email, tokens = await asyncio.shield(generation)
+        if not email:
+            return None
+        queued = await queue_outreach(
+            user_id,
+            company=application.company,
+            role=application.role,
+            to_email=contact.email,
+            verdict=contact.verdict,
+            email_source=contact.source,
+            verified_by=contact.verified_by,
+            subject=email["subject"],
+            body=email["body"],
+            job_application_id=str(application.id),
+            resume_document_id=(str(application.resume_id) if application.resume_id else None),
+        )
+        status = "completed"
+        output = (
+            {"state": queued.state, "outreach_id": str(queued.id)}
+            if queued
+            else {"state": "duplicate"}
+        )
+        return queued.state if queued else None
+    finally:
+        with anyio.CancelScope(shield=True):
+            if generation is not None and not generation.done():
+                try:
+                    _, tokens = await generation
+                except Exception as exc:
+                    logger.warning("Outreach generation interrupted: %s", type(exc).__name__)
+            async with AsyncSessionLocal() as db:
+                run = await db.get(AgentRun, run_id)
+                if run is not None and run.user_id == owner:
+                    run.status, run.output, run.tokens_used = status, output, tokens
+                    run.duration_ms = int((time.monotonic() - started) * 1000)
+                    run.completed_at = datetime.now(UTC)
+                    await db.commit()
 
 
 async def _notify(owner: uuid.UUID, jobs: list[JobApplication], minimum: int) -> None:

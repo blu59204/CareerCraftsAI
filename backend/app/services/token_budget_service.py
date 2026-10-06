@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DAILY_LIMIT = 500_000  # tokens per user per day
 
+
 async def _get_redis() -> aioredis.Redis:
     from app.core.redis_client import get_redis
 

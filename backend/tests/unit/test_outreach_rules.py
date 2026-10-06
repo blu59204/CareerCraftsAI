@@ -1,12 +1,12 @@
 from app.services.outreach_service import classify_thread, followup_text, initial_state
 
 
-def test_only_verified_addresses_skip_the_members_eyes():
+def test_every_valid_address_requires_explicit_message_approval():
     assert initial_state("invalid", True) is None
     assert initial_state("unknown", True) == "held"
     assert initial_state("risky", False) == "held"
     assert initial_state("valid", False) == "draft"
-    assert initial_state("valid", True) == "approved"
+    assert initial_state("valid", True) == "draft"
 
 
 def _thread(*senders):
@@ -60,3 +60,30 @@ def test_application_email_status_summary():
         summarize_outreach([_row(replied=True), _row("followup", "draft")])["status"] == "replied"
     )
     assert summarize_outreach([_row(bounced=True)])["status"] == "bounced"
+
+
+def test_approval_binds_recipient_wording_and_attachment_bytes():
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from app.services.outreach_service import has_current_approval, payload_hash
+
+    row = SimpleNamespace(
+        to_email="hr@acme.test",
+        subject="Role",
+        body="Reviewed",
+        resume_document_id="doc",
+        approved_at=datetime.now(UTC),
+        approved_payload_hash=None,
+    )
+    pdf = [("Resume.pdf", b"approved PDF")]
+    row.approved_payload_hash = payload_hash(row, pdf)
+    assert has_current_approval(row, pdf)
+    assert not has_current_approval(row, [("Resume.pdf", b"replacement PDF")])
+    row.to_email = "different@acme.test"
+    assert not has_current_approval(row, pdf)
+    row.to_email = "hr@acme.test"
+    row.body = "Edited"
+    assert not has_current_approval(row, pdf)
+    row.approved_at = None
+    assert not has_current_approval(row, pdf)

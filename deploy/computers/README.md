@@ -85,3 +85,19 @@ An active user model is required for planning. Public search and resume storage
 work without one. Run `verify-upload.py` inside the relay to check uploads and
 stale-approval rejection against the synthetic portal.
 CopilotKit's self-managed-agent production license must be resolved before sale.
+
+## Account erasure contract
+
+The backend's expiry sweep calls authenticated `DELETE /users/{user_uuid}` before
+Clerk/account deletion. The relay disables the owner and serializes purge against
+all actions and idle release. The supervisor removes only UUID-derived resources
+whose supervisor, namespace and bot labels all match: the container, profile and
+workspace volumes. Missing resources are successful; Docker errors, busy volumes
+and ownership conflicts fail closed and are retried by the next account sweep.
+A minimal UUID tombstone blocks delayed requests from recreating an erased owner.
+No browser data is stored in that tombstone. Ordinary Stop still retains profiles.
+
+Rebuild both supervisor and relay when deploying this change. An old supervisor
+without the purge route cannot confirm erasure and the backend retains the account
+for retry. Removing relay configuration on a host that has existing volumes is
+not a supported erasure operation; keep it configured until all owners are purged.
