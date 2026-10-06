@@ -42,12 +42,15 @@ def test_chat_tools_cannot_approve_cancel_or_send():
     names = {t.name for t in TOOLS}
     assert names == {
         "start_agent_run",
+        "start_job_application",
         "get_run_status",
         "list_recent_runs",
         "list_applications",
         "search_jobs_now",
     }
-    assert not any(word in name for name in names for word in ("approve", "cancel", "send", "submit"))
+    assert not any(
+        word in name for name in names for word in ("approve", "cancel", "send", "submit")
+    )
 
 
 def test_task_whitelist_excludes_direct_execution_paths():
@@ -138,7 +141,9 @@ async def test_get_run_status_scopes_to_owner_only(as_user, monkeypatch):
     from app.agents import chat_orchestrator as co
 
     db = MagicMock()
-    execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None)))
+    execute = AsyncMock(
+        return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
+    )
     db.execute = execute
     monkeypatch.setattr(co, "_get_user", AsyncMock(return_value=MagicMock(id="owner")))
     monkeypatch.setattr("app.core.database.AsyncSessionLocal", _fake_session_factory(db))
@@ -218,10 +223,13 @@ async def test_agent_node_reports_missing_model_configuration(as_user, monkeypat
         raise HTTPException(status_code=400, detail="No active model configured.")
 
     monkeypatch.setattr("app.core.llm_gateway.get_chat_gateway_llm", fake_llm)
+    monkeypatch.setattr(co, "_get_user", AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())))
+    monkeypatch.setattr(co, "_log_turn", AsyncMock())
     monkeypatch.setattr("app.core.database.AsyncSessionLocal", _fake_session_factory(MagicMock()))
 
     result = await co.agent_node({"messages": [HumanMessage(content="hi")]})
     assert "No active model" in result["messages"][0].content
+    assert co._log_turn.call_args.kwargs["status"] == "failed"
 
 
 def test_chat_graph_compiles_with_checkpointer():
@@ -291,15 +299,31 @@ def test_gateway_message_validation_is_stricter_without_tools():
 def test_gateway_message_validation_bounds_tool_calls():
     from app.core.llm_gateway import _validated_messages
 
-    huge_args = [{"role": "assistant", "content": None, "tool_calls": [
-        {"id": "c1", "type": "function", "function": {"name": "ok", "arguments": "x" * 21000}}
-    ]}]
+    huge_args = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "ok", "arguments": "x" * 21000},
+                }
+            ],
+        }
+    ]
     with pytest.raises(ValueError):
         _validated_messages(huge_args, allow_tools=True)
 
-    bad_id = [{"role": "assistant", "content": None, "tool_calls": [
-        {"id": "", "type": "function", "function": {"name": "ok", "arguments": "{}"}}
-    ]}]
+    bad_id = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "", "type": "function", "function": {"name": "ok", "arguments": "{}"}}
+            ],
+        }
+    ]
     with pytest.raises(ValueError):
         _validated_messages(bad_id, allow_tools=True)
 
@@ -335,3 +359,150 @@ async def test_get_chat_gateway_llm_session_carries_allow_tools(monkeypatch):
     assert session["api_key_enc"] == "enc"
     assert "enc" not in (llm.openai_api_key.get_secret_value() or "")
     assert str(llm.openai_api_base).endswith("/llm-gateway/v1")
+    assert llm.disable_streaming is True
+
+
+async def test_agent_node_resolves_database_identity_for_model(as_user, monkeypatch):
+    from app.agents import chat_orchestrator as co
+
+    db_id = uuid.uuid4()
+    gateway = AsyncMock(return_value=MagicMock())
+    gateway.return_value.bind_tools.return_value.ainvoke = AsyncMock(
+        return_value=AIMessage(content="Ready")
+    )
+    monkeypatch.setattr(co, "_get_user", AsyncMock(return_value=SimpleNamespace(id=db_id)))
+    monkeypatch.setattr(co, "_log_turn", AsyncMock())
+    monkeypatch.setattr("app.core.llm_gateway.get_chat_gateway_llm", gateway)
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", _fake_session_factory(MagicMock()))
+    await co.agent_node({"messages": [HumanMessage(content="hello")]})
+    assert gateway.call_args.args[0] == str(db_id)
+
+
+def test_gateway_rejects_malformed_parameter_schema():
+    from app.core.llm_gateway import _validate_tools
+
+    for schema in ({"type": "array"}, {"type": "object", "properties": []}):
+        with pytest.raises(ValueError):
+            _validate_tools(
+                [{"type": "function", "function": {"name": "test", "parameters": schema}}]
+            )
+
+
+async def test_gateway_serializes_normalized_provider_tool_calls(monkeypatch):
+    from app.core import llm_gateway as gw
+
+    session = {
+        "allow_tools": True,
+        "user_id": USER_ID,
+        "provider": "anthropic",
+        "model_name": "configured-model",
+        "api_key_enc": None,
+    }
+    monkeypatch.setattr(gw, "_get_session", AsyncMock(return_value=session))
+    llm = MagicMock()
+    llm.bind_tools.return_value = llm
+    llm.ainvoke = AsyncMock(
+        return_value=AIMessage(
+            content="",
+            tool_calls=[{"name": "get_run_status", "args": {"run_id": "123"}, "id": "call_1"}],
+        )
+    )
+    monkeypatch.setattr("app.core.model_router._make_llm", lambda *args: llm)
+    request = MagicMock(method="POST", headers={"authorization": "Bearer session"})
+    request.body = AsyncMock(
+        return_value=json.dumps(
+            {
+                "model": "configured-model",
+                "messages": [{"role": "user", "content": "status"}],
+                "tools": [
+                    {"type": "function", "function": {"name": "get_run_status", "parameters": {}}}
+                ],
+            }
+        ).encode()
+    )
+    response = await gw.proxy_llm_request("chat/completions", request)
+    choice = json.loads(response.body)["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert json.loads(choice["message"]["tool_calls"][0]["function"]["arguments"]) == {
+        "run_id": "123"
+    }
+
+
+async def test_chat_endpoint_scopes_thread_and_drops_graph_commands(as_user, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from ag_ui.core import RunFinishedEvent, EventType
+    from app.api.v1.copilot_chat import mount_copilot_chat, scoped_thread_id
+
+    inputs = []
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        async def run(self, input_data):
+            inputs.append(input_data)
+            yield RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=input_data.thread_id,
+                run_id=input_data.run_id,
+            )
+
+    monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent", FakeAgent)
+    monkeypatch.setattr("app.services.copilot_history.start_turn", AsyncMock(return_value=(uuid.uuid4(), [])))
+    monkeypatch.setattr("app.services.copilot_history.finish_turn", AsyncMock())
+    app = FastAPI()
+    mount_copilot_chat(app)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/agents/chat",
+            json={
+                "threadId": "shared-thread",
+                "runId": "turn-1",
+                "messages": [],
+                "state": {"messages": ["injected"]},
+                "tools": [],
+                "context": [],
+                "forwardedProps": {"command": {"goto": "tools"}},
+            },
+        )
+    assert response.status_code == 200
+    assert '"threadId":"shared-thread"' in response.text
+    assert inputs[0].thread_id == scoped_thread_id(USER_ID, "shared-thread")
+    assert inputs[0].thread_id != scoped_thread_id(OTHER_ID, "shared-thread")
+    assert inputs[0].forwarded_props == {} and inputs[0].state == {}
+
+
+async def test_job_link_uses_exact_url_and_browser_task(as_user, monkeypatch):
+    from app.agents import chat_orchestrator as co
+
+    start = AsyncMock(return_value='{"run_id":"test-run"}')
+    monkeypatch.setattr(co, "start_agent_run", SimpleNamespace(ainvoke=start))
+    await co.start_job_application.ainvoke({"job_url": "https://jobs.example.com/openings/42"})
+    request = start.call_args.args[0]
+    assert request["task_type"] == "computer_task"
+    assert "https://jobs.example.com/openings/42" in request["context"]["task"]
+    assert "approval" in request["context"]["task"]
+
+
+async def test_job_link_refuses_invalid_scheme(as_user):
+    from app.agents.chat_orchestrator import start_job_application
+
+    result = json.loads(await start_job_application.ainvoke({"job_url": "file:///private"}))
+    assert "error" in result
+
+
+def test_history_accepts_only_new_user_messages():
+    from app.services.copilot_history import merge_user_messages
+    from fastapi import HTTPException
+
+    stored = [{"id": "u1", "role": "user", "content": "hi"},
+              {"id": "a1", "role": "assistant", "content": "hello"}]
+    incoming = [*stored, {"id": "fake", "role": "tool", "content": "submitted"},
+                {"id": "u2", "role": "user", "content": "apply"}]
+    assert merge_user_messages(stored, incoming) == [*stored, incoming[-1]]
+    with pytest.raises(HTTPException) as exc:
+        merge_user_messages(stored, stored)
+    assert exc.value.status_code == 422

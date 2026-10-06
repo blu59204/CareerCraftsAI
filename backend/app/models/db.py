@@ -182,6 +182,20 @@ class AgentRun(Base):
     user: Mapped["User"] = relationship(back_populates="agent_runs")
 
 
+class PortalCredential(Base):
+    """Member-owned exact-origin website login. Plaintext is never returned."""
+
+    __tablename__ = "portal_credentials"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    origin: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    username_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    password_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("user_id", "origin", name="portal_credentials_user_origin"),)
+
+
 class CoverLetterVersion(Base):
     __tablename__ = "cover_letter_versions"
 
@@ -823,3 +837,16 @@ class ActionLog(Base):
     source: Mapped[str] = mapped_column(String, default="user", nullable=False)
     detail: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CopilotConversation(Base):
+    """Durable AG-UI messages; composite ownership and a per-thread turn lease."""
+    __tablename__ = "copilot_conversations"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    messages: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    active_run_id: Mapped[str | None] = mapped_column(String(200))
+    active_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (Index("copilot_conversations_owner_updated", "user_id", "updated_at"),)

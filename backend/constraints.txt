@@ -18,3 +18,4 @@ langgraph-sdk==0.4.5
 ag-ui-langgraph==0.0.46
 ag-ui-protocol==1.0.0
 ag-ui-a2ui-toolkit==0.0.4
+jsonschema==4.26.0

@@ -39,6 +39,7 @@ DRAFT_TYPES = {
     "linkedin_outreach",
 }
 ACTION_TYPES = DRAFT_TYPES | {
+    "computer_action",
     "send_email",
     "search_confirmation",
     "auto_apply_approval",
@@ -94,6 +95,10 @@ def validate_approval(pending: dict, edits: dict) -> dict:
 
 
 async def execute_agent(run: AgentRun, context: dict | None = None) -> dict:
+    if run.agent_type == "computer_task":
+        from app.agents.computer_agent import plan
+
+        return await plan(run)
     from app.agents.harness import get_harness
     from app.core.security import decrypt_api_key
     from app.core.sync_db import fetch_model_settings
@@ -214,6 +219,10 @@ async def send_approved_email(
 
 async def continue_action(run: AgentRun, pending: dict) -> dict:
     action = pending.get("type")
+    if action == "computer_action":
+        from app.agents.computer_agent import continue_step
+
+        return await continue_step(run, pending)
     if action in DRAFT_TYPES:
         return {"status": "completed", "result": {**pending, "reviewed": True}}
     if action == "search_confirmation":

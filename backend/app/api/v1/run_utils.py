@@ -85,6 +85,7 @@ async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any
             AgentRun.user_id == user.id,
             AgentRun.status.in_(["queued", "running"]),
             AgentRun.agent_type != "apply_prepare",
+            AgentRun.agent_type != "computer_action",
         )
     )
     active_run_ids = [str(run_id) for run_id in active_runs.scalars().all()]

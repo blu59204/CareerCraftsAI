@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import redis.asyncio as aioredis
@@ -6,18 +7,19 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_pool: aioredis.ConnectionPool | None = None
-
-
 def _get_pool() -> aioredis.ConnectionPool:
-    global _pool
-    if _pool is None:
-        _pool = aioredis.ConnectionPool.from_url(
+    # Redis sockets and locks belong to the loop that first uses them. Agent
+    # nodes run on short-lived loops as well as the API/Temporal worker loop.
+    loop = asyncio.get_running_loop()
+    pool = getattr(loop, "_careercraft_redis_pool", None)
+    if pool is None:
+        pool = aioredis.ConnectionPool.from_url(
             settings.REDIS_URL,
             max_connections=20,
             decode_responses=True,
         )
-    return _pool
+        setattr(loop, "_careercraft_redis_pool", pool)
+    return pool
 
 
 def get_redis() -> aioredis.Redis:
@@ -35,7 +37,8 @@ async def check_redis_connection() -> bool:
 
 
 async def close_redis() -> None:
-    global _pool
-    if _pool is not None:
-        await _pool.disconnect()
-        _pool = None
+    loop = asyncio.get_running_loop()
+    pool = getattr(loop, "_careercraft_redis_pool", None)
+    if pool is not None:
+        await pool.disconnect()
+        delattr(loop, "_careercraft_redis_pool")

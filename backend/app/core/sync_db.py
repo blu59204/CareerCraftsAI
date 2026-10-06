@@ -32,15 +32,23 @@ def _run_fresh(coro):
     spawns a subprocess) works — the default Selector loop that uvicorn installs
     raises NotImplementedError on subprocess creation.
     """
+    async def run_and_close():
+        from app.core.redis_client import close_redis
+
+        try:
+            return await coro
+        finally:
+            await close_redis()
+
     if sys.platform == "win32":
         loop = asyncio.ProactorEventLoop()
         try:
             asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coro)
+            return loop.run_until_complete(run_and_close())
         finally:
             asyncio.set_event_loop(None)
             loop.close()
-    return asyncio.run(coro)
+    return asyncio.run(run_and_close())
 
 
 def run_coro_sync(coro):

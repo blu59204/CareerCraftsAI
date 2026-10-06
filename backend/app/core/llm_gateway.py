@@ -50,14 +50,10 @@ _TOOL_ARGS_MAX_CHARS = 20000
 _SESSION_TTL_SECONDS = 3600
 _SESSION_KEY_PREFIX = "llm_gw:session:"
 
-_redis_client: aioredis.Redis | None = None
-
-
 def _get_redis() -> aioredis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-    return _redis_client
+    from app.core.redis_client import get_redis
+
+    return get_redis()
 
 
 # Internal base URL the agent uses to reach this gateway. Configurable so it
@@ -134,6 +130,8 @@ def _validate_tools(raw_tools) -> list | None:
     Function-type tools only, bounded count and size, safe names, object JSON
     schemas. Unknown keys are dropped so only the validated shape is forwarded.
     """
+    from jsonschema import Draft202012Validator, SchemaError
+
     if raw_tools is None:
         return None
     if not isinstance(raw_tools, list) or len(raw_tools) > _MAX_TOOLS:
@@ -154,6 +152,13 @@ def _validate_tools(raw_tools) -> list | None:
             raise ValueError("Invalid tools")
         if parameters is not None and not isinstance(parameters, dict):
             raise ValueError("Invalid tools")
+        if parameters:
+            if parameters.get("type") != "object":
+                raise ValueError("Tool parameters must be an object schema")
+            try:
+                Draft202012Validator.check_schema(parameters)
+            except SchemaError:
+                raise ValueError("Invalid tool parameter schema") from None
         cleaned: dict = {
             "type": "function",
             "function": {
@@ -322,10 +327,9 @@ async def proxy_llm_request(path: str, request: Request) -> Response:
     finish_reason = "stop"
     if allow_tools:
         tool_calls = []
-        for call in (result.additional_kwargs or {}).get("tool_calls") or []:
-            function = call.get("function") or {}
-            if not function.get("name"):
-                continue
+        # LangChain normalizes calls across providers. Anthropic/Google do not
+        # populate the OpenAI-specific additional_kwargs representation.
+        for call in result.tool_calls or []:
             tool_calls.append(
                 {
                     "id": call.get("id") or "call_" + _generate_session_token(
@@ -333,8 +337,8 @@ async def proxy_llm_request(path: str, request: Request) -> Response:
                     ),
                     "type": "function",
                     "function": {
-                        "name": function["name"],
-                        "arguments": function.get("arguments") or "{}",
+                        "name": call["name"],
+                        "arguments": json.dumps(call["args"]),
                     },
                 }
             )
@@ -445,6 +449,10 @@ async def get_chat_gateway_llm(user_id: str, db):
         model=model_settings.model_name,
         api_key=token,
         base_url=_GATEWAY_BASE_URL,
+        # LangGraph's event callbacks can implicitly request token streaming
+        # even for ainvoke(). The gateway intentionally supports complete
+        # responses only; AG-UI still streams graph/tool lifecycle events.
+        disable_streaming=True,
         timeout=120,
         max_retries=0,
         callbacks=[get_redaction_callback(), TokenTrackingCallback(user_id)],

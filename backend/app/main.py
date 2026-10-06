@@ -18,6 +18,7 @@ from app.api.v1 import (
     agents,
     candidate_profile,
     company,
+    computer,
     cover_letter,
     demo,
     email,
@@ -164,15 +165,18 @@ async def _jwt_middleware(request: Request, call_next):
         request.state.user = payload
         # Graph nodes (e.g. the AG-UI chat copilot) have no route dependency to
         # receive the user through — they read this instead.
-        from app.core.request_context import set_current_user_id
+        from app.core.request_context import reset_current_user_id, set_current_user_id
 
-        set_current_user_id(str(payload.get("sub") or "") or None)
+        identity_token = set_current_user_id(str(payload.get("sub") or "") or None)
     except Exception:
         return JSONResponse(
             status_code=401,
             content={"detail": "Invalid or expired token"},
         )
-    return await call_next(request)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_user_id(identity_token)
 
 
 # ── Lifespan ─────────────────────────────────────────────────────
@@ -287,6 +291,7 @@ app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(leads.router, prefix="/api/v1")
 app.include_router(email.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(computer.router, prefix="/api/v1")
 app.include_router(interview_prep.router, prefix="/api/v1")
 app.include_router(cover_letter.router, prefix="/api/v1")
 app.include_router(interview.router, prefix="/api/v1")

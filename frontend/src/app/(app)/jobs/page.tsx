@@ -1287,6 +1287,24 @@ export default function JobsPage() {
   const activeRunStatus = useAgentStore((s) =>
     activeRunId ? s.runs[activeRunId]?.status : undefined,
   );
+  const { data: searchOutcome } = useQuery<{
+    status: string;
+    output?: { total_found?: number; saved_count?: number; warnings?: string[]; error?: string;
+      matches?: { job_id: string; title: string; company: string; url: string; match_score: number }[] };
+  }>({
+    queryKey: ["job-search-outcome", activeRunId],
+    enabled: !!activeRunId,
+    queryFn: async () => (await apiClient.get(`/agents/runs/${activeRunId}`)).data,
+    refetchInterval: query => ["completed", "failed", "cancelled", "expired"].includes(query.state.data?.status ?? "") ? false : 5000,
+  });
+  useEffect(() => {
+    if (!activeRunId || !searchOutcome) return;
+    if (searchOutcome.status === "completed" || searchOutcome.status === "failed") {
+      setAgentRunning(false);
+      setRunStatus(activeRunId, searchOutcome.status);
+      void qc.invalidateQueries({ queryKey: ["jobs-saved"] });
+    }
+  }, [searchOutcome, activeRunId, setRunStatus, qc]);
 
   // Listing choice for large result sets, remembered per browser. undefined = not read yet.
   const [listChoice, setListChoice] = useState<ListChoice | null | undefined>(undefined);
@@ -1730,6 +1748,15 @@ export default function JobsPage() {
             </motion.div>
           )}
 
+          {searchOutcome?.status === "completed" && <div className="rounded-2xl border border-border p-4" aria-label="Latest search results">
+            <p role="status" className="text-sm font-medium">Found {searchOutcome.output?.total_found ?? 0} listings; saved {searchOutcome.output?.saved_count ?? 0} matches scoring at least 50%.</p>
+            {searchOutcome.output?.warnings?.map((warning, i) => <p key={i} className="mt-2 text-xs text-muted-foreground">{warning}</p>)}
+            {!searchOutcome.output?.matches?.length && <p className="mt-2 text-sm">No listings found. Try a broader role, location, or another source.</p>}
+            <ul className="mt-3 space-y-2">{searchOutcome.output?.matches?.slice(0, 10).map(job => <li key={job.job_id} className="flex items-center justify-between gap-3 text-sm">
+              <a className="underline underline-offset-4" href={/^https?:\/\//i.test(job.url) ? job.url : undefined} target="_blank" rel="noopener noreferrer">{job.title} · {job.company}</a><span className="shrink-0 text-xs text-muted-foreground">{job.match_score}% match</span>
+            </li>)}</ul>
+          </div>}
+          {searchOutcome?.status === "failed" && <p role="alert" className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{searchOutcome.output?.error || "Job search failed. Try again."}</p>}
           <SectionHeading
             eyebrow="Saved matches"
             title="Ranked against your resume"

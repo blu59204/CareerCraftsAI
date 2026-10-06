@@ -1,100 +1,67 @@
 "use client";
 
-/**
- * Copilot (AG-UI) wiring for the Career Copilot chat page.
- *
- * The backend exposes a bare AG-UI agent endpoint (ag-ui-langgraph), not a
- * full CopilotKit runtime — so the provider must NOT get a `runtimeUrl`:
- * the v2 client probes `${runtimeUrl}` with its own `{method: "info"}`
- * protocol and the AG-UI endpoint answers 422 ("Runtime info request
- * failed"). Instead we hand the provider a self-managed `HttpAgent` that
- * speaks AG-UI directly to `/api/v1/agents/chat`.
- *
- * Clerk session tokens rotate about every minute and `HttpAgent.headers` is
- * a plain record (no async support), so the token is cached in this module,
- * refreshed on a short interval, and pushed onto the live agent instance —
- * a request never sees a token older than ~30s.
- */
-
 import { HttpAgent } from "@ag-ui/client";
-
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, apiClient } from "@/lib/api";
 import { getClerkAuthToken } from "@/lib/clerk-token";
-
-const THREAD_STORAGE_KEY = "cc-copilot-thread-id";
-const TOKEN_REFRESH_INTERVAL_MS = 30_000;
 
 export const COPILOT_AGENT_ID = "career-copilot";
 
-let cachedToken: string | null = null;
-let refreshTimer: ReturnType<typeof setInterval> | null = null;
-let agent: HttpAgent | null = null;
-
-export function getCopilotAgentUrl(): string {
-  return `${API_BASE_URL}/agents/chat`;
+// CopilotKit clears the agent before connecting an explicit thread. Restore
+// from our history endpoint at that lifecycle boundary, without running a turn.
+class CareerCopilotAgent extends HttpAgent {
+  private latestMessages: HttpAgent["messages"] = [];
+  constructor(config: ConstructorParameters<typeof HttpAgent>[0]) {
+    super(config);
+    this.latestMessages = [...this.messages];
+    this.subscribe({ onMessagesChanged: ({ messages }) => {
+      // A newly mounted SDK view clears messages before connect. Retain the
+      // streaming snapshot so opening the full page cannot erase a pet reply.
+      if (messages.length || !this.isRunning) this.latestMessages = [...messages];
+    } });
+  }
+  async connectAgent() {
+    if (this.isRunning) {
+      this.setMessages(this.latestMessages);
+      return { result: undefined, newMessages: [] };
+    }
+    try {
+      const response = await apiClient.get(`/agents/chat/threads/${encodeURIComponent(this.threadId)}`);
+      this.setMessages(response.data.messages);
+    } catch (error) {
+      if ((error as { response?: { status: number } }).response?.status !== 404) throw error;
+      this.setMessages([]);
+    }
+    return { result: undefined, newMessages: [] };
+  }
 }
 
-/** Lazily creates the process-wide chat agent; headers refresh with the token. */
-export function getOrCreateCopilotAgent(): HttpAgent {
-  if (!agent) {
-    agent = new HttpAgent({
-      agentId: COPILOT_AGENT_ID,
-      url: getCopilotAgentUrl(),
-      headers: getCopilotHeaders(),
-    });
-  }
+export function createCopilotAgent(threadId: string, messages: HttpAgent["messages"] = []): HttpAgent {
+  const agent = new CareerCopilotAgent({
+    agentId: COPILOT_AGENT_ID,
+    threadId,
+    initialMessages: messages,
+    url: `${API_BASE_URL}/agents/chat`,
+    // Resolve credentials on every request, including the first chat turn.
+    fetch: async (url, init) => {
+      const token = await getClerkAuthToken();
+      if (!token) throw new Error("Please sign in again to use Career Copilot.");
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      return fetch(url, { ...init, headers });
+    },
+  });
   return agent;
 }
 
-export function getOrCreateCopilotThreadId(): string {
-  if (typeof window === "undefined") return "";
-  let threadId = window.localStorage.getItem(THREAD_STORAGE_KEY);
-  if (!threadId) {
-    threadId = newThreadId();
-  }
+export function getOrCreateCopilotThreadId(userId: string): string {
+  const key = `cc-copilot-thread-id:${userId}`;
+  const stored = window.localStorage.getItem(key);
+  if (stored) return stored;
+  return resetCopilotThreadId(userId);
+}
+
+export function resetCopilotThreadId(userId: string): string {
+  const threadId = crypto.randomUUID();
+  window.localStorage.setItem(`cc-copilot-thread-id:${userId}`, threadId);
   return threadId;
-}
-
-export function resetCopilotThreadId(): string {
-  const threadId = newThreadId();
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(THREAD_STORAGE_KEY, threadId);
-  }
-  return threadId;
-}
-
-function newThreadId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `thread-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-async function refreshCopilotToken(): Promise<void> {
-  cachedToken = await getClerkAuthToken();
-  if (agent) {
-    agent.headers = getCopilotHeaders();
-  }
-}
-
-export function startCopilotTokenRefresh(): void {
-  void refreshCopilotToken();
-  if (refreshTimer === null) {
-    refreshTimer = setInterval(() => void refreshCopilotToken(), TOKEN_REFRESH_INTERVAL_MS);
-  }
-}
-
-export function stopCopilotTokenRefresh(): void {
-  if (refreshTimer !== null) {
-    clearInterval(refreshTimer);
-    refreshTimer = null;
-  }
-}
-
-function getCopilotHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (cachedToken) {
-    headers.Authorization = `Bearer ${cachedToken}`;
-  }
-  return headers;
 }

@@ -30,6 +30,7 @@ import {
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient, useIsMutating } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { uploadResume } from "@/lib/resume-upload";
 import {
   Bezel,
   Eyebrow,
@@ -1067,13 +1068,7 @@ export default function ResumePage() {
     if (!file) return;
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("doc_type", "resume");
-      fd.append("is_primary", "true");
-      const { data } = await apiClient.post("/rag/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const data = await uploadResume(file);
       // A new resume replaces the current document: in-flight replies are stale.
       docGenRef.current += 1;
       setLastDocId(null);
@@ -1183,7 +1178,7 @@ export default function ResumePage() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,.doc,.docx"
+        accept=".pdf,.docx,.txt"
         aria-label="Resume file (PDF or DOCX)"
         className="hidden"
         onChange={handleFileChange}

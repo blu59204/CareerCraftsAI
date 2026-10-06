@@ -17,7 +17,6 @@ Served over the AG-UI protocol by ag-ui-langgraph (see api/v1/copilot_chat.py).
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -42,6 +41,7 @@ AGENT_TYPE = "chat"
 # would approve/cancel/send) is out of its reach by construction.
 ALLOWED_TASK_TYPES = frozenset(
     {
+        "computer_task",
         "job_search",
         "auto_apply",
         "resume_optimize",
@@ -61,8 +61,7 @@ _MAX_CONTEXT_CHARS = 8000
 _MAX_LIST_RESULTS = 25
 
 UNAUTHENTICATED_REPLY = (
-    "This chat session is not authenticated. Please sign in again and reopen "
-    "the Copilot."
+    "This chat session is not authenticated. Please sign in again and reopen the Copilot."
 )
 
 _SYSTEM_PROMPT = f"""You are Career Copilot, the orchestration assistant inside CareerCraft AI.
@@ -75,6 +74,20 @@ list their applications, and run quick keyless job searches.
 Rules:
 - Start a run only when the user asks for work that needs one, and tell them the
   run id and that they can watch it on the Agents page.
+- When the user supplies a specific job URL and asks to apply, use
+  start_job_application(job_url). Do not search for other jobs or collect a
+  target role/location first. The tool wakes the browser and starts a reviewed
+  application task for that exact link. Preparation is not submission.
+- For auto_apply without a specific link, collect search_query (target role), location, and optionally
+  max_applications (1–5). This pipeline searches for jobs and prepares child
+  application workflows; it does not accept saved-job ids or schedule a week
+  of work. Never claim those unsupported actions are done.
+- For a generic company career page or portal browser task, start computer_task
+  with context {{"task":"the user's requested work"}}. The tool wakes their computer on demand. Each browser change pauses for approval. Login
+  is private: direct the user to saved logins or human takeover in the panel;
+  never ask for a password in chat. Saved resume uploads are supported through
+  reviewed browser steps. Users can also upload a saved resume while holding
+  control in the browser panel. Tell them to save a resume in the app first.
 - When asked about a run's progress, use get_run_status. If a run is
   awaiting_approval, tell the user exactly that an approval card / the approval
   page is where they accept or reject it. You can NEVER approve, reject,
@@ -123,7 +136,7 @@ async def start_agent_run(task_type: str, context: dict | None = None) -> str:
         task_type: one of job_search, auto_apply, resume_optimize,
             cover_letter, interview_prep, interview_coach, company_research,
             salary_intelligence, email, email_monitor, linkedin_optimize,
-            linkedin_outreach.
+            linkedin_outreach, computer_task.
         context: task context, e.g. {"query": "Senior Python Engineer",
             "location": "Remote"} for job_search. Keep it small.
     """
@@ -150,6 +163,13 @@ async def start_agent_run(task_type: str, context: dict | None = None) -> str:
             user = await _get_user(db, user_id)
             if user is None:
                 return json.dumps({"error": "User account not found."})
+            if task_type == "computer_task":
+                task = context.get("task")
+                if not isinstance(task, str) or not task.strip():
+                    return json.dumps({"error": "Describe the browser task in context.task."})
+                from app.services.computer_service import relay, audit
+                await relay(user.id, "/start", "POST")
+                await audit(user.id, "start")
             run_id = await queue_agent_run(db, user, task_type, context)
     except Exception as exc:
         detail = getattr(exc, "detail", None)
@@ -170,6 +190,28 @@ async def start_agent_run(task_type: str, context: dict | None = None) -> str:
             "cannot approve it.",
         }
     )
+
+
+@tool
+async def start_job_application(job_url: str) -> str:
+    """Prepare an application to the exact job link supplied by the user.
+
+    Wakes their browser on demand. Browser mutations and submission still
+    require the user's approval. Login needs private human help; saved resume
+    uploads are supported after review.
+    """
+    from app.services.computer_service import ComputerAction, AGENT_WRITES
+    try:
+        ComputerAction(operation="navigate", parameters={"url": job_url}).validate_operation(AGENT_WRITES)
+    except ValueError:
+        return json.dumps({"error": "Provide a valid HTTP(S) job URL without embedded credentials."})
+    return await start_agent_run.ainvoke({"task_type": "computer_task", "context": {
+        "task": "Prepare my application for this exact job: " + job_url +
+            ". Open this link first. Use my saved profile and resume facts. "
+            "Ask for missing information; never invent answers. "
+            "Pause for my approval before browser changes and final submission.",
+        "job_url": job_url,
+    }})
 
 
 @tool
@@ -206,7 +248,7 @@ async def get_run_status(run_id: str) -> str:
         # Only the action type plus a short summary reach the model; the full
         # payload stays in the UI approval card.
         pending = {
-            "action_type": run.output.get("action_type"),
+            "action_type": run.output.get("type") or run.output.get("action_type"),
             "summary": _compact(run.output.get("summary") or run.output.get("details"), 400),
         }
     return json.dumps(
@@ -256,9 +298,7 @@ async def list_recent_runs(limit: int = 5) -> str:
                     "task_type": run.agent_type,
                     "status": run.status,
                     "started_at": run.started_at.isoformat() if run.started_at else None,
-                    "completed_at": (
-                        run.completed_at.isoformat() if run.completed_at else None
-                    ),
+                    "completed_at": (run.completed_at.isoformat() if run.completed_at else None),
                 }
                 for run in runs
             ]
@@ -356,12 +396,20 @@ async def search_jobs_now(keywords: str, location: str = "Remote") -> str:
     )
 
 
-TOOLS = [start_agent_run, get_run_status, list_recent_runs, list_applications, search_jobs_now]
+TOOLS = [start_agent_run, start_job_application, get_run_status, list_recent_runs, list_applications, search_jobs_now]
 
 
 # ── Graph ────────────────────────────────────────────────────────
 
-async def _log_turn(user_id: str, first_message: str, response: AIMessage, started: float):
+
+async def _log_turn(
+    user_id: str,
+    first_message: str,
+    response: AIMessage,
+    started: float,
+    *,
+    status: str = "completed",
+):
     """One agent_runs row per chat model call (token + latency tracking)."""
     try:
         from app.core.database import AsyncSessionLocal
@@ -377,7 +425,7 @@ async def _log_turn(user_id: str, first_message: str, response: AIMessage, start
                 AgentRunRow(
                     user_id=user.id,
                     agent_type=AGENT_TYPE,
-                    status="completed",
+                    status=status,
                     input={"preview": first_message[:500]},
                     output={"preview": _compact(response.content, 500)},
                     tokens_used=tokens,
@@ -388,7 +436,7 @@ async def _log_turn(user_id: str, first_message: str, response: AIMessage, start
             await db.commit()
     except Exception:
         # Logging must never break the chat turn.
-        logger.debug("chat turn logging failed", exc_info=True)
+        logger.warning("chat turn logging failed", exc_info=True)
 
 
 async def agent_node(state: MessagesState) -> dict:
@@ -403,25 +451,37 @@ async def agent_node(state: MessagesState) -> dict:
     from app.core.llm_gateway import get_chat_gateway_llm
 
     first_user = next(
-        (m.content for m in messages if getattr(m, "type", "") == "user"), ""
+        (m.content for m in reversed(messages) if getattr(m, "type", "") == "human"), ""
     )
     started = time.monotonic()
+    status = "completed"
     async with AsyncSessionLocal() as db:
+        user = await _get_user(db, user_id)
+        if user is None:
+            return {"messages": [AIMessage(content="User account not found.")]}
         try:
-            llm = await get_chat_gateway_llm(user_id, db)
+            # Settings and token budgets use the database UUID, while request
+            # identity and the chat tools use Clerk's authenticated subject.
+            llm = await get_chat_gateway_llm(str(user.id), db)
+            response = await llm.bind_tools(TOOLS).ainvoke(
+                with_security_rules([SystemMessage(content=_SYSTEM_PROMPT), *messages])
+            )
         except HTTPException as exc:
-            detail = exc.detail
-            message = detail if isinstance(detail, str) else str(detail)
+            status = "failed"
+            message = "Could not reach your configured model. Try again shortly."
             if exc.status_code == 429:
                 message = "Your daily token budget is used up. Try again tomorrow."
             elif exc.status_code == 400:
                 message = "No active model is configured. Set one up in Settings → Models."
-            return {"messages": [AIMessage(content=message)]}
-        response = await llm.bind_tools(TOOLS).ainvoke(
-            with_security_rules([SystemMessage(content=_SYSTEM_PROMPT), *messages])
-        )
+            response = AIMessage(content=message)
+        except Exception as exc:
+            status = "failed"
+            logger.warning("chat model failed: %s", type(exc).__name__)
+            response = AIMessage(
+                content="Could not reach your configured model. Try again shortly."
+            )
 
-    await _log_turn(user_id, str(first_user), response, started)
+    await _log_turn(user_id, str(first_user), response, started, status=status)
     return {"messages": [response]}
 
 

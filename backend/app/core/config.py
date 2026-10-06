@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # ── LLM gateway ────────────────────────────────────────────────────
     LLM_GATEWAY_URL: str = "http://localhost:8000/llm-gateway/v1"
 
+    # Private OpenBot relay, reached over a deployment network or SSH tunnel.
+    SANDBOX_RELAY_URL: str = ""
+    SANDBOX_RELAY_TOKEN: str = ""
+
     # ── Browser Use ────────────────────────────────────────────────────
     # Controller LLM — use a local Ollama model for cost-efficient navigation
     # steps. Set BROWSER_USE_OLLAMA_URL to your Ollama instance; leave empty

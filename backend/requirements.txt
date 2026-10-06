@@ -21,6 +21,7 @@ psycopg[binary]>=3.3.4
 # Config & validation
 pydantic>=2.7.4
 pydantic-settings>=2.3.0
+jsonschema>=4.26.0
 
 # Auth & security
 PyJWT[crypto]>=2.15.1  # Clerk JWT verification; unused python-jose removed
