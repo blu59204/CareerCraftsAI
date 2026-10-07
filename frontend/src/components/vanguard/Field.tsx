@@ -41,7 +41,11 @@ Textarea.displayName = "VanguardTextarea";
 export const Select = forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement> & { trayClassName?: string }>(
   ({ className, trayClassName, children, ...props }, ref) => (
     <div className={cn(TRAY, "relative", trayClassName)}>
-      <select ref={ref} className={cn(CONTROL, "h-11 appearance-none pr-10", className)} {...props}>
+      <select
+        ref={ref}
+        className={cn(CONTROL, "h-11 cursor-pointer appearance-none truncate pr-10 [&>option]:bg-card [&>option]:text-foreground", className)}
+        {...props}
+      >
         {children}
       </select>
       <svg aria-hidden viewBox="0 0 16 16" className="pointer-events-none absolute right-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="1.25">

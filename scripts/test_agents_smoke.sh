@@ -71,7 +71,6 @@ echo "CareerCraft AI Agent Smoke Test"
 echo "================================"
 echo ""
 
-run_agent_smoke "1. NL Search" "nl_job_search" '{"query":"backend engineer remote India"}' "checkpoint"
 run_agent_smoke "2. Job Search" "job_search" '{"query":"Python developer","location":"Bengaluru"}' "complete"
 run_agent_smoke "3. Resume Optimize" "resume_optimize" '{"jd_text":"We need a Python engineer with 5 years experience"}' "complete"
 run_agent_smoke "4. Cover Letter" "cover_letter" '{"job_description":"Python engineer role at Google","company_name":"Google"}' "complete"

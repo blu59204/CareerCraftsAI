@@ -103,6 +103,7 @@ async def _run_with_timeout(coro) -> dict:
 
 @activity.defn
 async def execute_agent_run_activity(params: dict) -> dict:
+    from app.core.sync_db import run_choice
     from app.services.workflow_service import execute_agent
 
     run_id = params["run_id"]
@@ -111,12 +112,14 @@ async def execute_agent_run_activity(params: dict) -> dict:
     if run is None:
         return {"status": status, "action_type": None}
     started = time.monotonic()
-    result = await _run_with_timeout(execute_agent(run))
+    with run_choice((run.input or {}).get("context")):
+        result = await _run_with_timeout(execute_agent(run))
     return await record_run_result(run_id, result, started)
 
 
 @activity.defn
 async def continue_agent_run_activity(params: dict) -> dict:
+    from app.core.sync_db import run_choice
     from app.services.workflow_service import continue_action
 
     run_id = params["run_id"]
@@ -125,7 +128,8 @@ async def continue_agent_run_activity(params: dict) -> dict:
     if run is None:
         return {"status": status, "action_type": None}
     started = time.monotonic()
-    result = await _run_with_timeout(continue_action(run, params.get("continuation") or {}))
+    with run_choice((run.input or {}).get("context")):
+        result = await _run_with_timeout(continue_action(run, params.get("continuation") or {}))
     return await record_run_result(run_id, result, started)
 
 

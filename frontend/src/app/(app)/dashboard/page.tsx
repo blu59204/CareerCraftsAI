@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
@@ -30,6 +31,7 @@ import { JobMatchCard } from "@/components/ui/JobMatchCard";
 import { AgentStatusCard } from "@/components/agents/AgentStatusCard";
 import { ApprovalCard } from "@/components/agents/ApprovalCard";
 import {
+  REVEAL_VIEWPORT,
   Bezel,
   EmptyPanel,
   Hairline,
@@ -102,15 +104,15 @@ interface PendingApproval {
   output: { type?: string; subject?: string; body?: string } | null;
 }
 
-/** Agent launchers. "Search Jobs" is the hero's primary action; the rest live in the Next actions panel. */
+/** Quick-action cards: primary Search Jobs triggers agent; others navigate to dedicated pages. */
 const quickActions = [
   { label: "Search Jobs", icon: MagnifyingGlass, taskType: "job_search", ctx: { query: "", location: "Remote" }, description: "Scan the boards and score every match." },
-  { label: "Optimize Resume", icon: FileText, taskType: "resume_optimize", ctx: {}, description: "Tailor to a role and rescore it for ATS." },
-  { label: "Mock Interview", icon: Microphone, taskType: "interview_coach", ctx: { role: "Software Engineer" }, description: "Practice answers with scored feedback." },
-  { label: "Research Company", icon: Buildings, taskType: "company_research", ctx: {}, description: "Culture, news and interview patterns." },
+  { label: "Optimize Resume", icon: FileText, taskType: "resume_optimize", ctx: {}, description: "Tailor to a role and rescore it for ATS.", href: "/resume" },
+  { label: "Mock Interview", icon: Microphone, taskType: "interview_coach", ctx: { role: "Software Engineer" }, description: "Practice answers with scored feedback.", href: "/interview" },
+  { label: "Research Company", icon: Buildings, taskType: "company_research", ctx: {}, description: "Culture, news and interview patterns.", href: "/company" },
 ] as const;
 
-const [primaryAction, ...panelActions] = quickActions;
+const [primaryAction] = quickActions;
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -166,6 +168,7 @@ function LaunchTile({
   label,
   description,
   icon,
+  href,
   busy,
   disabled,
   onClick,
@@ -173,42 +176,55 @@ function LaunchTile({
   label: string;
   description: string;
   icon: ReactNode;
-  busy: boolean;
-  disabled: boolean;
-  onClick: () => void;
+  href?: string;
+  busy?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
 }) {
   const descId = `launch-${label.toLowerCase().replace(/\s+/g, "-")}-desc`;
+  const tileClassName = cn(
+    bezelShell("md"),
+    "group block h-full w-full text-left transition-[transform,opacity] duration-500 ease-vanguard hover:-translate-y-0.5 active:scale-[0.98]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60",
+  );
+
+  const content = (
+    <span className={cn(bezelCore("md"), "flex h-full flex-col p-4")}>
+      <span className="flex items-start justify-between gap-3">
+        <Medallion>{icon}</Medallion>
+        <span
+          aria-hidden
+          className="grid h-8 w-8 place-items-center rounded-full bg-foreground/[0.05] text-muted-foreground transition-[transform,color,background-color] duration-500 ease-vanguard group-hover:-translate-y-[1px] group-hover:translate-x-1 group-hover:scale-105 group-hover:bg-primary/10 group-hover:text-primary dark:bg-white/10"
+        >
+          <ArrowUpRight size={14} weight="light" />
+        </span>
+      </span>
+      <span className="mt-6 block text-sm font-medium tracking-[-0.01em] text-foreground">{label}</span>
+      <span id={descId} className="mt-1 block text-xs leading-5 text-muted-foreground">
+        {busy ? "Starting agent…" : description}
+      </span>
+    </span>
+  );
+
   return (
     <motion.li variants={listItem} className="min-w-0">
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-busy={busy}
-        aria-label={label}
-        aria-describedby={descId}
-        className={cn(
-          bezelShell("md"),
-          "group block h-full w-full text-left transition-[transform,opacity] duration-500 ease-vanguard hover:-translate-y-0.5 active:scale-[0.98]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60",
-        )}
-      >
-        <span className={cn(bezelCore("md"), "flex h-full flex-col p-4")}>
-          <span className="flex items-start justify-between gap-3">
-            <Medallion>{icon}</Medallion>
-            <span
-              aria-hidden
-              className="grid h-8 w-8 place-items-center rounded-full bg-foreground/[0.05] text-muted-foreground transition-[transform,color,background-color] duration-500 ease-vanguard group-hover:-translate-y-[1px] group-hover:translate-x-1 group-hover:scale-105 group-hover:bg-primary/10 group-hover:text-primary dark:bg-white/10"
-            >
-              <ArrowUpRight size={14} weight="light" />
-            </span>
-          </span>
-          <span className="mt-6 block text-sm font-medium tracking-[-0.01em] text-foreground">{label}</span>
-          <span id={descId} className="mt-1 block text-xs leading-5 text-muted-foreground">
-            {busy ? "Starting agent…" : description}
-          </span>
-        </span>
-      </button>
+      {href ? (
+        <Link href={href} className={tileClassName} aria-label={label} aria-describedby={descId}>
+          {content}
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          aria-busy={busy}
+          aria-label={label}
+          aria-describedby={descId}
+          className={tileClassName}
+        >
+          {content}
+        </button>
+      )}
     </motion.li>
   );
 }
@@ -493,10 +509,11 @@ export default function DashboardPage() {
 
       {/* ---- Command bento ------------------------------------------------ */}
       <Section aria-label="Command center">
-        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
-          {/* Next actions — the anchor panel */}
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12 lg:items-stretch">
+          {/* Next actions — the anchor panel. On lg it stretches to the right column's
+              height and pins the launchers to the bottom, so no blank strip is left under it. */}
           <Reveal className="min-w-0 lg:col-span-8">
-            <Bezel size="lg" tone="primary" coreClassName="flex flex-col p-4 sm:p-6">
+            <Bezel size="lg" tone="primary" className="h-full" coreClassName="flex flex-col p-4 sm:p-6">
               <PanelTitle
                 title="Next actions"
                 icon={<Lightning size={16} weight="light" />}
@@ -511,7 +528,7 @@ export default function DashboardPage() {
                 }
               />
 
-              <div className="mt-4" aria-live="polite">
+              <div className="mt-4 lg:flex-1" aria-live="polite">
                 {isLoading ? (
                   <RowSkeleton rows={3} />
                 ) : visibleActions.length > 0 ? (
@@ -540,21 +557,22 @@ export default function DashboardPage() {
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Launch an agent</p>
                 <motion.ul
-                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
+                  className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
                   initial="hidden"
                   whileInView="show"
-                  viewport={{ once: true, amount: 0.2 }}
+                  viewport={REVEAL_VIEWPORT}
                   variants={listStagger}
                 >
-                  {panelActions.map((action) => (
+                  {quickActions.map((action) => (
                     <LaunchTile
                       key={action.taskType}
                       label={action.label}
                       description={action.description}
                       icon={<action.icon size={18} weight="light" />}
+                      href={"href" in action ? action.href : undefined}
                       busy={launching === action.taskType}
                       disabled={launching !== null}
-                      onClick={() => triggerAgent(action.taskType, { ...action.ctx })}
+                      onClick={!("href" in action) ? () => triggerAgent(action.taskType, { ...action.ctx }) : undefined}
                     />
                   ))}
                 </motion.ul>
@@ -572,13 +590,14 @@ export default function DashboardPage() {
               />
             </Reveal>
 
+            {/* Only shown when an agent is actually waiting; an empty card just padded the column. */}
+            {approvalsCount > 0 ? (
             <Reveal delay={0.14} className="min-w-0">
               <Bezel
                 id="approvals"
                 size="lg"
                 className={cn(
-                  "h-full scroll-mt-24",
-                  approvalsCount > 0 && "bg-warning/[0.05] ring-warning/20 dark:bg-warning/[0.06] dark:ring-warning/25",
+                  "h-full scroll-mt-24 bg-warning/[0.05] ring-warning/20 dark:bg-warning/[0.06] dark:ring-warning/25",
                 )}
                 coreClassName="flex flex-col p-6 md:p-7"
               >
@@ -586,16 +605,12 @@ export default function DashboardPage() {
                   title="Approvals"
                   icon={<ShieldCheck size={16} weight="light" />}
                   meta={
-                    approvalsCount > 0 ? (
-                      <StatusPill tone="warning" live>
-                        {approvalsCount} pending
-                      </StatusPill>
-                    ) : null
+                    <StatusPill tone="warning" live>
+                      {approvalsCount} pending
+                    </StatusPill>
                   }
                 />
                 <div className="mt-5 flex-1" aria-live="polite">
-                  {approvalsCount > 0 ? (
-                    <>
                       <p className="text-[13px] leading-5 text-muted-foreground">
                         {approvalsCount} action{approvalsCount > 1 ? "s" : ""} require approval. Nothing is sent or submitted until you approve.
                       </p>
@@ -616,18 +631,10 @@ export default function DashboardPage() {
                           </motion.li>
                         ))}
                       </motion.ul>
-                    </>
-                  ) : (
-                    <EmptyPanel
-                      compact
-                      icon={<SealCheck size={22} weight="light" />}
-                      title="Nothing waiting on you"
-                      description="Agents pause here before sending an email or submitting an application."
-                    />
-                  )}
                 </div>
               </Bezel>
             </Reveal>
+            ) : null}
           </div>
 
           {/* Key metrics */}
@@ -723,7 +730,7 @@ export default function DashboardPage() {
                     className="space-y-2"
                     initial="hidden"
                     whileInView="show"
-                    viewport={{ once: true, amount: 0.15 }}
+                    viewport={REVEAL_VIEWPORT}
                     variants={listStagger}
                   >
                     {recentRuns.map((run) => (

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 SSE_TIMEOUT_SECONDS = 300
 
 VALID_TASKS = {
+    "computer_task",
     "resume_optimize",
     "job_search",
     "linkedin_optimize",
@@ -35,7 +36,6 @@ VALID_TASKS = {
     "interview_prep",
     "company_research",
     "salary_intelligence",
-    "nl_job_search",
     "email_monitor",
     "auto_apply",
 }

@@ -54,6 +54,7 @@ function CharCount({ current, max }: { current: number; max: number }) {
 }
 
 const SPECIALISED_TYPES = [
+  "computer_action",
   "send_email",
   "resume_ready",
   "linkedin_edits",
@@ -490,6 +491,21 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                     )}
 
                     {/* Generic fallback for unknown action types */}
+                    {actionType === "computer_action" && (() => {
+                      const step = action.action as { operation?: string; parameters?: { url?: string; text?: string; deltaY?: number } } | undefined;
+                      return <div className="space-y-3">
+                        <p className="font-medium">{String(action.summary ?? "Review browser action")}</p>
+                        <p className="break-all text-sm text-muted-foreground">Page: {String(action.page_url ?? "Current browser page")}</p>
+                        <Recessed>
+                          <p>Action: {step?.operation}</p>
+                          {action.target ? <p>Target: {String(action.target)}</p> : null}
+                          {step?.parameters?.url ? <p>Open: {step.parameters.url}</p> : null}
+                          {step?.parameters?.text !== undefined ? <p>Enter: {step.parameters.text}</p> : null}
+                          {step?.parameters?.deltaY !== undefined ? <p>Scroll: {step.parameters.deltaY} pixels</p> : null}
+                        </Recessed>
+                        <p className="text-sm text-muted-foreground">Check the live computer view before approving.</p>
+                      </div>;
+                    })()}
                     {!SPECIALISED_TYPES.includes(actionType) && (
                       <Recessed mono className="max-h-64">
                         <pre className="whitespace-pre-wrap font-geist-mono text-xs text-foreground">

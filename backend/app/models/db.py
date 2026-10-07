@@ -12,11 +12,18 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import (
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    with_loader_criteria,
+)
 
 from app.core.database import Base
 
@@ -124,8 +131,30 @@ class JobApplication(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(Text)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    found_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Soft delete: hidden from every ORM read by _hide_deleted_applications.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Assisted apply in the member's own browser: opened -> applied | failed.
+    apply_state: Mapped[str | None] = mapped_column(String)
 
     user: Mapped["User"] = relationship(back_populates="applications")
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _hide_deleted_applications(state) -> None:
+    """Soft-deleted applications are invisible to every ORM SELECT unless the
+    statement opts in with ``.execution_options(include_deleted=True)`` (dedupe
+    checks do, so a deleted job isn't re-saved by the next search)."""
+    if state.is_select and not state.execution_options.get("include_deleted", False):
+        state.statement = state.statement.options(
+            with_loader_criteria(
+                JobApplication,
+                lambda cls: cls.deleted_at.is_(None),
+                include_aliases=True,
+            )
+        )
 
 
 class Lead(Base):
@@ -159,6 +188,22 @@ class AgentRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped["User"] = relationship(back_populates="agent_runs")
+
+
+class PortalCredential(Base):
+    """Member-owned exact-origin website login. Plaintext is never returned."""
+
+    __tablename__ = "portal_credentials"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    origin: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+    username_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    password_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("user_id", "origin", name="portal_credentials_user_origin"),)
 
 
 class CoverLetterVersion(Base):
@@ -341,6 +386,7 @@ class RecruiterOutreach(Base):
     resume_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     state: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_payload_hash: Mapped[str | None] = mapped_column(String(64))
     sending_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     gmail_message_id: Mapped[str | None] = mapped_column(String)
     gmail_thread_id: Mapped[str | None] = mapped_column(String)
@@ -701,6 +747,29 @@ class UserPreferences(Base):
     outreach_track_opens: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # One auto-apply rule: new saved job >= auto_rule_min_match -> action.
+    # auto_apply_enabled is its pause switch.
+    auto_rule_min_match: Mapped[int] = mapped_column(
+        Integer, default=70, nullable=False, server_default="70"
+    )
+    auto_rule_action: Mapped[str] = mapped_column(
+        String, default="apply", nullable=False, server_default="apply"
+    )
+    # When auto_apply_enabled last went on; the rule only acts on jobs found after it.
+    auto_rule_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Resume preferences, asked once on first auto-apply (resume_prefs_set_at
+    # NULL = not asked yet) and editable in Settings.
+    resume_template: Mapped[str | None] = mapped_column(String)
+    resume_page_target: Mapped[int] = mapped_column(
+        Integer, default=2, nullable=False, server_default="2"
+    )
+    resume_tailor_per_job: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+    resume_tone: Mapped[str] = mapped_column(
+        String, default="professional", nullable=False, server_default="professional"
+    )
+    resume_prefs_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -760,6 +829,39 @@ class NotificationDelivery(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'sent', 'dead')", name="notification_deliveries_status_check"
+            "status IN ('pending', 'sent', 'dead')",
+            name="notification_deliveries_status_check",
         ),
     )
+
+
+class ActionLog(Base):
+    """Every auto-apply / outreach / delete action a member or rule takes."""
+
+    __tablename__ = "action_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    job_application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("job_applications.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    source: Mapped[str] = mapped_column(String, default="user", nullable=False)
+    detail: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CopilotConversation(Base):
+    """Durable AG-UI messages; composite ownership and a per-thread turn lease."""
+
+    __tablename__ = "copilot_conversations"
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    thread_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    title: Mapped[str] = mapped_column(String(100), nullable=False)
+    messages: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    active_run_id: Mapped[str | None] = mapped_column(String(200))
+    active_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (Index("copilot_conversations_owner_updated", "user_id", "updated_at"),)

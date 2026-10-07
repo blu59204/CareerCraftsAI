@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Private login fixture</title>
+<h1>Test portal login</h1><form action="/" method="get" onsubmit="localStorage.setItem('fixtureLogin','yes')">
+<label>Email <input type="email" name="username" aria-label="Email"></label>
+<label>Password <input type="password" aria-label="Password"></label>
+<button type="button" onclick="document.querySelector('[aria-label=Password]').type='text';this.textContent='Hide password'">Show password</button>
+<button>Sign in to test employer</button></form></html>

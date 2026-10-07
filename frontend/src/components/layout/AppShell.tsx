@@ -8,6 +8,11 @@ import { ConstellationBackground } from "./ConstellationBackground";
 import { PendingDeletionBanner } from "./PendingDeletionBanner";
 import { useAgentStream } from "@/lib/sse";
 import { useAgentStore } from "@/store/agentStore";
+import { useUser } from "@clerk/nextjs";
+import { CompanionProvider } from "@/components/companion/CompanionProvider";
+import { FloatingCompanion } from "@/components/companion/FloatingCompanion";
+import { CopilotSessionProvider } from "@/components/agents/CopilotSessionProvider";
+import "@/components/companion/companion.css";
 
 // Persistent SSE stream for the active run — lives in the shell so it keeps
 // streaming (and updating the store) even when the user navigates between pages.
@@ -19,6 +24,7 @@ function ActiveRunStream() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { user } = useUser();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   if (pathname === "/onboarding") {
@@ -26,6 +32,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
+    <CompanionProvider key={user?.id ?? "loading"} ownerId={user?.id ?? ""}>
+    <CopilotSessionProvider ownerId={user?.id ?? ""}>
     <div className="premium-command-bg relative min-h-screen overflow-x-clip bg-background text-foreground">
       <ConstellationBackground />
       <ActiveRunStream />
@@ -39,5 +47,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     </div>
+    <FloatingCompanion />
+    </CopilotSessionProvider>
+    </CompanionProvider>
   );
 }

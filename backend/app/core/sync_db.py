@@ -12,6 +12,8 @@ import asyncio
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -30,15 +32,24 @@ def _run_fresh(coro):
     spawns a subprocess) works — the default Selector loop that uvicorn installs
     raises NotImplementedError on subprocess creation.
     """
+
+    async def run_and_close():
+        from app.core.redis_client import close_redis
+
+        try:
+            return await coro
+        finally:
+            await close_redis()
+
     if sys.platform == "win32":
         loop = asyncio.ProactorEventLoop()
         try:
             asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coro)
+            return loop.run_until_complete(run_and_close())
         finally:
             asyncio.set_event_loop(None)
             loop.close()
-    return asyncio.run(coro)
+    return asyncio.run(run_and_close())
 
 
 def run_coro_sync(coro):
@@ -103,12 +114,80 @@ def _to_uuid(user_id: str):
         return user_id
 
 
+# Per-run choices the member made on the agents page. Set by the activity that
+# executes the run (contextvars propagate through asyncio.to_thread), so every
+# fetch_model_settings / resume lookup below honors them without per-agent code.
+# Both ids are re-checked against user_id on every lookup: never trust the client.
+_run_choice: ContextVar[dict | None] = ContextVar("agent_run_choice", default=None)
+
+
+@contextmanager
+def run_choice(context: dict | None):
+    """Apply context["model_setting_id"] / ["resume_document_id"] for this run."""
+    ctx = context or {}
+    token = _run_choice.set(
+        {
+            "model_setting_id": ctx.get("model_setting_id"),
+            "resume_document_id": ctx.get("resume_document_id"),
+        }
+    )
+    try:
+        yield
+    finally:
+        _run_choice.reset(token)
+
+
+def _chosen(key: str):
+    value = (_run_choice.get() or {}).get(key)
+    if not value:
+        return None
+    try:
+        return _uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+def fetch_chosen_resume(user_id: str):
+    """Return the resume UserDocument picked for this run (owned by user_id), or None."""
+    from app.models.db import UserDocument
+
+    doc_id = _chosen("resume_document_id")
+    if doc_id is None:
+        return None
+    with _get_sync_factory()() as db:
+        return (
+            db.execute(
+                select(UserDocument).where(
+                    UserDocument.id == doc_id,
+                    UserDocument.user_id == _to_uuid(user_id),
+                    UserDocument.doc_type == "resume",
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+
 def fetch_model_settings(user_id: str):
-    """Return active UserModelSettings row for user_id, or None."""
+    """Return the model row picked for this run if it is user_id's, else the active row, or None."""
     from app.models.db import UserModelSettings
 
     factory = _get_sync_factory()
     with factory() as db:
+        chosen_id = _chosen("model_setting_id")
+        if chosen_id is not None:
+            chosen = (
+                db.execute(
+                    select(UserModelSettings).where(
+                        UserModelSettings.id == chosen_id,
+                        UserModelSettings.user_id == _to_uuid(user_id),
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            if chosen is not None:
+                return chosen
         result = db.execute(
             select(UserModelSettings).where(
                 UserModelSettings.user_id == _to_uuid(user_id),
@@ -134,12 +213,14 @@ def fetch_user_profile_text(user_id: str) -> str:
 
     factory = _get_sync_factory()
     with factory() as db:
-        result = db.execute(
-            select(UserDocument).where(
-                UserDocument.user_id == _to_uuid(user_id),
-                UserDocument.doc_type == "resume",
-                UserDocument.is_primary == True,  # noqa: E712
+        doc = fetch_chosen_resume(user_id)
+        if doc is None:
+            result = db.execute(
+                select(UserDocument).where(
+                    UserDocument.user_id == _to_uuid(user_id),
+                    UserDocument.doc_type == "resume",
+                    UserDocument.is_primary == True,  # noqa: E712
+                )
             )
-        )
-        doc = result.scalars().first()
+            doc = result.scalars().first()
         return doc.raw_text[:2000] if doc and doc.raw_text else ""

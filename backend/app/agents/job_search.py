@@ -1733,7 +1733,7 @@ def _persist_saved_jobs(user_id: str, scored: list[dict]) -> int:
                 select(JobApplication.id).where(
                     JobApplication.user_id == _to_uuid(user_id),
                     JobApplication.job_url == job["url"],
-                )
+                ).execution_options(include_deleted=True)
             ).scalar_one_or_none()
             if exists is not None:
                 continue
@@ -1770,7 +1770,7 @@ def job_search_agent_node(state: AgentState) -> AgentState:
         **ctx,
         "titles": ctx.get("titles") or [ctx.get("search_query", "software engineer")],
         "locations": ctx.get("locations") or [ctx.get("location", "Remote")],
-        "max_results": min(int(ctx.get("max_results", 10)), 25),
+        "max_results": int(ctx.get("max_results", 10)),
     }
     try:
         emit(run_id, "thinking", {"step": "search", "message": "Searching public job sources"})

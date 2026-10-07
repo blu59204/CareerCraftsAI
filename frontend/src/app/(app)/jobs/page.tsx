@@ -24,11 +24,14 @@ import {
   Briefcase,
   Sparkle,
   Broadcast,
+  ArrowRight,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { setPendingJd } from "@/lib/job-handoff";
+import { fetchApplications, fetchApplicationJd, type ApplicationFilters, type ApplicationPage } from "@/lib/applications-api";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import { JobSearchBasis } from "@/components/jobs/JobSearchBasis";
+import { LocationInput } from "@/components/ui/LocationInput";
 import { wakeExtension } from "@/lib/extension-bridge";
 import { cn } from "@/lib/utils";
 import { AgentStatusStream } from "@/components/agents/AgentStatusStream";
@@ -43,6 +46,7 @@ import {
   IconButton,
   Input,
   IslandButton,
+  IslandLink,
   Notice,
   PageHero,
   PanelTitle,
@@ -60,6 +64,8 @@ import {
   panelSwap,
   EASE_VANGUARD,
   SPRING_PANEL,
+  inputControlClass,
+  inputTrayClass,
   type StatusTone,
 } from "@/components/vanguard";
 
@@ -69,7 +75,6 @@ const XRAY_TEMPLATES = [
   `"careers.stripe.com" OR "jobs.notion.so" "Software Engineer" -intern`,
 ];
 
-const FILTER_CHIPS = ["Remote", "Hybrid", "Onsite", "Full-time", "Entry-level", "Bangalore", "Hyderabad", "Mumbai"];
 const MODE_FILTERS = ["Remote", "Hybrid", "Onsite"];
 const LOCATION_FILTERS = ["Bangalore", "Hyderabad", "Mumbai"];
 
@@ -117,6 +122,8 @@ interface JobSearchPrefs {
   years_experience?: number | null;
   current_title?: string;
   bio?: string | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
 }
 
 interface JobSearchProfile {
@@ -142,6 +149,8 @@ interface SearchProfileForm {
   job_type: string;
   work_mode: string;
   current_title: string;
+  salary_min: string;
+  salary_max: string;
 }
 
 function splitCsv(value: string | null | undefined): string[] {
@@ -438,16 +447,14 @@ function SearchIsland({
           <label htmlFor={locationId} className="block text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
             Where
           </label>
-          <input
+          <LocationInput
             id={locationId}
             name="location"
-            type="text"
-            autoComplete="off"
             value={location}
-            onChange={(e) => onLocationChange(e.target.value)}
+            onChange={onLocationChange}
             onKeyDown={(e) => e.key === "Enter" && onSubmit()}
-            placeholder="Location or Remote"
-            className={control}
+            placeholder="City or Remote"
+            inputClassName={control}
           />
         </div>
       </div>
@@ -469,52 +476,6 @@ function SearchIsland({
       >
         {running ? "Searching…" : "Search"}
       </IslandButton>
-    </Bezel>
-  );
-}
-
-function AgentConsole({
-  running,
-  isLoading,
-  jobsCount,
-  avgMatch,
-  newToday,
-}: {
-  running: boolean;
-  isLoading: boolean;
-  jobsCount: number;
-  avgMatch: number;
-  newToday: number;
-}) {
-  const stats = [
-    { label: "Roles found", value: jobsCount },
-    { label: "Avg match", value: avgMatch > 0 ? `${avgMatch}%` : "—" },
-    { label: "New · 24h", value: newToday },
-  ];
-  return (
-    <Bezel lifted coreClassName="space-y-6 p-6">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Job search agent</span>
-        <StatusPill tone={running ? "primary" : "success"} live>
-          {running ? "Running" : "Ready"}
-        </StatusPill>
-      </div>
-      <p role="status" aria-live="polite" className="text-pretty text-sm leading-6 text-foreground/85">
-        {running
-          ? "Job Search Agent running — scanning boards for matching roles…"
-          : `Job Search Agent ready — ${jobsCount > 0 ? `${jobsCount} roles saved` : "run agent to discover roles"}`}
-      </p>
-      <Hairline />
-      <dl className="grid grid-cols-3 gap-4">
-        {stats.map((stat) => (
-          <div key={stat.label} className="min-w-0">
-            <dt className="truncate text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">{stat.label}</dt>
-            <dd className="mt-2 font-geist text-3xl font-semibold tabular-nums tracking-[-0.04em] text-foreground">
-              {isLoading ? <Skeleton className="h-8 w-12 rounded-lg" /> : stat.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
     </Bezel>
   );
 }
@@ -795,13 +756,23 @@ function JobDetailBody({ job, onClose, titleId }: { job: SavedJob; onClose?: () 
   const router = useRouter();
   const p = clampScore(job.match_score);
 
-  const handleTailorResume = () => {
-    if (!job.jd_text) {
-      toast.error("No job description saved for this listing yet.");
-      return;
+  const [tailoring, setTailoring] = useState(false);
+
+  // The row's jd_text is truncated/often empty, so ask the API (falls back to the shared job catalog).
+  const handleTailorResume = async () => {
+    if (tailoring) return;
+    setTailoring(true);
+    try {
+      const jd = await fetchApplicationJd(job.id);
+      if (!jd.jd_text?.trim()) throw Object.assign(new Error("empty"), { response: { status: 404 } });
+      setPendingJd({ jdText: jd.jd_text, role: job.role, company: job.company });
+      router.push("/resume");
+    } catch (err) {
+      const notFound = (err as { response?: { status?: number } }).response?.status === 404;
+      toast.error(notFound ? "No job description saved for this listing yet." : "Could not load the job description. Try again.");
+    } finally {
+      setTailoring(false);
     }
-    setPendingJd({ jdText: job.jd_text, role: job.role, company: job.company });
-    router.push("/resume");
   };
 
   return (
@@ -855,8 +826,8 @@ function JobDetailBody({ job, onClose, titleId }: { job: SavedJob; onClose?: () 
         <IslandButton
           className="flex-1"
           onClick={handleTailorResume}
-          disabled={!job.jd_text}
-          icon={<Lightning size={16} weight="light" />}
+          disabled={tailoring}
+          icon={tailoring ? <CircleNotch size={16} weight="light" className="animate-spin" /> : <Lightning size={16} weight="light" />}
         >
           Tailor resume for this job
         </IslandButton>
@@ -912,6 +883,45 @@ function JobDetailModal({ job, onClose }: { job: SavedJob; onClose: () => void }
         </Bezel>
       </motion.div>
     </motion.div>
+  );
+}
+
+/** Compact read-out of the saved job preferences, shown beside the search. */
+function PreferencesSummary({ form, onEdit }: { form: SearchProfileForm; onEdit: () => void }) {
+  const roles = splitCsv(form.target_roles);
+  const places = splitCsv(form.preferred_locations);
+  const money = (v: string) => (v ? `$${Math.round(Number(v) / 1000)}k` : "");
+  const salary = form.salary_min || form.salary_max ? [money(form.salary_min), money(form.salary_max)].filter(Boolean).join(" – ") : "";
+  const rows: { label: string; value: string }[] = [
+    { label: "Roles", value: roles.join(", ") },
+    { label: "Locations", value: places.join(", ") },
+    { label: "Experience", value: [labelize(form.experience_level), form.years_experience ? `${form.years_experience} yrs` : ""].filter(Boolean).join(" · ") },
+    { label: "Work", value: [splitCsv(form.work_mode).map(labelize).join(", "), splitCsv(form.job_type).map(labelize).join(", ")].filter(Boolean).join(" · ") },
+    { label: "Salary", value: salary },
+  ];
+  return (
+    <Bezel lifted coreClassName="flex h-full flex-col p-5 md:p-6">
+      <PanelTitle
+        title="Job preferences"
+        icon={<SlidersHorizontal size={15} weight="light" />}
+        meta={
+          <IslandButton tone="ghost" size="sm" onClick={onEdit}>
+            Edit
+          </IslandButton>
+        }
+      />
+      <dl className="mt-4 space-y-3">
+        {rows.map((row) => (
+          <div key={row.label} className="grid grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-3">
+            <dt className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">{row.label}</dt>
+            <dd className={cn("truncate text-sm", row.value ? "text-foreground" : "text-muted-foreground/70")} title={row.value || undefined}>
+              {row.value || "Not set"}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-auto pt-4 text-xs leading-5 text-muted-foreground">Blank search uses these with your resume.</p>
+    </Bezel>
   );
 }
 
@@ -1007,12 +1017,16 @@ function ProfileSearchPanel({
           </Field>
           <Field label="Preferred locations">
             {(id) => (
-              <Input
-                id={id}
-                value={form.preferred_locations}
-                onChange={(e) => onChange("preferred_locations", e.target.value)}
-                placeholder="Remote, Bangalore, Hyderabad"
-              />
+              <div className={inputTrayClass}>
+                <LocationInput
+                  id={id}
+                  multiple
+                  value={form.preferred_locations}
+                  onChange={(v) => onChange("preferred_locations", v)}
+                  placeholder="Remote, Bengaluru, Hyderabad"
+                  inputClassName={cn(inputControlClass, "h-11")}
+                />
+              </div>
             )}
           </Field>
           <Field label="Are you fresher or experienced?">
@@ -1036,6 +1050,36 @@ function ProfileSearchPanel({
                 value={form.years_experience}
                 onChange={(e) => onChange("years_experience", e.target.value)}
                 placeholder="0 for fresher"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
+          <Field label="Salary minimum (USD / year)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                leading={<span className="text-sm">$</span>}
+                value={form.salary_min}
+                onChange={(e) => onChange("salary_min", e.target.value)}
+                placeholder="80000"
+                className="tabular-nums"
+              />
+            )}
+          </Field>
+          <Field label="Salary maximum (USD / year)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                leading={<span className="text-sm">$</span>}
+                value={form.salary_max}
+                onChange={(e) => onChange("salary_max", e.target.value)}
+                placeholder="150000"
                 className="tabular-nums"
               />
             )}
@@ -1182,6 +1226,13 @@ function ProfileSearchPanel({
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 
+const TOP_JOBS = 10;
+const BIG_LIST = 50;
+const MIN_OPTIONS = [50, 60, 70, 80, 90];
+const LIST_CHOICE_KEY = "jobs.listChoice";
+const QUERY_LOCATION_FILTERS = ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"];
+type ListChoice = { choice: "filter"; min: number } | { choice: "all" };
+
 export default function JobsPage() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -1194,6 +1245,15 @@ export default function JobsPage() {
     new Set(["Full-time"]),
   );
   const [showFilters, setShowFilters] = useState(false);
+  // Job preferences fold away; links to /jobs#search-profile open them.
+  const [showProfile, setShowProfile] = useState(false);
+  useEffect(() => {
+    if (window.location.hash === "#search-profile") setShowProfile(true);
+  }, []);
+  const openPreferences = () => {
+    setShowProfile(true);
+    requestAnimationFrame(() => document.getElementById("search-profile")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [xrayQuery, setXrayQuery] = useState(XRAY_TEMPLATES[0]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1212,6 +1272,8 @@ export default function JobsPage() {
     job_type: "full-time",
     work_mode: "remote",
     current_title: "",
+    salary_min: "",
+    salary_max: "",
   });
   const [profileInitialized, setProfileInitialized] = useState(false);
   const initRun = useAgentStore((s) => s.initRun);
@@ -1225,30 +1287,74 @@ export default function JobsPage() {
   const activeRunStatus = useAgentStore((s) =>
     activeRunId ? s.runs[activeRunId]?.status : undefined,
   );
+  const { data: searchOutcome } = useQuery<{
+    status: string;
+    output?: { total_found?: number; saved_count?: number; warnings?: string[]; error?: string;
+      matches?: { job_id: string; title: string; company: string; url: string; match_score: number }[] };
+  }>({
+    queryKey: ["job-search-outcome", activeRunId],
+    enabled: !!activeRunId,
+    queryFn: async () => (await apiClient.get(`/agents/runs/${activeRunId}`)).data,
+    refetchInterval: query => ["completed", "failed", "cancelled", "expired"].includes(query.state.data?.status ?? "") ? false : 5000,
+  });
+  useEffect(() => {
+    if (!activeRunId || !searchOutcome) return;
+    if (searchOutcome.status === "completed" || searchOutcome.status === "failed") {
+      setAgentRunning(false);
+      setRunStatus(activeRunId, searchOutcome.status);
+      void qc.invalidateQueries({ queryKey: ["jobs-saved"] });
+    }
+  }, [searchOutcome, activeRunId, setRunStatus, qc]);
 
-  const { data: jobs = [], isLoading } = useQuery<SavedJob[]>({
-    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(","),jobSource,postedDays],
-    queryFn: async () => {
-      const params = new URLSearchParams({ status: "saved" });
-      if (jobSource) params.set("source",jobSource);
-      if (postedDays!==30) params.set("posted_within_days",String(postedDays));
-      // Pass active filters to backend
-      const locations = Array.from(activeFilters).filter((f) =>
-        ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"].includes(f)
-      );
-      const jobTypes = Array.from(activeFilters).filter((f) =>
-        ["Full-time", "Part-time", "Contract", "Internship"].includes(f)
-      );
-      const expLevels = Array.from(activeFilters).filter((f) =>
-        ["Entry-level", "Mid-level", "Senior", "Lead"].includes(f)
-      );
-      if (locations.length > 0) params.set("location", locations.join(","));
-      if (jobTypes.length > 0) params.set("job_type", jobTypes.join(","));
-      if (expLevels.length > 0) params.set("experience_level", expLevels.join(","));
-      const { data } = await apiClient.get(`/jobs/applications?${params.toString()}`);
-      return data;
+  // Listing choice for large result sets, remembered per browser. undefined = not read yet.
+  const [listChoice, setListChoice] = useState<ListChoice | null | undefined>(undefined);
+  const [draftMin, setDraftMin] = useState(70);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LIST_CHOICE_KEY);
+      const c = raw ? (JSON.parse(raw) as ListChoice) : null;
+      setListChoice(c && (c.choice === "all" || (c.choice === "filter" && MIN_OPTIONS.includes(c.min))) ? c : null);
+    } catch {
+      setListChoice(null);
+    }
+  }, []);
+  const chooseList = (c: ListChoice | null) => {
+    setListChoice(c);
+    try {
+      if (c) localStorage.setItem(LIST_CHOICE_KEY, JSON.stringify(c));
+      else localStorage.removeItem(LIST_CHOICE_KEY);
+    } catch {
+      /* storage blocked: choice lasts for this visit only */
+    }
+  };
+  const minMatch = listChoice?.choice === "filter" ? listChoice.min : 0;
+
+  const { data: jobsPage, isLoading } = useQuery<ApplicationPage>({
+    queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(","), jobSource, postedDays, minMatch],
+    queryFn: () => {
+      const filters: ApplicationFilters = { status: "saved", sort: "match_desc" };
+      if (jobSource) filters.source = jobSource;
+      if (minMatch > 0) filters.minMatch = minMatch;
+      if (postedDays !== 30) filters.postedWithinDays = postedDays;
+      const locations = Array.from(activeFilters).filter((f) => QUERY_LOCATION_FILTERS.includes(f));
+      if (locations.length > 0) filters.location = locations.join(",");
+      return fetchApplications(filters, { limit: TOP_JOBS });
     },
   });
+  const jobs: SavedJob[] = jobsPage?.items ?? [];
+  const totalJobs = jobsPage?.total ?? 0;
+
+  // Same filters on the full list: /applications reads min, found (7d | custom + from) and sort.
+  const viewAllParams = new URLSearchParams({ sort: "match_desc" });
+  if (minMatch > 0) viewAllParams.set("min", String(minMatch));
+  if (postedDays === 7) viewAllParams.set("found", "7d");
+  else if (postedDays !== 30) {
+    viewAllParams.set("found", "custom");
+    const d = new Date(Date.now() - postedDays * 86400000);
+    viewAllParams.set("from", `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  const viewAllHref = `/applications?${viewAllParams.toString()}`;
+  const showSizePrompt = listChoice === null && totalJobs > BIG_LIST;
 
   const { data: prefs } = useQuery({
     queryKey: ["preferences"],
@@ -1286,6 +1392,8 @@ export default function JobsPage() {
       job_type: saved.job_type ?? "full-time",
       work_mode: saved.work_mode ?? searchProfile.work_mode_preview ?? "remote",
       current_title: saved.current_title ?? "",
+      salary_min: saved.salary_min != null ? String(saved.salary_min) : "",
+      salary_max: saved.salary_max != null ? String(saved.salary_max) : "",
     });
     setProfileInitialized(true);
   }, [searchProfile, profileInitialized]);
@@ -1355,6 +1463,9 @@ export default function JobsPage() {
         work_mode: profileForm.work_mode || undefined,
         target_roles: splitCsv(profileForm.target_roles),
         preferred_locations: splitCsv(profileForm.preferred_locations),
+        // null clears a stored value; omitted would keep the old one.
+        salary_min: profileForm.salary_min !== "" ? parseInt(profileForm.salary_min, 10) : null,
+        salary_max: profileForm.salary_max !== "" ? parseInt(profileForm.salary_max, 10) : null,
       };
       const { data } = await apiClient.patch("/users/me/preferences", payload);
       return data;
@@ -1457,13 +1568,6 @@ export default function JobsPage() {
   const selectedJob = jobs.find((j) => j.id === selectedId) ?? featuredJob;
 
   const searchBusy = searchMutation.isPending || agentRunning;
-  const planLabel = searchQuery.trim()
-    ? "Custom search"
-    : splitCsv(profileForm.target_roles)[0]
-      ? `Using profile: ${splitCsv(profileForm.target_roles)[0]}`
-      : searchProfile?.search_query_preview
-        ? `Resume plan: ${searchProfile.search_query_preview}`
-        : "Using resume/profile";
 
   function toggleFilter(chip: string) {
     setActiveFilters((prev) => {
@@ -1559,41 +1663,40 @@ export default function JobsPage() {
               />
               <JobSearchBasis value={searchBasis} onChange={setSearchBasis} source={jobSource} onSource={setJobSource} days={postedDays} onDays={setPostedDays} />
 
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-                <label className="inline-flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-foreground/85">
+              <div className="flex flex-wrap items-center gap-2">
+                <DisclosurePill
+                  open={showFilters}
+                  onToggle={() => setShowFilters((v) => !v)}
+                  controls="jobs-filter-panel"
+                  icon={<SlidersHorizontal size={14} weight="light" />}
+                  count={activeFilters.size}
+                >
+                  Filters
+                </DisclosurePill>
+                <DisclosurePill
+                  open={showAdvanced}
+                  onToggle={() => setShowAdvanced((v) => !v)}
+                  controls="jobs-xray-panel"
+                  icon={<Globe size={14} weight="light" />}
+                >
+                  Advanced search
+                </DisclosurePill>
+                {Array.from(activeFilters).map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => toggleFilter(chip)}
+                    aria-label={`Remove filter ${chip}`}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary/10 px-3 text-xs font-medium text-primary ring-1 ring-primary/20 transition-colors duration-500 ease-vanguard hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {chip}
+                    <X size={12} weight="light" aria-hidden />
+                  </button>
+                ))}
+                <label className="ml-auto inline-flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-foreground/85">
                   <Toggle checked={liveBrowser} onChange={setLiveBrowser} label="Watch browser" />
                   Watch browser
                 </label>
-                <StatusPill tone="neutral" icon={<Sparkle size={12} weight="light" />} className="min-w-0 max-w-full sm:max-w-[22rem]">
-                  <span className="min-w-0 truncate">{planLabel}</span>
-                </StatusPill>
-                <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-                  <DisclosurePill
-                    open={showFilters}
-                    onToggle={() => setShowFilters((v) => !v)}
-                    controls="jobs-filter-panel"
-                    icon={<SlidersHorizontal size={14} weight="light" />}
-                    count={activeFilters.size}
-                  >
-                    Filters
-                  </DisclosurePill>
-                  <DisclosurePill
-                    open={showAdvanced}
-                    onToggle={() => setShowAdvanced((v) => !v)}
-                    controls="jobs-xray-panel"
-                    icon={<Globe size={14} weight="light" />}
-                  >
-                    Advanced search
-                  </DisclosurePill>
-                </div>
-              </div>
-
-              <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-2">
-                {FILTER_CHIPS.map((chip) => (
-                  <Chip key={chip} active={activeFilters.has(chip)} onClick={() => toggleFilter(chip)}>
-                    {chip}
-                  </Chip>
-                ))}
               </div>
 
               <AnimatePresence initial={false}>
@@ -1617,15 +1720,7 @@ export default function JobsPage() {
               </AnimatePresence>
             </div>
           }
-          aside={
-            <AgentConsole
-              running={agentRunning}
-              isLoading={isLoading}
-              jobsCount={jobs.length}
-              avgMatch={avgMatch}
-              newToday={newToday}
-            />
-          }
+          aside={<PreferencesSummary form={profileForm} onEdit={openPreferences} />}
         />
 
         <Section aria-label="Matches">
@@ -1653,18 +1748,69 @@ export default function JobsPage() {
             </motion.div>
           )}
 
+          {searchOutcome?.status === "completed" && <div className="rounded-2xl border border-border p-4" aria-label="Latest search results">
+            <p role="status" className="text-sm font-medium">Found {searchOutcome.output?.total_found ?? 0} listings; saved {searchOutcome.output?.saved_count ?? 0} matches scoring at least 50%.</p>
+            {searchOutcome.output?.warnings?.map((warning, i) => <p key={i} className="mt-2 text-xs text-muted-foreground">{warning}</p>)}
+            {!searchOutcome.output?.matches?.length && <p className="mt-2 text-sm">No listings found. Try a broader role, location, or another source.</p>}
+            <ul className="mt-3 space-y-2">{searchOutcome.output?.matches?.slice(0, 10).map(job => <li key={job.job_id} className="flex items-center justify-between gap-3 text-sm">
+              <a className="underline underline-offset-4" href={/^https?:\/\//i.test(job.url) ? job.url : undefined} target="_blank" rel="noopener noreferrer">{job.title} · {job.company}</a><span className="shrink-0 text-xs text-muted-foreground">{job.match_score}% match</span>
+            </li>)}</ul>
+          </div>}
+          {searchOutcome?.status === "failed" && <p role="alert" className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{searchOutcome.output?.error || "Job search failed. Try again."}</p>}
           <SectionHeading
             eyebrow="Saved matches"
             title="Ranked against your resume"
             description="Select a role to read the full description, tailor your resume, or start a supervised application."
             actions={
-              jobs.length > 0 ? (
-                <StatusPill tone="primary" className="tabular-nums">
-                  {jobs.length} {jobs.length === 1 ? "role" : "roles"}
-                </StatusPill>
-              ) : null
+              <div className="flex flex-wrap items-center gap-2">
+                {agentRunning && (
+                  <StatusPill tone="primary" live>
+                    Agent searching…
+                  </StatusPill>
+                )}
+                {jobs.length > 0 && (
+                  <>
+                    <StatusPill tone="primary" className="tabular-nums">
+                      {totalJobs} {totalJobs === 1 ? "role" : "roles"}
+                    </StatusPill>
+                    {avgMatch > 0 && <StatusPill tone="neutral" className="tabular-nums">Avg match {avgMatch}%</StatusPill>}
+                    {newToday > 0 && <StatusPill tone="success" className="tabular-nums">{newToday} new today</StatusPill>}
+                  </>
+                )}
+              </div>
             }
           />
+
+          {showSizePrompt && (
+            <div className="flex flex-wrap items-center gap-3 rounded-[1.25rem] bg-foreground/[0.025] p-4 ring-1 ring-foreground/[0.05] dark:bg-white/[0.03] dark:ring-white/[0.06]">
+              <label htmlFor="jobs-min-match" className="text-sm text-foreground">
+                {totalJobs} saved roles. Show only matches ≥
+              </label>
+              <Select id="jobs-min-match" className="h-9 w-24" trayClassName="w-24" value={draftMin} onChange={(e) => setDraftMin(Number(e.target.value))}>
+                {MIN_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}%
+                  </option>
+                ))}
+              </Select>
+              <span className="text-sm text-foreground">?</span>
+              <IslandButton size="sm" onClick={() => chooseList({ choice: "filter", min: draftMin })}>
+                Filter
+              </IslandButton>
+              <IslandButton size="sm" tone="ghost" onClick={() => chooseList({ choice: "all" })}>
+                Show all
+              </IslandButton>
+            </div>
+          )}
+
+          {listChoice?.choice === "filter" && (
+            <p className="text-sm text-muted-foreground">
+              Showing matches ≥ {listChoice.min}%.{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => chooseList({ choice: "all" })}>
+                Show all
+              </button>
+            </p>
+          )}
 
           {isLoading ? (
             <ResultsSkeleton />
@@ -1729,17 +1875,25 @@ export default function JobsPage() {
               </aside>
             </div>
           )}
+
+          {!isLoading && totalJobs > 0 && (
+            <div className="flex justify-end">
+              <IslandLink href={viewAllHref} tone="ghost" icon={<ArrowRight size={16} weight="light" />} trailing>
+                View all {totalJobs} jobs
+              </IslandLink>
+            </div>
+          )}
         </Section>
 
-        <Section aria-label="Search profile">
-          <Reveal>
-            <SectionHeading
-              eyebrow="Search profile"
-              title="Tune what the agent looks for"
-              description="Edits here shape every search. Save them to reuse across sessions."
-            />
-          </Reveal>
-          <Reveal delay={0.05}>
+        <Section id="search-profile" aria-label="Search profile" className={cn("scroll-mt-24", !showProfile && "hidden")}>
+          {showProfile && (
+          <div id="jobs-search-profile-panel" className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-geist text-xl font-semibold tracking-[-0.02em] text-foreground">Edit job preferences</h2>
+              <IslandButton tone="ghost" size="sm" onClick={() => setShowProfile(false)} icon={<X size={13} weight="light" />}>
+                Close
+              </IslandButton>
+            </div>
             <ProfileSearchPanel
               profile={searchProfile}
               form={profileForm}
@@ -1748,7 +1902,8 @@ export default function JobsPage() {
               onSave={() => saveProfileMutation.mutate()}
               onRun={handleRunAgent}
             />
-          </Reveal>
+          </div>
+          )}
         </Section>
       </Screen>
 

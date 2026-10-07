@@ -105,7 +105,7 @@ async def test_nothing_is_sent_until_approved_and_the_daily_cap_holds(maker):
     assert (await service.approve_outreach(user, str(first.id))) is True
 
 
-async def test_auto_send_starts_only_after_three_hand_approved_sends(maker):
+async def test_standing_auto_send_never_approves_a_new_message(maker):
     from app.services import outreach_service as service
 
     user = await _member(maker, auto=True)
@@ -115,7 +115,7 @@ async def test_auto_send_starts_only_after_three_hand_approved_sends(maker):
         await service.approve_outreach(user, str(row.id))
     gmail = FakeGmail(user)
     await service.send_approved(user, lambda _: gmail)
-    assert (await _queue(user, "next@acme.com")).state == "approved"
+    assert (await _queue(user, "next@acme.com")).state == "draft"
     # an unverified address is still held, auto-send or not
     assert (await _queue(user, "maybe@acme.com", "unknown")).state == "held"
 
@@ -134,7 +134,10 @@ async def test_one_followup_after_six_days_and_none_after_a_reply(maker):
         await db.commit()
         ids = [str(a.id) for a in apps]
     gmail = FakeGmail(user)
-    for email, app_id, company in (("a@acme.com", ids[0], "Acme"), ("b@beta.io", ids[1], "Beta")):
+    for email, app_id, company in (
+        ("a@acme.com", ids[0], "Acme"),
+        ("b@beta.io", ids[1], "Beta"),
+    ):
         row = await _queue(user, email, company=company, application=app_id)
         await service.approve_outreach(user, str(row.id))
     await service.send_approved(user, lambda _: gmail)
@@ -168,7 +171,10 @@ async def test_a_reply_cancels_everything_waiting_for_that_company(maker):
     waiting = await _queue(user, "other@acme.com", "unknown")  # same company, different person
 
     gmail.threads = {
-        "thr-1": [{"id": "msg-1", "from": "me@gmail.com"}, {"id": "y", "from": "hr@acme.com"}]
+        "thr-1": [
+            {"id": "msg-1", "from": "me@gmail.com"},
+            {"id": "y", "from": "hr@acme.com"},
+        ]
     }
     await service.record_replies(user, lambda _: gmail)
     states = {r.to_email: r.state for r in await _rows(maker, user)}
@@ -250,11 +256,18 @@ async def test_applications_list_carries_resume_and_email_status(maker):
 
 async def test_auto_apply_queue_tailors_attaches_and_starts_only_safe_jobs(maker, monkeypatch):
     import app.services.auto_apply_queue as queue
-    from app.models.db import JobApplication, UserDocument
+    from app.models.db import JobApplication, UserDocument, UserPreferences
 
     monkeypatch.setattr(queue, "AsyncSessionLocal", maker)
     user = await _member(maker)
     async with maker() as db:
+        prefs = (
+            await db.execute(
+                select(UserPreferences).where(UserPreferences.user_id == uuid.UUID(user))
+            )
+        ).scalar_one()
+        prefs.auto_apply_enabled = True
+        prefs.auto_rule_enabled_at = datetime.now(UTC) - timedelta(minutes=1)
         docs = [
             UserDocument(
                 user_id=uuid.UUID(user),
@@ -282,11 +295,21 @@ async def test_auto_apply_queue_tailors_attaches_and_starts_only_safe_jobs(maker
         ids = {a.company: a.id for a in apps}
 
     drafts = {
-        "hi": {"pdf_document_id": doc_ids[0], "grounding": {"checked": True, "unsupported": []}},
+        "hi": {
+            "pdf_document_id": doc_ids[0],
+            "grounding": {"checked": True, "unsupported": []},
+        },
         # a resume that claims something unsupported must never be used
-        "mid": {"pdf_document_id": doc_ids[1], "grounding": {"unsupported": ["Kubernetes"]}},
+        "mid": {
+            "pdf_document_id": doc_ids[1],
+            "grounding": {"unsupported": ["Kubernetes"]},
+        },
     }
-    monkeypatch.setattr(queue, "_tailor", lambda uid, app: drafts[app.company])
+
+    async def tailor(uid, app, rule):
+        return drafts[app.company]
+
+    monkeypatch.setattr(queue, "_tailor", tailor)
     started = []
 
     async def fake_start(user_id, application_id, auto=False):
@@ -465,7 +488,9 @@ async def test_open_tracking_is_off_by_default_and_marks_the_first_load_when_on(
         assert (await service.outreach_stats(db, uuid.UUID(user)))["opened"] == 1
 
 
-async def test_agent_metrics_count_hands_off_applications_verified_emails_and_bounces(maker):
+async def test_agent_metrics_count_hands_off_applications_verified_emails_and_bounces(
+    maker,
+):
     from app.models.db import ApplicationAttempt, ExtensionTask, JobApplication
     from app.services.agent_metrics import agent_metrics
 
@@ -579,14 +604,14 @@ async def test_the_tailored_resume_is_attached_and_a_missing_one_blocks_the_send
         body="B",
         resume_document_id="00000000-0000-0000-0000-000000000001",
     )
-    for row in (good, bad):
-        await service.approve_outreach(user, str(row.id))
+    assert await service.approve_outreach(user, str(good.id))
+    assert not await service.approve_outreach(user, str(bad.id))
     gmail = FakeGmail(user)
     outcome = await service.send_approved(user, gmail_factory=lambda _u: gmail)
-    assert outcome["sent"] == 1 and outcome["failed"] == 1
+    assert outcome["sent"] == 1 and outcome["failed"] == 0
     assert gmail.sent == ["a@acme.com"] and gmail.attachments == [("Resume.pdf", b"%PDF-1.4 test")]
     states = {r.to_email: r.state for r in await _rows(maker, user)}
-    assert states == {"a@acme.com": "sent", "b@beta.com": "failed"}
+    assert states == {"a@acme.com": "sent", "b@beta.com": "draft"}
 
 
 async def test_a_reply_from_a_company_stops_its_later_follow_ups_and_sends(maker):
@@ -676,3 +701,87 @@ async def test_the_daily_cap_ramps_up_and_an_interrupted_send_is_surfaced(maker)
     await service.send_approved(user, gmail_factory=lambda _u: gmail)
     stuck = next(r for r in await _rows(maker, user) if r.to_email == "p0@c0.com")
     assert stuck.state == "failed" and "Sent folder" in stuck.last_error
+
+
+async def test_legacy_approval_and_changed_payload_are_never_sent(maker, monkeypatch):
+    from app.models.db import RecruiterOutreach
+    from app.services import outreach_service as service
+
+    user = await _member(maker, auto=True)
+    legacy = await _queue(user, "legacy@acme.com")
+    changed = await _queue(user, "changed@beta.com", company="Beta")
+    assert await service.approve_outreach(user, str(changed.id))
+    async with maker() as db:
+        old = await db.get(RecruiterOutreach, legacy.id)
+        old.state = "approved"  # Old standing-auto-send rows lacked consent.
+        row = await db.get(RecruiterOutreach, changed.id)
+        row.body = "Unreviewed replacement"
+        await db.commit()
+    gmail = FakeGmail(user)
+    assert (await service.send_approved(user, lambda _: gmail))["sent"] == 0
+    assert gmail.sent == []
+    assert all(r.state == "draft" and r.approved_at is None for r in await _rows(maker, user))
+
+
+async def test_replacing_an_approved_attachment_requires_reapproval(maker, monkeypatch):
+    from app.services import outreach_service as service
+
+    contents = [b"reviewed resume"]
+
+    async def load(owner, document):
+        return contents[0], "hash"
+
+    monkeypatch.setattr("app.applications.submission.load_resume", load)
+    user = await _member(maker)
+    row = await service.queue_outreach(
+        user,
+        company="Acme",
+        to_email="hr@acme.com",
+        verdict="valid",
+        subject="Hello",
+        body="Body",
+        resume_document_id=str(uuid.uuid4()),
+    )
+    assert await service.approve_outreach(user, str(row.id))
+    contents[0] = b"replacement resume"
+    gmail = FakeGmail(user)
+    assert (await service.send_approved(user, lambda _: gmail))["sent"] == 0
+    assert gmail.sent == []
+    current = (await _rows(maker, user))[0]
+    assert current.state == "draft" and current.approved_at is None
+
+
+async def test_concurrent_senders_reserve_one_daily_slot_before_gmail(maker):
+    import asyncio
+
+    from app.services import outreach_service as service
+
+    user = await _member(maker, cap=1)
+    for i in range(3):
+        row = await _queue(user, f"{i}@acme.com")
+        assert await service.approve_outreach(user, str(row.id))
+    gmail = FakeGmail(user)
+    outcomes = await asyncio.gather(
+        service.send_approved(user, lambda _: gmail),
+        service.send_approved(user, lambda _: gmail),
+    )
+    assert sum(result["sent"] for result in outcomes) == 1
+    assert len(gmail.sent) == 1
+    assert len([r for r in await _rows(maker, user) if r.state == "sent"]) == 1
+
+
+async def test_due_account_deletion_blocks_approved_email_sends(maker):
+    from app.models.db import User
+    from app.services import outreach_service as service
+
+    user = await _member(maker)
+    row = await _queue(user, "hr@acme.com")
+    assert await service.approve_outreach(user, str(row.id))
+    async with maker() as db:
+        account = await db.get(User, uuid.UUID(user))
+        account.deletion_scheduled_for = datetime.now(UTC) - timedelta(seconds=1)
+        await db.commit()
+    gmail = FakeGmail(user)
+    assert (await service.send_approved(user, lambda _: gmail))["sent"] == 0
+    assert gmail.sent == []
+    assert (await _rows(maker, user))[0].state == "approved"

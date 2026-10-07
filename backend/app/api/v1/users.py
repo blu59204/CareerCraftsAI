@@ -215,6 +215,9 @@ async def upsert_preferences(
         for field, value in payload.model_dump(exclude_unset=True).items()
         if value is not None or field in _CLEARABLE_PREFERENCES
     }
+    if update_data.get("auto_apply_enabled") and not (prefs and prefs.auto_apply_enabled):
+        # Switching the rule on: it covers jobs found from now, not the backlog.
+        update_data["auto_rule_enabled_at"] = datetime.now(UTC)
     if prefs is None:
         prefs = UserPreferences(user_id=current_user.id, **update_data)
         db.add(prefs)

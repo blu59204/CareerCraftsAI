@@ -501,7 +501,6 @@ export default function IntegrationsSettingsPage() {
 
   return (
     <Screen>
-      <GitHubSettings />
       <PageHero
         eyebrow="Settings · Connected accounts"
         title="Integrations"
@@ -523,6 +522,10 @@ export default function IntegrationsSettingsPage() {
       <Section aria-label="Integration settings" className="space-y-6 md:space-y-8">
         <Reveal subtle>
           <SettingsNav />
+        </Reveal>
+
+        <Reveal subtle>
+          <GitHubSettings />
         </Reveal>
 
         {connections.isError && !integrationsDisabled ? (

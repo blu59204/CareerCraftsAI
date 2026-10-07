@@ -1,0 +1,79 @@
+name: careercraft-sandbox
+services:
+  computer-image:
+    profiles: [build]
+    image: careercraft-computer:b6932d3
+    build:
+      context: https://github.com/CopilotKit/OpenBot.git#b6932d31a8d6e7896c15139dfc27a6c6911deb27
+      dockerfile: agent-computer/Dockerfile
+    command: ['true']
+  supervisor:
+    image: careercraft-supervisor:b6932d3
+    build:
+      context: ../..
+      dockerfile: deploy/computers/supervisor.Dockerfile
+      additional_contexts:
+        openbot: https://github.com/CopilotKit/OpenBot.git#b6932d31a8d6e7896c15139dfc27a6c6911deb27
+    environment:
+      PORT: '4300'
+      SUPERVISOR_TOKEN: ${COMPUTER_SUPERVISOR_TOKEN:?required}
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:?required}
+      COMPUTER_NAMESPACE: careercraft-sandbox
+      COMPUTER_IMAGE: careercraft-computer:b6932d3-private-login
+      COMPUTER_BROWSER_MODE: headless
+      COMPUTER_NETWORK: careercraft-sandbox-computers
+      COMPUTER_MEMORY_BYTES: '1073741824'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [control, computers]
+    init: true
+    restart: unless-stopped
+    mem_limit: 256m
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+  relay:
+    build:
+      context: .
+      dockerfile: relay.Dockerfile
+    environment:
+      COMPUTER_SUPERVISOR_TOKEN: ${COMPUTER_SUPERVISOR_TOKEN:?required}
+      COMPUTER_TOKEN: ${COMPUTER_TOKEN:?required}
+      SANDBOX_RELAY_TOKEN: ${SANDBOX_RELAY_TOKEN:?required}
+      SANDBOX_MAX_SESSIONS: '8'
+      SANDBOX_IDLE_SECONDS: '90'
+    volumes:
+      - relay-state:/state
+    ports: ['127.0.0.1:14312:4302']
+    networks: [control, computers]
+    init: true
+    restart: unless-stopped
+    mem_limit: 256m
+    security_opt: ['no-new-privileges:true']
+    cap_drop: [ALL]
+  private-computer-image:
+    profiles: [build]
+    image: careercraft-computer:b6932d3-private-login
+    build:
+      context: .
+      dockerfile: computer.Dockerfile
+    command: ['true']
+  test-portal:
+    image: nginx:alpine
+    volumes: ['./fixtures:/usr/share/nginx/html:ro']
+    networks: [computers]
+    mem_limit: 64m
+  egress:
+    build:
+      context: .
+      dockerfile: egress.Dockerfile
+    networks: [computers, outbound]
+    restart: unless-stopped
+    mem_limit: 128m
+networks:
+  control: {}
+  computers:
+    name: careercraft-sandbox-computers
+    internal: true
+  outbound: {}
+volumes:
+  relay-state:

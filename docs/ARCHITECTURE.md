@@ -275,7 +275,7 @@ graph TD
 | Agent | File | Tools / Services | Input → Output | Timeout / Budget |
 |---|---|---|---|---|
 | **JobSearchAgent** | `agents/job_search.py` | `BrowserUseTool`, `JobPlatformsService`, `IndianPlatformsService`, `RAGService.retrieve()` | `{query, location, salary_min, experience_years, platforms[]} → {jobs[{id,title,company,location,salary,match_score 0-100,url,platform}]}` — keyword+location+experience scoring | 120s / 3000 |
-| **ResumeAgent** | `agents/resume_agent.py` | `RAGService.retrieve()`, `ATSService.score()`, `PDFService.generate()` | `{job_description, persona_id?, tone?} → {resume_text, ats_score, ats_suggestions[], document_id, download_url}`; RAG `{user}_resume` + `{user}_achievements` | 60s / 4000 |
+| **ResumeAgent** | `agents/resume_agent.py` | `RAGService.retrieve()`, `app.services.ats_service`, `app.services.pdf_service` | `{job_description, persona_id?, tone?} → {resume_text, ats_score, ats_suggestions[], document_id, download_url}`; RAG `{user}_resume` + `{user}_achievements` | 60s / 4000 |
 | **LinkedInAgent** | `agents/linkedin_agent.py` | `RAGService.retrieve()`, `ProxyCurlService.get_profile()` | target role → `{headline, about, experience_bullets[3]}` suggestions only | 60s / 3000 |
 | **CoverLetterAgent** | `agents/cover_letter_agent.py` | `RAGService.retrieve()`, `ThinkingWrapper` (extended thinking) | `{job_description, tone} → {cover_letter, document_id}` | 90s / 6000 |
 | **EmailAgent** | `agents/email_agent.py` | `GmailService.get_threads()`, `HunterService.find_email()`, `RAGService.retrieve()` | thread context → recruiter draft; send **only** via `/email/approve/{id}` | 60s / 3000 |
@@ -506,7 +506,7 @@ BE->>T: signal_agent_decision() — `decide` signal
 
 ## 12. End-to-End Flows
 
-**Auto-Apply (10 steps):** click → `POST /agents/run {auto_apply, job_url}` → `agent_run` + SSE → `JobSearchAgent.get_job_details` (Playwright) → `ResumeAgent.tailor` + PDF → `CoverLetterAgent.generate` → `ATSService.score` → **HITL#1** (resume+CL review) → `FormFillerService.fill` (BrowserUse) → **HITL#2** (form review) → `BrowserControlService.submit` → `ApplicationsService.create` → `FollowUpAgent.schedule` (Temporal `FollowupWorkflow`, day-5/12 timers) → `complete`.
+**Auto-Apply (10 steps):** click → `POST /agents/run {auto_apply, job_url}` → `agent_run` + SSE → `JobSearchAgent.get_job_details` (Playwright) → `ResumeAgent.tailor` + PDF → `CoverLetterAgent.generate` → `app.services.ats_service` → **HITL#1** (resume+CL review) → `FormFillerService.fill` (BrowserUse) → **HITL#2** (form review) → `BrowserControlService.submit` → `ApplicationsService.create` → `FollowUpAgent.schedule` (Temporal `FollowupWorkflow`, day-5/12 timers) → `complete`.
 
 **Job search:** `POST /jobs/search` → `start_job_search()` starts `JobSearchWorkflow(id=job-search/{run_id})` → `run_job_search_activity` → waterfall Remotive/Arbeitnow/Jobicy/JobSpy or live Chromium if `prefer_live_browser` → score → persist `match_score≥50` → `complete {matches[]}`.
 

@@ -15,10 +15,10 @@ from app.models.db import (
     UserPreferences,
 )
 from app.models.schemas import (
-    ATSScoreRequest,
-    ATSScoreResponse,
     AnswerEvaluation,
     AnswerSubmitRequest,
+    ATSScoreRequest,
+    ATSScoreResponse,
     CompanyIntelResponse,
     CompanyResearchRequest,
     CoverLetterRequest,
@@ -26,7 +26,6 @@ from app.models.schemas import (
     InterviewStartRequest,
     ModelSettingsCreate,
     ModelSettingsResponse,
-    NLSearchRequest,
     OutreachIdentifyRequest,
     OutreachMessageResponse,
     PersonaCreate,
@@ -70,7 +69,6 @@ __all__ = [
     "InterviewStartRequest",
     "ModelSettingsCreate",
     "ModelSettingsResponse",
-    "NLSearchRequest",
     "OutreachIdentifyRequest",
     "OutreachMessageResponse",
     "PersonaCreate",

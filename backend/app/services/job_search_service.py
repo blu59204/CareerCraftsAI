@@ -4,11 +4,24 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
 # Per-platform budget: no single source may stall a run.
 PLATFORM_TIMEOUT_SEC = 25
+# LinkedIn via JobSpy takes ~40s for one location; under the 25s default its
+# results were always discarded.
+_ADAPTER_TIMEOUT_SEC = {"jobspy": 75}
+
+# Catalog jobs this recent can stand in for a live scrape of a default source.
+LIVE_SKIP_FRESHNESS = timedelta(days=1)
+
+# Per-adapter upstream fetch size. This bounds one live request, never the result set.
+LIVE_FETCH_LIMIT = 50
+
+# Public demo adapter: never reads/writes the shared catalog (unauthenticated callers).
+NO_CATALOG = {"open_apis_keyless"}
 
 # Canonical normalized job keys returned to agents.
 JOB_KEYS = (
@@ -93,7 +106,9 @@ def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
         scrape_jobs(
             search_term=query,
             location=location,
-            results_wanted=max_results,
+            # LinkedIn fetches each posting's page: 25 takes ~40s, 50 overruns
+            # _ADAPTER_TIMEOUT_SEC and loses everything.
+            results_wanted=min(max_results, 25),
             hours_old=72,
             platforms=["linkedin", "indeed"],
         )
@@ -145,6 +160,10 @@ DEFAULT_PLATFORMS = [
     "remotive",
     "remoteok",
     "arbeitnow",
+    # The employer catalog is mostly US/EU boards; LinkedIn + Indeed (scoped to
+    # the member's location) fill the gap, and catalog-first search only calls
+    # them when the shared catalog is short. Results are written through.
+    "jobspy",
 ]
 
 
@@ -153,56 +172,93 @@ async def search_all_platforms(
     platforms: list[str] | None = None,
     timeout_s: int = 90,
 ) -> tuple[list[dict], list[str]]:
-    from app.services.job_catalog import search_catalog
-    from app.services.job_connectors import FAMILIES
-
-    selected = platforms or DEFAULT_PLATFORMS
-    public = [p for p in selected if p in FAMILIES or ":" in p]
-    public_jobs, public_warnings = [], []
-    if public:
-        public_jobs, public_warnings = await search_catalog(query, public)
-        if len(public) == len(selected):
-            return public_jobs, public_warnings
-    platforms = [p for p in selected if p not in public]
-    """Fan out across job platforms (and locations) concurrently.
+    """Catalog-first job search with live gap fill, write-through and no result caps.
 
     Args:
         query: {titles: list[str], locations: list[str], remote: str,
             max_results: int}. ``titles`` is required; locations optional.
-        platforms: subset of _ADAPTERS keys. Unknown names are skipped with
-            a warning. Defaults to DEFAULT_PLATFORMS.
-        timeout_s: overall budget; each platform additionally capped at
+            ``max_results`` is the target relevant-job count that triggers
+            gap fill, not a cap on what is returned.
+        platforms: public families/source ids (served from the shared catalog)
+            and/or _ADAPTERS keys (live). Unknown names are skipped with a
+            warning. Defaults to DEFAULT_PLATFORMS.
+        timeout_s: unused; each platform is individually capped at
             PLATFORM_TIMEOUT_SEC.
 
     Returns:
         (normalized deduped jobs, warnings). Platform failures become
         warnings — this function never raises for source errors.
     """
-    titles = query.get("titles") or []
-    locations = (
-        query.get("locations")
-        or ([str(query["location"])] if query.get("location") else [])
-        or ["Remote"]
-    )
-    max_results = int(query.get("max_results", 10))
-    remote = str(query.get("remote") or "").strip().lower()
-    q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
+    from app.services.job_catalog import matches_query, search_catalog, write_through
+    from app.services.job_connectors import FAMILIES
 
-    names = platforms or DEFAULT_PLATFORMS
-    warnings: list[str] = public_warnings
+    selected = platforms or DEFAULT_PLATFORMS
+    public = [p for p in selected if p in FAMILIES or ":" in p]
+    warnings: list[str] = []
     valid_names = []
-    for name in names:
+    for name in selected:
+        if name in public:
+            continue
         if name in _ADAPTERS:
             valid_names.append(name)
         else:
             warnings.append(f"unknown platform skipped: {name}")
 
+    need = int(query.get("max_results", 10))
+    # 1. Shared catalog first (public sources + jobs other users' live searches stored).
+    catalog_jobs: list[dict] = []
+    cacheable = [n for n in valid_names if n not in NO_CATALOG]
+    if public or cacheable:
+        try:
+            catalog_jobs, catalog_warnings = await search_catalog(
+                query, public, live_platforms=cacheable
+            )
+            catalog_jobs = [job for job in catalog_jobs if matches_query(job, query)]
+            warnings.extend(catalog_warnings)
+        except Exception as exc:
+            if not valid_names:
+                raise
+            logger.warning("Catalog read failed: %s", type(exc).__name__)
+            warnings.append(f"catalog unavailable: {type(exc).__name__}")
+    locations = (
+        query.get("locations")
+        or ([str(query["location"])] if query.get("location") else [])
+        or ["Remote"]
+    )
+    # The catalog replaces a live search only when (a) the member didn't pick the
+    # source themselves, and (b) it holds enough jobs seen in the last day that
+    # are in the requested city (remote roles don't cover a city search).
+    from app.services.job_catalog import _cities, in_city
+
+    fresh_after = datetime.now(UTC) - LIVE_SKIP_FRESHNESS
+
+    def seen_recently(job: dict) -> bool:
+        try:
+            return datetime.fromisoformat(str(job["last_seen_at"])) >= fresh_after
+        except (KeyError, ValueError):
+            return False
+
+    covering = [
+        j
+        for j in catalog_jobs
+        if seen_recently(j) and (in_city(j, locations) or not _cities(locations))
+    ]
+    if not valid_names or (
+        platforms is None and len(cacheable) == len(valid_names) and len(covering) >= need
+    ):
+        return catalog_jobs, warnings
+
+    # 2. Shortfall: live adapters fill the gap.
+    titles = query.get("titles") or []
+    q = " ".join(titles) if titles else str(query.get("search_query", "software engineer"))
+    fetch_n = max(need, LIVE_FETCH_LIMIT)
+
     async def run_one(name: str, location: str) -> list[dict]:
         adapter = _ADAPTERS[name]
         try:
             raw = await asyncio.wait_for(
-                asyncio.to_thread(adapter, q, location, max_results),
-                timeout=PLATFORM_TIMEOUT_SEC,
+                asyncio.to_thread(adapter, q, location, fetch_n),
+                timeout=_ADAPTER_TIMEOUT_SEC.get(name, PLATFORM_TIMEOUT_SEC),
             )
             return [_normalize(job, name) for job in (raw or [])]
         except Exception as exc:
@@ -210,31 +266,23 @@ async def search_all_platforms(
             warnings.append(f"{name} failed: {type(exc).__name__}")
             return []
 
-    # No outer timeout: each platform is individually capped at
-    # PLATFORM_TIMEOUT_SEC and run_one never raises, so gather always
+    # No outer timeout: each platform is individually capped (see
+    # _ADAPTER_TIMEOUT_SEC) and run_one never raises, so gather always
     # resolves with partial results. (An outer wait_for would cancel
     # completed sources and discard their jobs.)
     # Fan out over every requested location, not just the first — a
     # multi-location search previously silently dropped all but one city.
-    per_source = await asyncio.gather(
-        *(run_one(name, location) for name in valid_names for location in locations)
+    pairs = [(name, location) for name in valid_names for location in locations]
+    per_source = await asyncio.gather(*(run_one(n, loc) for n, loc in pairs))
+
+    # 3. Write-through so the next user's search finds these in the catalog.
+    # write_through never raises; a failed catalog write must not fail the search.
+    by_name: dict[str, list[dict]] = {}
+    for (name, _), group in zip(pairs, per_source, strict=True):
+        by_name.setdefault(name, []).extend(group)
+    await asyncio.gather(
+        *(write_through(g, n) for n, g in by_name.items() if g and n not in NO_CATALOG)
     )
 
-    jobs = _dedupe(public_jobs + [job for group in per_source for job in group])
-    if remote in ("remote", "hybrid", "onsite"):
-        # Post-fetch predicate: none of the adapters accept a remote/work-mode
-        # parameter, so filter on each job's normalized location + remote
-        # fields directly rather than dropping the request's remote field.
-        def _mode_matches(job: dict) -> bool:
-            haystack = f"{job.get('location', '')} {job.get('remote', '')}".lower()
-            is_remote = "remote" in haystack
-            is_hybrid = "hybrid" in haystack
-            if remote == "remote":
-                return is_remote
-            if remote == "hybrid":
-                return is_hybrid
-            return not is_remote and not is_hybrid  # onsite
-
-        jobs = [j for j in jobs if _mode_matches(j)]
-    cap = max_results * max(len(valid_names), 1) * len(locations)
-    return jobs[:cap], warnings
+    jobs = _dedupe(catalog_jobs + [job for group in per_source for job in group])
+    return [job for job in jobs if matches_query(job, query)], warnings

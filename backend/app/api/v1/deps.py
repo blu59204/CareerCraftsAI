@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
@@ -55,6 +56,14 @@ async def get_current_user(
     # app.core.clerk_auth so middleware and routers share one code path.
     auth_subject = subject_from_payload(payload)
     user = await get_or_provision_user(db, auth_subject, payload)
+
+    deletion_due = getattr(user, "deletion_scheduled_for", None)
+    if (
+        deletion_due is not None
+        and deletion_due <= datetime.now(UTC)
+        and (request.method, request.url.path) not in _CONSENT_EXEMPT_PATHS
+    ):
+        raise HTTPException(status_code=410, detail="Account erasure is in progress")
 
     if (
         user.policy_accepted_at is None

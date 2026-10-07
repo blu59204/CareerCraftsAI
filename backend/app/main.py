@@ -18,6 +18,7 @@ from app.api.v1 import (
     agents,
     candidate_profile,
     company,
+    computer,
     cover_letter,
     demo,
     email,
@@ -36,6 +37,7 @@ from app.api.v1 import (
     salary,
     users,
 )
+from app.api.v1.copilot_chat import mount_copilot_chat
 from app.core.clerk_auth import verify_token
 from app.core.config import settings
 from app.core.llm_gateway import router as llm_gw
@@ -162,12 +164,20 @@ async def _jwt_middleware(request: Request, call_next):
         # so one slow/cold JWKS fetch can't stall every other in-flight request.
         payload = await asyncio.to_thread(verify_token, token)
         request.state.user = payload
+        # Graph nodes (e.g. the AG-UI chat copilot) have no route dependency to
+        # receive the user through — they read this instead.
+        from app.core.request_context import reset_current_user_id, set_current_user_id
+
+        identity_token = set_current_user_id(str(payload.get("sub") or "") or None)
     except Exception:
         return JSONResponse(
             status_code=401,
             content={"detail": "Invalid or expired token"},
         )
-    return await call_next(request)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_user_id(identity_token)
 
 
 # ── Lifespan ─────────────────────────────────────────────────────
@@ -264,6 +274,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    # Paginated lists (GET /jobs/applications) report their total here.
+    expose_headers=["X-Total-Count", "X-Stage-Counts"],
 )
 
 
@@ -280,6 +292,7 @@ app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(leads.router, prefix="/api/v1")
 app.include_router(email.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(computer.router, prefix="/api/v1")
 app.include_router(interview_prep.router, prefix="/api/v1")
 app.include_router(cover_letter.router, prefix="/api/v1")
 app.include_router(interview.router, prefix="/api/v1")
@@ -292,6 +305,10 @@ app.include_router(extension.router, prefix="/api/v1")
 app.include_router(agent_memory.router)
 
 app.include_router(llm_gw)
+
+# AG-UI chat endpoint (Career Copilot) — guarded by the JWT middleware like
+# every other non-public path.
+mount_copilot_chat(app)
 
 
 # ── Health endpoints (no auth required) ──────────────────────────

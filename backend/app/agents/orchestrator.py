@@ -27,7 +27,6 @@ TASK_ROUTES: dict[str, str] = {
     "interview_prep": "interview_prep",
     "company_research": "company_research",
     "salary_intelligence": "salary",
-    "nl_job_search": "nl_search",
     "email_monitor": "email_monitor",
     "auto_apply": "auto_apply",
 }
@@ -53,7 +52,6 @@ from app.agents.interview_coach_agent import start_session_node, evaluate_answer
 from app.agents.interview_prep_agent import interview_prep_agent_node
 from app.agents.company_research_agent import company_research_node
 from app.agents.salary_agent import salary_report_node
-from app.agents.nl_search_agent import nl_search_node
 from app.agents.linkedin_outreach_agent import linkedin_outreach_agent_node
 from app.agents.email_monitor_agent import email_monitor_node
 from app.agents.auto_apply_pipeline import run_auto_apply_pipeline
@@ -191,7 +189,6 @@ _NODE_REGISTRY: dict[str, Callable] = {
     "interview_coach": _interview_coach_wrapper,
     "company_research": company_research_node,
     "salary": salary_report_node,
-    "nl_search": nl_search_node,
     "linkedin_outreach": linkedin_outreach_agent_node,
     "email_monitor": email_monitor_node,
     "auto_apply": _auto_apply_wrapper,

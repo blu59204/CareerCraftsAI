@@ -52,5 +52,6 @@ def mock_user():
     user = MagicMock()
     user.id = "00000000-0000-0000-0000-000000000001"
     user.email = "test@example.com"
+    user.deletion_scheduled_for = None
     user.clerk_user_id = "00000000-0000-0000-0000-000000000abc"
     return user

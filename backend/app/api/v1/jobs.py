@@ -1,20 +1,29 @@
 import asyncio
+import json
 import logging
 import re
 import urllib.parse
 import uuid
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.deps import get_current_user, get_db
 from app.api.v1.job_basis import router as basis_router
 from app.core.rate_limit import limiter
-from app.models.db import AgentRun, JobApplication, User, UserDocument, UserPreferences
+from app.models.db import (
+    ActionLog,
+    AgentRun,
+    JobApplication,
+    User,
+    UserDocument,
+    UserPreferences,
+)
 from app.schemas.jobs import JobSearchQuerySchema
 from app.workflows.starters import WorkflowUnavailable
 
@@ -23,14 +32,13 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 router.include_router(basis_router)
 logger = logging.getLogger(__name__)
 
-NL_SEARCH_TIMEOUT_SECONDS = 120
 VALID_STATUSES = {"saved", "applied", "viewed", "interview", "offer", "rejected"}
 
 
 class JobSearchRequest(JobSearchQuerySchema):
     search_query: str = Field(default="", max_length=200)
     location: str = "Remote"
-    max_results: int = 10
+    max_results: int = Field(10, ge=1, le=25)
     # Default to False: the free keyless job-board APIs (Remotive / Arbeitnow
     # / Jobicy) and JobSpy are fast and return real apply links. live_browser
     # opens a visible Chromium for the demo, but it triggers CAPTCHAs and
@@ -45,7 +53,11 @@ class JobSearchRequest(JobSearchQuerySchema):
 
 
 def make_job_search_id(
-    user_id: str, search_query: str, location: str, max_results: int, filters: dict | None = None
+    user_id: str,
+    search_query: str,
+    location: str,
+    max_results: int,
+    filters: dict | None = None,
 ) -> str:
     """Content hash of a search — identical repeat clicks reuse the run
     that is already in flight instead of starting another."""
@@ -90,8 +102,25 @@ class ApplicationResponse(BaseModel):
     resume_label: str | None = None
     outreach_status: str | None = None
     outreach_to: str | None = None
+    found_at: datetime | None = None
+    apply_state: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ApplicationIdsBody(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
+class ApplyStateBody(BaseModel):
+    state: Literal["opened", "applied", "failed"]
+
+
+class JobDescriptionResponse(BaseModel):
+    jd_text: str
+    role: str
+    company: str
+    source: Literal["application", "catalog"]
 
 
 class JobSearchProfileResponse(BaseModel):
@@ -125,6 +154,17 @@ def is_example_job_url(job_url: str | None) -> bool:
     return hostname == "example.com" or hostname.endswith(".example.com")
 
 
+# Old and new city names both appear in postings; a filter on either matches both.
+_CITY_PAIRS = (
+    ("bengaluru", "bangalore"),
+    ("gurugram", "gurgaon"),
+    ("mumbai", "bombay"),
+    ("chennai", "madras"),
+    ("kolkata", "calcutta"),
+)
+_CITY_NAMES = {name: pair for pair in _CITY_PAIRS for name in pair}
+
+
 def _matches_location_filter(app: JobApplication, location_filter: str | None) -> bool:
     if not location_filter:
         return True
@@ -144,7 +184,9 @@ def _matches_location_filter(app: JobApplication, location_filter: str | None) -
         return False
 
     city_filters = filters - {"remote", "hybrid", "onsite"}
-    if city_filters and not any(city in location for city in city_filters):
+    if city_filters and not any(
+        name in location for city in city_filters for name in _CITY_NAMES.get(city, (city,))
+    ):
         return False
 
     return True
@@ -714,9 +756,6 @@ async def search_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if payload.max_results > 25:
-        raise HTTPException(status_code=400, detail="max_results cannot exceed 25")
-
     search_query, location, work_mode, search_source = await _resolve_search_context(
         db, current_user, payload
     )
@@ -828,20 +867,61 @@ async def search_jobs(
     return JobSearchResponse(run_id=run_id, queue_job_id=stable_job_id, queued=True)
 
 
-@router.get("/applications", response_model=list[ApplicationResponse])
-async def list_applications(
+_SORTS = {
+    "found_desc": (JobApplication.found_at.desc(),),
+    "found_asc": (JobApplication.found_at.asc(),),
+    "match_desc": (
+        JobApplication.match_score.desc().nulls_last(),
+        JobApplication.found_at.desc(),
+    ),
+    "match_asc": (
+        JobApplication.match_score.asc().nulls_last(),
+        JobApplication.found_at.desc(),
+    ),
+}
+
+
+def _application_query(
+    user_id: uuid.UUID,
+    *,
     status: str | None = None,
     location: str | None = None,
-    source: str | None = Query(None, max_length=100),
-    posted_within_days: int | None = Query(None, ge=1, le=90),
-    limit: int | None = Query(None, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    source: str | None = None,
+    posted_within_days: int | None = None,
+    min_match: int | None = None,
+    found_after: datetime | None = None,
+    found_before: datetime | None = None,
+    sort: str | None = None,
+    q: str | None = None,
 ):
+    """Filters owned rows in SQL for paging, counts and exports."""
     if status and status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"status must be one of: {VALID_STATUSES}")
 
-    query = select(JobApplication).where(JobApplication.user_id == current_user.id)
+    query = select(JobApplication).where(JobApplication.user_id == user_id)
+    host = func.substring(
+        func.coalesce(JobApplication.job_url, ""),
+        r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//(?:[^/?#]*@)?([^:/?#]+)",
+    )
+    query = query.where(~func.coalesce(func.lower(host).op("~")(r"(^|\.)example\.com$"), False))
+    filters = {item.strip().lower() for item in (location or "").split(",") if item.strip()}
+    for mode in filters & {"remote", "hybrid"}:
+        query = query.where(JobApplication.location.icontains(mode, autoescape=True))
+    if "onsite" in filters:
+        query = query.where(~JobApplication.location.icontains("remote", autoescape=True))
+    cities = filters - {"remote", "hybrid", "onsite"}
+    if cities:
+        query = query.where(
+            or_(
+                *(
+                    JobApplication.location.icontains(name, autoescape=True)
+                    for city in cities
+                    for name in _CITY_NAMES.get(city, (city,))
+                )
+            )
+        )
+    if filters:
+        query = query.where(JobApplication.location.is_not(None), JobApplication.location != "")
     if status:
         query = query.where(JobApplication.status == status)
     if source:
@@ -849,24 +929,291 @@ async def list_applications(
     if posted_within_days:
         query = query.where(
             JobApplication.posted_at
-            >= datetime.now(timezone.utc) - timedelta(days=posted_within_days)  # noqa: UP017
+            >= datetime.now(UTC) - timedelta(days=posted_within_days)  # noqa: UP017
         )
-    result = await db.execute(
-        query.order_by(
-            JobApplication.match_score.desc().nulls_last()
-            if status == "saved"
-            else JobApplication.applied_at.desc().nulls_last()
+    if min_match is not None:
+        query = query.where(JobApplication.match_score >= min_match)
+    if found_after:
+        query = query.where(JobApplication.found_at >= found_after)
+    if found_before:
+        query = query.where(JobApplication.found_at <= found_before)
+    if q and q.strip():
+        term = q.strip()
+        query = query.where(
+            or_(
+                JobApplication.company.icontains(term, autoescape=True),
+                JobApplication.role.icontains(term, autoescape=True),
+                JobApplication.location.icontains(term, autoescape=True),
+            )
+        )
+    if sort:
+        order = _SORTS[sort]
+    elif status == "saved":
+        order = (JobApplication.match_score.desc().nulls_last(),)
+    else:
+        order = (
+            JobApplication.applied_at.desc().nulls_last(),
+            JobApplication.found_at.desc(),
+        )
+    return query.order_by(*order, JobApplication.id.asc())
+
+
+async def _filtered_applications(
+    db: AsyncSession, user_id: uuid.UUID, **filters
+) -> list[JobApplication]:
+    """Exports deliberately request all matching rows, using the list's filters."""
+    result = await db.execute(_application_query(user_id, **filters))
+    return list(result.scalars().all())
+
+
+@router.get("/applications", response_model=list[ApplicationResponse])
+async def list_applications(
+    response: Response,
+    status: str | None = None,
+    location: str | None = None,
+    source: str | None = Query(None, max_length=100),
+    posted_within_days: int | None = Query(None, ge=1, le=90),
+    min_match: int | None = Query(None, ge=0, le=100),
+    found_after: datetime | None = None,
+    found_before: datetime | None = None,
+    sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    q: str | None = Query(None, max_length=200),
+    offset: int = Query(0, ge=0),
+    limit: int | None = Query(None, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Filtered, sorted, paginated list. The total row count (before
+    offset/limit) is returned in the ``X-Total-Count`` header and per-stage
+    counts in ``X-Stage-Counts`` (JSON), so the body stays a plain list for
+    existing callers and a paged view can still show whole-list stats."""
+    query = _application_query(
+        current_user.id,
+        status=status,
+        location=location,
+        source=source,
+        posted_within_days=posted_within_days,
+        min_match=min_match,
+        found_after=found_after,
+        found_before=found_before,
+        sort=sort,
+        q=q,
+    )
+    counts = (
+        await db.execute(
+            query.order_by(None)
+            .with_only_columns(JobApplication.status, func.count())
+            .group_by(JobApplication.status)
+        )
+    ).all()
+    response.headers["X-Total-Count"] = str(sum(count for _, count in counts))
+    response.headers["X-Stage-Counts"] = json.dumps(dict(counts))
+    page = query.offset(offset)
+    if limit:
+        page = page.limit(limit)
+    apps = list((await db.execute(page)).scalars().all())
+    return await _with_tracking(db, current_user.id, apps)
+
+
+def _csv_cell(value: object) -> str:
+    """CSV-escape; a leading = + - @ gets a ' prefix so Sheets never runs
+    scraped job text as a formula."""
+    text_value = "" if value is None else str(value)
+    if text_value[:1] in ("=", "+", "-", "@"):
+        text_value = "'" + text_value
+    return '"' + text_value.replace('"', '""') + '"'
+
+
+@router.post("/applications/export-sheet")
+async def export_applications_sheet(
+    status: str | None = None,
+    location: str | None = None,
+    source: str | None = Query(None, max_length=100),
+    min_match: int | None = Query(None, ge=0, le=100),
+    found_after: datetime | None = None,
+    found_before: datetime | None = None,
+    sort: Literal["found_desc", "found_asc", "match_desc", "match_asc"] | None = None,
+    q: str | None = Query(None, max_length=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Export the filtered list to a new Google Sheet in the member's Drive
+    (Drive converts the CSV upload; drive.file scope only). Each call makes a
+    new sheet: appending to an existing one isn't supported."""
+    from app.services.drive_service import DriveError, upload_to_drive
+
+    apps = await _filtered_applications(
+        db,
+        current_user.id,
+        status=status,
+        location=location,
+        source=source,
+        min_match=min_match,
+        found_after=found_after,
+        found_before=found_before,
+        sort=sort,
+        q=q,
+    )
+    rows = [["Company", "Role", "Location", "Match", "Status", "Found", "URL", "Source"]]
+    rows += [
+        [
+            a.company,
+            a.role,
+            a.location,
+            a.match_score,
+            a.status,
+            a.found_at,
+            a.job_url,
+            a.source,
+        ]
+        for a in apps
+    ]
+    csv = "\r\n".join(",".join(_csv_cell(c) for c in row) for row in rows)
+    name = f"CareerCraft jobs {datetime.now(UTC).date().isoformat()}"
+    try:
+        # upload_to_drive is a blocking HTTP call; keep it off the event loop.
+        result = await asyncio.to_thread(
+            upload_to_drive,
+            str(current_user.id),
+            name,
+            csv.encode("utf-8"),
+            "text/csv",
+            "application/vnd.google-apps.spreadsheet",
+        )
+    except DriveError as exc:
+        if exc.not_connected:  # the UI starts the Drive connect flow only for this
+            raise HTTPException(status_code=409, detail="google_drive_not_connected") from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    db.add(
+        ActionLog(
+            user_id=current_user.id,
+            action="export_sheet",
+            detail={"rows": len(apps), "file_id": result.get("id")},
         )
     )
-    apps = [
-        app
-        for app in result.scalars().all()
-        if not is_example_job_url(app.job_url) and _matches_location_filter(app, location)
-    ]
-    # `limit` is applied after the example-URL/location filters so callers get
-    # the number of real rows they asked for. Previously it was silently ignored.
-    apps = apps[:limit] if limit else apps
-    return await _with_tracking(db, current_user.id, apps)
+    await db.commit()
+    return {"url": result.get("webViewLink"), "rows": len(apps)}
+
+
+async def _owned_applications(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    ids: list[uuid.UUID],
+    *,
+    include_deleted: bool = False,
+) -> list[JobApplication]:
+    rows = await db.execute(
+        select(JobApplication)
+        .where(JobApplication.user_id == user_id, JobApplication.id.in_(ids))
+        .execution_options(include_deleted=include_deleted)
+    )
+    return list(rows.scalars().all())
+
+
+@router.post("/applications/delete")
+async def delete_applications(
+    body: ApplicationIdsBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft delete (undoable via /applications/restore)."""
+    apps = await _owned_applications(db, current_user.id, body.ids)
+    now = datetime.now(UTC)
+    for app in apps:
+        app.deleted_at = now
+        db.add(ActionLog(user_id=current_user.id, job_application_id=app.id, action="delete"))
+    await db.commit()
+    return {"deleted": [str(a.id) for a in apps]}
+
+
+@router.post("/applications/restore")
+async def restore_applications(
+    body: ApplicationIdsBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    apps = await _owned_applications(db, current_user.id, body.ids, include_deleted=True)
+    for app in apps:
+        app.deleted_at = None
+        db.add(ActionLog(user_id=current_user.id, job_application_id=app.id, action="restore"))
+    await db.commit()
+    return {"restored": [str(a.id) for a in apps]}
+
+
+@router.get("/applications/{application_id}/jd", response_model=JobDescriptionResponse)
+async def get_application_jd(
+    application_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """The job description to tailor a resume against. Saved rows hold a
+    copy capped at 4000 chars (and some sources save none), so the shared
+    job catalog's full description wins when it is longer."""
+    apps = await _owned_applications(db, current_user.id, [application_id])
+    if not apps:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app = apps[0]
+    saved = (app.jd_text or "").strip()
+    catalog = ""
+    if app.job_url:
+        from app.services.job_connectors import canonical_url
+
+        try:  # the catalog keys jobs by canonical URL; saved rows keep the raw one
+            urls = list({app.job_url, canonical_url(app.job_url)})
+        except ValueError:
+            urls = [app.job_url]
+        catalog = (
+            (
+                await db.execute(
+                    text(
+                        "SELECT data->>'description' FROM job_catalog WHERE url = ANY(:urls) "
+                        "ORDER BY length(data->>'description') DESC NULLS LAST LIMIT 1"
+                    ),
+                    {"urls": urls},
+                )
+            ).scalar_one_or_none()
+            or ""
+        ).strip()
+    if not saved and not catalog:
+        raise HTTPException(status_code=404, detail="No job description saved for this role")
+    use_catalog = len(catalog) > len(saved)
+    return JobDescriptionResponse(
+        jd_text=catalog if use_catalog else saved,
+        role=app.role,
+        company=app.company,
+        source="catalog" if use_catalog else "application",
+    )
+
+
+@router.post("/applications/{application_id}/apply-state", response_model=ApplicationResponse)
+async def set_apply_state(
+    application_id: uuid.UUID,
+    body: ApplyStateBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Assisted apply in the member's own browser: the client opens the job
+    page (``opened``), then the member confirms ``applied`` or ``failed``.
+    ``applied`` also moves a saved row to status=applied (follow-ups start)."""
+    apps = await _owned_applications(db, current_user.id, [application_id])
+    if not apps:
+        raise HTTPException(status_code=404, detail="Application not found")
+    app = apps[0]
+    app.apply_state = body.state
+    db.add(
+        ActionLog(
+            user_id=current_user.id,
+            job_application_id=app.id,
+            action=f"apply_{body.state}",
+        )
+    )
+    await db.commit()
+    if body.state == "applied" and app.status == "saved":
+        await update_application_status(
+            application_id, StatusUpdateBody(status="applied"), db, current_user
+        )
+    await db.refresh(app)
+    return (await _with_tracking(db, current_user.id, [app]))[0]
 
 
 async def _with_tracking(db: AsyncSession, user_id: uuid.UUID, apps: list) -> list:
@@ -1068,7 +1415,8 @@ async def prepare_application_apply(
     ).scalar_one_or_none()
     if attempt and attempt.state in ACTIVE_SUBMISSION_STATES:
         raise HTTPException(
-            status_code=409, detail="Verify the existing application before applying again"
+            status_code=409,
+            detail="Verify the existing application before applying again",
         )
 
     if not await has_active_device(db, current_user.id):
@@ -1083,3 +1431,39 @@ async def prepare_application_apply(
     # Release the row lock before the workflow's reserve activity locks it.
     await db.commit()
     return await _start_temporal_auto_apply(current_user.id, application_id)
+
+
+class OutreachBody(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
+
+
+@router.post("/applications/outreach")
+@limiter.limit("10/hour")
+async def queue_applications_outreach(
+    body: OutreachBody,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Draft recruiter emails for the member's own saved jobs. Drafts land in
+    the review queue (/outreach); they only go out unreviewed if the member
+    turned on auto-send."""
+    from app.services.auto_apply_queue import draft_outreach
+
+    apps = await _owned_applications(db, current_user.id, body.ids)
+    queued: list[str] = []
+    skipped: list[str] = []
+    for app in apps:
+        state = await draft_outreach(str(current_user.id), app)
+        (queued if state else skipped).append(str(app.id))
+        db.add(
+            ActionLog(
+                user_id=current_user.id,
+                job_application_id=app.id,
+                action="outreach_queued",
+                source="user",
+                detail={"state": state or "no_contact"},
+            )
+        )
+    await db.commit()
+    return {"queued": queued, "skipped": skipped}

@@ -8,7 +8,7 @@ class JobSearchQuerySchema(BaseModel):
     """Structured job-search request (preferred over free-text query).
 
     Used by POST /jobs/search when the caller supplies parsed titles
-    (e.g. from nl_search). Missing fields fall back to legacy resolution
+    (e.g. from a parsed query). Missing fields fall back to legacy resolution
     from preferences/resume in the endpoint.
     """
 
