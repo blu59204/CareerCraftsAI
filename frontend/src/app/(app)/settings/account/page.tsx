@@ -195,7 +195,7 @@ export default function AccountSettingsPage() {
   const weeklyDigest = notifyPrefs?.notify_weekly_digest ?? false;
   const dailySummary = notifyPrefs?.notify_daily_summary ?? false;
   const saveNotifyPrefs = useMutation({
-    mutationFn: async (payload: NotificationPreferences) =>
+    mutationFn: async (payload: Partial<NotificationPreferences>) =>
       apiClient.patch("/users/me/preferences", payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["preferences"] }),
     onError: () => toast.error("Couldn't save notification preferences"),
@@ -208,10 +208,10 @@ export default function AccountSettingsPage() {
       notify_weekly_digest: weeklyDigest,
       notify_daily_summary: dailySummary,
     };
-    saveNotifyPrefs.mutate({ ...current, [key]: !current[key] });
+    saveNotifyPrefs.mutate({ [key]: !current[key] });
   };
   // Two-factor state is owned by the identity provider; the switch only explains that.
-  const [twoFactor] = useState(false);
+  const twoFactor = authUser?.twoFactorEnabled ?? false;
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [presetPickerOpen, setPresetPickerOpen] = useState(false);
 
@@ -401,9 +401,9 @@ export default function AccountSettingsPage() {
     mutationFn: async () => {
       const { data } = await apiClient.patch("/users/me", {
         full_name: name || undefined,
-        headline: headline || undefined,
-        phone: phone || undefined,
-        linkedin_url: linkedinUrl || undefined,
+        headline: headline.trim() || null,
+        phone: phone.trim() || null,
+        linkedin_url: linkedinUrl.trim() || null,
       });
       return data;
     },
@@ -610,6 +610,7 @@ export default function AccountSettingsPage() {
         <div className="min-w-0 space-y-6 lg:col-span-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Segmented<Tab>
+                id="account-tabs"
               ariaLabel="Settings view"
               value={activeTab}
               onChange={setActiveTab}
@@ -626,6 +627,8 @@ export default function AccountSettingsPage() {
             <motion.div
               key={activeTab}
               role="tabpanel"
+              id={`account-tabs-panel-${activeTab}`}
+              aria-labelledby={`account-tabs-tab-${activeTab}`}
               aria-label={tabs.find((t) => t.id === activeTab)?.label}
               variants={panelSwap}
               initial="hidden"

@@ -80,7 +80,16 @@ async def test_score_resume_background_filters_by_user_id():
 
     # Verify the signature now accepts user_id (covered by test_score_resume_background_signature_requires_user_id)
     # and that the query was attempted
-    assert len(captured_queries) >= 1 or True  # graceful: DB may not be reachable in unit env
+    assert captured_queries, "background scorer must query the owner-scoped document"
+    from sqlalchemy.sql import visitors
+    from sqlalchemy.sql.elements import BinaryExpression, BindParameter
+    comparisons = []
+    for statement in captured_queries:
+        for node in visitors.iterate(statement.whereclause):
+            if isinstance(node, BinaryExpression) and isinstance(node.right, BindParameter):
+                comparisons.append((str(node.left), node.right.effective_value))
+    assert ("user_documents.id", uuid.UUID(doc_id)) in comparisons
+    assert ("user_documents.user_id", uuid.UUID(user_id)) in comparisons
 
 
 @pytest.mark.asyncio

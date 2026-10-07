@@ -53,10 +53,10 @@ class InterviewQuestionsOutput(BaseModel):
 
 
 class InterviewEvaluationOutput(BaseModel):
-    clarity: int = Field(default=0, ge=0, le=10)
-    relevance: int = Field(default=0, ge=0, le=10)
-    depth: int = Field(default=0, ge=0, le=10)
-    feedback: str = ""
+    clarity: int = Field(ge=0, le=10)
+    relevance: int = Field(ge=0, le=10)
+    depth: int = Field(ge=0, le=10)
+    feedback: str = Field(min_length=1)
     rating: str = ""
 
 
@@ -84,8 +84,12 @@ Question Type: {question_type}
 Candidate's Answer: {answer}
 
 Evaluate the answer and return a JSON object with:
-  - "score": integer 0-100 (0=terrible, 100=perfect)
-  - "tips": array of specific improvement suggestions (at least 1)
+  - "clarity": integer 0-10 for structure and clear delivery
+  - "relevance": integer 0-10 for addressing the question
+  - "depth": integer 0-10 for specific examples and supporting detail
+  - "feedback": nonempty string with specific improvement suggestions
+
+The overall score is computed as (clarity + relevance + depth) / 30 * 100.
 
 Scoring guidelines:
   - 0-25 (poor): Missing key elements, vague, off-topic
@@ -352,8 +356,8 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
             }
 
         # Retrieve session questions
-        session_data = _get_interview_session(session_id)
-        if not session_data:
+        session_data = _get_interview_session(session_id, user_id)
+        if not session_data or session_data.get("user_id") != str(user_id):
             return {
                 **state,
                 "status": "failed",
@@ -422,6 +426,7 @@ def evaluate_answer_node(state: AgentState) -> AgentState:
         # Update session with answer and score
         _update_session_answer(
             session_id=session_id,
+            user_id=user_id,
             question_index=question_index,
             answer_text=answer_text,
             score=score,
@@ -541,7 +546,7 @@ def _save_interview_session(
         logger.warning("interview_coach: failed to save session: %s", exc)
 
 
-def _get_interview_session(session_id: str) -> dict | None:
+def _get_interview_session(session_id: str, user_id: str) -> dict | None:
     """Retrieve interview session data by ID."""
     from sqlalchemy import select
 
@@ -550,7 +555,11 @@ def _get_interview_session(session_id: str) -> dict | None:
     factory = _get_sync_factory()
     try:
         with factory() as db:
-            result = db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+            result = db.execute(
+                select(InterviewSession).where(
+                    InterviewSession.id == session_id, InterviewSession.user_id == user_id
+                )
+            )
             session = result.scalars().first()
             if not session:
                 return None
@@ -571,6 +580,7 @@ def _get_interview_session(session_id: str) -> dict | None:
 
 def _update_session_answer(
     session_id: str,
+    user_id: str,
     question_index: int,
     answer_text: str,
     score: int,
@@ -583,7 +593,11 @@ def _update_session_answer(
     factory = _get_sync_factory()
     try:
         with factory() as db:
-            result = db.execute(select(InterviewSession).where(InterviewSession.id == session_id))
+            result = db.execute(
+                select(InterviewSession)
+                .where(InterviewSession.id == session_id, InterviewSession.user_id == user_id)
+                .with_for_update()
+            )
             session = result.scalars().first()
             if not session:
                 return

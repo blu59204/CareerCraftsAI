@@ -83,11 +83,6 @@ const SUGGESTIONS = [
   },
 ];
 
-const FOLLOW_UP_STEPS = [
-  { day: "Day 1", label: "Initial outreach", status: "done" as const },
-  { day: "Day 3", label: "Follow-up", status: "pending" as const },
-  { day: "Day 7", label: "Final nudge", status: "upcoming" as const },
-];
 
 interface Template {
   id: string;
@@ -437,47 +432,6 @@ function InboxCleanup() {
 /* Right rail                                                                 */
 /* -------------------------------------------------------------------------- */
 
-function FollowUpStep({
-  day,
-  label,
-  status,
-  last,
-}: {
-  day: string;
-  label: string;
-  status: "done" | "pending" | "upcoming";
-  last: boolean;
-}) {
-  return (
-    <li className="relative flex items-start gap-3 pb-5 last:pb-0">
-      {!last ? (
-        <span aria-hidden className="absolute bottom-0 left-[13px] top-8 w-px bg-foreground/[0.08] dark:bg-white/[0.08]" />
-      ) : null}
-      <span
-        aria-hidden
-        className={cn(
-          "relative grid h-7 w-7 shrink-0 place-items-center rounded-full ring-1",
-          status === "done" && "bg-success/10 text-success ring-success/25",
-          status === "pending" && "bg-warning/10 text-warning ring-warning/25",
-          status === "upcoming" && "bg-foreground/[0.04] text-muted-foreground ring-foreground/[0.08] dark:bg-white/[0.05] dark:ring-white/10",
-        )}
-      >
-        {status === "done" && <Check size={13} weight="light" />}
-        {status === "pending" && <Clock size={13} weight="light" />}
-        {status === "upcoming" && <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />}
-      </span>
-      <div className="flex min-w-0 flex-1 items-start justify-between gap-2 pt-0.5">
-        <div className="min-w-0">
-          <p className="font-geist-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{day}</p>
-          <p className="mt-0.5 text-[13px] font-medium tracking-[-0.01em] text-foreground">{label}</p>
-        </div>
-        {status === "done" && <StatusPill tone="success">Sent</StatusPill>}
-        {status === "pending" && <StatusPill tone="warning" live>Queued</StatusPill>}
-      </div>
-    </li>
-  );
-}
-
 function SuggestionRow({
   suggestion,
   onApply,
@@ -707,7 +661,7 @@ export default function EmailPage() {
   };
 
   const wordCount = composeText.trim() ? composeText.trim().split(/\s+/).length : 0;
-  const queuedFollowUps = FOLLOW_UP_STEPS.filter((step) => step.status !== "done").length;
+
 
   return (
     <Screen>
@@ -753,7 +707,7 @@ export default function EmailPage() {
             items={[
               { label: "Drafts", value: drafts.length },
               { label: "Templates", value: TEMPLATES.length },
-              { label: "Queued", value: queuedFollowUps },
+              { label: "Drafts", value: drafts.length },
             ]}
           />
         }
@@ -990,12 +944,9 @@ export default function EmailPage() {
             </Bezel>
 
             <Bezel size="md" coreClassName="space-y-5 p-4">
-              <PanelTitle title="Follow-up Schedule" icon={<Clock size={15} weight="light" />} />
-              <ol className="px-1">
-                {FOLLOW_UP_STEPS.map((step, i) => (
-                  <FollowUpStep key={step.day} {...step} last={i === FOLLOW_UP_STEPS.length - 1} />
-                ))}
-              </ol>
+              <PanelTitle title="Follow-up policy" icon={<Clock size={15} weight="light" />} />
+              <p className="text-sm text-muted-foreground">After confirmed outreach, follow-up drafts can be prepared on day 5 and day 12. Each send requires your approval. This is the policy, not a record of sent or queued messages.</p>
+              <a href="/applications" className="text-sm text-primary underline">View application follow-ups</a>
             </Bezel>
           </motion.aside>
         </RevealGroup>

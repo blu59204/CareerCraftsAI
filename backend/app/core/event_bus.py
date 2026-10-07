@@ -148,7 +148,7 @@ async def stream_events(run_id: str, timeout_s: int = 300) -> AsyncIterator[str]
 
             try:
                 msg = await asyncio.wait_for(
-                    pubsub.get_message(ignore_subscribe_messages=True),
+                    pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0),
                     timeout=5.0,
                 )
             except TimeoutError:
@@ -156,6 +156,7 @@ async def stream_events(run_id: str, timeout_s: int = 300) -> AsyncIterator[str]
                 continue
 
             if msg is None:
+                yield 'event: ping\ndata: {"type":"ping"}\n\n'
                 continue
 
             raw = msg.get("data", "")

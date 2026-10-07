@@ -30,6 +30,8 @@ def test_state_requires_user_id_and_run_id():
     New: declared in _AgentStateRequired (no total=False) — mypy/pyright will
     catch missing fields at type-check time.
     """
+    assert {"user_id", "run_id"} <= AgentState.__required_keys__
+    assert not {"user_id", "run_id"} & AgentState.__optional_keys__
     state: AgentState = {
         "user_id": "usr_abc",
         "run_id": str(uuid.uuid4()),
@@ -83,6 +85,8 @@ def test_tokens_used_is_in_schema():
     dropped when the orchestrator serialised state between nodes.
     New: tokens_used is defined and round-trips correctly.
     """
+    from typing import get_type_hints
+    assert get_type_hints(AgentState)["tokens_used"] is int
     state: AgentState = {
         "user_id": "usr_1",
         "run_id": "run_1",
@@ -110,6 +114,8 @@ def test_messages_accepts_langchain_message_objects():
         "run_id": "r",
         "messages": [],
     }
+    from typing import Any, get_type_hints
+    assert get_type_hints(AgentState)["messages"] == list[Any]
     msg = AIMessage(content="Resume tailored successfully.")
     state["messages"].append(msg)
 

@@ -158,23 +158,29 @@ class TestHITLBypassPrevention:
         assert checkpoints, "pipeline must emit an approval checkpoint"
         assert checkpoints[0].get("type") == "review_application_draft"
 
-    def test_approve_wrong_action_type_blocked(self):
-        state = AgentState(
-            user_id="u1",
-            run_id="r3",
-            task_type="email",
-            context={},
-            messages=[],
-            status="running",
-            pending_action={"type": "send_email", "details": {}},
-            result=None,
-            error=None,
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status,action,expected", [
+        ("awaiting_approval", "submit_application", 422),
+        ("expired", "send_email", 400),
+        ("completed", "send_email", 400),
+    ])
+    async def test_approval_rejects_wrong_action_and_closed_checkpoint(self, status, action, expected):
+        import uuid
+        from types import SimpleNamespace
+        from fastapi import HTTPException, Request
+        from app.api.v1.agents import ApproveRequest, approve_or_cancel
+
+        run = SimpleNamespace(status=status, input={}, output={"type": "send_email"})
+        db = SimpleNamespace(
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: run)),
+            commit=AsyncMock(),
         )
-        mismatched = {"type": "submit_application", "details": {}}
-        assert mismatched["type"] != state["pending_action"]["type"]
-
-    def test_approve_expired_checkpoint_handled(self):
-        pass
-
-    def test_concurrent_approve_idempotency(self):
-        pass
+        with patch("app.workflows.starters.signal_agent_decision", new=AsyncMock()) as signal:
+            with pytest.raises(HTTPException) as rejected:
+                await approve_or_cancel.__wrapped__(
+                    str(uuid.uuid4()), ApproveRequest(approved=True, action_type=action),
+                    Request({"type": "http"}), db, SimpleNamespace(id=uuid.uuid4()),
+                )
+            assert rejected.value.status_code == expected
+            signal.assert_not_awaited()
+            db.commit.assert_not_awaited()

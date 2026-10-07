@@ -242,9 +242,11 @@ function QueueCard({ run, featured, deciding, onDecide }: QueueCardProps) {
             size="sm"
             disabled={deciding}
             trailing={deciding ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <Check size={14} weight="light" />}
-            onClick={() => onDecide(true)}
+            onClick={async () => {
+              try { await navigator.clipboard.writeText(messages.map((message) => `To ${message.contact_name}\n${message.message}`).join("\n\n")); toast.success("Drafts copied. Open a contact profile to send in LinkedIn yourself."); } catch { toast.error("Copy failed. Select and copy the draft text."); }
+            }}
           >
-            Approve & Send
+            Copy drafts
           </IslandButton>
           <IslandButton
             tone="ghost"

@@ -94,7 +94,7 @@ def _adapter_open_apis_keyless(query: str, location: str, max_results: int) -> l
 
 def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
     from app.agents.job_search import _job_listings_to_dicts
-    from app.services.job_platforms_service import scrape_jobs
+    from app.services.job_platforms_service import _country_from_location, scrape_jobs
 
     # Left at its default, scrape_jobs hits all 8 JobSpy-supported sites
     # (including glassdoor/zip_recruiter/bayt/naukri, which reliably 403/406
@@ -111,6 +111,7 @@ def _adapter_jobspy(query: str, location: str, max_results: int) -> list[dict]:
             results_wanted=min(max_results, 25),
             hours_old=72,
             platforms=["linkedin", "indeed"],
+            country=_country_from_location(location),
         )
     )
 

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, Search, CheckCircle, Briefcase, Mail, Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -47,6 +48,11 @@ function relativeTime(iso: string): string {
 }
 
 export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const submitSearch = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter" && search.trim()) { router.push(`/applications?q=${encodeURIComponent(search.trim())}`); setMobileSearchOpen(false); }
+  };
   const [notifOpen, setNotifOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -104,7 +110,11 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
       <div className="hidden min-w-0 max-w-md flex-1 items-center gap-2 rounded-full border border-white/45 bg-white/[0.10] px-4 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[20px] dark:border-white/10 dark:bg-black/[0.12] sm:flex">
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
         <input
-          placeholder="Search jobs, applications, agents…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          onKeyDown={submitSearch}
+          aria-label="Search applications"
+          placeholder="Search applications…"
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         />
       </div>
@@ -115,6 +125,10 @@ export function AppTopbar({ onMenuClick }: { onMenuClick?: () => void }) {
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
             autoFocus
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={submitSearch}
+            aria-label="Search applications"
             placeholder="Search…"
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />

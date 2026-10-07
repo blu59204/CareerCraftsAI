@@ -1,19 +1,15 @@
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.email_agent import email_agent_node
-from app.agents.state import AgentState
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User
 from app.services.gmail_service import GmailSendError
@@ -24,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 def _relative_time(dt: datetime) -> str:
     """Return a human-readable relative time string from a datetime."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     delta = now - dt
     seconds = int(delta.total_seconds())
     if seconds < 3600:
@@ -73,7 +69,8 @@ async def list_drafts(
 
     drafts: list[EmailDraft] = []
     for run in runs:
-        inp: dict = run.input or {}
+        saved_input: dict = run.input or {}
+        inp: dict = saved_input.get("context") or saved_input
         out: dict = run.output or {}
         company = inp.get("company", "")
         role = inp.get("role", "role")
@@ -178,56 +175,22 @@ async def compose_email(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="email",
-        status="running",
-        input={"company": payload.company, "role": payload.role},
-    )
-    db.add(agent_run)
-    await db.flush()
+    from app.api.v1.run_utils import queue_agent_run, wait_for_agent_result
 
-    state = AgentState(
-        user_id=str(current_user.id),
-        run_id=run_id,
-        task_type="email",
-        messages=[HumanMessage(content=f"Draft email for {payload.role} at {payload.company}")],
-        context={
+    run_id = await queue_agent_run(
+        db,
+        current_user,
+        "email",
+        {
             "company": payload.company,
             "role": payload.role,
-            "recipient_email": payload.recipient_email,
+            "recipient_email": str(payload.recipient_email),
+            "subject": payload.subject,
+            "body": payload.body,
         },
-        status="running",
-        pending_action=None,
-        result=None,
-        error=None,
     )
-
-    result_state = await asyncio.get_running_loop().run_in_executor(None, email_agent_node, state)
-
-    agent_run.status = result_state["status"]
-    agent_run.completed_at = datetime.now(timezone.utc)
-    if result_state.get("pending_action"):
-        pending_action = dict(result_state["pending_action"])
-        if payload.subject:
-            pending_action["subject"] = payload.subject
-        if payload.body:
-            pending_action["body"] = payload.body
-        agent_run.output = pending_action
-
-    if result_state["status"] == "failed":
-        logger.warning(
-            "Email compose agent failed for run %s: %s", run_id, result_state.get("error")
-        )
-        raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
-
-    return {
-        "run_id": run_id,
-        "status": result_state["status"],
-        "draft": result_state.get("pending_action"),
-    }
+    run = await wait_for_agent_result(db, current_user, run_id)
+    return {"run_id": run_id, "status": run.status, "draft": run.output}
 
 
 class InboxCleanupEmail(BaseModel):
@@ -377,18 +340,18 @@ async def approve_and_send(
         # Actionable Gmail reason (scopes, API disabled, revoked token) — safe to show.
         logger.warning("Email approval send failed for run %s: %s", run_id, exc)
         run.status = "failed"
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         await db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         logger.warning("Email approval send failed for run %s: %s", run_id, exc)
         run.status = "failed"
-        run.completed_at = datetime.now(timezone.utc)
+        run.completed_at = datetime.now(UTC)
         await db.commit()
         raise HTTPException(status_code=502, detail="Email send failed") from exc
 
     run.status = "completed" if result.get("sent") else "failed"
-    run.completed_at = datetime.now(timezone.utc)
+    run.completed_at = datetime.now(UTC)
     run.output = {**pending, **result}
     await db.commit()
     return {"status": "sent" if result.get("sent") else "unknown", "recipient": recipient}

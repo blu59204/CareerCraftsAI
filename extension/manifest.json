@@ -33,6 +33,7 @@
     "http://127.0.0.1/*",
     "https://www.careercraftsai.me/*",
     "https://careercraftsai.me/*",
+    "https://app.careercraftsai.me/*",
     "https://www.linkedin.com/*",
     "https://*.naukri.com/*",
     "https://www.naukri.com/*",
@@ -63,6 +64,7 @@
         "http://localhost/*",
         "http://127.0.0.1/*",
         "https://careercraftsai.me/*",
+        "https://app.careercraftsai.me/*",
         "https://www.careercraftsai.me/*"
       ],
       "js": [

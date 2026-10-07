@@ -23,7 +23,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { ApplicationList, type ApplicationItem, type AppStage } from "@/components/apps/ApplicationList";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { deleteApplications, fetchApplications, restoreApplications, type ApplicationFilters, type ApplicationRecord, type ApplicationSort } from "@/lib/applications-api";
+import { deleteApplications, applicationFilterParams, fetchApplications, restoreApplications, type ApplicationFilters, type ApplicationRecord, type ApplicationSort } from "@/lib/applications-api";
 import { ApplicationDrawer } from "@/components/apps/ApplicationDrawer";
 import {
   Bezel,
@@ -85,8 +85,9 @@ function ApplicationsView() {
   const params = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState(params.get("q") ?? "");
+  useEffect(() => { setSearch(params.get("q") ?? ""); }, [params]);
+  const [query, setQuery] = useState(params.get("q") ?? "");
   useEffect(() => {
     const timer = setTimeout(() => setQuery(search.trim()), 300);
     return () => clearTimeout(timer);
@@ -95,6 +96,9 @@ function ApplicationsView() {
   const [pendingDelete, setPendingDelete] = useState<string[] | null>(null);
 
   // Filter + sort state lives in the URL so reload/share keeps it.
+  const source = params.get("source") ?? "";
+  const status = params.get("status") as AppStage | null;
+  const postedWithinDays = Math.max(0, Math.min(90, Number(params.get("posted")) || 0));
   const minMatch = Math.min(100, Math.max(0, Number(params.get("min")) || 0));
   const foundParam = params.get("found");
   const found: FoundRange = FOUND_CHIPS.some((c) => c.value === foundParam) ? (foundParam as FoundRange) : "any";
@@ -119,6 +123,9 @@ function ApplicationsView() {
   // Memoised on URL params so relative ranges ("7d") don't change the query key every render.
   const filters = useMemo<ApplicationFilters>(() => {
     const f: ApplicationFilters = { sort };
+    if (source) f.source = source;
+    if (status && ["saved", "applied", "viewed", "interview", "offer", "rejected"].includes(status)) f.status = status;
+    if (postedWithinDays) f.postedWithinDays = postedWithinDays;
     if (minMatch > 0) f.minMatch = minMatch;
     const now = Date.now();
     if (found === "today") f.foundAfter = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
@@ -131,7 +138,7 @@ function ApplicationsView() {
     if (query) f.q = query;
     if (cities.length) f.location = cities.join(",");
     return f;
-  }, [sort, minMatch, found, from, to, query, cities]);
+  }, [sort, minMatch, found, from, to, query, cities, source, status, postedWithinDays]);
   const filtersActive = minMatch > 0 || found !== "any" || cities.length > 0;
   const setCities = (next: string[]) => setParams({ city: next.length ? next.join(",") : null });
   const addCity = (picked: string) => {
@@ -273,11 +280,7 @@ function ApplicationsView() {
     setShowExportMenu(false);
     const tab = window.open("about:blank", "_blank");
     if (tab) tab.opener = null; // we keep the handle; the opened page can't script ours
-    const params: Record<string, string | number> = { sort };
-    if (filters.minMatch != null) params.min_match = filters.minMatch;
-    if (filters.foundAfter) params.found_after = filters.foundAfter;
-    if (filters.foundBefore) params.found_before = filters.foundBefore;
-    if (filters.q) params.q = filters.q;
+    const params = applicationFilterParams(filters);
     const create = () =>
       apiClient.post<{ url: string }>("/jobs/applications/export-sheet", null, { params }).then((r) => r.data.url);
     const notConnected = (err: unknown) => (err as { response?: { status?: number } }).response?.status === 409;

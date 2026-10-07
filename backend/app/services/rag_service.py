@@ -226,6 +226,17 @@ def _search_live_documents(user_id, doc_type, provider, embeddings, query, k):
     vector = embeddings.embed_query(query)
     if len(vector) != dimension:
         raise ValueError("Embedding dimension mismatch")
+    # Company research is persisted in company_intel, not user_documents.
+    # The trusted type selects a fixed SQL clause; IDs and ownership stay bound.
+    live_record = (
+        """SELECT 1 FROM company_intel d
+           WHERE d.id::text = e.cmetadata->>'company_intel_id'
+             AND d.user_id::text = :owner"""
+        if doc_type == "company"
+        else """SELECT 1 FROM user_documents d
+           WHERE d.id::text = e.cmetadata->>'document_id'
+             AND d.user_id::text = :owner AND d.doc_type = :doc_type"""
+    )
     with _get_sync_factory()() as db:
         rows = db.execute(
             text(f"""
@@ -236,9 +247,7 @@ def _search_live_documents(user_id, doc_type, provider, embeddings, query, k):
               AND vector_dims(e.embedding) = {dimension}
               AND e.cmetadata->>'user_id' = :owner
               AND EXISTS (
-                  SELECT 1 FROM user_documents d
-                  WHERE d.id::text = e.cmetadata->>'document_id'
-                    AND d.user_id::text = :owner AND d.doc_type = :doc_type
+                  {live_record}
               )
             ORDER BY e.embedding::vector({dimension}) <=> CAST(:query AS vector({dimension}))
             LIMIT :limit

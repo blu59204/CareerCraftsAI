@@ -14,6 +14,7 @@ from app.api.v1.deps import get_current_user, get_db
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.models.db import User, UserDocument, UserModelSettings
+from app.services.document_lifecycle import lock_document_owner as _lock_document_owner
 from app.services.drive_service import DriveError, upload_to_drive
 from app.services.rag_service import EmbeddingUnavailable, ingest_document
 from app.services.storage_service import download_file, upload_file
@@ -62,24 +63,6 @@ async def _read_bounded(file: UploadFile) -> bytes:
 
 
 _parser_slots = asyncio.Semaphore(2)
-
-
-async def _lock_document_owner(db: AsyncSession, owner_id) -> User:
-    """Serialize storage writes/primary selection with the account eraser."""
-    owner = (
-        await db.execute(
-            select(User)
-            .where(User.id == owner_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-    ).scalar_one_or_none()
-    if owner is None or (
-        owner.deletion_scheduled_for is not None
-        and owner.deletion_scheduled_for <= datetime.now(UTC)
-    ):
-        raise HTTPException(status_code=403, detail="Account deletion is in progress")
-    return owner
 
 
 def _safe_filename(filename: str | None) -> str:
@@ -472,11 +455,14 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await _lock_document_owner(db, current_user.id)
     result = await db.execute(
-        select(UserDocument).where(
+        select(UserDocument)
+        .where(
             UserDocument.id == document_id,
             UserDocument.user_id == current_user.id,
         )
+        .with_for_update()
     )
     doc = result.scalar_one_or_none()
     if not doc:

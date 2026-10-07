@@ -67,7 +67,12 @@ async def check_run_admission(db, user: User) -> None:
     from app.core.config import settings
 
     locked_user = (
-        await db.execute(select(User).where(User.id == user.id).with_for_update())
+        await db.execute(
+            select(User)
+            .where(User.id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one_or_none()
     if locked_user is None:
         raise HTTPException(status_code=404, detail="User account not found")
@@ -83,7 +88,7 @@ async def check_run_admission(db, user: User) -> None:
         .where(
             AgentRun.user_id == user.id,
             or_(
-                AgentRun.agent_type == "chat_orchestrator",
+                AgentRun.agent_type.in_(("chat_orchestrator", "linkedin_pdf")),
                 and_(
                     AgentRun.agent_type == "email",
                     AgentRun.input["source"].astext == "application_outreach",
@@ -165,3 +170,40 @@ async def queue_agent_run(db, user: User, task_type: str, context: dict[str, Any
         await db.commit()
         raise HTTPException(status_code=503, detail="Agent service unavailable") from exc
     return run_id
+
+
+async def wait_for_agent_result(db, user: User, run_id: str, timeout_s: float = 120):
+    """Preserve synchronous draft responses while durable workers own execution.
+
+    Poll without holding a transaction/owner lock. A request timeout does not
+    cancel durable work; return its ID so clients can recover the result.
+    """
+    import asyncio
+    import time
+    import uuid
+
+    from fastapi import HTTPException
+    from sqlalchemy import select
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        run = (
+            await db.execute(
+                select(AgentRun)
+                .where(AgentRun.id == uuid.UUID(run_id), AgentRun.user_id == user.id)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one_or_none()
+        await db.commit()
+        if run is None:
+            raise HTTPException(status_code=404, detail="Agent run not found")
+        if run.status in {"failed", "cancelled", "expired"}:
+            raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
+        if run.status not in {"queued", "running"}:
+            return run
+        if time.monotonic() >= deadline:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "Agent is still running", "run_id": run_id},
+            )
+        await asyncio.sleep(0.25)

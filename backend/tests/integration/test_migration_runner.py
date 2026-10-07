@@ -17,7 +17,10 @@ pytestmark = pytest.mark.skipif(
     reason="Disposable workflow infrastructure required",
 )
 
-ADMIN_URL = "postgresql://workflow_test:workflow_test@127.0.0.1:55439/workflow_test"
+ADMIN_URL = os.getenv(
+    "WORKFLOW_TEST_ADMIN_URL",
+    "postgresql://workflow_test:workflow_test@127.0.0.1:55439/workflow_test",
+)
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "migrate.py"
 
 
@@ -68,3 +71,27 @@ def test_an_unledgered_database_must_be_baselined_first(fresh_database):
         pending = runner.migrate(conn, dry_run=True)
     assert first not in pending
     assert len(pending) == len(runner.migration_files()) - 1
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_ledger_failure_rolls_back_schema_and_allows_retry(fresh_database, tmp_path, monkeypatch, wrapped):
+    runner = _load_runner()
+    migration = tmp_path / "0001_probe.sql"
+    sql = "CREATE TABLE atomic_probe(id integer);"
+    migration.write_text("BEGIN;\n" + sql + "\nCOMMIT;\n" if wrapped else sql)
+    monkeypatch.setattr(runner, "MIGRATIONS", tmp_path)
+    record = runner._record
+
+    def fail_record(*args, **kwargs):
+        raise RuntimeError("simulated ledger failure")
+
+    monkeypatch.setattr(runner, "_record", fail_record)
+    with psycopg.connect(fresh_database, autocommit=True) as conn:
+        with pytest.raises(RuntimeError, match="ledger failure"):
+            runner.migrate(conn)
+        assert conn.execute("SELECT to_regclass('atomic_probe')").fetchone()[0] is None
+        assert runner.applied(conn) == {}
+        monkeypatch.setattr(runner, "_record", record)
+        assert runner.migrate(conn) == [migration.name]
+        assert conn.execute("SELECT to_regclass('atomic_probe')").fetchone()[0] == "atomic_probe"
+        assert list(runner.applied(conn)) == [migration.name]

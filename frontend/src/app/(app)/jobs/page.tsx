@@ -1,4 +1,5 @@
 "use client";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 
 import { useState, useEffect, useId, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -62,8 +63,6 @@ import {
   listItem,
   listStagger,
   panelSwap,
-  EASE_VANGUARD,
-  SPRING_PANEL,
   inputControlClass,
   inputTrayClass,
   type StatusTone,
@@ -79,7 +78,6 @@ const MODE_FILTERS = ["Remote", "Hybrid", "Onsite"];
 const LOCATION_FILTERS = ["Bangalore", "Hyderabad", "Mumbai"];
 
 const JOB_TYPE_FILTERS = ["Full-time", "Part-time", "Contract", "Internship"];
-const EXPERIENCE_FILTERS = ["Entry-level", "Mid-level", "Senior", "Lead"];
 const DATE_FILTERS = ["Today", "Past week", "Past month"];
 const EXPERIENCE_LEVELS = ["fresher", "junior", "mid", "senior", "lead", "principal"];
 const WORK_MODES = ["remote", "hybrid", "onsite"];
@@ -87,8 +85,6 @@ const JOB_TYPES = ["full-time", "part-time", "contract", "internship"];
 
 const FILTER_GROUPS: ReadonlyArray<{ label: string; items: string[] }> = [
   { label: "Location / Mode", items: ["Remote", "Hybrid", "Onsite", "Bangalore", "Hyderabad", "Mumbai"] },
-  { label: "Job type", items: JOB_TYPE_FILTERS },
-  { label: "Experience level", items: EXPERIENCE_FILTERS },
   { label: "Date posted", items: DATE_FILTERS },
 ];
 
@@ -847,42 +843,17 @@ function JobDetailBody({ job, onClose, titleId }: { job: SavedJob; onClose?: () 
 
 /** Below lg the detail panel becomes a bottom sheet / centered dialog. */
 function JobDetailModal({ job, onClose }: { job: SavedJob; onClose: () => void }) {
-  const reduce = useReducedMotion();
   const titleId = useId();
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.35, ease: EASE_VANGUARD }}
-      className="fixed inset-0 z-40 flex items-end justify-center bg-foreground/20 p-3 backdrop-blur-sm dark:bg-black/60 sm:items-center sm:p-6"
-      onClick={onClose}
-    >
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        initial={reduce ? { opacity: 0 } : { opacity: 0, y: 40 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={reduce ? { opacity: 0 } : { opacity: 0, y: 24 }}
-        transition={reduce ? { duration: 0.2 } : SPRING_PANEL}
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl"
-      >
-        <Bezel lifted coreClassName="flex max-h-[85dvh] flex-col p-5 sm:p-6">
-          <JobDetailBody job={job} onClose={onClose} titleId={titleId} />
-        </Bezel>
-      </motion.div>
-    </motion.div>
+    <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-foreground/20 backdrop-blur-sm dark:bg-black/60" />
+        <DialogPrimitive.Content aria-labelledby={titleId} aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 outline-none">
+          <DialogPrimitive.Title className="sr-only">Job details</DialogPrimitive.Title>
+          <Bezel lifted coreClassName="flex max-h-[85dvh] flex-col p-5 sm:p-6"><JobDetailBody job={job} onClose={onClose} titleId={titleId} /></Bezel>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 
@@ -1329,13 +1300,16 @@ export default function JobsPage() {
   };
   const minMatch = listChoice?.choice === "filter" ? listChoice.min : 0;
 
+  const effectivePostedDays = activeFilters.has("Today") ? 1 : activeFilters.has("Past week") ? 7 : activeFilters.has("Past month") ? 30 : postedDays;
+  const selectedLocations = Array.from(activeFilters).filter((f) => QUERY_LOCATION_FILTERS.includes(f));
+
   const { data: jobsPage, isLoading } = useQuery<ApplicationPage>({
     queryKey: ["jobs-saved", Array.from(activeFilters).sort().join(","), jobSource, postedDays, minMatch],
     queryFn: () => {
       const filters: ApplicationFilters = { status: "saved", sort: "match_desc" };
       if (jobSource) filters.source = jobSource;
       if (minMatch > 0) filters.minMatch = minMatch;
-      if (postedDays !== 30) filters.postedWithinDays = postedDays;
+      filters.postedWithinDays = effectivePostedDays;
       const locations = Array.from(activeFilters).filter((f) => QUERY_LOCATION_FILTERS.includes(f));
       if (locations.length > 0) filters.location = locations.join(",");
       return fetchApplications(filters, { limit: TOP_JOBS });
@@ -1344,15 +1318,10 @@ export default function JobsPage() {
   const jobs: SavedJob[] = jobsPage?.items ?? [];
   const totalJobs = jobsPage?.total ?? 0;
 
-  // Same filters on the full list: /applications reads min, found (7d | custom + from) and sort.
-  const viewAllParams = new URLSearchParams({ sort: "match_desc" });
+  const viewAllParams = new URLSearchParams({ sort: "match_desc", status: "saved", posted: String(effectivePostedDays) });
   if (minMatch > 0) viewAllParams.set("min", String(minMatch));
-  if (postedDays === 7) viewAllParams.set("found", "7d");
-  else if (postedDays !== 30) {
-    viewAllParams.set("found", "custom");
-    const d = new Date(Date.now() - postedDays * 86400000);
-    viewAllParams.set("from", `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-  }
+  if (selectedLocations.length) viewAllParams.set("city", selectedLocations.join(","));
+  if (jobSource) viewAllParams.set("source", jobSource);
   const viewAllHref = `/applications?${viewAllParams.toString()}`;
   const showSizePrompt = listChoice === null && totalJobs > BIG_LIST;
 
@@ -1623,7 +1592,7 @@ export default function JobsPage() {
       resume_id: searchBasis.startsWith("resume:") ? searchBasis.split(":")[1] : undefined,
       persona_id: searchBasis.startsWith("persona:") ? searchBasis.split(":")[1] : undefined,
       platforms: jobSource ? [jobSource] : [],
-      posted_within_days: postedDays,
+      posted_within_days: effectivePostedDays,
       search_query: query,
       // An explicitly typed location wins; otherwise fall back to filters/profile as before.
       location:

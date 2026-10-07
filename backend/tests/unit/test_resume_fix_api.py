@@ -21,30 +21,34 @@ AI engineer building LLM tools.
 
 
 @pytest.mark.asyncio
-async def test_unexpected_optimize_failure_finishes_run_without_error_leak(monkeypatch):
+async def test_optimize_uses_durable_dispatch_and_preserves_response(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
-
     from app.api.v1.deps import get_current_user, get_db
-    from app.core.model_router import _add_tokens
 
-    rows = []
-    db = SimpleNamespace(add=rows.append, flush=AsyncMock(), commit=AsyncMock())
+    user = SimpleNamespace(id=uuid.uuid4(), full_name="Jane")
+    db = object()
     app, _ = _build_app()
-    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4())
+    app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-
-    def fail(state):
-        _add_tokens(80)
-        raise RuntimeError("Private model output")
-
-    monkeypatch.setattr("app.agents.resume_agent.resume_agent_node", fail)
+    queue = AsyncMock(return_value=str(uuid.uuid4()))
+    wait = AsyncMock(
+        return_value=SimpleNamespace(status="awaiting_approval", output={"ats_score": 85})
+    )
+    monkeypatch.setattr("app.api.v1.run_utils.queue_agent_run", queue)
+    monkeypatch.setattr("app.api.v1.run_utils.wait_for_agent_result", wait)
+    monkeypatch.setattr("app.api.v1.resume._contact_suggestions", AsyncMock(return_value={}))
     async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
         response = await client.post("/api/v1/resume/optimize", json={"jd_text": "Python Engineer"})
-    assert response.status_code == 500 and "Private model output" not in response.text
-    assert rows[0].status == "failed" and rows[0].tokens_used == 80
-    assert rows[0].completed_at is not None and rows[0].duration_ms >= 0
-    assert db.commit.await_count == 2
+    assert response.status_code == 200
+    assert response.json()["ats_score"] == 85
+    queue.assert_awaited_once_with(
+        db,
+        user,
+        "resume_optimize",
+        {"jd_text": "Python Engineer", "template": "modern", "page_target": 2},
+    )
+    wait.assert_awaited_once_with(db, user, queue.return_value)
 
 
 @pytest.mark.asyncio
@@ -154,6 +158,7 @@ class _Harness:
         self.pins: set[str] = set()
         # Whether each document lookup locked the row (SELECT ... FOR UPDATE).
         self.doc_locks: list[bool] = []
+        self.deletion_scheduled_for = None
         self.render_error: Exception | None = None
         self.ats_error: Exception | None = None
 
@@ -236,6 +241,18 @@ class _Harness:
                 entity = stmt.column_descriptions[0].get("entity")
                 compiled = stmt.compile(dialect=postgresql.dialect())
                 params = compiled.params
+                if entity.__name__ == "User":
+                    from app.models.db import User
+
+                    assert str(compiled).endswith("FOR UPDATE")
+                    assert compiled.execution_options.get("populate_existing")
+                    harness.calls.append("owner_lock")
+                    return _Result(
+                        User(
+                            id=harness.user_id,
+                            deletion_scheduled_for=harness.deletion_scheduled_for,
+                        )
+                    )
                 if entity is not UserDocument:
                     return _Result(uuid.uuid4() if entity.__name__ in harness.pins else None)
                 harness.doc_locks.append(str(compiled).endswith("FOR UPDATE"))
@@ -772,6 +789,26 @@ def test_pin_lookup_runs_the_attempt_query_then_the_run_query():
 
 
 # ── Limits ───────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_due_account_erasure_refuses_fix_before_document_or_storage(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    h = _Harness(monkeypatch, _doc(uuid.uuid4()))
+    h.deletion_scheduled_for = datetime.now(UTC) - timedelta(seconds=1)
+    response = await h.fix({"template": "classic"})
+    assert response.status_code == 403
+    assert h.doc_locks == [] and h.uploaded == []
+
+
+@pytest.mark.asyncio
+async def test_fix_locks_owner_before_storage_and_document(monkeypatch):
+    h = _Harness(monkeypatch, _doc(uuid.uuid4()))
+    response = await h.fix({"template": "classic", "remember": False})
+    assert response.status_code == 200
+    assert h.calls[0] == "owner_lock"
+    assert h.calls.index("owner_lock") < h.calls.index(("upload", "user-id/new.pdf"))
 
 
 @pytest.mark.asyncio

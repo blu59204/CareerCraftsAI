@@ -492,7 +492,9 @@ async def get_cached_intel(
 # ---------------------------------------------------------------------------
 
 
-async def embed_company_intel(user_id: str, intel: CompanyIntel, model_settings: Any) -> int:
+async def embed_company_intel(
+    user_id: str, intel: CompanyIntel, model_settings: Any, company_intel_id: str
+) -> int:
     """Chunk and embed company intel into {user_id}_company pgvector collection."""
     # Build a text representation for embedding
     text_parts = [
@@ -512,12 +514,13 @@ async def embed_company_intel(user_id: str, intel: CompanyIntel, model_settings:
     full_text = "\n\n".join(part for part in text_parts if part)
     chunks = chunk_text(full_text)
 
-    embeddings = get_embedding_model(model_settings)
     docs = [
         Document(
             page_content=chunk,
             metadata={
                 "company_name": intel.company_name,
+                "user_id": str(user_id),
+                "company_intel_id": str(company_intel_id),
                 "source": "company_research",
                 "chunk_index": i,
             },
@@ -525,10 +528,30 @@ async def embed_company_intel(user_id: str, intel: CompanyIntel, model_settings:
         for i, chunk in enumerate(chunks)
     ]
 
-    store = get_vector_store(
-        user_id, "company", embeddings, provider=get_embedding_provider(model_settings)
-    )
-    store.add_documents(docs)
+    def store_chunks():
+        from app.core.sync_db import _get_sync_factory
+        from app.models.db import User
+        from app.services.rag_service import _ensure_hnsw_index
+
+        # Vector rows have no owner FK. Serialize publication with the eraser's
+        # owner lock so an in-flight embedding cannot recreate swept memory.
+        with _get_sync_factory()() as owner_db:
+            owner = owner_db.execute(
+                select(User).where(User.id == uuid.UUID(str(user_id))).with_for_update()
+            ).scalar_one_or_none()
+            if owner is None or (
+                owner.deletion_scheduled_for is not None
+                and owner.deletion_scheduled_for <= datetime.now(UTC)
+            ):
+                raise ValueError("Account deletion is in progress")
+            embeddings = get_embedding_model(model_settings)
+            store = get_vector_store(
+                user_id, "company", embeddings, provider=get_embedding_provider(model_settings)
+            )
+            store.add_documents(docs)
+            _ensure_hnsw_index()
+
+    await asyncio.to_thread(store_chunks)
     return len(docs)
 
 
@@ -641,14 +664,14 @@ async def company_research_node(state: AgentState) -> AgentState:
         intel = compile_intel(company_name, results, failures)
         intel = await synthesize_intel(intel, results, model_settings)
 
+        record = await save_intel_to_db(db, user_id, intel)
+
         # --- Embed in pgvector (best effort) ---
         if model_settings is not None:
             try:
-                await embed_company_intel(user_id, intel, model_settings)
+                await embed_company_intel(user_id, intel, model_settings, str(record.id))
             except Exception as exc:
                 logger.warning("Failed to embed company intel in pgvector: %s", exc)
-
-        await save_intel_to_db(db, user_id, intel)
 
     return {
         **state,

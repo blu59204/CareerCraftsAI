@@ -31,6 +31,7 @@ from app.applications.answer_resolver import resolve_fields
 from app.applications.models import ApplicationField
 from app.applications.question_normalizer import normalize_question
 from app.applications.schema_extractor import extract_fields
+from app.services.document_lifecycle import RESUME_DOCUMENT_TYPES
 from app.models.db import (
     AgentRun,
     CandidateAnswer,
@@ -203,7 +204,7 @@ def _narrative_generator(user_id: uuid.UUID, task: ExtensionTask, budget: list[i
                         select(UserDocument).where(
                             UserDocument.id == uuid.UUID(document_id),
                             UserDocument.user_id == user_id,
-                            UserDocument.doc_type == "resume",
+                            UserDocument.doc_type.in_(RESUME_DOCUMENT_TYPES),
                         )
                     )
                 ).scalar_one_or_none()

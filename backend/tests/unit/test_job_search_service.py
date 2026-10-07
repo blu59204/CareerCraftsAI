@@ -254,7 +254,7 @@ def _override_auth(monkeypatch):
 
     async def _exec(*a, **k):
         calls["n"] += 1
-        if calls["n"] <= 2:
+        if "FROM users" in str(a[0]) or "FROM user_model_settings" in str(a[0]):
             # Query 1: get_current_user's own user-by-subject lookup.
             # Query 2: search_jobs()'s active-model-settings check.
             # Both must resolve truthy for the route to reach the handler body.

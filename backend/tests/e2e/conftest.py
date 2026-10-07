@@ -76,10 +76,12 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
+    if config.option.collectonly:
+        return
     run_e2e = os.getenv("RUN_E2E", "").lower() in ("1", "true", "yes")
     if not run_e2e:
         missing = _check_env_vars()
-        health_ok, health_msg = _check_backend_health()
+        health_ok, health_msg = (False, "Prerequisites missing") if missing else _check_backend_health()
 
         if missing or not health_ok:
             reasons = []

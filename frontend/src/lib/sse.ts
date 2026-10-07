@@ -12,20 +12,29 @@ export function useAgentStream(runId: string | null) {
   useEffect(() => {
     if (!runId) return;
     const id = runId;
+    const generation = useAgentStore.getState().generation;
+    const currentOwner = () => useAgentStore.getState().generation === generation;
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let polling = false;
+    let terminal = false;
     const pollController = new AbortController();
     if (!useAgentStore.getState().runs[id]) useAgentStore.getState().initRun(id);
 
     // DB state is authoritative: restore approvals/results after refresh or lost SSE.
     async function reconcile() {
-      if (polling || disposed) return;
+      if (polling || disposed || terminal || !currentOwner()) return;
       polling = true;
       try {
         const { data } = await apiClient.get(`/agents/runs/${id}`, { signal: pollController.signal });
-        if (disposed) return;
-        if (data.status === "awaiting_approval") setCheckpoint(id, data.output || {});
+        if (disposed || !currentOwner()) return;
+        if (["completed", "failed", "cancelled", "expired"].includes(data.status)) {
+          terminal = true;
+          abortRef.current?.abort();
+          if (retryTimer) clearTimeout(retryTimer);
+        }
+        if (data.status === "cancelled" || data.status === "expired") setRunStatus(id, data.status);
+        else if (data.status === "awaiting_approval") setCheckpoint(id, data.output || {});
         else if (data.status === "completed") setComplete(id, data.output || {});
         else if (data.status === "failed" && data.output?.outcome === "unknown") {
           setNeedsVerification(id, data.output?.message || "Check the job portal before retrying — this outcome could not be confirmed.");
@@ -39,13 +48,14 @@ export function useAgentStream(runId: string | null) {
     const pollTimer = setInterval(() => void reconcile(), 3000);
 
     async function connect() {
-      if (disposed) return;
+      if (disposed || terminal || !currentOwner()) return;
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
       try {
         const token = await getClerkAuthToken();
+        if (disposed || terminal || !currentOwner()) return;
         const apiUrl = API_BASE_URL;
         const res = await fetch(`${apiUrl}/agents/${id}/stream`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
@@ -56,6 +66,7 @@ export function useAgentStream(runId: string | null) {
           throw new Error(`SSE ${res.status}`);
         }
 
+        if (disposed || terminal || !currentOwner()) { await res.body.cancel(); return; }
         retryRef.current = 0;
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -65,6 +76,7 @@ export function useAgentStream(runId: string | null) {
 
         while (true) {
           const { done, value } = await reader.read();
+          if (disposed || terminal || !currentOwner()) { await reader.cancel(); return; }
           if (done) break;
           buf += decoder.decode(value, { stream: true });
           const lines = buf.split("\n");
@@ -89,7 +101,12 @@ export function useAgentStream(runId: string | null) {
                   if (eventType === "checkpoint") {
                     setCheckpoint(id, data);
                   } else if (eventType === "complete") {
+                    terminal = true;
                     setComplete(id, data);
+                    return;
+                  } else if (eventType === "cancelled" || eventType === "expired") {
+                    terminal = true;
+                    setRunStatus(id, eventType);
                     return;
                    } else if (eventType === "error") {
                     // A broken event bus is not evidence of workflow failure.

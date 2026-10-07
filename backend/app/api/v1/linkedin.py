@@ -55,18 +55,9 @@ async def optimize_uploaded_profile(
         profile, pages, warnings = await asyncio.to_thread(parse_profile_pdf, content)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    from app.core.config import settings
+    from app.api.v1.run_utils import check_run_admission
 
-    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
-    active = await db.execute(
-        select(AgentRun.id).where(
-            AgentRun.user_id == current_user.id,
-            AgentRun.status.in_(("queued", "running")),
-            AgentRun.agent_type != "apply_prepare",
-        )
-    )
-    if len(active.scalars().all()) >= settings.AGENT_MAX_CONCURRENT_PER_USER:
-        raise HTTPException(status_code=429, detail="Wait for your current agent runs to complete.")
+    await check_run_admission(db, current_user)
     run = AgentRun(
         id=uuid.uuid4(),
         user_id=current_user.id,
@@ -199,77 +190,13 @@ async def approve_outreach(
         raise HTTPException(status_code=400, detail="Run is not awaiting approval")
 
     if body.approved:
-        from app.core.model_router import _build_llm
-        from app.core.sync_db import fetch_model_settings
-        from app.services.browser_control_service import linkedin_send_connection
-
-        output = run.output or {}
-        messages = output.get("messages") or []
-        if not messages:
-            raise HTTPException(status_code=422, detail="No outreach messages pending")
-
-        model_settings = fetch_model_settings(str(current_user.id))
-        if not model_settings:
-            raise HTTPException(status_code=400, detail="No active model settings configured")
-        llm = _build_llm(model_settings)
-
-        # Claimed and committed before anything is sent: a second request now
-        # sees "running" and is refused instead of sending again.
-        run.status = "running"
-        await db.commit()
-        sent: list[dict] = []
-        remaining = [item for item in messages if isinstance(item, dict)]
-        for item in list(remaining):
-            profile_url = item.get("profile_url")
-            message = body.edited_message or item.get("message")
-            problem: HTTPException | None = None
-            if not profile_url or not message:
-                problem = HTTPException(
-                    status_code=422,
-                    detail="Outreach message missing profile_url or message",
-                )
-            else:
-                try:
-                    await linkedin_send_connection(
-                        llm=llm,
-                        user_id=str(current_user.id),
-                        profile_url=profile_url,
-                        note=message,
-                        run_id=str(run_id),
-                    )
-                except Exception as exc:
-                    logger.warning("LinkedIn outreach send failed for run %s: %s", run_id, exc)
-                    problem = HTTPException(status_code=502, detail="LinkedIn send failed")
-            if problem is not None:
-                # Back to awaiting approval with only what is still unsent, so a
-                # retry never repeats the requests that already went out.
-                run.status = "awaiting_approval"
-                run.output = {**output, "messages": remaining, "sent": sent}
-                await db.commit()
-                raise problem
-
-            queue_id = item.get("queue_id")
-            if queue_id:
-                qres = await db.execute(
-                    select(LinkedInOutreachQueue).where(
-                        LinkedInOutreachQueue.id == uuid.UUID(queue_id),
-                        LinkedInOutreachQueue.user_id == current_user.id,
-                    )
-                )
-                queue_item = qres.scalar_one_or_none()
-                if queue_item:
-                    queue_item.status = "sent"
-                    queue_item.approved_at = datetime.now(UTC)
-                    queue_item.sent_at = datetime.now(UTC)
-                    if body.edited_message:
-                        queue_item.message = body.edited_message
-            sent.append({"profile_url": profile_url, "contact_name": item.get("contact_name")})
-            remaining.remove(item)
-            run.output = {**output, "messages": remaining, "sent": sent}
-            await db.commit()
-
-        run.status = "completed"
-        run.output = {**output, "sent": sent}
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Automatic LinkedIn sends are unavailable. "
+                "Copy the draft and send it on LinkedIn yourself."
+            ),
+        )
     else:
         output = run.output or {}
         for queue_id in output.get("queue_ids") or []:

@@ -48,32 +48,8 @@ def test_hitl_gate_requires_awaiting_approval():
 STATUSES = ["saved", "applied", "viewed", "interview", "offer", "rejected"]
 
 
-@given(
-    status=st.sampled_from(STATUSES),
-    days_since=st.integers(min_value=0, max_value=365),
-)
-@h_settings(max_examples=30)
-def test_ai_suggestion_always_available(status: str, days_since: int):
-    """At least one suggestion should be generatable for any status + days combo."""
-    suggestions = []
-    if status == "interview":
-        suggestions.append("Launch Interview Coach")
-    elif status == "offer":
-        suggestions.append("Launch Salary Agent")
-    elif status == "applied" and days_since >= 5:
-        suggestions.append("Send follow-up email")
-    elif status == "saved":
-        suggestions.append("Apply to this role")
-    elif status == "viewed":
-        suggestions.append("Prepare for potential interview")
-    elif status == "rejected":
-        suggestions.append("Find similar roles")
-
-    # Fallback: always at least one suggestion
-    if not suggestions:
-        suggestions.append("Review application status")
-
-    assert len(suggestions) >= 1
+# Suggestions are frontend behavior. Do not duplicate their implementation in
+# this backend suite: that assertion would pass even if the product broke.
 
 
 # ---------------------------------------------------------------------------
@@ -123,9 +99,8 @@ def test_missing_keywords_are_set_difference(resume_words: list, jd_words: list)
     resume_lower = set(w.lower() for w in resume_words)
 
     for kw in missing:
-        # Missing keywords should not be in resume (with some tolerance for extraction)
-        # This is a soft check since keyword extraction uses frequency filtering
-        pass  # The function's correctness is validated by the ATS service unit tests
+        assert kw.lower() not in resume_lower
+        assert kw.lower() in jd_text.lower()
 
     # All missing keywords should be strings
     assert all(isinstance(kw, str) for kw in missing)

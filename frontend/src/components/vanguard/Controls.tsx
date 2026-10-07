@@ -18,6 +18,7 @@ export function Segmented<T extends string>({
   size = "md",
   asTabs = true,
   ariaLabel,
+  id,
 }: {
   value: T;
   onChange: (next: T) => void;
@@ -26,10 +27,12 @@ export function Segmented<T extends string>({
   size?: "sm" | "md";
   asTabs?: boolean;
   ariaLabel?: string;
+  id?: string;
 }) {
   const layoutId = useId();
   return (
     <div
+      id={id}
       role={asTabs ? "tablist" : "radiogroup"}
       aria-label={ariaLabel}
       className={cn(
@@ -44,6 +47,18 @@ export function Segmented<T extends string>({
             key={opt.value}
             type="button"
             role={asTabs ? "tab" : "radio"}
+            tabIndex={active ? 0 : -1}
+            onKeyDown={(event) => {
+              const index = options.findIndex((item) => item.value === opt.value);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : ["ArrowRight", "ArrowDown"].includes(event.key) ? (index + 1) % options.length : ["ArrowLeft", "ArrowUp"].includes(event.key) ? (index - 1 + options.length) % options.length : -1;
+              if (next < 0) return;
+              event.preventDefault();
+              onChange(options[next].value);
+              const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button");
+              buttons?.[next]?.focus();
+            }}
+            id={id ? `${id}-tab-${opt.value}` : undefined}
+            aria-controls={asTabs && id ? `${id}-panel-${opt.value}` : undefined}
             aria-selected={asTabs ? active : undefined}
             aria-checked={asTabs ? undefined : active}
             onClick={() => onChange(opt.value)}

@@ -1,4 +1,6 @@
-import axios from "axios";
+import axios, { type InternalAxiosRequestConfig } from "axios";
+import { useAgentStore } from "../store/agentStore";
+type OwnedRequest = InternalAxiosRequestConfig & { ownerGeneration?: number };
 import { toast } from "sonner";
 import { getClerkAuthToken } from "@/lib/clerk-token";
 
@@ -17,7 +19,8 @@ export const apiClient = axios.create({
 // Deduplicate concurrent identical GET requests
 const pendingRequests = new Map<string, Promise<unknown>>();
 
-apiClient.interceptors.request.use(async (config) => {
+apiClient.interceptors.request.use(async (config: OwnedRequest) => {
+  config.ownerGeneration = useAgentStore.getState().generation;
   if (typeof window !== "undefined") {
     try {
       const token = await getClerkAuthToken();
@@ -28,6 +31,7 @@ apiClient.interceptors.request.use(async (config) => {
       // not authenticated — request will get 401, guard handles redirect
     }
   }
+  if (config.ownerGeneration !== useAgentStore.getState().generation) throw new axios.CanceledError("Account changed");
   return config;
 });
 
@@ -35,8 +39,12 @@ apiClient.interceptors.request.use(async (config) => {
 // loop on 401 here; the auth guard surfaces a single error page and lets the user
 // choose to log in again. This avoids the dashboard⇄login redirect loop.
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if ((response.config as OwnedRequest).ownerGeneration !== useAgentStore.getState().generation) throw new axios.CanceledError("Account changed");
+    return response;
+  },
   async (error) => {
+    if (error.config && (error.config as OwnedRequest).ownerGeneration !== useAgentStore.getState().generation) return Promise.reject(new axios.CanceledError("Account changed"));
     // Surface which request failed and the backend's reason (helps diagnose 400/422/500).
     // Only unexpected server failures are errors; a 4xx or a 503 ("feature
     // disabled", "workflow engine unavailable") is an answer the UI handles.
@@ -112,7 +120,7 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
  * Use for data that multiple components might request simultaneously.
  */
 export async function deduplicatedGet<T>(url: string, params?: Record<string, unknown>): Promise<T> {
-  const key = `${url}?${JSON.stringify(params ?? {})}`;
+  const key = `${useAgentStore.getState().generation}:${url}?${JSON.stringify(params ?? {})}`;
   const existing = pendingRequests.get(key);
   if (existing) return existing as Promise<T>;
 

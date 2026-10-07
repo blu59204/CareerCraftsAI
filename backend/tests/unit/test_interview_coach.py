@@ -121,6 +121,7 @@ def test_evaluate_answer_scores_in_range(mock_llm):
         patch(
             "app.agents.interview_coach_agent._get_interview_session",
             return_value={
+                "user_id": "usr_test",
                 "questions": [{"question": "Tell me about yourself", "type": "behavioral"}]
             },
         ),

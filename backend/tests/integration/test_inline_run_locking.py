@@ -61,6 +61,95 @@ async def _new_user(factory):
         return user
 
 
+@pytest.mark.parametrize("route", ["email", "resume", "jobs"])
+async def test_dedicated_routes_share_admission_slots(database, monkeypatch, route):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from app.api.v1 import email, jobs, resume
+    from app.models.db import AgentRun
+
+    user = await _new_user(database)
+    async with database() as db:
+        db.add_all(
+            [
+                AgentRun(user_id=user.id, agent_type=kind, status="running")
+                for kind in ("email", "resume_optimize")
+            ]
+        )
+        await db.commit()
+    request = Request(
+        {"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("test", 1)}
+    )
+    if route == "jobs":
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setattr(
+            jobs,
+            "_resolve_search_context",
+            AsyncMock(return_value=("Engineer", "Remote", "remote", "request")),
+        )
+        monkeypatch.setattr(jobs, "_resolve_live_browser", AsyncMock(return_value=False))
+        monkeypatch.setattr(
+            "app.services.search_basis.resolve_basis", AsyncMock(return_value=(None, None))
+        )
+        endpoint, payload = jobs.search_jobs.__wrapped__, jobs.JobSearchRequest(
+            search_query="Engineer"
+        )
+    elif route == "email":
+        endpoint, payload = email.compose_email.__wrapped__, email.ComposeRequest(
+            company="Acme", role="Engineer", recipient_email="hr@example.com"
+        )
+    else:
+        endpoint, payload = resume.optimize_resume.__wrapped__, resume.OptimizeRequest(
+            jd_text="Engineer"
+        )
+    async with database() as db:
+        with pytest.raises(HTTPException) as rejected:
+            await endpoint(request, payload, db, user)
+        assert rejected.value.status_code == 429
+
+
+async def test_http_foreign_run_rejected_for_two_valid_database_identities(database):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.v1 import agents
+    from app.api.v1.deps import get_current_user, get_db
+    from app.core.rate_limit import limiter
+    from app.models.db import AgentRun
+
+    victim, caller = await _new_user(database), await _new_user(database)
+    run_id = uuid.uuid4()
+    async with database() as db:
+        db.add(
+            AgentRun(
+                id=run_id,
+                user_id=victim.id,
+                agent_type="email",
+                status="awaiting_approval",
+                output={"type": "send_email"},
+            )
+        )
+        await db.commit()
+    app = FastAPI()
+    app.state.limiter = limiter
+    app.include_router(agents.router)
+    app.dependency_overrides[get_current_user] = lambda: caller
+
+    async def session():
+        async with database() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = session
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+        stream = await client.get(f"/agents/{run_id}/stream")
+        approval = await client.post(f"/agents/{run_id}/approve", json={"approved": True})
+    assert stream.status_code == approval.status_code == 404
+    async with database() as db:
+        assert (await db.get(AgentRun, run_id)).status == "awaiting_approval"
+
+
 async def test_cover_letter_route_queues_a_committed_durable_run(database, monkeypatch):
     """The route no longer runs the agent in the request: it commits a queued
     row (which the workflow's first activity reads) and starts the workflow."""

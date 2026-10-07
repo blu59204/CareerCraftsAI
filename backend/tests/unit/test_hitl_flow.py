@@ -201,28 +201,23 @@ def test_no_caller_passes_submit_true_to_apply_to_job():
     pass submit=True.  If a future change adds a submit=True call outside
     an approved post-approval handler, this test will catch it.
     """
+    import ast
     from pathlib import Path
 
-    backend = Path(__file__).parent.parent.parent / "app"
-    suspicious: list[str] = []
-
+    backend = Path(__file__).resolve().parents[2] / "app"
+    suspicious = []
     for py_file in backend.rglob("*.py"):
-        # Skip the service file itself (definition) and tests
-        if "browser_control_service" in py_file.name:
-            continue
-        content = py_file.read_text(encoding="utf-8", errors="replace")
-        # Look for calls that explicitly pass submit=True
-        if "apply_to_job(" in content and "submit=True" in content:
-            # Check if they're in the same call (rough proximity check)
-            lines = content.splitlines()
-            for i, line in enumerate(lines):
-                if "apply_to_job(" in line and "submit=True" in line:
-                    suspicious.append(f"{py_file}:{i+1}: {line.strip()}")
-
-    assert not suspicious, (
-        "Found call(s) to apply_to_job with submit=True outside an approved "
-        "post-approval handler:\n" + "\n".join(suspicious)
-    )
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            name = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", "")
+            if name == "apply_to_job" and any(
+                arg.arg == "submit" and isinstance(arg.value, ast.Constant) and arg.value.value is True
+                for arg in call.keywords
+            ):
+                suspicious.append(f"{py_file}:{call.lineno}")
+    assert not suspicious, suspicious
 
 
 # ---------------------------------------------------------------------------

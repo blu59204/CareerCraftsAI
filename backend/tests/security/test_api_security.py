@@ -4,7 +4,6 @@ Run: pytest tests/security -v
 """
 
 import base64
-import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -73,61 +72,76 @@ def test_no_out_of_band_job_trigger_routes():
     assert not [r.path for r in app.routes if getattr(r, "path", "").startswith("/internal")]
 
 
+@pytest.fixture
+def authenticated_transport():
+    """Real route validation with an admitted identity, no live DB/provider."""
+    import uuid
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from app.api.v1 import agents, jobs, rag
+    from app.api.v1.deps import get_current_user, get_db
+
+    isolated = FastAPI()
+    for router in (agents.router, jobs.router, rag.router):
+        isolated.include_router(router, prefix="/api/v1")
+    isolated.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=uuid.uuid4())
+    isolated.dependency_overrides[get_db] = lambda: SimpleNamespace()
+    return ASGITransport(app=isolated)
+
+
 @pytest.mark.asyncio
-async def test_agent_run_rejects_invalid_task_type():
-    async with make_client() as client:
+async def test_agent_run_rejects_invalid_task_type(authenticated_transport):
+    async with AsyncClient(transport=authenticated_transport, base_url="http://test") as client:
         resp = await client.post(
             "/api/v1/agents/run",
             json={"task_type": "'; DROP TABLE users; --", "context": {}},
         )
-    assert resp.status_code in (400, 401, 422)
+    assert resp.status_code == 400
+
+
+def test_sql_injection_job_filter_is_bound_as_data():
+    import uuid
+    from app.api.v1.jobs import _application_query
+
+    payload = "'; DROP TABLE users; --"
+    query = _application_query(
+        uuid.uuid4(), status=None, location=None, source=None,
+        posted_within_days=None, min_match=None, found_after=None,
+        found_before=None, sort=None, q=payload,
+    ).compile()
+    assert payload not in str(query)
+    assert any(payload.lower() in str(value).lower() for value in query.params.values())
+
+
+def test_model_markup_is_escaped_at_pdf_rendering_boundary():
+    from app.services.pdf_service import _markup
+
+    rendered = _markup("<script>alert(1)</script> & **safe**")
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered and "&amp;" in rendered
 
 
 @pytest.mark.asyncio
-async def test_sql_injection_job_query_rejected():
-    """Verify SQL injection in job query param is rejected by Pydantic/validation."""
-    async with make_client() as client:
-        resp = await client.post(
-            "/api/v1/jobs/search",
-            json={"search_query": "'; DROP TABLE users; --", "max_results": 10},
-        )
-    assert resp.status_code in (400, 401, 422)
-
-
-@pytest.mark.asyncio
-async def test_xss_script_in_resume_text_not_rendered():
-    """Verify script tags in resume text are stored as-is, not executed."""
-    from app.services.ats_service import compute_ats_score
-
-    result = compute_ats_score(
-        "<script>alert(1)</script>\nExperience: 5 years Python", "Python engineer"
-    )
-    assert "<script>" in result.matched_keywords or "<script>" not in result.matched_keywords
-    assert result.composite_score >= 0
-    assert result.composite_score <= 100
-
-
-@pytest.mark.asyncio
-async def test_doc_upload_rejects_executable_content_type():
+async def test_doc_upload_rejects_executable_content_type(authenticated_transport):
     from io import BytesIO
 
-    async with make_client() as client:
+    async with AsyncClient(transport=authenticated_transport, base_url="http://test") as client:
         resp = await client.post(
             "/api/v1/rag/upload",
             files={"file": ("malware.exe", BytesIO(b"MZ..."), "application/octet-stream")},
             data={"doc_type": "resume", "is_primary": "false"},
         )
-    assert resp.status_code in (401, 415, 422)
+    assert resp.status_code == 415
 
 
 @pytest.mark.asyncio
-async def test_job_search_max_results_capped():
-    async with make_client() as client:
+async def test_job_search_max_results_capped(authenticated_transport):
+    async with AsyncClient(transport=authenticated_transport, base_url="http://test") as client:
         resp = await client.post(
             "/api/v1/jobs/search",
             json={"search_query": "python", "max_results": 9999},
         )
-    assert resp.status_code in (400, 401, 422)
+    assert resp.status_code == 422
 
 
 def test_api_key_encryption_ciphertext_not_plaintext():
