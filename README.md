@@ -579,26 +579,18 @@ The migrations in `supabase/migrations/`, applied in order by `scripts/migrate.p
 
 ## Deployment (Production)
 
-### 1. VPS setup
+### 1. Configure the deployment
 
-```bash
-# On your Ubuntu 22.04 VPS
-mkdir -p /opt/careercraft
-cd /opt/careercraft
-git clone https://github.com/blu59204/CareerCraftsAI.git .
-cp .env.example .env
-# Fill in production values
-
-certbot --nginx -d yourdomain.com
-sed -i 's/${DOMAIN}/yourdomain.com/g' nginx/nginx.conf
-```
+Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) to provision the VM, protected environment files in `/opt/careercraft-secrets`, Clerk/Nango and the Temporal server. Configure `deploy/oracle-vm/nginx.conf` and the host TLS reverse proxy for your domain. There is no default root production Compose file.
 
 ### 2. Start production stack
 
+From the repository root, with the deployment prerequisites configured:
+
 ```bash
-docker compose up -d
-docker compose ps
-curl https://yourdomain.com/health  # → {"status":"ok"}
+docker compose -p careercraft-isolated -f deploy/oracle-vm/compose.yml up -d --build
+docker compose -p careercraft-isolated -f deploy/oracle-vm/compose.yml ps
+curl https://yourdomain.com/health
 ```
 
 For a single small VM, `deploy/oracle-vm/compose.yml` runs the whole stack with host networking: backend, `temporal-worker` (runs every workflow and registers the Schedules — not optional), frontend, self-hosted Postgres, Redis, the Nginx gateway. The Temporal server itself is a separate stack, `deploy/oracle-vm/temporal-compose.yml`, meant for its own box; `TEMPORAL_ADDRESS` in `backend.env` points at it (or at Temporal Cloud). Backend, frontend, Postgres and Redis have healthchecks, and services that depend on them wait until they are healthy.

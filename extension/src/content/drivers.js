@@ -328,6 +328,13 @@
     }
     const control = findApplyControl();
     if (!control) return null;
+    // Unknown standalone Apply buttons can submit immediately on a signed-in
+    // portal. Only follow an actual link here; a human must operate buttons
+    // whose effects cannot be established before a form review exists.
+    const href = control.tagName === "A" ? httpsHref(control.getAttribute("href")) : null;
+    if (!href || href.split("#")[0] === location.href.split("#")[0]) {
+      throw new Error("Open the application form manually, then continue CareerCraft. This Apply control may submit immediately and requires your review.");
+    }
     return clickThrough(ctx, control, findApplicationForm);
   }
 

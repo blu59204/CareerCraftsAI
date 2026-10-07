@@ -1,20 +1,15 @@
 import asyncio
 import logging
-import time
 import uuid
-from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.state import AgentState
 from app.api.v1.deps import get_current_user, get_db
-from app.api.v1.run_utils import CLIENT_SAFE_AGENT_ERROR
 from app.core.rate_limit import limiter
 from app.models.db import AgentRun, User, UserDocument
 
@@ -153,78 +148,27 @@ async def optimize_resume(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.agents.resume_agent import resume_agent_node
+    from app.api.v1.run_utils import queue_agent_run, wait_for_agent_result
 
     if not payload.jd_text.strip():
         raise HTTPException(status_code=400, detail="jd_text cannot be empty")
-
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="resume",
-        status="running",
-        input={
-            "jd_text_length": len(payload.jd_text),
-            "template": payload.template,
-            "page_target": payload.page_target,
-        },
-    )
-    db.add(agent_run)
-    await db.flush()
-    await db.commit()
-
-    state = AgentState(
-        user_id=str(current_user.id),
-        run_id=run_id,
-        task_type="resume_optimize",
-        messages=[HumanMessage(content=payload.jd_text)],
-        context={
+    run_id = await queue_agent_run(
+        db,
+        current_user,
+        "resume_optimize",
+        {
             "jd_text": payload.jd_text,
             "template": payload.template,
             "page_target": payload.page_target,
         },
-        status="running",
-        pending_action=None,
-        result=None,
-        error=None,
     )
-
-    from app.core.model_router import begin_token_tracking, get_and_reset_tokens
-
-    begin_token_tracking()
-    start = time.monotonic()
-    try:
-        result_state = await asyncio.to_thread(resume_agent_node, state)
-    except Exception as exc:
-        logger.warning("resume_optimize_failed run_id=%s error_type=%s", run_id, type(exc).__name__)
-        result_state = {"status": "failed"}
-    finally:
-        agent_run.tokens_used = get_and_reset_tokens()
-        agent_run.duration_ms = int((time.monotonic() - start) * 1000)
-
-    agent_run.status = result_state["status"]
-    agent_run.completed_at = datetime.now(UTC)
-    pending = result_state.get("pending_action") or {}
-    if pending:
-        # Small DB footprint: ids + score only. No markdown, no binary.
-        agent_run.output = {
-            "type": pending.get("type", "resume_ready"),
-            "pdf_document_id": pending.get("pdf_document_id"),
-            "ats_score": pending.get("ats_score"),
-        }
-
-    if result_state["status"] in ("failed", "error"):
-        await db.commit()
-        logger.warning("Resume optimize agent failed run_id=%s", run_id)
-        raise HTTPException(status_code=500, detail=CLIENT_SAFE_AGENT_ERROR)
-
-    await db.commit()
+    agent_run = await wait_for_agent_result(db, current_user, run_id)
+    pending = agent_run.output or {}
 
     suggestions = await _contact_suggestions(db, current_user)
     return OptimizeResponse(
         run_id=run_id,
-        status=result_state["status"],
+        status=agent_run.status,
         template=payload.template,
         pdf_available=bool(pending.get("pdf_document_id")),
         pdf_document_id=pending.get("pdf_document_id"),
@@ -355,7 +299,7 @@ _OPEN_RUN_STATUSES = ("queued", "running", "awaiting_approval")
 
 
 def _pinning_attempt_query(doc: UserDocument):
-    from app.models.db import AgentRun, ApplicationAttempt, JobApplication
+    from app.models.db import ApplicationAttempt, JobApplication
 
     return (
         select(ApplicationAttempt.id)
@@ -375,8 +319,6 @@ def _pinning_attempt_query(doc: UserDocument):
 
 def _pinning_run_query(doc: UserDocument):
     from sqlalchemy import and_, or_
-
-    from app.models.db import AgentRun
 
     doc_id = str(doc.id)
     return (
@@ -449,6 +391,10 @@ async def fix_tailored_resume(
     response carries its id) and the original is left untouched.
     """
     from app.services.ats_service import compute_ats_score
+
+    # Locked until the commit below: concurrent fixes of one document are
+    # serialised, so the second one edits the text the first one saved.
+    from app.services.document_lifecycle import lock_document_owner
     from app.services.pdf_service import generate_resume_pdf
     from app.services.resume_facts import save_facts
     from app.services.resume_structure import (
@@ -458,8 +404,7 @@ async def fix_tailored_resume(
     )
     from app.services.storage_service import delete_file, upload_file
 
-    # Locked until the commit below: concurrent fixes of one document are
-    # serialised, so the second one edits the text the first one saved.
+    await lock_document_owner(db, current_user.id)
     doc = await _get_tailored_doc(db, document_id, current_user, for_update=True)
     from app.services.resume_version import content_version
 

@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.models.db import UserDocument
+from app.services.document_lifecycle import RESUME_DOCUMENT_TYPES
 
 SUBMIT_NAME = re.compile(r"^(submit(?: your)? application|send application|submit)$", re.I)
 CONFIRMATION = re.compile(
@@ -32,7 +33,7 @@ async def load_resume(user_id: uuid.UUID, document_id: str) -> tuple[bytes, str]
                 )
             )
         ).scalar_one_or_none()
-        if not document or document.doc_type != "resume":
+        if not document or document.doc_type not in RESUME_DOCUMENT_TYPES:
             raise ValueError("Approved resume is unavailable")
     content = await asyncio.to_thread(download_file, document.storage_path, str(user_id))
     if len(content) > 10 * 1024 * 1024 or not content.startswith(b"%PDF"):

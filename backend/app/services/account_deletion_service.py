@@ -259,6 +259,7 @@ async def reap_expired_account_deletions(db: AsyncSession) -> int:
                     AgentRun.started_at >= datetime.now(UTC) - timedelta(minutes=10),
                     or_(
                         AgentRun.agent_type == "chat_orchestrator",
+                        AgentRun.agent_type == "linkedin_pdf",
                         and_(
                             AgentRun.agent_type == "email",
                             AgentRun.input["source"].astext == "application_outreach",

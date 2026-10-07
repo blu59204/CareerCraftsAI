@@ -19,6 +19,7 @@ import {
   type IconProps,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { approvalContent, approvalEdits } from "@/lib/approval-content";
 import { apiClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAgentStore } from "@/store/agentStore";
@@ -118,7 +119,7 @@ function EditToggle({ editing, onClick }: { editing: boolean; onClick: () => voi
 export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [editedText, setEditedText] = useState("");
+  const [editedText, setEditedText] = useState<string | null>(null);
   const reduce = useReducedMotion();
   const actionType = (action.type as string) || "unknown";
   const warnings = Array.isArray(action.warnings)
@@ -127,13 +128,17 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
   const ActionIcon = ACTION_ICON[actionType] ?? ShieldCheck;
 
   const decide = async (approved: boolean) => {
+    if (approved && actionType === "linkedin_outreach") {
+      try { await navigator.clipboard.writeText(JSON.stringify(action.messages ?? [], null, 2)); toast.success("Drafts copied. Send them manually in LinkedIn."); } catch { toast.error("Copy failed. Copy the draft text manually."); }
+      return;
+    }
+    if (approved && editedText !== null && !editedText.trim()) {
+      toast.error("The approved content cannot be empty");
+      return;
+    }
     setLoading(true);
     try {
-      const edits = !approved
-        ? undefined
-        : editedText
-          ? { body: editedText }
-          : undefined;
+      const edits = approvalEdits(approved, editedText);
       await apiClient.post(`/agents/${runId}/approve`, {
         approved,
         edits,
@@ -144,7 +149,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
         toast.success("Action approved");
         onApprove();
       } else {
-        useAgentStore.getState().setError(runId, "Cancelled by you");
+        useAgentStore.getState().setRunStatus(runId, "cancelled");
         toast.info("Action cancelled");
         onCancel();
       }
@@ -159,7 +164,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
     if (e.key === "Escape" && !editing) onCancel();
   };
 
-  const approveLabel = loading ? "Processing..." : "Approve & Execute";
+  const approveLabel = loading ? "Processing..." : actionType === "linkedin_outreach" ? "Copy drafts" : "Approve & Execute";
 
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onCancel()}>
@@ -247,7 +252,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                             <EditToggle
                               editing={editing}
                               onClick={() => {
-                                if (!editing) setEditedText(String(action.body ?? ""));
+                                if (!editing && editedText === null) setEditedText(String(action.body ?? ""));
                                 setEditing(!editing);
                               }}
                             />
@@ -259,17 +264,17 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                           <div className="space-y-1.5">
                             <Textarea
                               aria-label="Edit the email body"
-                              value={editedText}
+                              value={editedText ?? ""}
                               onChange={(e) => setEditedText(e.target.value)}
                               className="min-h-48 font-geist-mono text-sm"
                               placeholder="Edit the email body..."
                             />
                             <div className="flex justify-end pr-1">
-                              <CharCount current={editedText.length} max={1500} />
+                              <CharCount current={(editedText ?? "").length} max={1500} />
                             </div>
                           </div>
                         ) : (
-                          <Recessed className="max-h-48">{String(action.body ?? "—")}</Recessed>
+                          <Recessed className="max-h-48">{approvalContent(String(action.body ?? "—"), editedText)}</Recessed>
                         )}
                       </div>
                     )}
@@ -331,7 +336,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                               <EditToggle
                                 editing={editing}
                                 onClick={() => {
-                                  if (!editing) setEditedText(String(action.resume_markdown ?? action.resume_text ?? ""));
+                                  if (!editing && editedText === null) setEditedText(String(action.resume_markdown ?? action.resume_text ?? ""));
                                   setEditing(!editing);
                                 }}
                               />
@@ -343,18 +348,18 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                             <div className="space-y-1.5">
                               <Textarea
                                 aria-label="Edit the resume draft"
-                                value={editedText}
+                                value={editedText ?? ""}
                                 onChange={(e) => setEditedText(e.target.value)}
                                 className="min-h-48 font-geist-mono text-sm"
                                 placeholder="Edit the resume draft..."
                               />
                               <div className="flex justify-end pr-1">
-                                <CharCount current={editedText.length} max={5000} />
+                                <CharCount current={(editedText ?? "").length} max={5000} />
                               </div>
                             </div>
                           ) : (
                             <Recessed mono className="max-h-80">
-                              {String(action.resume_markdown ?? action.resume_text ?? "—")}
+                              {approvalContent(String(action.resume_markdown ?? action.resume_text ?? "—"), editedText)}
                             </Recessed>
                           )}
                         </div>
@@ -383,7 +388,7 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                             <EditToggle
                               editing={editing}
                               onClick={() => {
-                                if (!editing) setEditedText(String(action.body ?? ""));
+                                if (!editing && editedText === null) setEditedText(String(action.body ?? ""));
                                 setEditing(!editing);
                               }}
                             />
@@ -395,16 +400,16 @@ export function ApprovalModal({ runId, action, onApprove, onCancel }: Props) {
                           <div className="space-y-1.5">
                             <Textarea
                               aria-label="Edit the cover letter"
-                              value={editedText}
+                              value={editedText ?? ""}
                               onChange={(e) => setEditedText(e.target.value)}
                               className="min-h-48 font-geist-mono text-sm"
                             />
                             <div className="flex justify-end pr-1">
-                              <CharCount current={editedText.length} max={1500} />
+                              <CharCount current={(editedText ?? "").length} max={1500} />
                             </div>
                           </div>
                         ) : (
-                          <Recessed className="max-h-64">{String(action.body ?? "—")}</Recessed>
+                          <Recessed className="max-h-64">{approvalContent(String(action.body ?? "—"), editedText)}</Recessed>
                         )}
                       </div>
                     )}

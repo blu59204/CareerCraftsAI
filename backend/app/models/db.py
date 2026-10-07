@@ -119,10 +119,12 @@ class JobApplication(Base):
     job_url: Mapped[str | None] = mapped_column(String)
     jd_text: Mapped[str | None] = mapped_column(Text)
     match_score: Mapped[int | None] = mapped_column(Integer)
-    resume_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("user_documents.id"))
+    resume_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user_documents.id", ondelete="SET NULL")
+    )
     cover_letter: Mapped[str | None] = mapped_column(Text)
     cover_letter_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("user_documents.id"), nullable=True
+        ForeignKey("user_documents.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String, default="saved")
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -214,7 +216,9 @@ class CoverLetterVersion(Base):
     job_application_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("job_applications.id", ondelete="CASCADE")
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("user_documents.id"))
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_documents.id", ondelete="CASCADE")
+    )
     tone: Mapped[str] = mapped_column(String(10), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -525,7 +529,9 @@ class CandidateProfile(Base):
     willing_to_relocate: Mapped[bool | None] = mapped_column(Boolean)
     remote_preference: Mapped[str | None] = mapped_column(String)
 
-    default_resume_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("user_documents.id"))
+    default_resume_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user_documents.id", ondelete="SET NULL")
+    )
     version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

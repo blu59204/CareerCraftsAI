@@ -11,6 +11,7 @@ import {
   SignInPage,
   type AuthMode,
   type AuthPasswordSubmitData,
+  type AuthResetPasswordData,
   type AuthVerificationState,
 } from "@/components/ui/sign-in";
 import { apiClient } from "@/lib/api";
@@ -71,7 +72,37 @@ export default function LoginPage() {
   const [verification, setVerification] = useState<AuthVerificationState | null>(null);
   // Which flow the code field is completing — a new account, or a sign-in whose
   // only enabled first factor is an emailed code.
-  const [verificationFlow, setVerificationFlow] = useState<"sign-up" | "sign-in" | "sign-in-second">("sign-up");
+  const [verificationFlow, setVerificationFlow] = useState<"sign-up" | "sign-in" | "sign-in-second" | "reset">("sign-up");
+  const resetPasswordRef = useRef("");
+  const [secondStrategy, setSecondStrategy] = useState<"totp" | "backup_code" | "phone_code" | "email_code">("totp");
+  const [secondChoices, setSecondChoices] = useState<Array<{ strategy: "totp" | "backup_code" | "phone_code" | "email_code"; phoneNumberId?: string }>>([]);
+  async function prepareSecond(strategy: typeof secondStrategy, email: string, phoneNumberId?: string) {
+    if (!signIn) return;
+    if (strategy === "phone_code" && phoneNumberId) await signIn.prepareSecondFactor({ strategy, phoneNumberId });
+    else if (strategy === "email_code") await signIn.prepareSecondFactor({ strategy });
+    setSecondStrategy(strategy);
+    setVerificationFlow("sign-in-second");
+    setVerification({ email, title: "Confirm it's you", description: strategy === "totp" ? "Enter a code from your authenticator app." : strategy === "backup_code" ? "Enter one of your saved backup codes." : strategy === "phone_code" ? "Enter the code sent to your phone." : "Enter the code sent to your email." });
+  }
+  async function beginSecond(email: string) {
+    if (!signIn) return;
+    const choices = (signIn.supportedSecondFactors ?? []).filter((factor) => ["totp", "backup_code", "phone_code", "email_code"].includes(factor.strategy)) as typeof secondChoices;
+    setSecondChoices(choices);
+    const first = choices.find((factor) => factor.strategy === "totp") ?? choices[0];
+    if (!first) throw new Error("No supported verification method is available. Contact support.");
+    await prepareSecond(first.strategy, email, first.phoneNumberId);
+  }
+  const handleResetPassword = async ({ email, password }: AuthResetPasswordData) => {
+    if (!signIn) return;
+    setLoading(true); setErrorMessage(null);
+    try {
+      await signIn.create({ strategy: "reset_password_email_code", identifier: email });
+      resetPasswordRef.current = password;
+      setVerificationFlow("reset");
+      setVerification({ email, description: `Enter the password reset code sent to ${email}.` });
+    } catch (err) { setErrorMessage(describeError(err)); }
+    finally { setLoading(false); }
+  };
   const [destination, setDestination] = useState(DEFAULT_DESTINATION);
 
   // Read query params from the browser instead of `useSearchParams()` so this
@@ -258,19 +289,8 @@ export default function LoginPage() {
           // dead-ended with the raw status printed at the user, which is why
           // password sign-in appeared broken. Drive the second factor instead.
           if (result.status === "needs_second_factor") {
-            const second = (result.supportedSecondFactors ?? []).find(
-              (f) => f.strategy === "email_code",
-            );
-            if (second) {
-              await signIn.prepareSecondFactor({ strategy: "email_code" });
-              setVerificationFlow("sign-in-second");
-              setVerification({
-                email,
-                title: "Confirm it's you",
-                description: `We sent a confirmation code to ${email}.`,
-              });
-              return;
-            }
+            await beginSecond(email);
+            return;
           }
 
           setErrorMessage(
@@ -336,6 +356,20 @@ export default function LoginPage() {
 
     // The same code field now serves two flows: confirming a new account, and
     // completing a sign-in when email_code is the only enabled first factor.
+    if (verificationFlow === "reset") {
+      try {
+        if (!signIn || !setSignInActive) return;
+        const result = await signIn.attemptFirstFactor({ strategy: "reset_password_email_code", code, password: resetPasswordRef.current });
+        resetPasswordRef.current = "";
+        if (result.status === "complete") {
+          await setSignInActive({ session: result.createdSessionId });
+          router.push(destination);
+        } else if (result.status === "needs_second_factor") await beginSecond(verification?.email ?? "");
+        else setErrorMessage(`Could not reset password (${result.status}).`);
+      } catch (err) { setErrorMessage(describeError(err)); }
+      finally { setLoading(false); }
+      return;
+    }
     if (verificationFlow === "sign-in" || verificationFlow === "sign-in-second") {
       if (!signIn || !setSignInActive) return;
       try {
@@ -344,13 +378,14 @@ export default function LoginPage() {
         // correct password. Same code field, different Clerk call.
         const result =
           verificationFlow === "sign-in-second"
-            ? await signIn.attemptSecondFactor({ strategy: "email_code", code })
+            ? await signIn.attemptSecondFactor({ strategy: secondStrategy, code })
             : await signIn.attemptFirstFactor({ strategy: "email_code", code });
         if (result.status === "complete") {
           await setSignInActive({ session: result.createdSessionId });
           router.push(destination);
           return;
         }
+        if (result.status === "needs_second_factor") { await beginSecond(verification?.email ?? ""); return; }
         setErrorMessage(`Could not complete sign in (${result.status}).`);
       } catch (err) {
         setErrorMessage(describeError(err));
@@ -390,6 +425,7 @@ export default function LoginPage() {
   };
 
   const handleVerificationCancel = () => {
+    resetPasswordRef.current = "";
     setVerificationFlow("sign-up");
     setVerification(null);
     setErrorMessage(null);
@@ -398,6 +434,7 @@ export default function LoginPage() {
 
   const handleModeSwitch = (next: AuthMode) => {
     setMode(next);
+    resetPasswordRef.current = "";
     setVerificationFlow("sign-up");
     setVerification(null);
     setErrorMessage(null);
@@ -476,12 +513,24 @@ export default function LoginPage() {
       onModeSwitch={handleModeSwitch}
       heroImageSrc={HERO_IMAGE}
       onPasswordSubmit={handlePasswordSubmit}
-      onMagicLink={() => {}}
+      onMagicLink={async (email) => {
+        if (!signIn) return;
+        setLoading(true); setErrorMessage(null);
+        try {
+          const result = await signIn.create({ identifier: email });
+          const factor = result.supportedFirstFactors?.find((f) => f.strategy === "email_code");
+          if (!factor) throw new Error("Email code sign-in is unavailable. Use your password or a social provider.");
+          await signIn.prepareFirstFactor({ strategy: "email_code", emailAddressId: (factor as { emailAddressId: string }).emailAddressId });
+          setVerificationFlow("sign-in"); setVerification({ email });
+        } catch (err) { setErrorMessage(describeError(err)); }
+        finally { setLoading(false); }
+      }}
       onGoogleSignIn={handleGoogleSignIn}
       onLinkedInSignIn={handleLinkedInSignIn}
       onGithubSignIn={handleGithubSignIn}
-      onResetPassword={() => {}}
+      onResetPassword={handleResetPassword}
       verification={verification}
+      verificationAlternatives={verificationFlow === "sign-in-second" ? secondChoices.map((factor) => ({ label: factor.strategy === "totp" ? "Authenticator app" : factor.strategy === "backup_code" ? "Backup code" : factor.strategy === "phone_code" ? "Text message" : "Email code", onClick: async () => { setLoading(true); setErrorMessage(null); try { await prepareSecond(factor.strategy, verification?.email ?? "", factor.phoneNumberId); } catch (err) { setErrorMessage(describeError(err)); } finally { setLoading(false); } } })) : []}
       onVerificationSubmit={handleVerificationSubmit}
       onVerificationCancel={handleVerificationCancel}
       errorMessage={errorMessage}

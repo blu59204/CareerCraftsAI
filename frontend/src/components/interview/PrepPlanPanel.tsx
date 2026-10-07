@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useEffect, useId, useState } from "react";
-import { createPortal } from "react-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -21,11 +20,9 @@ import {
   Quotes,
   Sparkle,
   Warning,
-  X,
   YoutubeLogo,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { DictationButton } from "./DictationButton";
 import { apiClient, getApiErrorMessage } from "@/lib/api";
 import {
   REVEAL_VIEWPORT,
@@ -35,13 +32,11 @@ import {
   EmptyPanel,
   Eyebrow,
   Field,
-  IconButton,
   Input,
   IslandButton,
   Notice,
   PanelTitle,
   Reveal,
-  SPRING_PANEL,
   Segmented,
   Skeleton,
   StatusPill,
@@ -122,144 +117,6 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
         />
       </div>
     </div>
-  );
-}
-
-function MockInterviewModal({
-  questions,
-  onClose,
-}: {
-  questions: string[];
-  onClose: () => void;
-}) {
-  const [step, setStep] = useState(0);
-  const [answer, setAnswer] = useState("");
-  const [answers, setAnswers] = useState<string[]>([]);
-  const [done, setDone] = useState(false);
-  const titleId = useId();
-
-  const currentQ = questions[step];
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const handleNext = () => {
-    if (!answer.trim()) {
-      toast.error("Enter an answer before continuing");
-      return;
-    }
-    setAnswers((prev) => [...prev, answer]);
-    setAnswer("");
-    if (step + 1 >= questions.length) {
-      setDone(true);
-    } else {
-      setStep((s) => s + 1);
-    }
-  };
-
-  // Portaled to <body>: ancestors carry motion transforms/filters (panel
-  // swap, reveals) which would otherwise become the fixed containing block.
-  return createPortal(
-    <div className="fixed inset-0 z-40 flex items-end justify-center p-4 font-geist antialiased sm:items-center">
-      <motion.div
-        aria-hidden
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.4, ease: EASE_VANGUARD }}
-        className="absolute inset-0 bg-background/70 backdrop-blur-md"
-        onClick={onClose}
-      />
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        initial={{ opacity: 0, y: 28, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.98, transition: { duration: 0.25, ease: EASE_VANGUARD } }}
-        transition={SPRING_PANEL}
-        className="relative w-full max-w-xl"
-      >
-        <Bezel lifted coreClassName="p-6 md:p-8">
-          <div className="mb-6 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2.5">
-              <span aria-hidden className="grid h-8 w-8 place-items-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/20">
-                <ChatCircleText size={16} weight="light" />
-              </span>
-              <h2 id={titleId} className="font-geist text-[15px] font-semibold tracking-[-0.015em] text-foreground">
-                Mock Interview
-              </h2>
-            </div>
-            <IconButton aria-label="Close mock interview" onClick={onClose}>
-              <X size={16} weight="light" />
-            </IconButton>
-          </div>
-
-          {done ? (
-            <div className="flex flex-col items-center py-4 text-center">
-              <span aria-hidden className="grid h-14 w-14 place-items-center rounded-full bg-success/10 text-success ring-1 ring-success/25">
-                <Sparkle size={24} weight="light" />
-              </span>
-              <p className="mt-5 font-geist text-xl font-semibold tracking-[-0.025em] text-foreground">Interview complete!</p>
-              <p className="mt-2 max-w-[40ch] text-sm leading-6 text-muted-foreground">
-                You answered {answers.length} questions. Connect the backend to get AI-powered feedback on your responses.
-              </p>
-              <IslandButton className="mt-7" onClick={onClose}>
-                Done
-              </IslandButton>
-            </div>
-          ) : (
-            <div className="space-y-5">
-              <div className="flex items-center justify-between gap-4 text-xs text-muted-foreground">
-                <span className="tabular-nums" aria-live="polite">
-                  Question {step + 1} of {questions.length}
-                </span>
-                <div className="flex gap-1" aria-hidden>
-                  {questions.map((_, i) => (
-                    <span
-                      key={i}
-                      className={cn(
-                        "h-1.5 w-5 rounded-full transition-colors duration-500 ease-vanguard",
-                        i <= step ? "bg-primary" : "bg-foreground/[0.08] dark:bg-white/10",
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-              <Bezel size="md" tone="primary" coreClassName="p-5">
-                <p data-testid="mock-question-text" className="font-geist text-lg font-medium leading-7 tracking-[-0.015em] text-foreground">
-                  {currentQ}
-                </p>
-              </Bezel>
-              <DictationButton current={answer} onText={setAnswer} />
-              <Textarea
-                aria-label="Your answer"
-                value={answer}
-                onChange={(e) => setAnswer(e.target.value)}
-                placeholder="Type your answer here…"
-                rows={4}
-                autoFocus
-                className="resize-none"
-              />
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <IslandButton className="sm:flex-1" onClick={handleNext} trailing>
-                  {step + 1 >= questions.length ? "Finish" : "Next question"}
-                </IslandButton>
-                <IslandButton tone="ghost" onClick={onClose}>
-                  Exit
-                </IslandButton>
-              </div>
-            </div>
-          )}
-        </Bezel>
-      </motion.div>
-    </div>,
-    document.body,
   );
 }
 
@@ -384,12 +241,11 @@ function QuestionCard({ question, company, role }: { question: Question; company
  * videos and a mock interview drawn from the generated plan's questions.
  * Logic moved intact from the former /interview-prep page.
  */
-export function PrepPlanPanel() {
+export function PrepPlanPanel({ onStartMock }: { onStartMock: () => void }) {
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
   const [activeTab, setActiveTab] = useState<Category>("All");
   const [stories, setStories] = useState<StarStory[]>(BASE_STAR_STORIES);
-  const [mockOpen, setMockOpen] = useState(false);
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [reviewRunId, setReviewRunId] = useState<string | null>(null);
@@ -678,7 +534,7 @@ export function PrepPlanPanel() {
             {/* Mock interview launcher */}
             <Reveal delay={0.05}>
               <Bezel lifted tone="primary" coreClassName="p-6">
-                <PanelTitle title="20-minute mock interview" icon={<Microphone size={16} weight="light" />} />
+                <PanelTitle title="Scored mock interview" icon={<Microphone size={16} weight="light" />} />
                 <p className="mt-4 text-sm leading-6 text-muted-foreground">
                   AI will ask questions and evaluate your answers in real time — scored on clarity, structure, and depth.
                 </p>
@@ -690,7 +546,7 @@ export function PrepPlanPanel() {
                 <span className="mt-6 block" title={mockDisabled ? "Generate an interview plan first" : undefined}>
                   <IslandButton
                     className="w-full"
-                    onClick={() => setMockOpen(true)}
+                    onClick={onStartMock}
                     disabled={mockDisabled}
                     trailing={<Play size={15} weight="light" />}
                   >
@@ -924,14 +780,7 @@ export function PrepPlanPanel() {
         )}
       </div>
 
-      <AnimatePresence>
-        {mockOpen && (
-          <MockInterviewModal
-            questions={aiQuestions.map((q) => q.text)}
-            onClose={() => setMockOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+
     </>
   );
 }

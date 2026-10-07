@@ -9,6 +9,7 @@ export const STATIC_HOST_ORIGINS = [
   // on first install, without a connection code or a permission prompt.
   "https://careercraftsai.me",
   "https://www.careercraftsai.me",
+  "https://app.careercraftsai.me",
   "https://www.linkedin.com",
   "https://*.naukri.com",
   "https://www.naukri.com",

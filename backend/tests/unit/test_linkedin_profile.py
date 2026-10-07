@@ -108,7 +108,12 @@ async def test_failed_grounding_records_consumed_tokens_and_terminal_run(monkeyp
 
     runs = []
     db = SimpleNamespace(
-        execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=list))),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                scalar_one_or_none=lambda: SimpleNamespace(deletion_scheduled_for=None),
+                scalars=lambda: SimpleNamespace(all=list),
+            )
+        ),
         add=runs.append,
         commit=AsyncMock(),
     )

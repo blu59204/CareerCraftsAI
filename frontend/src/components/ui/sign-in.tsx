@@ -65,6 +65,7 @@ interface SignInPageProps {
   onMagicLink?: (email: string) => Promise<void> | void;
   onResetPassword?: (data: AuthResetPasswordData) => Promise<void> | void;
   verification?: AuthVerificationState | null;
+  verificationAlternatives?: Array<{ label: string; onClick: () => void }>;
   onVerificationSubmit?: (code: string) => Promise<void> | void;
   onVerificationCancel?: () => void;
   onModeSwitch?: (mode: AuthMode) => void;
@@ -141,6 +142,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   onMagicLink,
   onResetPassword,
   verification,
+  verificationAlternatives = [],
   onVerificationSubmit,
   onVerificationCancel,
   onModeSwitch,
@@ -255,6 +257,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               {resolvedDescription}
             </p>
 
+            {verification && verificationAlternatives.length > 1 && <div className="flex flex-wrap gap-3" aria-label="Verification methods">{verificationAlternatives.map((method) => <button type="button" key={method.label} disabled={loading} onClick={method.onClick} className="text-sm text-primary underline">{method.label}</button>)}</div>}
             {errorMessage && (
               <div className="animate-element rounded-2xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
                 {errorMessage}
@@ -278,10 +281,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                       value={verificationCode}
                       onChange={(event) => setVerificationCode(event.target.value)}
                       type="text"
-                      inputMode="numeric"
+                      inputMode="text"
                       autoComplete="one-time-code"
                       placeholder="Enter code"
-                      maxLength={8}
+                      maxLength={32}
                       required
                       autoFocus
                       className="w-full bg-transparent text-sm p-4 rounded-2xl focus:outline-none"

@@ -27,6 +27,9 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 : "${DOMAIN:=localhost}"
 : "${DATABASE_URL:=}"
 : "${SUPABASE_URL:=}"
+: "${COMPOSE_FILE:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/oracle-vm/compose.yml}"
+: "${COMPOSE_PROJECT:=careercraft-isolated}"
+: "${REQUIRED_SERVICES:=backend frontend postgres redis temporal-worker notification-worker gateway}"
 
 echo "========================================="
 echo " CareerCraft AI Production Validation"
@@ -105,14 +108,24 @@ fi
 
 # ── 8. Docker containers healthy ───────────────────────────────
 if command -v docker &> /dev/null && command -v jq &> /dev/null; then
-  unhealthy=$(docker compose ps --format json 2>/dev/null | jq -r 'select(.Health != "healthy") | .Name' 2>/dev/null || echo "")
-  if [ -z "$unhealthy" ]; then
-    pass "All Docker containers healthy"
+  if ! containers=$(docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" ps --all --format json); then
+    fail "Docker container query failed" "Check COMPOSE_FILE and COMPOSE_PROJECT"
+  elif ! containers=$(printf '%s' "$containers" | jq -s 'flatten'); then
+    fail "Docker returned invalid container data" "Check Docker Compose output"
   else
-    fail "Unhealthy containers: ${unhealthy}" "Run: docker compose ps"
+    for service in $REQUIRED_SERVICES; do
+      if printf '%s' "$containers" | jq -e --arg service "$service" '
+        [.[] | select(.Service == $service)] as $rows |
+        ($rows | length) > 0 and all($rows[];
+          .State == "running" and (.Health == "healthy" or .Health == ""))' >/dev/null; then
+        pass "Docker service ${service} running (healthcheck healthy when configured)"
+      else
+        fail "Docker service ${service} missing, stopped or unhealthy" "Check the configured Compose project"
+      fi
+    done
   fi
 else
-  warn "Skipping Docker container check (docker/jq not available)"
+  fail "Docker container check unavailable" "Install docker and jq"
 fi
 
 # ── 9. Temporal worker polling ────────────────────────────────

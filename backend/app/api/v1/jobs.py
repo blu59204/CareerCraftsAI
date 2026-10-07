@@ -814,31 +814,33 @@ async def search_jobs(
     )
     existing_run = existing_result.scalars().first()
     if existing_run is not None:
-        return JobSearchResponse(
-            run_id=str(existing_run.id), queue_job_id=stable_job_id, queued=True
-        )
+        agent_run = existing_run
+        run_id = str(existing_run.id)
+    else:
+        from app.api.v1.run_utils import check_run_admission
 
-    run_id = str(uuid.uuid4())
-    agent_run = AgentRun(
-        id=uuid.UUID(run_id),
-        user_id=current_user.id,
-        agent_type="job_search",
-        status="running",
-        input={
-            **basis,
-            "search_query": search_query,
-            "location": location,
-            "max_results": payload.max_results,
-            "live_browser": live_browser,
-            "work_mode": work_mode,
-            "search_source": search_source,
-            "titles": titles,
-            "platforms": platforms,
-            "queue_job_id": stable_job_id,
-        },
-    )
-    db.add(agent_run)
-    # Committed before the workflow starts: its activity reads the row.
+        await check_run_admission(db, current_user)
+        run_id = str(uuid.uuid4())
+        agent_run = AgentRun(
+            id=uuid.UUID(run_id),
+            user_id=current_user.id,
+            agent_type="job_search",
+            status="running",
+            input={
+                **basis,
+                "search_query": search_query,
+                "location": location,
+                "max_results": payload.max_results,
+                "live_browser": live_browser,
+                "work_mode": work_mode,
+                "search_source": search_source,
+                "titles": titles,
+                "platforms": platforms,
+                "queue_job_id": stable_job_id,
+            },
+        )
+        db.add(agent_run)
+    # Reuse still ensures dispatch: recover a crash between commit and start.
     await db.commit()
 
     from app.workflows.starters import start_job_search
@@ -1029,6 +1031,7 @@ async def export_applications_sheet(
     status: str | None = None,
     location: str | None = None,
     source: str | None = Query(None, max_length=100),
+    posted_within_days: int | None = Query(None, ge=1, le=90),
     min_match: int | None = Query(None, ge=0, le=100),
     found_after: datetime | None = None,
     found_before: datetime | None = None,
@@ -1048,6 +1051,7 @@ async def export_applications_sheet(
         status=status,
         location=location,
         source=source,
+        posted_within_days=posted_within_days,
         min_match=min_match,
         found_after=found_after,
         found_before=found_before,

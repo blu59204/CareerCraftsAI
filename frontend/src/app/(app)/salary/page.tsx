@@ -428,10 +428,13 @@ export default function SalaryPage() {
   })
 
   const approveMutation = useMutation({
-    mutationFn: (reportId: string) =>
-      apiClient.post(`/agents/${reportId}/approve`, { approved: true }),
-    onSuccess: () => toast.success('Negotiation script approved'),
-    onError: (error) => toast.error(getApiErrorMessage(error, 'Approval failed')),
+    mutationFn: ({ reportId, approved }: { reportId: string; approved: boolean }) =>
+      apiClient.post(`/agents/${reportId}/approve`, { approved }),
+    onSuccess: (_data, { approved }) => {
+      setReport(null)
+      toast.success(approved ? 'Negotiation script approved' : 'Script discarded')
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error, 'Decision failed')),
   })
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -471,7 +474,7 @@ export default function SalaryPage() {
         ? 'unavailable'
         : 'report'
 
-  const approved = approveMutation.isSuccess && report !== null && approveMutation.variables === report.id
+  const approved = approveMutation.isSuccess && report !== null && approveMutation.variables?.reportId === report.id
 
   const status: { tone: StatusTone; label: string; live: boolean } =
     view === 'pending'
@@ -776,12 +779,13 @@ export default function SalaryPage() {
                           <IslandButton
                             tone="ghost"
                             icon={<X size={15} weight="light" />}
-                            onClick={() => toast.info('Script discarded')}
+                            onClick={() => approveMutation.mutate({ reportId: report.id, approved: false })}
+                            disabled={approveMutation.isPending}
                           >
                             Discard
                           </IslandButton>
                           <IslandButton
-                            onClick={() => approveMutation.mutate(report.id)}
+                            onClick={() => approveMutation.mutate({ reportId: report.id, approved: true })}
                             disabled={approveMutation.isPending}
                             trailing={<Check size={15} weight="light" />}
                           >

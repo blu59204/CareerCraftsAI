@@ -1,4 +1,5 @@
 "use client";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +21,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { parseCsv } from "@/lib/csv";
 import { apiClient } from "@/lib/api";
 import {
   Bezel,
@@ -36,7 +38,6 @@ import {
   Screen,
   Section,
   Segmented,
-  SPRING_PANEL,
   StatStrip,
   StatusPill,
   Textarea,
@@ -132,20 +133,6 @@ function Monogram({ name, size = "md", active = false }: { name: string | null; 
 }
 
 /** Closes the surrounding surface on Escape. */
-function useEscape(onEscape: () => void) {
-  const ref = useRef(onEscape);
-  useEffect(() => {
-    ref.current = onEscape;
-  }, [onEscape]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ref.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-}
-
 /** Fixed overlay shell shared by the add-lead and (mobile) detail dialogs. */
 function DialogShell({
   labelledBy,
@@ -158,32 +145,16 @@ function DialogShell({
   className?: string;
   children: ReactNode;
 }) {
-  const reduce = useReducedMotion();
-  useEscape(onClose);
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.35, ease: EASE_OUT_EXPO }}
-      className={cn("fixed inset-0 z-40 flex items-end justify-center p-3 font-geist sm:items-center sm:p-6", className)}
-    >
-      <div aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-md" onClick={onClose} />
-      <motion.div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={labelledBy}
-        initial={reduce ? { opacity: 0 } : { opacity: 0, y: 28, scale: 0.98 }}
-        animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-        exit={reduce ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.98 }}
-        transition={reduce ? { duration: 0.15 } : SPRING_PANEL}
-        className="relative w-full max-w-lg"
-      >
-        <Bezel lifted coreClassName="max-h-[calc(100dvh-3rem)] overflow-y-auto p-6 md:p-8">
-          {children}
-        </Bezel>
-      </motion.div>
-    </motion.div>
+    <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-background/70 backdrop-blur-md" />
+        <DialogPrimitive.Content aria-labelledby={labelledBy} aria-describedby={undefined} className={cn("fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 outline-none", className)}>
+          <DialogPrimitive.Title className="sr-only">{labelledBy === "add-lead-title" ? "Add lead" : "Lead details"}</DialogPrimitive.Title>
+          <Bezel lifted coreClassName="max-h-[calc(100dvh-3rem)] overflow-y-auto p-6 md:p-8">{children}</Bezel>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 
@@ -563,7 +534,6 @@ export default function LeadsPage() {
   const qc = useQueryClient();
   const reduce = useReducedMotion();
   const [addOpen, setAddOpen] = useState(false);
-  const [localLeads, setLocalLeads] = useState<Lead[]>([]);
   const [mutatingLeadId, setMutatingLeadId] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [importing, setImporting] = useState(false);
@@ -578,18 +548,18 @@ export default function LeadsPage() {
     setImporting(true);
     try {
       const text = await file.text();
-      const rows = text.split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+      const rows = parseCsv(text);
       if (rows.length === 0) {
         toast.error("CSV is empty");
         return;
       }
       // Detect + skip a header row (name,email,company,linkedin_url)
-      const header = rows[0].toLowerCase();
+      const header = rows[0].map((cell) => cell.toLowerCase());
       const dataRows = header.includes("name") && header.includes("email") ? rows.slice(1) : rows;
 
       let ok = 0;
       for (const row of dataRows) {
-        const [name, email, company, linkedin_url] = row.split(",").map((c) => c.trim());
+        const [name, email, company, linkedin_url] = row.map((c) => c.trim());
         if (!name) continue;
         try {
           await apiClient.post("/leads", {
@@ -621,13 +591,15 @@ export default function LeadsPage() {
     },
   });
 
-  const leads = [...localLeads, ...remoteLeads.filter((l) => !localLeads.find((x) => x.id === l.id))];
+  const leads = remoteLeads;
 
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       apiClient.patch(`/leads/${id}/status`, { status }),
     onMutate: ({ id }) => setMutatingLeadId(id),
-    onSuccess: () => {
+    onSuccess: (_response, { id, status }) => {
+      qc.setQueryData<Lead[]>(["leads"], (old) => old?.map((lead) => lead.id === id ? { ...lead, status } : lead));
+      setSelectedLead((lead) => lead?.id === id ? { ...lead, status } : lead);
       setMutatingLeadId(null);
       toast.success("Lead status updated");
       qc.invalidateQueries({ queryKey: ["leads"] });
@@ -904,7 +876,7 @@ export default function LeadsPage() {
           <AddLeadModal
             key="add-lead"
             onClose={() => setAddOpen(false)}
-            onAdd={(lead) => setLocalLeads((prev) => [lead, ...prev])}
+            onAdd={(lead) => { qc.setQueryData<Lead[]>(["leads"], (old = []) => [lead, ...old]); void qc.invalidateQueries({ queryKey: ["leads"] }); }}
           />
         )}
         {activeLead && (

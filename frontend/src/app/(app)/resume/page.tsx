@@ -1415,6 +1415,7 @@ export default function ResumePage() {
         <div className="min-w-0 space-y-6 lg:col-span-7 lg:col-start-6 lg:row-span-3 lg:row-start-1 lg:pt-4 xl:col-span-8 xl:col-start-5">
           <Reveal subtle className="flex flex-wrap items-center justify-between gap-3">
             <Segmented<WorkspaceTab>
+                id="resume-tabs"
               value={tab}
               onChange={setTab}
               options={WORKSPACE_TABS}
@@ -1433,6 +1434,8 @@ export default function ResumePage() {
             <motion.div
               key={tab}
               role="tabpanel"
+              id={`resume-tabs-panel-${tab}`}
+              aria-labelledby={`resume-tabs-tab-${tab}`}
               aria-label={WORKSPACE_TABS.find((t) => t.value === tab)?.label}
               variants={panelVariants}
               initial="hidden"

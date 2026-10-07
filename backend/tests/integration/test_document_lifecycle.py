@@ -18,6 +18,129 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.asyncio
+async def test_delete_referenced_document_preserves_history_and_enqueues_cleanup(vector_db):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.api.v1.rag import delete_document
+    from app.models.db import (
+        CandidateProfile,
+        CoverLetterVersion,
+        JobApplication,
+        User,
+        UserDocument,
+    )
+
+    _, engine = vector_db
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                Path(
+                    "../supabase/migrations/20261006102000_document_reference_deletion.sql"
+                ).read_text()
+            )
+        )
+    async_engine = create_async_engine(engine.url.set(drivername="postgresql+asyncpg"))
+    maker = async_sessionmaker(async_engine, expire_on_commit=False)
+    owner, document_id, application_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    try:
+        async with maker() as db:
+            user = User(id=owner, email=f"{owner}@example.test")
+            db.add(user)
+            await db.flush()
+            db.add(
+                UserDocument(
+                    id=document_id,
+                    user_id=owner,
+                    doc_type="resume",
+                    filename="resume.pdf",
+                    storage_path=f"{owner}/resume.pdf",
+                )
+            )
+            await db.flush()
+            db.add(
+                JobApplication(
+                    id=application_id,
+                    user_id=owner,
+                    company="Acme",
+                    role="Engineer",
+                    resume_id=document_id,
+                    cover_letter_id=document_id,
+                )
+            )
+            db.add(CandidateProfile(user_id=owner, default_resume_id=document_id))
+            await db.flush()
+            db.add(
+                CoverLetterVersion(
+                    user_id=owner,
+                    job_application_id=application_id,
+                    document_id=document_id,
+                    tone="formal",
+                )
+            )
+            await db.commit()
+            await delete_document(document_id, db, user)
+            await db.commit()
+        async with maker() as db:
+            assert await db.get(UserDocument, document_id) is None
+            app = await db.get(JobApplication, application_id)
+            assert app is not None and app.resume_id is None and app.cover_letter_id is None
+            assert (await db.get(CandidateProfile, owner)).default_resume_id is None
+            assert (
+                await db.execute(
+                    text("SELECT count(*) FROM cover_letter_versions WHERE document_id=:id"),
+                    {"id": document_id},
+                )
+            ).scalar() == 0
+            assert (
+                await db.execute(
+                    text("SELECT storage_path FROM document_cleanup_queue WHERE document_id=:id"),
+                    {"id": document_id},
+                )
+            ).scalar() == f"{owner}/resume.pdf"
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_replacement_owner_guard_serializes_with_eraser(vector_db):
+    from fastapi import HTTPException
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.db import User
+    from app.services.document_lifecycle import lock_document_owner
+
+    _, engine = vector_db
+    async_engine = create_async_engine(engine.url.set(drivername="postgresql+asyncpg"))
+    maker = async_sessionmaker(async_engine, expire_on_commit=False)
+    owner = uuid.uuid4()
+    try:
+        async with maker() as db:
+            db.add(User(id=owner, email=f"{owner}@example.test"))
+            await db.commit()
+        async with maker() as writer, maker() as eraser:
+            await lock_document_owner(writer, owner)
+
+            async def erase():
+                row = (
+                    await eraser.execute(select(User).where(User.id == owner).with_for_update())
+                ).scalar_one()
+                row.deletion_scheduled_for = datetime.now(UTC)
+                await eraser.commit()
+
+            pending = asyncio.create_task(erase())
+            await asyncio.sleep(0.1)
+            assert not pending.done(), "external sweep must wait for writer transaction"
+            await writer.commit()
+            await asyncio.wait_for(pending, timeout=3)
+            with pytest.raises(HTTPException) as rejected:
+                await lock_document_owner(writer, owner)
+            assert rejected.value.status_code == 403
+    finally:
+        await async_engine.dispose()
+
+
 class FakeEmbedding(Embeddings):
     def __init__(self, dimension):
         self.dimension = dimension

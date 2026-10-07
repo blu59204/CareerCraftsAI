@@ -72,6 +72,38 @@ def _migration_sql_for(filename: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _effective_policies(sql: str) -> dict[tuple[str, str], str]:
+    """Replay named literal policies; distinct names coexist until explicitly dropped.
+
+    This static guard complements integration tests; it cannot interpret arbitrary
+    dynamic SQL or establish the deployed connection role's RLS effectiveness.
+    """
+    sql = re.sub(r"/\*[\s\S]*?\*/|--[^\n]*", "", sql)
+    identifier = r'(?:"[^"]+"|[a-zA-Z_][a-zA-Z_0-9]*)'
+    pattern = re.compile(
+        rf'(?P<action>CREATE|DROP)\s+POLICY\s+(?:IF\s+EXISTS\s+)?(?P<name>{identifier})\s+ON\s+(?:public\.)?(?P<table>{identifier})(?P<body>[^;]*);',
+        re.IGNORECASE,
+    )
+    policies: dict[tuple[str, str], str] = {}
+    for match in pattern.finditer(sql):
+        key = (match["table"].strip('"').lower(), match["name"].strip('"').lower())
+        if match["action"].upper() == "DROP":
+            policies.pop(key, None)
+        else:
+            policies[key] = match["body"]
+    return policies
+
+
+def test_policy_replay_keeps_distinct_names_and_honors_drop():
+    sql = """
+    -- CREATE POLICY comment ON users USING (true);
+    CREATE POLICY unsafe ON users FOR ALL USING (true);
+    CREATE POLICY safe ON users FOR ALL USING (user_id = 1) WITH CHECK (user_id = 1);
+    """
+    assert set(_effective_policies(sql)) == {("users", "unsafe"), ("users", "safe")}
+    assert set(_effective_policies(sql + "DROP POLICY IF EXISTS unsafe ON users;")) == {("users", "safe")}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -172,22 +204,13 @@ def test_insert_policies_have_with_check(all_sql, table):
     that the final (latest) policy definition for that table includes
     WITH CHECK.
     """
-    # Find all CREATE POLICY blocks for this table
-    policy_pattern = re.compile(
-        rf"CREATE\s+POLICY\s+\w+\s+ON\s+(?:public\.)?{re.escape(table)}\b(.*?)(?=CREATE\s+POLICY|DROP\s+POLICY|ALTER\s+TABLE|--\s*FILE:|$)",
-        re.IGNORECASE | re.DOTALL,
-    )
-    matches = policy_pattern.findall(all_sql)
-    assert matches, f"No CREATE POLICY found for table '{table}'"
-
-    # The last match is the effective (most recent) policy body
-    last_policy_body = matches[-1]
-
-    # Check it contains WITH CHECK
-    assert re.search(r"\bWITH\s+CHECK\b", last_policy_body, re.IGNORECASE), (
-        f"Last policy on '{table}' is missing WITH CHECK clause.\n"
-        f"Policy body snippet: {last_policy_body[:300]}"
-    )
+    policies = [(name, body) for (policy_table, name), body in _effective_policies(all_sql).items() if policy_table == table]
+    assert policies, f"No effective policies found for {table}"
+    for name, body in policies:
+        command = re.search(r"\bFOR\s+(ALL|INSERT|UPDATE|DELETE|SELECT)\b", body, re.IGNORECASE)
+        if command and command[1].upper() in {"SELECT", "DELETE"}:
+            continue
+        assert re.search(r"\bWITH\s+CHECK\b", body, re.IGNORECASE), f"Effective write policy {table}.{name} lacks WITH CHECK"
 
 
 # ---------------------------------------------------------------------------
@@ -201,18 +224,9 @@ def test_no_open_using_true_policy(all_sql, table):
     read — this is only acceptable for service_role/deny patterns, not for
     user-scoped tables.
     """
-    policy_pattern = re.compile(
-        rf"CREATE\s+POLICY\s+\w+\s+ON\s+(?:public\.)?{re.escape(table)}\b(.*?)(?=CREATE\s+POLICY|DROP\s+POLICY|ALTER\s+TABLE|--\s*FILE:|$)",
-        re.IGNORECASE | re.DOTALL,
-    )
-    matches = policy_pattern.findall(all_sql)
-    for body in matches:
-        # If USING (true) appears, it must be scoped to service_role
-        if re.search(r"USING\s*\(\s*true\s*\)", body, re.IGNORECASE):
-            assert re.search(r"\bTO\s+service_role\b", body, re.IGNORECASE), (
-                f"Table '{table}' has USING (true) policy not scoped to service_role.\n"
-                f"Body: {body[:300]}"
-            )
+    for (policy_table, name), body in _effective_policies(all_sql).items():
+        if policy_table == table and re.search(r"USING\s*\(\s*true\s*\)", body, re.IGNORECASE):
+            assert re.search(r"\bTO\s+service_role\b", body, re.IGNORECASE), f"Open effective policy {table}.{name} is not service-role scoped"
 
 
 # ---------------------------------------------------------------------------
@@ -297,17 +311,5 @@ def test_no_clerk_id_in_final_policies(all_sql):
     then for each policy name keep only the last CREATE. Check that last
     CREATE doesn't use clerk_id.
     """
-    # Extract (name, body) pairs for every CREATE POLICY in document order
-    pattern = re.compile(
-        r"CREATE\s+POLICY\s+(\w+)\s+ON\s+\S+\b(.*?)(?=CREATE\s+POLICY|DROP\s+POLICY|ALTER\s+TABLE|--\s*FILE:|$)",
-        re.IGNORECASE | re.DOTALL,
-    )
-    # Build dict: policy_name -> last seen body (later files overwrite earlier)
-    latest: dict = {}
-    for name, body in pattern.findall(all_sql):
-        latest[name.lower()] = body
-
-    for name, body in latest.items():
-        assert not re.search(r"\bclerk_id\b", body, re.IGNORECASE), (
-            f"Final policy '{name}' still references clerk_id:\n{body[:400]}"
-        )
+    for (table, name), body in _effective_policies(all_sql).items():
+        assert not re.search(r"\bclerk_id\b", body, re.IGNORECASE), f"Effective policy {table}.{name} references clerk_id"

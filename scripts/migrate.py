@@ -14,8 +14,8 @@ runner refuses to touch it until you record what is already applied:
     python scripts/migrate.py --baseline              # every file
     python scripts/migrate.py --baseline 0040_x.sql   # up to and including one
 
-Each file runs as one implicit transaction unless it manages its own with
-BEGIN/COMMIT, and a failure stops the run with nothing recorded for it.
+Each file and its ledger entry commit in one transaction. An outer
+BEGIN/COMMIT wrapper is removed so the runner owns that transaction.
 """
 
 from __future__ import annotations
@@ -100,6 +100,25 @@ def baseline(conn: psycopg.Connection, upto: str | None) -> list[str]:
 LOCK_KEY = 727274  # arbitrary, shared by every run of this script
 
 
+def transaction_body(source: str) -> str:
+    """Accept the outer wrapper used by standalone migration files.
+
+    PL/pgSQL BEGIN blocks have no semicolon immediately after BEGIN and
+    remain untouched. Migration files must not commit inside the runner's
+    transaction; only the enclosing standalone wrapper is supported.
+    """
+    wrapper = re.fullmatch(
+        r"(?P<prefix>(?:\s|--[^\n]*(?:\n|$))*)BEGIN\s*;"
+        r"(?P<body>[\s\S]*?)COMMIT\s*;(?P<suffix>\s*)",
+        source,
+        re.IGNORECASE,
+    )
+    body = wrapper.group("prefix") + wrapper.group("body") if wrapper else source
+    if re.search(r"(?im)^\s*(?:BEGIN\s*;|COMMIT\s*;|ROLLBACK\s*;|START TRANSACTION\b)", body):
+        raise ValueError("Only an outer BEGIN/COMMIT migration wrapper is supported")
+    return body
+
+
 def migrate(conn: psycopg.Connection, *, dry_run: bool = False) -> list[str]:
     """Apply pending files. Runs are serialised with an advisory lock, so two
     deploys (or a deploy and a manual run) cannot apply the same file twice."""
@@ -134,14 +153,14 @@ def _migrate(conn: psycopg.Connection, *, dry_run: bool = False) -> list[str]:
             continue
         print(f"applying {path.name}", flush=True)
         try:
-            # No parameters, so psycopg sends the whole file in one simple
-            # query: one implicit transaction, or the file's own BEGIN/COMMIT.
-            conn.execute(path.read_text(encoding="utf-8"))
+            sql = transaction_body(path.read_text(encoding="utf-8"))
+            with conn.transaction():
+                conn.execute(sql)
+                _record(conn, path, baseline=False)
         except psycopg.Error as exc:
             raise SystemExit(
                 f"{path.name} failed, nothing recorded for it: {exc}"
             ) from exc
-        _record(conn, path, baseline=False)
         ran.append(path.name)
     return ran
 

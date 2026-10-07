@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Bezel, Hairline, IslandButton, Notice, PanelTitle, Select } from "@/components/vanguard";
@@ -48,7 +48,8 @@ export function AutoApplyPanel() {
   const [mode, setMode] = useState<Mode>("apply");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Apply walk-through: ids frozen at the first click, `opened` = how many tabs so far.
-  const [queue, setQueue] = useState<string[]>([]);
+  const [queue, setQueue] = useState<typeof items>([]);
+  const preparing = useRef(false);
   const [opened, setOpened] = useState(0);
   const [busy, setBusy] = useState(false);
   const [askPrefs, setAskPrefs] = useState<"start" | "enable" | null>(null);
@@ -68,10 +69,12 @@ export function AutoApplyPanel() {
   const needsPrefs = !prefsLoading && !prefs?.resume_prefs_set_at;
 
   const resetWalk = () => {
+    if (preparing.current) return;
     setQueue([]);
     setOpened(0);
   };
   const toggle = (id: string) => {
+    if (preparing.current) return;
     resetWalk();
     setSelected((prev) => {
       const next = new Set(prev);
@@ -81,30 +84,36 @@ export function AutoApplyPanel() {
     });
   };
 
-  // Called synchronously from the click so the browser lets the new tab open.
-  const start = () => {
+  // startAssistedApply opens the tab before its first await.
+  const start = async () => {
+    if (preparing.current) return;
     if (needsPrefs) {
       setDraftPrefs(toResumePrefs(prefs));
       setAskPrefs("start");
       return;
     }
-    if (chosen.length === 0) return;
-    if (mode !== "outreach") {
-      const order = walking ? queue : chosen.filter((a) => a.job_url).map((a) => a.id);
-      const target = items.find((a) => a.id === order[walking ? opened : 0]);
-      if (target) startAssistedApply(target);
-      if (!walking) setQueue(order);
-      setOpened((n) => n + 1);
-      if (walking && opened + 1 >= order.length) qc.invalidateQueries({ queryKey: ["auto-apply-jobs"] });
-    }
-    if (mode !== "apply" && !walking) {
-      setBusy(true);
-      queueOutreach(chosen.map((a) => a.id))
-        .then((n) =>
-          toast.success(n ? `${n} email draft${n === 1 ? "" : "s"} waiting in Outreach for your review` : "No recruiter contact found for these jobs"),
-        )
-        .catch(() => toast.error("Couldn't queue outreach"))
-        .finally(() => setBusy(false));
+    if (chosen.length === 0 && !walking) return;
+    preparing.current = true;
+    setBusy(true);
+    try {
+      if (mode !== "outreach") {
+        const order = walking ? queue : chosen.filter((a) => a.job_url);
+        const target = order[walking ? opened : 0];
+        if (!target) return;
+        if (!walking) setQueue(order);
+        if (!await startAssistedApply(target)) return;
+        setOpened((n) => n + 1);
+        void qc.invalidateQueries({ queryKey: ["auto-apply-jobs"] });
+      }
+      if (mode !== "apply" && !walking) {
+        const n = await queueOutreach(chosen.map((a) => a.id));
+        toast.success(n ? `${n} email drafts waiting in Outreach for your review` : "No recruiter contact found for these jobs");
+      }
+    } catch {
+      toast.error("Couldn't queue outreach");
+    } finally {
+      preparing.current = false;
+      setBusy(false);
     }
   };
 
@@ -210,6 +219,7 @@ export function AutoApplyPanel() {
             <Select
               value={String(minMatch)}
               onChange={(e) => {
+                if (preparing.current) return;
                 resetWalk();
                 setMinMatch(Number(e.target.value));
               }}
@@ -227,6 +237,7 @@ export function AutoApplyPanel() {
             <Select
               value={within}
               onChange={(e) => {
+                if (preparing.current) return;
                 resetWalk();
                 setWithin(e.target.value as "any" | "7" | "30");
               }}
@@ -241,6 +252,7 @@ export function AutoApplyPanel() {
             <Select
               value={mode}
               onChange={(e) => {
+                if (preparing.current) return;
                 resetWalk();
                 setMode(e.target.value as Mode);
               }}
@@ -267,6 +279,7 @@ export function AutoApplyPanel() {
                   aria-label="Select all jobs"
                   checked={chosen.length === items.length}
                   onChange={(e) => {
+                    if (preparing.current) return;
                     resetWalk();
                     setSelected(e.target.checked ? new Set(items.map((a) => a.id)) : new Set());
                   }}
@@ -307,7 +320,7 @@ export function AutoApplyPanel() {
             <IslandButton
               tone="primary"
               size="sm"
-              disabled={busy || prefsLoading || chosen.length === 0 || (walking && opened >= total && mode !== "outreach")}
+              disabled={busy || prefsLoading || (!walking && chosen.length === 0) || (walking && opened >= total && mode !== "outreach")}
               onClick={start}
             >
               {busy ? "Working…" : startLabel}

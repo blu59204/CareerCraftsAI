@@ -1,66 +1,57 @@
-"""Regression test: awaiting_approval status must save pending_action to run.output."""
+"""Exercise production persistence rather than a copied branch."""
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
 
-def test_awaiting_approval_saves_pending_action_not_result():
-    """Verify that when result_state has status=awaiting_approval,
-    the run.output is set to pending_action, not result."""
-    result_state = {
-        "status": "awaiting_approval",
-        "pending_action": {"action_type": "submit_application", "job_url": "https://example.com/job"},
-        "result": None,
-        "user_id": "user-123",
-        "run_id": str(uuid.uuid4()),
-    }
-    # Simulate the fixed persistence logic
-    st = result_state.get("status")
-    if st == "awaiting_approval":
-        output = result_state.get("pending_action") or {}
-    else:
-        output = result_state.get("result")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["awaiting_approval", "completed", "failed"])
+async def test_record_run_result_preserves_payload_and_publishes_after_commit(monkeypatch, status):
+    from app.workflows.agent_activities import record_run_result
 
-    assert output == {"action_type": "submit_application", "job_url": "https://example.com/job"}
-    assert output.get("action_type") == "submit_application"
+    pending, result = {"type": "send_email", "body": "Review"}, {"jobs_found": 5}
+    run = SimpleNamespace(status="running", output=None, completed_at=None)
+    db = SimpleNamespace(get=AsyncMock(return_value=run), commit=AsyncMock())
 
+    class Session:
+        async def __aenter__(self):
+            return db
+        async def __aexit__(self, *args):
+            return False
 
-def test_completed_status_saves_result_not_pending_action():
-    """Completed runs must save result, not pending_action."""
-    result_state = {
-        "status": "completed",
-        "result": {"jobs_found": 5},
-        "pending_action": None,
-    }
-    st = result_state.get("status")
-    if st == "awaiting_approval":
-        output = result_state.get("pending_action") or {}
-    else:
-        output = result_state.get("result")
-
-    assert output == {"jobs_found": 5}
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", Session)
+    published = []
+    def publish(run_id, event, output):
+        assert db.commit.await_count == 1
+        published.append((event, output))
+    monkeypatch.setattr("app.core.event_bus.publish", publish)
+    outcome = await record_run_result(str(uuid.uuid4()), {
+        "status": status, "pending_action": pending, "result": result,
+    })
+    expected = pending if status == "awaiting_approval" else result
+    assert run.output == expected and run.status == status
+    assert (run.completed_at is None) == (status == "awaiting_approval")
+    assert published == [({"awaiting_approval": "checkpoint", "completed": "complete", "failed": "error"}[status], expected)]
+    assert outcome["status"] == status
 
 
-def test_approve_endpoint_reads_action_type_from_output():
-    """Simulates approve_or_cancel logic reading action_type from run.output."""
-    # After the fix, run.output contains the pending_action dict
-    run_output = {"action_type": "submit_application", "job_url": "https://example.com/job"}
+@pytest.mark.asyncio
+async def test_result_never_overwrites_cancellation(monkeypatch):
+    from app.workflows.agent_activities import record_run_result
 
-    pending = run_output or {}
-    redis_action_type = pending.get("type") or pending.get("action_type")
-
-    assert redis_action_type == "submit_application"
-
-
-def test_unapproved_action_is_rejected():
-    """If approved=False, status must become failed, not run the action."""
-    # Simulates the rejection branch in approve_or_cancel
-    approved = False
-    if not approved:
-        new_status = "failed"
-        output = {"error": "Action cancelled by user"}
-    else:
-        new_status = "running"
-        output = None
-
-    assert new_status == "failed"
-    assert "cancelled" in output["error"].lower()
+    run = SimpleNamespace(status="failed", output={"error": "Action cancelled by user"})
+    db = SimpleNamespace(get=AsyncMock(return_value=run), commit=AsyncMock())
+    class Session:
+        async def __aenter__(self):
+            return db
+        async def __aexit__(self, *args):
+            return False
+    monkeypatch.setattr("app.core.database.AsyncSessionLocal", Session)
+    published = []
+    monkeypatch.setattr("app.core.event_bus.publish", lambda *args: published.append(args))
+    await record_run_result(str(uuid.uuid4()), {"status": "completed", "result": {}})
+    assert run.output == {"error": "Action cancelled by user"}
+    assert published == []
+    db.commit.assert_not_awaited()

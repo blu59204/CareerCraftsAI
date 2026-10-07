@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def _store_cover_letter(
     user_id: str,
     job_application_id: str,
-    parsed: "CoverLetterOutput",
+    parsed: CoverLetterOutput,
     tone: str,
 ) -> dict:
     """Persist the draft to user_documents + cover_letter_versions.
@@ -170,7 +170,7 @@ def cover_letter_node(state: AgentState) -> AgentState:
                     "company": ctx.get("company", "NOT_PROVIDED"),
                     "target_role": ctx.get("target_role", ctx.get("role", "NOT_PROVIDED")),
                 },
-                chunk_texts or None,
+                [context_text] if context_text.strip() else None,
             ),
             CoverLetterOutput,
         )

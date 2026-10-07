@@ -103,6 +103,7 @@ function InterviewWorkspace() {
         tab={tab}
         actions={
           <Segmented<InterviewTab>
+                id="interview-tabs"
             ariaLabel="Interview mode"
             value={tab}
             onChange={selectTab}
@@ -114,13 +115,15 @@ function InterviewWorkspace() {
         <motion.div
           key={tab}
           role="tabpanel"
+              id={`interview-tabs-panel-${tab}`}
+              aria-labelledby={`interview-tabs-tab-${tab}`}
           aria-label={tab === "prep" ? "Prep plan" : tab === "coach" ? "Mock interview" : "History"}
           variants={panelSwap}
           initial="hidden"
           animate="show"
           exit="exit"
         >
-          {tab === "prep" ? <PrepPlanPanel /> : tab === "coach" ? <MockInterviewPanel /> : <InterviewHistoryPanel />}
+          {tab === "prep" ? <PrepPlanPanel onStartMock={() => selectTab("coach")} /> : tab === "coach" ? <MockInterviewPanel /> : <InterviewHistoryPanel />}
         </motion.div>
       </AnimatePresence>
     </div>

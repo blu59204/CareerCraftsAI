@@ -41,6 +41,13 @@ class UserProfileUpdate(BaseModel):
     linkedin_url: str | None = Field(None, max_length=500)
     onboarding_completed: bool | None = None
 
+    @field_validator("onboarding_completed")
+    @classmethod
+    def onboarding_must_be_boolean(cls, value):
+        if value is None:
+            raise ValueError("onboarding_completed must be a boolean when supplied")
+        return value
+
 
 class UserPreferencesSchema(BaseModel):
     experience_level: str | None = None

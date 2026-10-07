@@ -104,10 +104,13 @@ async def apply_inbox_updates(user_id: str, updates: list[dict]) -> list[dict]:
         applications = list(
             (
                 await db.execute(
-                    select(JobApplication).where(
+                    select(JobApplication)
+                    .where(
                         JobApplication.user_id == owner,
                         JobApplication.status.in_(OPEN_STATUSES),
                     )
+                    .order_by(JobApplication.id)
+                    .with_for_update()
                 )
             )
             .scalars()

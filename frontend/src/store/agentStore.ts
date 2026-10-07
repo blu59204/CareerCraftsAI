@@ -33,6 +33,9 @@ interface AgentRun {
 }
 
 interface AgentStore {
+  generation: number;
+  owner: string | null;
+  setOwner: (owner: string | null) => void;
   runs: Record<string, AgentRun>;
   activeRunId: string | null;
 
@@ -52,24 +55,23 @@ interface AgentStore {
   clearRun: (runId: string) => void;
 }
 
-const ACTIVE_RUN_KEY = "cc_active_run_id";
-
+let activeOwner: string | null = null;
 function persistActiveRun(runId: string | null) {
-  if (typeof window === "undefined") return;
-  if (runId) localStorage.setItem(ACTIVE_RUN_KEY, runId);
-  else localStorage.removeItem(ACTIVE_RUN_KEY);
+  if (typeof window === "undefined" || !activeOwner) return;
+  const key = `cc_active_run_id:${activeOwner}`;
+  if (runId) localStorage.setItem(key, runId);
+  else localStorage.removeItem(key);
 }
-
-const getInitialActiveRun = () => {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem(ACTIVE_RUN_KEY);
-  }
-  return null;
-};
-
 export const useAgentStore = create<AgentStore>((set) => ({
+  generation: 0,
+  owner: null,
   runs: {},
-  activeRunId: getInitialActiveRun(),
+  activeRunId: null,
+  setOwner: (owner) => {
+    activeOwner = owner;
+    if (typeof window !== "undefined") localStorage.removeItem("cc_active_run_id");
+    set((s) => ({ generation: s.generation + 1, owner, runs: {}, activeRunId: owner && typeof window !== "undefined" ? localStorage.getItem(`cc_active_run_id:${owner}`) : null }));
+  },
 
   setActiveRun: (runId) => {
     persistActiveRun(runId);
@@ -96,6 +98,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
 
   addEvent: (runId, eventType, data) =>
     set((s) => {
+      if (!s.runs[runId]) return s;
       const run = s.runs[runId] ?? {
         runId,
         status: "running",
@@ -121,7 +124,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
     }),
 
   setCheckpoint: (runId, pendingAction) =>
-    set((s) => ({
+    set((s) => !s.runs[runId] ? s : ({
       runs: {
         ...s.runs,
         [runId]: {
@@ -133,7 +136,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
     })),
 
   clearCheckpoint: (runId) =>
-    set((s) => ({
+    set((s) => !s.runs[runId] ? s : ({
       runs: {
         ...s.runs,
         [runId]: {
@@ -145,51 +148,69 @@ export const useAgentStore = create<AgentStore>((set) => ({
     })),
 
   setComplete: (runId, result) => {
-    persistActiveRun(null);
-    set((s) => ({
+    set((s) => {
+      if (!s.runs[runId]) return s;
+      if (s.activeRunId === runId) persistActiveRun(null);
+      return ({
+      activeRunId: s.activeRunId === runId ? null : s.activeRunId,
       runs: {
         ...s.runs,
         [runId]: {
           ...s.runs[runId],
           status: "completed",
+          pendingAction: null,
           result,
         },
       },
-    }));
+    }); });
   },
 
   setError: (runId, message) => {
-    persistActiveRun(null);
-    set((s) => ({
+    set((s) => {
+      if (!s.runs[runId]) return s;
+      if (s.activeRunId === runId) persistActiveRun(null);
+      return ({
+      activeRunId: s.activeRunId === runId ? null : s.activeRunId,
       runs: {
         ...s.runs,
         [runId]: {
           ...s.runs[runId],
           status: "failed",
+          pendingAction: null,
           error: message,
         },
       },
-    }));
+    }); });
   },
 
   setNeedsVerification: (runId, message) => {
-    persistActiveRun(null);
-    set((s) => ({
+    set((s) => {
+      if (!s.runs[runId]) return s;
+      if (s.activeRunId === runId) persistActiveRun(null);
+      return ({
+      activeRunId: s.activeRunId === runId ? null : s.activeRunId,
       runs: {
         ...s.runs,
         [runId]: {
           ...s.runs[runId],
           status: "needs_verification",
+          pendingAction: null,
           error: message,
         },
       },
-    }));
+    }); });
   },
 
   setRunStatus: (runId, status) =>
-    set((s) => ({
-      runs: { ...s.runs, [runId]: { ...s.runs[runId], status } },
-    })),
+    set((s) => {
+      if (!s.runs[runId]) return s;
+      const terminal = ["completed", "failed", "needs_verification", "cancelled", "expired"].includes(status);
+      if (terminal && s.activeRunId === runId) persistActiveRun(null);
+      return {
+        activeRunId: terminal && s.activeRunId === runId ? null : s.activeRunId,
+        runs: { ...s.runs, [runId]: { ...s.runs[runId], status, ...(terminal ? { pendingAction: null } : {}) } },
+      };
+    }),
 
   clearRun: (runId) =>
     set((s) => {

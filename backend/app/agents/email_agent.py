@@ -43,7 +43,9 @@ def email_agent_node(state: AgentState) -> AgentState:
             task_description=f"Write outreach email to {recipient} about {role} at {company}",
             user_context=f"Prior email threads: {thread_context}",
             target_context=f"Company: {company}, Role: {role}",
-            selection_criteria="What hook will get a response? What's unique about this candidate for this role?",
+            selection_criteria=(
+                "What hook will get a response? What's unique about this candidate for this role?"
+            ),
         )
 
         draft = call_llm_json(
@@ -67,8 +69,8 @@ def email_agent_node(state: AgentState) -> AgentState:
             "pending_action": {
                 "type": "send_email",
                 "recipient": recipient,
-                "subject": draft.subject,
-                "body": draft.body,
+                "subject": ctx.get("subject") if ctx.get("subject") is not None else draft.subject,
+                "body": ctx.get("body") if ctx.get("body") is not None else draft.body,
                 "thinking": draft.intent_detected,
             },
             "messages": state["messages"]

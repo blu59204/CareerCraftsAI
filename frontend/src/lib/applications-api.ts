@@ -1,3 +1,5 @@
+import { applicationFilterParams } from "./application-filters";
+export { applicationFilterParams } from "./application-filters";
 // Shared contract for job rows (Applications, Jobs, Agent auto-apply panel).
 // Backend: backend/app/api/v1/jobs.py — GET /jobs/applications and friends.
 import { apiClient } from "@/lib/api";
@@ -52,16 +54,7 @@ export async function fetchApplications(
   filters: ApplicationFilters = {},
   page: { offset?: number; limit?: number } = {},
 ): Promise<ApplicationPage> {
-  const params: Record<string, string | number> = {};
-  if (filters.status) params.status = filters.status;
-  if (filters.minMatch != null) params.min_match = filters.minMatch;
-  if (filters.foundAfter) params.found_after = filters.foundAfter;
-  if (filters.foundBefore) params.found_before = filters.foundBefore;
-  if (filters.sort) params.sort = filters.sort;
-  if (filters.location) params.location = filters.location;
-  if (filters.source) params.source = filters.source;
-  if (filters.postedWithinDays) params.posted_within_days = filters.postedWithinDays;
-  if (filters.q?.trim()) params.q = filters.q.trim();
+  const params = applicationFilterParams(filters);
   if (page.offset) params.offset = page.offset;
   if (page.limit) params.limit = page.limit;
   const res = await apiClient.get<ApplicationRecord[]>("/jobs/applications", { params });
