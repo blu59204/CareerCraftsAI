@@ -28,8 +28,10 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
-  // Set by Clerk when the Terms box was ticked on the sign-up page.
-  const legalAcceptedAt = useUser().user?.legalAcceptedAt ?? null;
+  // Set by Clerk when the Terms box was ticked on the sign-up page. Kept as a
+  // boolean: Clerk hands back a new Date on every user reload, and an object
+  // dependency would re-run the guard and blank the page each time.
+  const legalAccepted = Boolean(useUser().user?.legalAcceptedAt);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<GuardError | null>(null);
   const [needsConsent, setNeedsConsent] = useState(false);
@@ -73,7 +75,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
         // Agreeing to the Terms/Privacy Policy comes before anything else —
         // the backend blocks every other endpoint until this is recorded, so
         // check it first rather than letting onboarding fail underneath it.
-        if (!data.policy_accepted_at && legalAcceptedAt) {
+        if (!data.policy_accepted_at && legalAccepted) {
           // They agreed on the sign-up page; the record just didn't land then
           // (e.g. the session wasn't ready). Record it now, no second page.
           try {
@@ -157,7 +159,7 @@ export function OnboardingGuard({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [pathname, router, isLoaded, isSignedIn, getToken, refreshKey, legalAcceptedAt]);
+  }, [pathname, router, isLoaded, isSignedIn, getToken, refreshKey, legalAccepted]);
 
   async function handleLoginAgain() {
     try {
